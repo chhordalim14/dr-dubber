@@ -24,7 +24,7 @@ const LOGS_DIR = path.join(ROOT_DIR, 'storage', 'logs');
 
 [UPLOADS_DIR, AUDIO_CACHE_DIR, SEPARATED_DIR, EXPORTS_DIR, OUTPUTS_DIR, LOGS_DIR, CUSTOM_OUTPUTS_DIR, USER_DESKTOP_OUTPUTS].forEach(dir => {
     if (!fs.existsSync(dir)) {
-        try { fs.mkdirSync(dir, { recursive: true }); } catch (e) {}
+        try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { }
     }
 });
 
@@ -107,13 +107,13 @@ const MIME_MAP = {
 // 1. Audio / Media Streaming Endpoint (handles both standard and URL-encoded query strings)
 app.use('/api/audio', (req, res) => {
     let filePath = req.query.path;
-    
+
     if (!filePath && req.originalUrl.includes('path=')) {
         try {
             const decoded = decodeURIComponent(req.originalUrl);
             const match = decoded.match(/path=([^&]+)/);
             if (match) filePath = match[1];
-        } catch (e) {}
+        } catch (e) { }
     }
 
     if (!filePath || !fs.existsSync(filePath)) {
@@ -161,10 +161,10 @@ app.post('/api/extract-audio', upload.any(), (req, res) => {
     }
 
     const baseName = path.basename(videoPath, path.extname(videoPath));
-    const fileName = `${baseName}_audio.wav`;
+    const fileName = `${baseName}_audio.mp3`;
     const audioOut = path.join(SEPARATED_DIR, fileName);
 
-    const cmd = ['-y', '-i', videoPath, '-vn', '-acodec', 'pcm_s16le', '-ar', '44100', '-ac', '2', audioOut];
+    const cmd = ['-y', '-i', videoPath, '-vn', '-acodec', 'libmp3lame', '-b:a', '128k', '-ar', '16000', '-ac', '1', audioOut];
     const ffmpeg = spawn('ffmpeg', cmd, { windowsHide: true });
 
     ffmpeg.on('close', (code) => {
@@ -276,7 +276,7 @@ app.post('/api/transcribe', async (req, res) => {
                 if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
                 const fullPath = path.join(targetDir, partName);
                 fs.writeFileSync(fullPath, audioBuffer);
-            } catch (e) {}
+            } catch (e) { }
         });
     } catch (err) {
         console.warn('[Outputs] Error saving transcribe chunk:', err.message);
@@ -291,19 +291,47 @@ app.post('/api/transcribe', async (req, res) => {
     }
 
     try {
-        const prompt = `You are a professional audio transcriber and translator. Listen to the audio and transcribe and translate all speech into natural, accurate Khmer subtitles. Output ONLY a valid JSON array of objects with the following schema:
+        const durationHint = (duration && Number(duration) > 0) ? `\nTotal video duration: ${Number(duration).toFixed(1)} seconds.` : '';
+        const prompt = `You are a professional film/TV dialogue adapter and subtitle synchronizer specializing in Asian/Chinese drama (C-Drama) dubbing into natural Khmer.
+
+TASK:
+Listen to the audio carefully and transcribe and translate all spoken dialogue into natural, concise Khmer subtitles suitable for video dubbing.
+
+CRITICAL DUBBING & TIMELINE SYNCHRONIZATION RULES:
+1. Exact Timestamps:
+   - "start" and "end" timestamps MUST correspond precisely to the real-time playback position from audio start (00:00.00). Format timestamps as MM:SS.ss (or HH:MM:SS.ss).
+   - DO NOT skip or compress intro music, sound effects, or silence. If speech starts at 2 minutes (02:00.00), the first subtitle start time MUST be 02:00.00 or later, NEVER 00:00.00.
+
+2. Dubbing Pacing & Syllable Matching (C-Drama Pacing):
+   - In Asian/Chinese dramas, speech is fast and compact (often only 3-5 syllables).
+   - Translate into PUNCHY, CONCISE, SPOKEN Khmer that matches the speaker's emotional rhythm and dialogue duration.
+   - AVOID verbose, wordy, or formal literal translations that take too long to speak or read.
+   - Examples of concise dubbing:
+     * "我明白了" -> "ខ្ញុំយល់ហើយ" (Concise & Natural), NOT "ខ្ញុំយល់ពីអ្វីដែលអ្នកនិយាយហើយ" (Too Long).
+     * "你没事吧" -> "ឯងមិនអីទេ?" (Concise & Natural), NOT "តើអ្នកមានបញ្ហាអ្វីកើតឡើងទេ?" (Too Long).
+     * "快走" -> "ទៅលឿន!", NOT "សូមប្រញាប់ចាកចេញពីទីនេះ".
+
+3. Natural Segments:
+   - Divide subtitles into short, readable lines (2 to 5 seconds per line).
+   - Ensure timestamps do not drift and stay locked to the speaker's voice on the timeline.${durationHint}
+
+4. Accurate Speaker Identification:
+   - Assign accurate speaker gender (Male / Female).
+
+5. Output Format:
+   - Output ONLY a valid JSON array of objects with the exact schema below. No explanations, no markdown blocks.
+
+SCHEMA:
 [
   {
     "start": "00:00.00",
     "end": "00:05.50",
+    "originalText": "Original Chinese/English dialogue",
     "text": "Khmer subtitle translation",
-    "gender": "Male" or "Female"
+    "gender": "Male",
+    "speaker": "Speaker 1"
   }
-]
-Requirements:
-1. Divide subtitles into short, readable lines (2-6 seconds each).
-2. Assign accurate speaker gender (Male / Female).
-3. Do not include markdown code blocks or any explanation. Return ONLY the raw JSON array.`;
+]`;
 
         const payload = {
             contents: [
@@ -365,7 +393,7 @@ Requirements:
             return res.json({
                 success: true,
                 data: [
-                    { start: "00:00.00", end: "00:05.00", text: "សួស្តី!", gender: "Male" }
+                    { start: "00:00.00", end: "00:05.00", originalText: "Hello!", text: "សួស្តី!", gender: "Male", speaker: "Speaker 1" }
                 ],
                 rawText: rawContent
             });
@@ -385,6 +413,114 @@ Requirements:
     }
 });
 
+// 4b. Translate SRT / Text directly with Concise Dubbing Rules
+app.post('/api/translate-srt', async (req, res) => {
+    const {
+        srtBase64,
+        srtText,
+        targetLanguage = 'Khmer',
+        apiKey,
+        model = 'gemini-2.0-flash',
+        requestId
+    } = req.body;
+
+    let content = srtText;
+    if (!content && srtBase64) {
+        try {
+            content = Buffer.from(srtBase64, 'base64').toString('utf8');
+        } catch (e) {
+            content = '';
+        }
+    }
+
+    if (!content || !content.trim()) {
+        return res.status(400).json({ success: false, error: 'No subtitle content provided to translate.' });
+    }
+
+    if (!apiKey || !apiKey.trim()) {
+        return res.status(400).json({ success: false, error: 'INVALID_API_KEY', message: 'API key is required.' });
+    }
+
+    try {
+        const prompt = `You are a professional film/TV dialogue adapter and voice-dubbing translator specializing in Asian/Chinese drama (C-Drama) localization into natural Khmer.
+
+TASK:
+Translate each dialogue line into natural, concise Khmer dialogue optimized for voice dubbing and subtitle timing.
+
+CRITICAL DUBBING & CONCISENESS RULES:
+1. Pacing & Syllable Matching:
+   - Original drama dialogue is fast and brief. Keep Khmer translations SHORT, PUNCHY, and CONVERSATIONAL.
+   - DO NOT write overly wordy or formal literal translations.
+   - Example: "我明白了" -> "ខ្ញុំយល់ហើយ", NOT "ខ្ញុំយល់ពីអ្វីដែលអ្នកនិយាយហើយ".
+2. Exact 1-to-1 Line Match:
+   - Output an array with the exact same number of items as the input lines.
+3. Gender Tagging:
+   - Assign "Male" or "Female" for each line based on context.
+4. Output Format:
+   - Return ONLY a valid JSON array of objects:
+[
+  {
+    "text": "Khmer translation",
+    "gender": "Male" or "Female"
+  }
+]
+
+SUBTITLES TO TRANSLATE:
+${content}`;
+
+        const payload = {
+            contents: [
+                {
+                    role: "user",
+                    parts: [{ text: prompt }]
+                }
+            ],
+            generationConfig: {
+                responseMimeType: "application/json"
+            }
+        };
+
+        const targetModel = model || 'gemini-2.0-flash';
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${apiKey.trim()}`;
+
+        const abortCtrl = new AbortController();
+        if (requestId) activeTranscribeRequests.set(requestId, abortCtrl);
+
+        const geminiRes = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal: abortCtrl.signal
+        });
+
+        if (requestId) activeTranscribeRequests.delete(requestId);
+
+        if (geminiRes.status === 429) return res.status(429).json({ success: false, error: 'RATE_LIMIT_EXCEEDED' });
+        if (geminiRes.status === 400 || geminiRes.status === 403) return res.status(geminiRes.status).json({ success: false, error: 'INVALID_API_KEY' });
+
+        const json = await geminiRes.json();
+        const rawContent = json?.candidates?.[0]?.content?.parts?.[0]?.text || '[]';
+
+        let parsedData = [];
+        try {
+            const cleanJson = rawContent.replace(/^```json/m, '').replace(/^```/m, '').trim();
+            parsedData = JSON.parse(cleanJson);
+        } catch (e) {
+            console.error('Failed to parse Gemini translate output:', rawContent);
+            parsedData = [];
+        }
+
+        res.json({
+            success: true,
+            data: parsedData,
+            rawText: rawContent
+        });
+    } catch (e) {
+        if (e.name === 'AbortError') return res.json({ success: false, error: 'CANCELLED' });
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 app.post('/api/cancel-transcribe', (req, res) => {
     const { requestId } = req.body;
     if (requestId && activeTranscribeRequests.has(requestId)) {
@@ -393,6 +529,101 @@ app.post('/api/cancel-transcribe', (req, res) => {
         activeTranscribeRequests.delete(requestId);
     }
     res.json({ success: true });
+});
+
+// 4c. Export Audio Stems (Clean Voice Stem + Isolated BGM + SRT Package)
+app.post('/api/export-stems', async (req, res) => {
+    const {
+        subtitles = [],
+        bgmPath,
+        videoName = 'dubbing_project',
+        customFolder
+    } = req.body;
+
+    try {
+        const timestamp = Date.now();
+        const baseClean = (videoName || 'project').replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+        const folderName = `Stems_${baseClean}_${timestamp}`;
+
+        let targetDir = customFolder && fs.existsSync(customFolder) ? path.join(customFolder, folderName) : path.join(EXPORTS_DIR, folderName);
+        fs.mkdirSync(targetDir, { recursive: true });
+
+        // Helper for seconds to SRT time
+        function formatSecToSrt(seconds) {
+            const secNum = Math.max(0, parseFloat(seconds) || 0);
+            const hrs = Math.floor(secNum / 3600);
+            const mins = Math.floor((secNum % 3600) / 60);
+            const secs = Math.floor(secNum % 60);
+            const ms = Math.floor((secNum % 1) * 1000);
+            return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
+        }
+
+        // 1. Export Subtitles (SRT)
+        const srtPath = path.join(targetDir, `${baseClean}_subtitles.srt`);
+        let srtContent = '';
+        subtitles.forEach((sub, idx) => {
+            const sStart = sub.startTime || formatSecToSrt(parseFloat(sub.textStart || 0));
+            const sEnd = sub.endTime || formatSecToSrt(parseFloat(sub.textEnd || 0));
+            const txt = (sub.text || '').trim();
+            srtContent += `${idx + 1}\n${sStart} --> ${sEnd}\n${txt}\n\n`;
+        });
+        fs.writeFileSync(srtPath, srtContent, 'utf8');
+
+        // 2. Copy or link Isolated BGM if available
+        let exportedBgmPath = null;
+        if (bgmPath && fs.existsSync(bgmPath)) {
+            exportedBgmPath = path.join(targetDir, `${baseClean}_isolated_bgm${path.extname(bgmPath) || '.wav'}`);
+            fs.copyFileSync(bgmPath, exportedBgmPath);
+        }
+
+        // 3. Export Clean Dubbed Dialogue Stem (combining valid subtitle audio files)
+        const validSubs = (subtitles || []).filter(s => {
+            const aPath = s.file || s.audioPath;
+            return aPath && fs.existsSync(aPath);
+        });
+
+        let exportedVoicePath = null;
+        if (validSubs.length > 0) {
+            exportedVoicePath = path.join(targetDir, `${baseClean}_dubbed_voice.wav`);
+            const args = ['-y'];
+            const filterParts = [];
+            const streamNames = [];
+
+            validSubs.forEach((sub, i) => {
+                const aPath = sub.file || sub.audioPath;
+                args.push('-i', aPath);
+                const startSec = parseFloat(sub.audioStart || sub.textStart || 0);
+                const delayMs = Math.max(0, Math.round(startSec * 1000));
+                filterParts.push(`[${i}:a]adelay=${delayMs}|${delayMs}[a${i}]`);
+                streamNames.push(`[a${i}]`);
+            });
+
+            if (validSubs.length > 1) {
+                filterParts.push(`${streamNames.join('')}amix=inputs=${validSubs.length}:normalize=0[aout]`);
+                args.push('-filter_complex', filterParts.join(';'), '-map', '[aout]', '-ac', '2', '-ar', '44100', exportedVoicePath);
+            } else {
+                filterParts.push(`${streamNames[0]}anull[aout]`);
+                args.push('-filter_complex', filterParts.join(';'), '-map', '[aout]', '-ac', '2', '-ar', '44100', exportedVoicePath);
+            }
+
+            await new Promise((resolve) => {
+                const ff = spawn('ffmpeg', args, { windowsHide: true });
+                ff.on('close', resolve);
+                ff.on('error', resolve);
+            });
+        }
+
+        res.json({
+            success: true,
+            folder: targetDir,
+            srtFile: srtPath,
+            bgmFile: exportedBgmPath,
+            voiceFile: exportedVoicePath,
+            files: [srtPath, exportedBgmPath, exportedVoicePath].filter(Boolean)
+        });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
 });
 
 // 5. Neural Speech Generation (Edge-TTS + Khmer)
@@ -544,7 +775,7 @@ app.post('/api/render', upload.any(), (req, res) => {
         try {
             const parsed = JSON.parse(req.body.data);
             renderOpts = { ...renderOpts, ...parsed };
-        } catch (e) {}
+        } catch (e) { }
     }
 
     const {
@@ -605,9 +836,9 @@ app.post('/api/render', upload.any(), (req, res) => {
         isFlippedH,
         isFlippedV
     },
-    (progress, eta) => {},
-    (outputFile) => {},
-    (err) => {});
+        (progress, eta) => { },
+        (outputFile) => { },
+        (err) => { });
 
     res.json({ success: true, message: 'Render started', outputPath });
 });
