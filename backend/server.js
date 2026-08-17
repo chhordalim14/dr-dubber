@@ -17,13 +17,37 @@ const AUDIO_CACHE_DIR = path.join(ROOT_DIR, 'storage', 'audio_cache');
 const SEPARATED_DIR = path.join(ROOT_DIR, 'storage', 'separated');
 const EXPORTS_DIR = path.join(ROOT_DIR, 'storage', 'exports');
 const OUTPUTS_DIR = path.join(ROOT_DIR, 'storage', 'outputs');
-const CUSTOM_OUTPUTS_DIR = 'C:\\Export\\AIDubber\\outputs';
-const USER_DESKTOP_OUTPUTS = 'C:\\Users\\KOLDER\\OneDrive\\Desktop\\transcribe output';
+const CUSTOM_OUTPUTS_DIR = process.platform === 'win32' ? 'C:\\Export\\AIDubber\\outputs' : path.join(ROOT_DIR, 'storage', 'custom_outputs');
+const USER_DESKTOP_OUTPUTS = process.platform === 'win32' ? 'C:\\Users\\KOLDER\\OneDrive\\Desktop\\transcribe output' : path.join(os.homedir(), 'Desktop', 'transcribe output');
 const PYTHON_DIR = path.join(ROOT_DIR, 'backend', 'python');
 const LOGS_DIR = path.join(ROOT_DIR, 'storage', 'logs');
 
+function getPythonCmd() {
+    if (process.env.PYTHON_PATH && fs.existsSync(process.env.PYTHON_PATH)) {
+        return process.env.PYTHON_PATH;
+    }
+    const venvPython = process.platform === 'win32'
+        ? path.join(ROOT_DIR, 'backend', 'venv', 'Scripts', 'python.exe')
+        : path.join(ROOT_DIR, 'backend', 'venv', 'bin', 'python');
+    if (fs.existsSync(venvPython)) {
+        return venvPython;
+    }
+    return process.platform === 'win32' ? 'python' : 'python3';
+}
+const PYTHON_CMD = getPythonCmd();
+
+function getPythonExecutable() {
+    const venvPython = path.join(ROOT_DIR, '.venv', 'bin', 'python');
+    const venvPythonWin = path.join(ROOT_DIR, '.venv', 'Scripts', 'python.exe');
+    if (fs.existsSync(venvPython)) return venvPython;
+    if (fs.existsSync(venvPythonWin)) return venvPythonWin;
+    if (process.env.PYTHON_BIN) return process.env.PYTHON_BIN;
+    if (process.platform === 'win32') return 'python';
+    return 'python3';
+}
+
 [UPLOADS_DIR, AUDIO_CACHE_DIR, SEPARATED_DIR, EXPORTS_DIR, OUTPUTS_DIR, LOGS_DIR, CUSTOM_OUTPUTS_DIR, USER_DESKTOP_OUTPUTS].forEach(dir => {
-    if (!fs.existsSync(dir)) {
+    if (dir && !fs.existsSync(dir)) {
         try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { }
     }
 });
@@ -167,6 +191,11 @@ app.post('/api/extract-audio', upload.any(), (req, res) => {
     const cmd = ['-y', '-i', videoPath, '-vn', '-acodec', 'libmp3lame', '-b:a', '128k', '-ar', '16000', '-ac', '1', audioOut];
     const ffmpeg = spawn('ffmpeg', cmd, { windowsHide: true });
 
+    ffmpeg.on('error', (err) => {
+        console.error('[FFmpeg Error]', err);
+        if (!res.headersSent) res.status(500).json({ success: false, error: err.message });
+    });
+
     ffmpeg.on('close', (code) => {
         if (code === 0 && fs.existsSync(audioOut)) {
             res.json({
@@ -195,10 +224,14 @@ app.post('/api/remove-vocals', upload.any(), (req, res) => {
     res.json({ success: true, jobId: jobId, status: 'processing' });
 
     const pyScript = path.join(PYTHON_DIR, 'vocal_separator.py');
-    const child = spawn('python', [pyScript, '--input', audioPath, '--output', SEPARATED_DIR]);
+    const child = spawn(PYTHON_CMD, [pyScript, '--input', audioPath, '--output', SEPARATED_DIR]);
 
     let output = '';
     child.stdout.on('data', d => output += d.toString());
+    child.on('error', (err) => {
+        console.error('[Python Vocal Separator Error]', err);
+        bgmJobs.set(jobId, { status: 'error', success: false, error: err.message });
+    });
     child.on('close', (code) => {
         try {
             const data = JSON.parse(output);
@@ -238,6 +271,86 @@ app.post('/api/cancel-remove-vocals', (req, res) => {
     res.json({ success: true });
 });
 
+// --- GEMINI MODEL RESOLUTION & FALLBACK ENGINE ---
+function resolveGeminiModel(modelName) {
+    if (!modelName) return 'gemini-2.0-flash';
+    const m = String(modelName).toLowerCase().trim();
+    if (m === 'gemini-3.1-pro-preview' || m === 'gemini-3.1-pro' || m.includes('3.1-pro')) {
+        return 'gemini-3.1-pro-preview';
+    }
+    if (m.includes('3.1-flash') || m.includes('3.1-flash-lite')) return 'gemini-2.0-flash-lite';
+    if (m.includes('3-flash')) return 'gemini-2.0-flash';
+    if (m === 'gemini-2.5-pro' || m.includes('2.5-pro')) return 'gemini-2.5-pro';
+    if (m === 'gemini-2.5-flash' || m.includes('2.5-flash')) return 'gemini-2.0-flash';
+    if (m.includes('2.0-flash-lite') || m.includes('2.0-lite')) return 'gemini-2.0-flash-lite';
+    if (m === 'gemini-2.0-flash' || m.includes('2.0') || m.includes('flash')) return 'gemini-2.0-flash';
+    if (m === 'gemini-1.5-pro' || m.includes('1.5-pro')) return 'gemini-1.5-pro';
+    if (m === 'gemini-1.5-flash' || m.includes('1.5-flash')) return 'gemini-1.5-flash';
+    return m;
+}
+
+async function executeGeminiGenerate(apiKey, requestedModel, payload, signal) {
+    const primaryModel = resolveGeminiModel(requestedModel);
+    const candidateModels = [
+        primaryModel,
+        'gemini-2.0-flash',
+        'gemini-1.5-flash',
+        'gemini-2.0-flash-lite',
+        'gemini-1.5-pro',
+        'gemini-3.1-pro-preview'
+    ].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i);
+
+    let primaryErrorMessage = null;
+    let lastError = null;
+    let lastStatus = 500;
+
+    for (let idx = 0; idx < candidateModels.length; idx++) {
+        const m = candidateModels[idx];
+        if (signal && signal.aborted) break;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${apiKey.trim()}`;
+        try {
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                signal
+            });
+
+            if (res.ok) {
+                const json = await res.json();
+                return { success: true, json, modelUsed: m };
+            }
+
+            lastStatus = res.status;
+            const errData = await res.json().catch(() => ({}));
+            const errMsg = errData?.error?.message || `HTTP ${res.status}`;
+            console.warn(`[Gemini API Warning] Model ${m} returned ${res.status}: ${errMsg}`);
+            if (idx === 0) primaryErrorMessage = errMsg;
+            lastError = errMsg;
+
+            if (res.status === 400 && (errMsg.includes('API_KEY_INVALID') || errMsg.includes('API key not valid'))) {
+                return { success: false, status: 400, error: 'INVALID_API_KEY', message: errMsg };
+            }
+            if (res.status === 403) {
+                return { success: false, status: 403, error: 'INVALID_API_KEY', message: errMsg };
+            }
+        } catch (fetchErr) {
+            if (fetchErr.name === 'AbortError') throw fetchErr;
+            if (idx === 0) primaryErrorMessage = fetchErr.message;
+            lastError = fetchErr.message;
+            console.warn(`[Gemini API Fetch Error] Model ${m}:`, fetchErr.message);
+        }
+    }
+
+    const finalMsg = primaryErrorMessage || lastError || 'GENERATION_FAILED';
+    return {
+        success: false,
+        status: lastStatus,
+        error: lastStatus === 429 ? 'RATE_LIMIT_EXCEEDED' : finalMsg,
+        message: finalMsg
+    };
+}
+
 // 4. Transcription & Gemini Speech-to-Text Pipeline
 app.post('/api/transcribe', async (req, res) => {
     const {
@@ -245,6 +358,8 @@ app.post('/api/transcribe', async (req, res) => {
         mimeType = 'audio/mp3',
         duration,
         targetLanguage = 'Khmer',
+        genre = 'historical',
+        dramaRegister,
         apiKey,
         model = 'gemini-2.0-flash',
         requestId,
@@ -385,29 +500,22 @@ SCHEMA:
             }
         };
 
-        const targetModel = model || 'gemini-2.0-flash';
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${apiKey.trim()}`;
-
         const abortCtrl = new AbortController();
         if (requestId) activeTranscribeRequests.set(requestId, abortCtrl);
 
-        const geminiRes = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-            signal: abortCtrl.signal
-        });
+        const geminiResult = await executeGeminiGenerate(apiKey, model, payload, abortCtrl.signal);
 
         if (requestId) activeTranscribeRequests.delete(requestId);
 
-        if (geminiRes.status === 429) {
-            return res.status(429).json({ success: false, error: 'RATE_LIMIT_EXCEEDED' });
-        }
-        if (geminiRes.status === 400 || geminiRes.status === 403) {
-            return res.status(geminiRes.status).json({ success: false, error: 'INVALID_API_KEY' });
+        if (!geminiResult.success) {
+            return res.status(geminiResult.status || 500).json({
+                success: false,
+                error: geminiResult.error || 'GENERATION_FAILED',
+                message: geminiResult.message
+            });
         }
 
-        const json = await geminiRes.json();
+        const json = geminiResult.json;
         const rawContent = json?.candidates?.[0]?.content?.parts?.[0]?.text || '[]';
 
         let parsedData = [];
@@ -528,25 +636,22 @@ ${content}`;
             }
         };
 
-        const targetModel = model || 'gemini-2.0-flash';
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${apiKey.trim()}`;
-
         const abortCtrl = new AbortController();
         if (requestId) activeTranscribeRequests.set(requestId, abortCtrl);
 
-        const geminiRes = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-            signal: abortCtrl.signal
-        });
+        const geminiResult = await executeGeminiGenerate(apiKey, model, payload, abortCtrl.signal);
 
         if (requestId) activeTranscribeRequests.delete(requestId);
 
-        if (geminiRes.status === 429) return res.status(429).json({ success: false, error: 'RATE_LIMIT_EXCEEDED' });
-        if (geminiRes.status === 400 || geminiRes.status === 403) return res.status(geminiRes.status).json({ success: false, error: 'INVALID_API_KEY' });
+        if (!geminiResult.success) {
+            return res.status(geminiResult.status || 500).json({
+                success: false,
+                error: geminiResult.error || 'TRANSLATE_FAILED',
+                message: geminiResult.message
+            });
+        }
 
-        const json = await geminiRes.json();
+        const json = geminiResult.json;
         const rawContent = json?.candidates?.[0]?.content?.parts?.[0]?.text || '[]';
 
         let parsedData = [];
@@ -664,8 +769,11 @@ app.post('/api/export-stems', async (req, res) => {
         res.json({
             success: true,
             folder: targetDir,
+            srtPath: srtPath,
             srtFile: srtPath,
+            bgmPath: exportedBgmPath,
             bgmFile: exportedBgmPath,
+            voicePath: exportedVoicePath,
             voiceFile: exportedVoicePath,
             files: [srtPath, exportedBgmPath, exportedVoicePath].filter(Boolean)
         });
@@ -749,7 +857,7 @@ app.post('/api/generate-audio', (req, res) => {
     const outFile = resolveAudioOutputFile(tempPath, index);
     const pyScript = path.join(PYTHON_DIR, 'tts_generator.py');
 
-    const child = spawn('python', [
+    const child = spawn(PYTHON_CMD, [
         pyScript,
         '--text', text,
         '--voice', voice,
@@ -761,6 +869,10 @@ app.post('/api/generate-audio', (req, res) => {
 
     let output = '';
     child.stdout.on('data', d => output += d.toString());
+    child.on('error', (err) => {
+        console.error('[TTS Error]', err);
+        if (!res.headersSent) res.status(500).json({ success: false, error: err.message });
+    });
     child.on('close', (code) => {
         try {
             const data = JSON.parse(output);
@@ -788,7 +900,7 @@ app.post('/api/generate-voxcmp2', (req, res) => {
 
     const prosody = getEmotionProsody(emotion, '+0Hz', '+0%', speed);
 
-    const child = spawn('python', [
+    const child = spawn(PYTHON_CMD, [
         pyScript,
         '--text', text,
         '--voice', voice,
@@ -800,6 +912,10 @@ app.post('/api/generate-voxcmp2', (req, res) => {
 
     let output = '';
     child.stdout.on('data', d => output += d.toString());
+    child.on('error', (err) => {
+        console.error('[TTS Error]', err);
+        if (!res.headersSent) res.status(500).json({ success: false, error: err.message });
+    });
     child.on('close', () => {
         try {
             const data = JSON.parse(output);
@@ -1004,12 +1120,14 @@ app.get('/api/select-folder', (req, res) => {
 
 app.post('/api/open-folder', (req, res) => {
     const folder = req.body.exportPath || EXPORTS_DIR;
-    exec(`explorer "${folder}"`);
+    const openCmd = process.platform === 'darwin' ? 'open' : (process.platform === 'win32' ? 'explorer' : 'xdg-open');
+    exec(`${openCmd} "${folder}"`);
     res.json({ success: true });
 });
 
 app.post('/api/open-logs-folder', (req, res) => {
-    exec(`explorer "${LOGS_DIR}"`);
+    const openCmd = process.platform === 'darwin' ? 'open' : (process.platform === 'win32' ? 'explorer' : 'xdg-open');
+    exec(`${openCmd} "${LOGS_DIR}"`);
     res.json({ success: true });
 });
 
