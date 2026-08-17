@@ -1503,6 +1503,15 @@
                   Shift Time
                 </button>
 
+                <button
+                  id="btn-micro-lipsync"
+                  class="group bg-[var(--bg-hover)] border border-[var(--border-light)] hover:bg-pink-500/20 hover:border-pink-500 hover:text-pink-400 text-[var(--text-primary)] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-md active:scale-[0.95]"
+                  title="👄 Auto Micro Lip-Sync: Snap all speech durations to actor mouth timing with zero pitch distortion"
+                >
+                  <i data-lucide="sparkles" class="w-[14px] h-[14px] text-pink-400 transition-transform duration-300 group-hover:scale-110 group-active:scale-90"></i>
+                  Micro Lip-Sync
+                </button>
+
                 <div class="h-4 w-px bg-[var(--border-light)] mx-1"></div>
 
                 <span id="bulk-voice-label" class="text-[var(--text-muted)] text-xs flex items-center gap-1">Set voice to:</span>
@@ -1700,6 +1709,30 @@
                 </button>
 
                 <div id="lang-dropdown-menu" class="hidden absolute bottom-full mb-2 left-0 w-[140px] bg-[var(--bg-panel)] border border-[var(--border-color)] shadow-2xl rounded-xl py-1.5 z-50 animate-dropdown origin-bottom-left overflow-y-auto max-h-[min(320px,50vh)]"></div>
+              </div>
+
+              <!-- Drama Style / Genre Selector -->
+              <div class="relative">
+                <button
+                  id="btn-genre-select"
+                  class="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-primary)] hover:border-amber-400/50 hover:bg-[var(--bg-hover)] transition-all duration-300 ease-out cursor-pointer"
+                  title="Drama Genre Register for accurate Cambodian royal & conversational dubbing"
+                >
+                  <span id="genre-icon" class="text-sm">👑</span>
+                  <span id="genre-label" class="hidden sm:inline font-khmer text-xs text-amber-400 font-semibold">បុរាណ/រាជវង្ស</span>
+                  <i data-lucide="chevron-down" class="w-3 h-3 text-[var(--text-muted)] shrink-0"></i>
+                </button>
+                <div id="genre-dropdown-menu" class="hidden absolute bottom-full mb-2 left-0 w-[190px] bg-[var(--bg-panel)] border border-[var(--border-color)] shadow-2xl rounded-xl py-1 z-50 animate-dropdown font-khmer origin-bottom-left">
+                  <button data-genre="historical" class="genre-opt w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-[var(--bg-hover)] text-amber-400 font-semibold cursor-pointer">
+                    <span class="text-sm">👑</span> <span>រឿងបុរាណ / រាជវង្ស</span>
+                  </button>
+                  <button data-genre="modern" class="genre-opt w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-[var(--bg-hover)] text-cyan-400 cursor-pointer">
+                    <span class="text-sm">🏙️</span> <span>រឿងសម័យ / ស្នេហា</span>
+                  </button>
+                  <button data-genre="action" class="genre-opt w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-[var(--bg-hover)] text-rose-400 cursor-pointer">
+                    <span class="text-sm">💥</span> <span>រឿងសកម្មភាព / កងទ័ព</span>
+                  </button>
+                </div>
               </div>
 
               <button id="btn-transcribe" disabled class="px-3 sm:px-4 py-1.5 rounded-lg text-xs font-medium flex items-center gap-2 transition-all duration-300 ease-out bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-muted)] opacity-60 cursor-not-allowed">
@@ -1995,6 +2028,33 @@
             <input type="range" id="reverb-strength" min="0" max="100" value="30" class="w-full accent-purple-400 h-1.5 bg-[var(--border-light)] rounded-lg appearance-none cursor-pointer" />
             <div class="flex justify-between text-[9px] text-[var(--text-muted)] mt-0.5"><span>Dry</span><span>Wet</span></div>
           </div>
+
+          <!-- Room Acoustic Presets -->
+          <div class="flex flex-col gap-1.5">
+            <span class="text-[11px] font-medium text-[var(--text-primary)] flex items-center gap-1.5">
+              <i data-lucide="building-2" class="w-3 h-3 text-purple-400"></i>
+              Acoustic Room Presets
+            </span>
+            <div class="grid grid-cols-2 gap-1.5">
+              <button type="button" data-preset="palace" class="reverb-preset-btn px-2 py-1.5 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)] hover:border-purple-400/50 hover:bg-purple-500/10 text-left transition-all cursor-pointer">
+                <div class="text-[11px] font-semibold text-amber-300 flex items-center gap-1">🏰 Palace Hall</div>
+                <div class="text-[9px] text-[var(--text-muted)]">Wide cathedral (60%)</div>
+              </button>
+              <button type="button" data-preset="room" class="reverb-preset-btn px-2 py-1.5 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)] hover:border-purple-400/50 hover:bg-purple-500/10 text-left transition-all cursor-pointer">
+                <div class="text-[11px] font-semibold text-emerald-300 flex items-center gap-1">🚪 Intimate Room</div>
+                <div class="text-[9px] text-[var(--text-muted)]">Warm dry (15%)</div>
+              </button>
+              <button type="button" data-preset="outdoor" class="reverb-preset-btn px-2 py-1.5 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)] hover:border-purple-400/50 hover:bg-purple-500/10 text-left transition-all cursor-pointer">
+                <div class="text-[11px] font-semibold text-cyan-300 flex items-center gap-1">🌲 Outdoors</div>
+                <div class="text-[9px] text-[var(--text-muted)]">Open air (25%)</div>
+              </button>
+              <button type="button" data-preset="flashback" class="reverb-preset-btn px-2 py-1.5 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)] hover:border-purple-400/50 hover:bg-purple-500/10 text-left transition-all cursor-pointer">
+                <div class="text-[11px] font-semibold text-purple-300 flex items-center gap-1">📞 Flashback</div>
+                <div class="text-[9px] text-[var(--text-muted)]">Echo dream (45%)</div>
+              </button>
+            </div>
+          </div>
+
           <!-- Preview note -->
           <p class="text-[10px] text-[var(--text-muted)] italic">Reverb previews live during playback and is baked into the final render.</p>
         </div>
@@ -7199,6 +7259,52 @@
       const langDropdownMenu = document.getElementById("lang-dropdown-menu");
       const langDropdownContainer = document.getElementById("lang-dropdown-container");
 
+      // --- DRAMA GENRE REGISTER STATE ---
+      let activeDramaGenre = localStorage.getItem("dr_dubber_drama_genre") || "historical";
+      const genreBtn = document.getElementById("btn-genre-select");
+      const genreDropdown = document.getElementById("genre-dropdown-menu");
+      const genreIcon = document.getElementById("genre-icon");
+      const genreLabel = document.getElementById("genre-label");
+
+      const genreConfig = {
+        historical: { icon: "👑", label: "បុរាណ/រាជវង្ស", color: "text-amber-400" },
+        modern: { icon: "🏙️", label: "សម័យ/ស្នេហា", color: "text-cyan-400" },
+        action: { icon: "💥", label: "សកម្មភាព/កងទ័ព", color: "text-rose-400" },
+      };
+
+      const setDramaGenre = (g) => {
+        activeDramaGenre = g;
+        localStorage.setItem("dr_dubber_drama_genre", g);
+        const conf = genreConfig[g] || genreConfig.historical;
+        if (genreIcon) genreIcon.textContent = conf.icon;
+        if (genreLabel) {
+          genreLabel.textContent = conf.label;
+          genreLabel.className = `hidden sm:inline font-khmer text-xs font-semibold ${conf.color}`;
+        }
+      };
+      setDramaGenre(activeDramaGenre);
+
+      if (genreBtn && genreDropdown) {
+        genreBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          genreDropdown.classList.toggle("hidden");
+        });
+        document.addEventListener("click", (e) => {
+          if (!genreBtn.contains(e.target) && !genreDropdown.contains(e.target)) {
+            genreDropdown.classList.add("hidden");
+          }
+        });
+        genreDropdown.querySelectorAll(".genre-opt").forEach((btn) => {
+          btn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const g = btn.getAttribute("data-genre");
+            if (g) setDramaGenre(g);
+            genreDropdown.classList.add("hidden");
+            showToast(`Drama Register set to: ${genreConfig[g]?.label || g}`, "info");
+          });
+        });
+      }
+
       // --- GEMINI AI TRANSCRIPTION LOGIC ---
       // ── Smart Whisper Folder Validator (Mac + Windows aware) ──
       const REQUIRED_WHISPER_FILES = { common: ["transcribe.py"], win32: ["run.bat"], darwin: ["run.sh"], linux: ["run.sh"] };
@@ -7896,6 +8002,7 @@
                       srtBase64: srtBase64,
                       mimeType: "text/plain",
                       targetLanguage: targetProject.targetLanguage || targetLanguage,
+                      genre: activeDramaGenre || "historical",
                       apiKey: key,
                       model: activeModel,
                       requestId: targetProject.geminiRequestId,
@@ -7944,11 +8051,13 @@
                 finalSubs = parsedSubs.map((s, idx) => ({
                   ...s,
                   text: translatedSubs[idx].text,
+                  emotion: translatedSubs[idx].emotion || "Neutral",
                 }));
               } else if (translatedSubs) {
                 finalSubs = parsedSubs.map((s, idx) => ({
                   ...s,
                   text: translatedSubs[idx] ? translatedSubs[idx].text : s.text,
+                  emotion: (translatedSubs[idx] && translatedSubs[idx].emotion) || "Neutral",
                 }));
                 showToast("Translation line count didn't match Whisper's — please review subtitles.", "warning");
               } else if (lastTranslateErrorType === "QUOTA_ZERO") {
@@ -8042,6 +8151,7 @@
                       mimeType: audioBlob.type || "audio/mp3",
                       duration: totalDur,
                       targetLanguage: targetProject.targetLanguage || targetLanguage,
+                      genre: activeDramaGenre || "historical",
                       apiKey: key,
                       model: activeModel,
                       requestId: targetProject.geminiRequestId,
@@ -8166,6 +8276,7 @@
                       audioEnd: parseAiTime(endRaw).toFixed(2),
                       originalText: sub.originalText || sub.original || null,
                       speaker: sub.speaker || null,
+                      emotion: sub.emotion || "Neutral",
                       text: textRaw,
                       voice: "KH Khmer",
                       gender: detectedGender,
@@ -14544,6 +14655,47 @@
         }
       })();
 
+      // --- 👄 MICRO LIP-SYNC LOCK (AUTOMATIC TIMING DURATION FIT) ---
+      (function setupMicroLipSync() {
+        const btnMicroLipSync = document.getElementById("btn-micro-lipsync");
+        if (!btnMicroLipSync) return;
+
+        btnMicroLipSync.addEventListener("click", () => {
+          if (!subtitles || subtitles.length === 0) {
+            return showToast("No subtitles available to lip-sync.", "warning");
+          }
+
+          let syncCount = 0;
+          saveStateToPast();
+
+          subtitles.forEach((sub) => {
+            if (sub.audioStatus === "ready" && sub.baseAudioDuration && sub.baseAudioDuration > 0) {
+              const sStart = parseFloat(sub.textStart);
+              const sEnd = parseFloat(sub.textEnd);
+              const slotDuration = Math.max(0.4, sEnd - sStart);
+
+              // Compute optimal speed multiplier to fit mouth dialogue window
+              const calculatedSpeed = Math.max(0.85, Math.min(1.45, sub.baseAudioDuration / slotDuration));
+              sub.speed = Number(calculatedSpeed.toFixed(2));
+              sub.audioStart = sStart.toFixed(2);
+              sub.audioEnd = (sStart + (sub.baseAudioDuration / sub.speed)).toFixed(2);
+
+              if (activeAudios[sub.id]) {
+                activeAudios[sub.id].playbackRate = sub.speed;
+              }
+              syncCount++;
+            }
+          });
+
+          if (syncCount > 0) {
+            renderSubtitles();
+            showToast(`👄 Micro Lip-Sync locked for ${syncCount} dialogue clips!`, "success");
+          } else {
+            showToast("Generate speech first to apply Micro Lip-Sync.", "info");
+          }
+        });
+      })();
+
       function autoAssignVoxProfiles(subs) {
         const voxData =
           typeof voxCmp2Load === "function"
@@ -16722,6 +16874,18 @@
           const spinnerColor = isRowSelected ? "text-[var(--accent-primary)]" : "text-[var(--accent-text)]";
           const playBtnClass = isRowSelected ? "bg-[var(--accent-primary)]/[0.15] text-[var(--accent-primary)] border-[var(--accent-primary)]/30 hover:bg-[var(--accent-primary)]/20" : "bg-[var(--bg-hover)] text-[var(--accent-text)] border-[var(--border-light)] hover:brightness-110";
 
+          const emotionIcons = {
+            Neutral: "😐",
+            Angry: "😡",
+            Sad: "😢",
+            Whisper: "🤫",
+            Excited: "⚡",
+            Royal: "👑",
+            Fear: "😨"
+          };
+          const currentEmotion = sub.emotion || "Neutral";
+          const currentEmotionIcon = emotionIcons[currentEmotion] || "😐";
+
           const tr = document.createElement("tr");
           tr.className = `subtitle-row group transition-colors hover:bg-[var(--bg-hover)] border-l-2 ${isRowSelected ? "bg-[var(--bg-hover)] border-[var(--accent-primary)]" : "border-transparent"}`;
           tr.setAttribute("data-id", sub.id);
@@ -16740,7 +16904,30 @@
                 <input type="text" value="${sub.text.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&#39;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}" class="subtitle-text-input w-full bg-transparent border-none outline-none font-khmer text-[13px] ${textInputColor} group-hover:text-[var(--text-bright)] focus:ring-2 focus:ring-[var(--accent-primary)] focus:bg-[var(--bg-base)] rounded px-2 py-1 -ml-2 transition-all">
             </td>
             <td class="px-4 py-2 overflow-visible relative z-[1]" onclick="event.stopPropagation()">
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-1.5">
+              <!-- Emotion Dropdown -->
+              <div class="relative emotion-row-wrap w-fit" data-id="${sub.id}">
+                <button
+                  type="button"
+                  class="emotion-row-trigger flex items-center gap-1 bg-[var(--bg-base)] border border-[var(--border-light)] hover:border-purple-400/50 rounded text-xs px-2 h-[26px] outline-none cursor-pointer transition-colors"
+                  title="Acting Emotion: ${currentEmotion}"
+                >
+                  <span class="text-xs">${currentEmotionIcon}</span>
+                  <span class="text-[10px] font-medium text-[var(--text-secondary)] hidden xl:inline">${currentEmotion}</span>
+                  <i data-lucide="chevron-down" class="w-2.5 h-2.5 text-[var(--text-muted)]"></i>
+                </button>
+                <div class="emotion-row-panel hidden absolute z-[999] top-full mt-1 left-0 rounded-lg border border-[var(--border-light)] bg-[var(--bg-panel)] shadow-xl p-1 flex flex-col gap-0.5 min-w-[110px]">
+                  <button type="button" data-emotion="Neutral" class="emotion-row-opt text-left px-2 py-1 rounded text-xs hover:bg-[var(--bg-hover)] flex items-center gap-1.5 cursor-pointer"><span>😐</span> <span>Neutral</span></button>
+                  <button type="button" data-emotion="Angry" class="emotion-row-opt text-left px-2 py-1 rounded text-xs hover:bg-[var(--bg-hover)] text-red-400 flex items-center gap-1.5 cursor-pointer"><span>😡</span> <span>Angry</span></button>
+                  <button type="button" data-emotion="Sad" class="emotion-row-opt text-left px-2 py-1 rounded text-xs hover:bg-[var(--bg-hover)] text-blue-400 flex items-center gap-1.5 cursor-pointer"><span>😢</span> <span>Sad</span></button>
+                  <button type="button" data-emotion="Whisper" class="emotion-row-opt text-left px-2 py-1 rounded text-xs hover:bg-[var(--bg-hover)] text-teal-400 flex items-center gap-1.5 cursor-pointer"><span>🤫</span> <span>Whisper</span></button>
+                  <button type="button" data-emotion="Excited" class="emotion-row-opt text-left px-2 py-1 rounded text-xs hover:bg-[var(--bg-hover)] text-amber-400 flex items-center gap-1.5 cursor-pointer"><span>⚡</span> <span>Excited</span></button>
+                  <button type="button" data-emotion="Royal" class="emotion-row-opt text-left px-2 py-1 rounded text-xs hover:bg-[var(--bg-hover)] text-yellow-300 flex items-center gap-1.5 cursor-pointer"><span>👑</span> <span>Royal</span></button>
+                  <button type="button" data-emotion="Fear" class="emotion-row-opt text-left px-2 py-1 rounded text-xs hover:bg-[var(--bg-hover)] text-purple-400 flex items-center gap-1.5 cursor-pointer"><span>😨</span> <span>Fear</span></button>
+                </div>
+              </div>
+
+              <!-- Voice Select Wrap -->
               <div class="relative vox-row-wrap w-fit" data-id="${sub.id}">
                 <button
                   class="vox-row-trigger w-full flex items-center justify-between gap-1.5 bg-[var(--bg-base)] border rounded text-xs px-2 h-[26px] outline-none cursor-pointer transition-colors min-w-[130px] ${voiceSelectColor} ${typeof bouncingGenderId !== "undefined" && bouncingGenderId === sub.id ? "animate-cute-bounce" : ""}"
@@ -17117,6 +17304,47 @@
                   bouncingGenderId = null;
                 }
               }, 400);
+            });
+          }
+
+          // --- EMOTION DROPDOWN WIRING ---
+          const emotionTrigger = tr.querySelector(".emotion-row-trigger");
+          const emotionPanel = tr.querySelector(".emotion-row-panel");
+          const emotionRowWrap = tr.querySelector(".emotion-row-wrap");
+
+          if (emotionTrigger && emotionPanel && emotionRowWrap) {
+            emotionTrigger.addEventListener("click", (e) => {
+              e.stopPropagation();
+              const isHidden = emotionPanel.classList.contains("hidden");
+              document.querySelectorAll(".emotion-row-panel").forEach((p) => p.classList.add("hidden"));
+              if (isHidden) emotionPanel.classList.remove("hidden");
+            });
+
+            document.addEventListener("click", (e) => {
+              if (!emotionRowWrap.contains(e.target)) emotionPanel.classList.add("hidden");
+            });
+
+            emotionPanel.querySelectorAll(".emotion-row-opt").forEach((optBtn) => {
+              optBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                const em = optBtn.getAttribute("data-emotion") || "Neutral";
+                const currentIndex = subtitles.findIndex((s) => s.id === sub.id);
+                if (currentIndex > -1) {
+                  subtitles[currentIndex].emotion = em;
+                  if (subtitles[currentIndex].audioStatus === "ready") {
+                    subtitles[currentIndex].audioStatus = "idle";
+                    subtitles[currentIndex].audioUrl = null;
+                    subtitles[currentIndex].file = null;
+                    if (activeAudios[sub.id]) {
+                      activeAudios[sub.id].pause();
+                      if (typeof window.releaseAudioChain === "function") window.releaseAudioChain(activeAudios[sub.id]);
+                      delete activeAudios[sub.id];
+                    }
+                  }
+                  renderSubtitles();
+                }
+                emotionPanel.classList.add("hidden");
+              });
             });
           }
 
@@ -18790,6 +19018,7 @@
                     profile: matchedProfile || null,
                     index: sub.id,
                     speed: sub.speed || 1.0,
+                    emotion: sub.emotion || "Neutral",
                   }),
                   signal: jobAbortController.signal,
                 });
@@ -18805,6 +19034,7 @@
                     tempPath: targetProject.tempAudioPath || tempAudioPath,
                     index: sub.id,
                     speed: sub.speed || 1.0,
+                    emotion: sub.emotion || "Neutral",
                   }),
                   signal: jobAbortController.signal,
                 });
@@ -24374,21 +24604,22 @@
 
             const percent = data.percent;
             let statusText = "Normal";
-            let colorClass = "text-[var(--text-muted)]";
+            let colorClass = "text-emerald-400";
 
             if (percent >= 85) {
-              statusText = "CRITICAL";
+              statusText = "Critical";
               colorClass = "text-red-500 font-bold animate-pulse";
             } else if (percent >= 70) {
               statusText = "Heavy";
-              colorClass = "text-amber-500 font-semibold";
+              colorClass = "text-amber-400 font-semibold";
             } else if (percent >= 50) {
               statusText = "Moderate";
               colorClass = "text-blue-400";
             }
 
+            const appMbStr = data.appUsedMB ? ` · ${data.appUsedMB} MB` : "";
             memDisplay.className = `transition-colors duration-300 flex items-center gap-1.5 ${colorClass}`;
-            memDisplay.innerHTML = `${memIconHTML} Memory: ${percent}% (${statusText})`;
+            memDisplay.innerHTML = `${memIconHTML} Memory: ${percent}%${appMbStr} (${statusText})`;
           } catch (e) {
             if (e.name !== "AbortError") console.warn("[MemTracker] Poll failed:", e.message);
           }
@@ -25908,6 +26139,25 @@
               reverbNodes[reverbTargetId].wetGain.gain.value = strength;
             }
           }
+        });
+
+        // ── Room Acoustic Preset Buttons ──
+        const presetStrengths = {
+          palace: 60,
+          room: 15,
+          outdoor: 25,
+          flashback: 45,
+        };
+        modal.querySelectorAll(".reverb-preset-btn").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const p = btn.getAttribute("data-preset");
+            if (p && presetStrengths[p] !== undefined) {
+              setToggle(true);
+              strengthSlider.value = presetStrengths[p];
+              strengthLbl.textContent = presetStrengths[p];
+              strengthSlider.dispatchEvent(new Event("input"));
+            }
+          });
         });
 
         document.getElementById("reverb-apply-btn").addEventListener("click", () => {
