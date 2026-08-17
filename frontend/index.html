@@ -2598,14 +2598,11 @@
 
                 <!-- Hidden native select (still used by existing JS listeners) -->
                 <select id="setting-ai-model" class="hidden">
-                  <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
-                  <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
-                  <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash Lite</option>
+                  <option value="gemini-2.5-flash" selected>Gemini 2.5 Flash</option>
+                  <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
                   <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro</option>
-                  <option value="gemini-3-flash-preview" selected>Gemini 3 Flash</option>
-                  <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash Lite</option>
                   <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
-                  <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                  <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
                 </select>
 
                 <!-- Custom Dropdown -->
@@ -2613,7 +2610,7 @@
                   <button id="gemini-model-trigger" class="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)] hover:border-[var(--accent-primary)] transition-all text-sm text-[var(--text-primary)]">
                     <span class="flex items-center gap-2.5">
                       <i id="gemini-model-icon" data-lucide="zap" class="w-4 h-4 text-yellow-400 shrink-0"></i>
-                      <span id="gemini-model-label">Gemini 3 Flash (Fast & Capable - Default)</span>
+                      <span id="gemini-model-label">Gemini 2.5 Flash (Free Tier & Ultra Fast)</span>
                     </span>
                     <i data-lucide="chevron-down" id="gemini-model-chevron" class="w-4 h-4 text-[var(--text-muted)] shrink-0 transition-transform duration-300"></i>
                   </button>
@@ -2622,86 +2619,53 @@
                   <div id="gemini-model-panel" class="absolute z-50 left-0 right-0 mt-1.5 rounded-xl border border-[var(--border-light)] bg-[var(--bg-panel)] shadow-2xl overflow-hidden grid grid-rows-[0fr] transition-[grid-template-rows] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]">
                     <div class="overflow-hidden">
                       <div id="gemini-model-list" class="flex flex-col p-1.5 gap-0.5 overflow-y-auto" style="max-height: 220px; scroll-behavior: smooth; scrollbar-width: thin; scrollbar-color: var(--border-light) transparent">
-                        <p class="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider px-2 pt-1 pb-0.5">Latest Generation (Gemini 3.6)</p>
+                        <p class="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider px-2 pt-1 pb-0.5">High Speed & Free Tier (Recommended)</p>
                         <button
-                          data-model="gemini-3.6-flash"
-                          data-label="Gemini 3.6 Flash (Frontier Speed)"
+                          data-model="gemini-2.5-flash"
+                          data-label="Gemini 2.5 Flash (Free Tier & Ultra Fast)"
+                          class="gemini-model-opt w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--bg-hover)] transition-colors text-sm text-[var(--text-primary)] hover:text-[var(--text-bright)] bg-[var(--accent-primary)] text-white"
+                        >
+                          <i data-lucide="zap" class="w-4 h-4 text-yellow-400 shrink-0"></i>
+                          <span class="flex-1">Gemini 2.5 Flash</span>
+                          <span class="text-[10px] text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded border border-emerald-400/20">Free & Fast</span>
+                        </button>
+                        <button
+                          data-model="gemini-1.5-flash"
+                          data-label="Gemini 1.5 Flash (Stable Free Fallback)"
                           class="gemini-model-opt w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--bg-hover)] transition-colors text-sm text-[var(--text-primary)] hover:text-[var(--text-bright)]"
                         >
-                          <i data-lucide="flame" class="w-4 h-4 text-fuchsia-400 shrink-0"></i>
-                          <span class="flex-1">Gemini 3.6 Flash</span>
-                          <span class="text-[10px] text-fuchsia-400 bg-fuchsia-400/10 px-1.5 py-0.5 rounded border border-fuchsia-400/20">New</span>
+                          <i data-lucide="shield-check" class="w-4 h-4 text-emerald-400 shrink-0"></i>
+                          <span class="flex-1">Gemini 1.5 Flash</span>
+                          <span class="text-[10px] text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded border border-emerald-400/20">Free</span>
                         </button>
 
                         <div class="border-t border-[var(--border-color)] my-1"></div>
-                        <p class="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider px-2 pt-1 pb-0.5">Generation (Gemini 3.5)</p>
-                        <button
-                          data-model="gemini-3.5-flash"
-                          data-label="Gemini 3.5 Flash (Frontier Speed)"
-                          class="gemini-model-opt w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--bg-hover)] transition-colors text-sm text-[var(--text-primary)] hover:text-[var(--text-bright)]"
-                        >
-                          <i data-lucide="rocket" class="w-4 h-4 text-cyan-400 shrink-0"></i>
-                          <span class="flex-1">Gemini 3.5 Flash</span>
-                        </button>
-                        <button
-                          data-model="gemini-3.5-flash-lite"
-                          data-label="Gemini 3.5 Flash Lite (Fastest & Cheapest)"
-                          class="gemini-model-opt w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--bg-hover)] transition-colors text-sm text-[var(--text-primary)] hover:text-[var(--text-bright)]"
-                        >
-                          <i data-lucide="feather" class="w-4 h-4 text-teal-400 shrink-0"></i>
-                          <span class="flex-1">Gemini 3.5 Flash Lite</span>
-                          <span class="text-[10px] text-teal-400 bg-teal-400/10 px-1.5 py-0.5 rounded border border-teal-400/20">Lite</span>
-                        </button>
-
-                        <div class="border-t border-[var(--border-color)] my-1"></div>
-                        <p class="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider px-2 pt-1 pb-0.5">Generation (Gemini 3)</p>
+                        <p class="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider px-2 pt-1 pb-0.5">Flagship Intelligence (Billing / Paid Tier)</p>
                         <button
                           data-model="gemini-3.1-pro-preview"
-                          data-label="Gemini 3.1 Pro (Most Intelligent)"
+                          data-label="Gemini 3.1 Pro (Most Intelligent - Paid)"
                           class="gemini-model-opt w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--bg-hover)] transition-colors text-sm text-[var(--text-primary)] hover:text-[var(--text-bright)]"
                         >
                           <i data-lucide="brain-circuit" class="w-4 h-4 text-violet-400 shrink-0"></i>
                           <span class="flex-1">Gemini 3.1 Pro</span>
-                          <span class="text-[10px] text-[var(--text-muted)] bg-[var(--bg-hover)] px-1.5 py-0.5 rounded">Most Intelligent</span>
+                          <span class="text-[10px] text-violet-400 bg-violet-400/10 px-1.5 py-0.5 rounded border border-violet-400/20">Paid / Pro</span>
                         </button>
-                        <button
-                          data-model="gemini-3-flash-preview"
-                          data-label="Gemini 3 Flash (Fast & Capable - Default)"
-                          class="gemini-model-opt w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--bg-hover)] transition-colors text-sm text-[var(--text-primary)] hover:text-[var(--text-bright)]"
-                        >
-                          <i data-lucide="zap" class="w-4 h-4 text-yellow-400 shrink-0"></i>
-                          <span class="flex-1">Gemini 3 Flash</span>
-                          <span class="text-[10px] text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded border border-emerald-400/20">Default</span>
-                        </button>
-                        <button
-                          data-model="gemini-3.1-flash-lite-preview"
-                          data-label="Gemini 3.1 Flash Lite (Fastest)"
-                          class="gemini-model-opt w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--bg-hover)] transition-colors text-sm text-[var(--text-primary)] hover:text-[var(--text-bright)]"
-                        >
-                          <i data-lucide="gauge" class="w-4 h-4 text-sky-400 shrink-0"></i>
-                          <span class="flex-1">Gemini 3.1 Flash Lite</span>
-                          <span class="text-[10px] text-[var(--text-muted)] bg-[var(--bg-hover)] px-1.5 py-0.5 rounded">Fastest</span>
-                        </button>
-
-                        <div class="border-t border-[var(--border-color)] my-1"></div>
-                        <p class="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider px-2 pb-0.5">Stable Generation (Gemini 2.5)</p>
                         <button
                           data-model="gemini-2.5-pro"
-                          data-label="Gemini 2.5 Pro (Advanced Reasoning)"
+                          data-label="Gemini 2.5 Pro (Advanced Reasoning - Paid)"
                           class="gemini-model-opt w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--bg-hover)] transition-colors text-sm text-[var(--text-primary)] hover:text-[var(--text-bright)]"
                         >
                           <i data-lucide="atom" class="w-4 h-4 text-purple-400 shrink-0"></i>
                           <span class="flex-1">Gemini 2.5 Pro</span>
-                          <span class="text-[10px] text-[var(--text-muted)] bg-[var(--bg-hover)] px-1.5 py-0.5 rounded">Advanced Reasoning</span>
+                          <span class="text-[10px] text-purple-400 bg-purple-400/10 px-1.5 py-0.5 rounded border border-purple-400/20">Paid / Pro</span>
                         </button>
                         <button
-                          data-model="gemini-2.5-flash"
-                          data-label="Gemini 2.5 Flash (Standard)"
+                          data-model="gemini-1.5-pro"
+                          data-label="Gemini 1.5 Pro (High Context)"
                           class="gemini-model-opt w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--bg-hover)] transition-colors text-sm text-[var(--text-primary)] hover:text-[var(--text-bright)]"
                         >
-                          <i data-lucide="bolt" class="w-4 h-4 text-orange-400 shrink-0"></i>
-                          <span class="flex-1">Gemini 2.5 Flash</span>
-                          <span class="text-[10px] text-[var(--text-muted)] bg-[var(--bg-hover)] px-1.5 py-0.5 rounded">Standard</span>
+                          <i data-lucide="atom" class="w-4 h-4 text-fuchsia-400 shrink-0"></i>
+                          <span class="flex-1">Gemini 1.5 Pro</span>
                         </button>
                       </div>
                     </div>
@@ -7978,7 +7942,7 @@
 
               let translatedSubs = null;
               let lastTranslateErrorType = "";
-              let activeModel = localStorage.getItem("aiDubberModel") || "gemini-3-flash-preview";
+              let activeModel = localStorage.getItem("aiDubberModel") || "gemini-2.5-flash";
 
               // Encode the SRT transcript as a base64 text file, same as we do for audio uploads —
               // more stable for long transcripts than embedding raw text in the prompt string
@@ -8061,7 +8025,7 @@
                 }));
                 showToast("Translation line count didn't match Whisper's — please review subtitles.", "warning");
               } else if (lastTranslateErrorType === "QUOTA_ZERO") {
-                showToast(`Your API key has no free-tier quota for "${activeModel}". This model may require billing enabled, or you can switch to a free-tier model like gemini-3-flash, 3.5-flash in Settings. Keeping the original (untranslated) Whisper transcript for now.`, "error", {
+                showToast(`Your API key has no free-tier quota for "${activeModel}". You can switch to a free-tier model like Gemini 2.5 Flash, 2.0 Flash in Settings.`, "error", {
                   linkUrl: "https://ai.google.dev/gemini-api/docs/rate-limits",
                   linkText: "View quota details",
                 });
@@ -8131,7 +8095,7 @@
               const totalDur = (targetProject.duration || duration) > 0 ? (targetProject.duration || duration).toFixed(2) : 60;
 
               // Cleanly get the exact model selected by the user
-              let activeModel = localStorage.getItem("aiDubberModel") || "gemini-3-flash-preview";
+              let activeModel = localStorage.getItem("aiDubberModel") || "gemini-2.5-flash";
 
               let lastErrorType = "UNKNOWN_ERROR";
               let lastErrorMessage = "";
@@ -11657,14 +11621,17 @@
       };
 
       const loadSettings = async () => {
-        // Default to the new Gemini 3 Flash
-        let savedModel = localStorage.getItem("aiDubberModel") || "gemini-3-flash-preview";
+        // Default to Gemini 2.5 Flash (free tier & high speed)
+        let savedModel = localStorage.getItem("aiDubberModel") || "gemini-2.5-flash";
+        if (savedModel === "gemini-3.1-pro") {
+          savedModel = "gemini-3.1-pro-preview";
+        }
 
         const modelSelect = document.getElementById("setting-ai-model");
         if (modelSelect) {
           modelSelect.value = savedModel;
           if (modelSelect.selectedIndex === -1) {
-            savedModel = "gemini-3-flash-preview";
+            savedModel = "gemini-2.5-flash";
             modelSelect.value = savedModel;
           }
         }
@@ -23222,7 +23189,7 @@
                 subtitlesContent = (await Promise.all(readPromises)).join("\n\n");
               }
 
-              const activeModel = localStorage.getItem("aiDubberModel") || "gemini-3-flash-preview";
+              const activeModel = localStorage.getItem("aiDubberModel") || "gemini-2.5-flash";
               let suggestions = null;
               let lastErrorType = "";
 

@@ -12,6 +12,19 @@ let currentRenderJob = {
     error: null
 };
 
+let _subtitlesFilterSupported = null;
+function hasSubtitlesFilter() {
+    if (_subtitlesFilterSupported !== null) return _subtitlesFilterSupported;
+    try {
+        const { execSync } = require('child_process');
+        const filters = execSync('ffmpeg -filters', { encoding: 'utf8' });
+        _subtitlesFilterSupported = filters.includes(' subtitles ') || filters.includes('subtitles ');
+    } catch (e) {
+        _subtitlesFilterSupported = false;
+    }
+    return _subtitlesFilterSupported;
+}
+
 function parseTimeToSeconds(timeStr) {
     if (typeof timeStr === 'number') return timeStr;
     if (!timeStr) return 0;
@@ -207,15 +220,22 @@ function renderVideo(options, onProgress, onComplete, onError) {
             videoFilterStr = `[${currentVTag}]`;
         }
 
-        // Subtitles burning
+        // Subtitles burning or soft muxing
+        let softSrtInputIndex = -1;
         if (burnSubtitles && subtitles.length > 0) {
             const srtPath = path.join(tempDir, 'subtitles_burn.srt');
             createSrtFile(subtitles, srtPath);
             const escapedSrtPath = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:');
             const fontsDir = path.join(__dirname, '..', 'frontend', 'fonts').replace(/\\/g, '/').replace(/:/g, '\\:');
             
-            const subStyle = `Fontname=${subtitleFont},Fontsize=${subtitleFontSize},PrimaryColour=${subtitleFontColor},OutlineColour=${subtitleOutlineColor},BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV=30`;
-            filterComplex.push(`${videoFilterStr}subtitles='${escapedSrtPath}':fontsdir='${fontsDir}':force_style='${subStyle}'[final_video]`);
+            if (hasSubtitlesFilter()) {
+                const subStyle = `Fontname=${subtitleFont},Fontsize=${subtitleFontSize},PrimaryColour=${subtitleFontColor},OutlineColour=${subtitleOutlineColor},BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV=30`;
+                filterComplex.push(`${videoFilterStr}subtitles=filename='${escapedSrtPath}':fontsdir='${fontsDir}':force_style='${subStyle}'[final_video]`);
+            } else {
+                filterComplex.push(`${videoFilterStr}null[final_video]`);
+                softSrtInputIndex = nextInputIndex++;
+                args.push('-i', srtPath);
+            }
         } else {
             filterComplex.push(`${videoFilterStr}null[final_video]`);
         }
@@ -227,6 +247,10 @@ function renderVideo(options, onProgress, onComplete, onError) {
         args.push('-filter_complex_script', filterScriptPath);
         args.push('-map', '[final_video]');
         args.push('-map', '[final_audio]');
+        if (softSrtInputIndex >= 0) {
+            args.push('-map', `${softSrtInputIndex}:s?`);
+            args.push('-c:s', 'mov_text');
+        }
 
         // Codec & Encoding settings
         args.push('-c:v', encoder === 'h264_qsv' ? 'h264_qsv' : 'libx264');
@@ -241,8 +265,10 @@ function renderVideo(options, onProgress, onComplete, onError) {
         const ffmpeg = spawn('ffmpeg', args, { windowsHide: true });
         activeRenderProcess = ffmpeg;
 
+        let fullStderr = '';
         ffmpeg.stderr.on('data', (data) => {
             const text = data.toString();
+            fullStderr += text;
             const timeMatch = text.match(/time=(\d{2}):(\d{2}):(\d{2}\.\d{2})/);
             if (timeMatch) {
                 const currentSec = parseFloat(timeMatch[1]) * 3600 + parseFloat(timeMatch[2]) * 60 + parseFloat(timeMatch[3]);
@@ -259,8 +285,9 @@ function renderVideo(options, onProgress, onComplete, onError) {
                 currentRenderJob.progress = 100;
                 if (onComplete) onComplete(outputPath);
             } else {
+                console.error(`[Render FFmpeg Error Code ${code}] Full stderr:\n`, fullStderr);
                 currentRenderJob.status = 'error';
-                currentRenderJob.error = `FFmpeg exited with code ${code}`;
+                currentRenderJob.error = `FFmpeg exited with code ${code}: ${fullStderr.slice(-400)}`;
                 if (onError) onError(new Error(currentRenderJob.error));
             }
         });
