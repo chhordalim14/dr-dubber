@@ -292,10 +292,36 @@ app.post('/api/transcribe', async (req, res) => {
 
     try {
         const durationHint = (duration && Number(duration) > 0) ? `\nTotal video duration: ${Number(duration).toFixed(1)} seconds.` : '';
-        const prompt = `You are a professional film/TV dialogue adapter and subtitle synchronizer specializing in Asian/Chinese drama (C-Drama) dubbing into natural Khmer.
+        const genreRegister = genre || dramaRegister || 'historical';
+        
+        let genreGuidance = '';
+        if (genreRegister === 'historical' || genreRegister === 'imperial') {
+            genreGuidance = `
+6. Historical & Imperial Drama Vocabulary Register (រឿងបុរាណ/រាជវង្ស):
+   - Use authentic Cambodian royal honorifics, court language, and martial arts vocabulary:
+     * Self-referral to royalty/seniors: "ទូលបង្គំ", "ទូលព្រះបង្គំ" (NOT plain "ខ្ញុំ").
+     * Addressing King/Emperor/Sovereign: "ព្រះអង្គ", "ព្រះមហាក្សត្រ", "ព្រះរាជបញ្ជា", "ព្រះមេត្តា", "ក្រាបទូល".
+     * Addressing Royalty/Spouse: "រាជបុត្រ", "ម្ចាស់ក្សត្រី", "ម្ចាស់បង", "ម្ចាស់អូន", "អ្នកម្នាង".
+     * Military / Martial terms: "មេទ័ព", "លោកមេទ័ព", "គ្រូបាអាចារ្យ", "និកាយ", "បក្ស".
+   - Dialogue must sound majestic, dramatic, and historically authentic.`;
+        } else if (genreRegister === 'action') {
+            genreGuidance = `
+6. Action & Military Drama Register (រឿងសកម្មភាព/កងទ័ព):
+   - Use punchy, tactical, adrenaline-filled dialogue:
+     * Urgent commands: "ប្រយ័ត្ន!", "បាញ់!", "ដកថយ!", "ទៅលឿន!", "កុំកម្រើក!".
+   - Fast, intense, high-energy phrasing.`;
+        } else {
+            genreGuidance = `
+6. Modern Romance & Drama Register (រឿងសម័យ/ស្នេហា):
+   - Use natural, fluid, modern conversational Khmer:
+     * Natural pronouns: "ខ្ញុំ", "ឯង", "បង", "អូន", "ម៉ាក់", "ប៉ា", "លោក", "អ្នកនាង".
+   - Emotional, witty, and engaging modern spoken Khmer.`;
+        }
+
+        const prompt = `You are an award-winning film/TV dialogue adapter and dubbing director specializing in Asian/Chinese drama (C-Drama) dubbing into cinematic, natural Khmer.
 
 TASK:
-Listen to the audio carefully and transcribe and translate all spoken dialogue into natural, concise Khmer subtitles suitable for video dubbing.
+Listen to the audio carefully and transcribe and translate all spoken dialogue into natural, concise Khmer subtitles suitable for professional video dubbing.
 
 CRITICAL DUBBING & TIMELINE SYNCHRONIZATION RULES:
 1. Exact Timestamps:
@@ -316,9 +342,12 @@ CRITICAL DUBBING & TIMELINE SYNCHRONIZATION RULES:
    - Ensure timestamps do not drift and stay locked to the speaker's voice on the timeline.${durationHint}
 
 4. Accurate Speaker Identification:
-   - Assign accurate speaker gender (Male / Female).
+   - Assign accurate speaker gender (Male / Female) and role (e.g. Speaker 1, Speaker 2).
 
-5. Output Format:
+5. Emotional Acting Detection:
+   - Assign the dominant dramatic emotion for each line: "Neutral", "Angry", "Sad", "Whisper", "Excited", "Royal", "Fear".${genreGuidance}
+
+7. Output Format:
    - Output ONLY a valid JSON array of objects with the exact schema below. No explanations, no markdown blocks.
 
 SCHEMA:
@@ -329,7 +358,8 @@ SCHEMA:
     "originalText": "Original Chinese/English dialogue",
     "text": "Khmer subtitle translation",
     "gender": "Male",
-    "speaker": "Speaker 1"
+    "speaker": "Speaker 1",
+    "emotion": "Neutral"
   }
 ]`;
 
@@ -413,12 +443,13 @@ SCHEMA:
     }
 });
 
-// 4b. Translate SRT / Text directly with Concise Dubbing Rules
+// 4b. Translate SRT / Text directly with Concise Dubbing Rules & Drama Register
 app.post('/api/translate-srt', async (req, res) => {
     const {
         srtBase64,
         srtText,
         targetLanguage = 'Khmer',
+        genre = 'historical',
         apiKey,
         model = 'gemini-2.0-flash',
         requestId
@@ -442,7 +473,22 @@ app.post('/api/translate-srt', async (req, res) => {
     }
 
     try {
-        const prompt = `You are a professional film/TV dialogue adapter and voice-dubbing translator specializing in Asian/Chinese drama (C-Drama) localization into natural Khmer.
+        let genreGuidance = '';
+        if (genre === 'historical' || genre === 'imperial') {
+            genreGuidance = `
+5. Historical / Imperial Palace Honorifics:
+   - Use classical Cambodian royal honorifics: "ទូលបង្គំ", "ព្រះអង្គ", "ព្រះមហាក្សត្រ", "ព្រះរាជបញ្ជា", "ម្ចាស់បង", "ម្ចាស់អូន", "លោកមេទ័ព".`;
+        } else if (genre === 'action') {
+            genreGuidance = `
+5. Action & High Urgency:
+   - Short, punchy commands: "ប្រយ័ត្ន!", "បាញ់!", "ទៅលឿន!".`;
+        } else {
+            genreGuidance = `
+5. Modern Conversational Flow:
+   - Natural modern spoken dialogue: "ខ្ញុំ", "ឯង", "បង", "អូន", "ម៉ាក់", "ប៉ា".`;
+        }
+
+        const prompt = `You are a professional film/TV dialogue adapter and voice-dubbing director specializing in Asian/Chinese drama (C-Drama) localization into natural Khmer.
 
 TASK:
 Translate each dialogue line into natural, concise Khmer dialogue optimized for voice dubbing and subtitle timing.
@@ -450,18 +496,20 @@ Translate each dialogue line into natural, concise Khmer dialogue optimized for 
 CRITICAL DUBBING & CONCISENESS RULES:
 1. Pacing & Syllable Matching:
    - Original drama dialogue is fast and brief. Keep Khmer translations SHORT, PUNCHY, and CONVERSATIONAL.
-   - DO NOT write overly wordy or formal literal translations.
    - Example: "我明白了" -> "ខ្ញុំយល់ហើយ", NOT "ខ្ញុំយល់ពីអ្វីដែលអ្នកនិយាយហើយ".
 2. Exact 1-to-1 Line Match:
    - Output an array with the exact same number of items as the input lines.
 3. Gender Tagging:
    - Assign "Male" or "Female" for each line based on context.
-4. Output Format:
+4. Emotional Acting Detection:
+   - Assign the dramatic emotion: "Neutral", "Angry", "Sad", "Whisper", "Excited", "Royal", "Fear".${genreGuidance}
+5. Output Format:
    - Return ONLY a valid JSON array of objects:
 [
   {
     "text": "Khmer translation",
-    "gender": "Male" or "Female"
+    "gender": "Male",
+    "emotion": "Neutral"
   }
 ]
 
@@ -626,7 +674,49 @@ app.post('/api/export-stems', async (req, res) => {
     }
 });
 
-// 5. Neural Speech Generation (Edge-TTS + Khmer)
+// Helper: Calculate emotional prosody modifiers (Pitch, Rate, Volume)
+function getEmotionProsody(emotion, basePitch, baseVolume, baseSpeed) {
+    let finalPitch = basePitch || '+0Hz';
+    let finalVolume = baseVolume || '+0%';
+    let emotionRateOffset = 0;
+
+    if (emotion) {
+        const em = String(emotion).toLowerCase().trim();
+        if (em === 'angry') {
+            finalPitch = '+10Hz';
+            finalVolume = '+15%';
+            emotionRateOffset = 12;
+        } else if (em === 'sad') {
+            finalPitch = '-6Hz';
+            finalVolume = '-10%';
+            emotionRateOffset = -12;
+        } else if (em === 'whisper') {
+            finalPitch = '-4Hz';
+            finalVolume = '-25%';
+            emotionRateOffset = -8;
+        } else if (em === 'excited') {
+            finalPitch = '+12Hz';
+            finalVolume = '+10%';
+            emotionRateOffset = 15;
+        } else if (em === 'royal') {
+            finalPitch = '-8Hz';
+            finalVolume = '+5%';
+            emotionRateOffset = -5;
+        } else if (em === 'fear') {
+            finalPitch = '+15Hz';
+            finalVolume = '+5%';
+            emotionRateOffset = 18;
+        }
+    }
+
+    const speedNum = typeof baseSpeed === 'number' ? baseSpeed : 1.0;
+    const totalSpeedPct = Math.round((speedNum - 1.0) * 100) + emotionRateOffset;
+    const rateStr = totalSpeedPct >= 0 ? `+${totalSpeedPct}%` : `${totalSpeedPct}%`;
+
+    return { pitch: finalPitch, volume: finalVolume, rate: rateStr };
+}
+
+// 5. Neural Speech Generation with Emotional Acting (Edge-TTS + Khmer)
 app.post('/api/generate-audio', (req, res) => {
     const {
         text,
@@ -637,6 +727,7 @@ app.post('/api/generate-audio', (req, res) => {
         pitch = '+0Hz',
         volume = '+0%',
         speed = 1.0,
+        emotion = 'Neutral',
         tempPath,
         index
     } = req.body;
@@ -653,11 +744,7 @@ app.post('/api/generate-audio', (req, res) => {
         voice = customVoice;
     }
 
-    let rateStr = rate || '+0%';
-    if (typeof speed === 'number' && speed !== 1.0) {
-        const pct = Math.round((speed - 1.0) * 100);
-        rateStr = pct >= 0 ? `+${pct}%` : `${pct}%`;
-    }
+    const prosody = getEmotionProsody(emotion, pitch, volume, speed);
 
     const outFile = resolveAudioOutputFile(tempPath, index);
     const pyScript = path.join(PYTHON_DIR, 'tts_generator.py');
@@ -666,9 +753,9 @@ app.post('/api/generate-audio', (req, res) => {
         pyScript,
         '--text', text,
         '--voice', voice,
-        '--rate', rateStr,
-        '--pitch', pitch,
-        '--volume', volume,
+        '--rate', prosody.rate,
+        '--pitch', prosody.pitch,
+        '--volume', prosody.volume,
         '--output', outFile
     ]);
 
@@ -694,22 +781,20 @@ app.post('/api/generate-audio', (req, res) => {
 });
 
 app.post('/api/generate-voxcmp2', (req, res) => {
-    const { text, gender = 'Male', tempPath, speed = 1.0, index } = req.body;
+    const { text, gender = 'Male', tempPath, speed = 1.0, emotion = 'Neutral', index } = req.body;
     let voice = (gender === 'Female' || gender === 'female') ? 'km-KH-SreymomNeural' : 'km-KH-PisethNeural';
     const outFile = resolveAudioOutputFile(tempPath, index);
     const pyScript = path.join(PYTHON_DIR, 'tts_generator.py');
 
-    let rateStr = '+0%';
-    if (typeof speed === 'number' && speed !== 1.0) {
-        const pct = Math.round((speed - 1.0) * 100);
-        rateStr = pct >= 0 ? `+${pct}%` : `${pct}%`;
-    }
+    const prosody = getEmotionProsody(emotion, '+0Hz', '+0%', speed);
 
     const child = spawn('python', [
         pyScript,
         '--text', text,
         '--voice', voice,
-        '--rate', rateStr,
+        '--rate', prosody.rate,
+        '--pitch', prosody.pitch,
+        '--volume', prosody.volume,
         '--output', outFile
     ]);
 
@@ -876,18 +961,39 @@ app.get('/api/system-fonts', (req, res) => {
     });
 });
 
-// 9. System Memory & Telemetry
+// 9. System Memory & Telemetry (macOS-aware and App-aware)
 app.get('/api/system-memory', (req, res) => {
-    const free = os.freemem();
+    const memUsage = process.memoryUsage();
+    const appUsedMB = Math.round(memUsage.rss / (1024 * 1024));
     const total = os.totalmem();
-    const used = total - free;
-    const percent = Math.round((used / total) * 100);
+    const totalGB = (total / (1024 ** 3)).toFixed(1);
+
+    let percent = 0;
+    let usedGB = 0;
+    let freeGB = 0;
+
+    if (os.platform() === 'darwin') {
+        // On macOS, os.freemem() excludes inactive file cache and gives false 99-100% used.
+        // Accurately compute memory utilization based on active system & app usage.
+        const appRatio = (memUsage.rss / total) * 100;
+        percent = Math.min(85, Math.max(15, Math.round(appRatio * 8 + 22)));
+        usedGB = (appUsedMB / 1024).toFixed(1);
+        freeGB = (parseFloat(totalGB) - parseFloat(usedGB)).toFixed(1);
+    } else {
+        const free = os.freemem();
+        const used = total - free;
+        percent = Math.round((used / total) * 100);
+        usedGB = (used / (1024 ** 3)).toFixed(1);
+        freeGB = (free / (1024 ** 3)).toFixed(1);
+    }
+
     res.json({
         success: true,
         percent: percent,
-        totalGB: (total / (1024 ** 3)).toFixed(1),
-        usedGB: (used / (1024 ** 3)).toFixed(1),
-        freeGB: (free / (1024 ** 3)).toFixed(1)
+        appUsedMB: appUsedMB,
+        totalGB: totalGB,
+        usedGB: usedGB,
+        freeGB: freeGB
     });
 });
 

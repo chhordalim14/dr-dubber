@@ -142,7 +142,9 @@ function renderVideo(options, onProgress, onComplete, onError) {
                 if (duckingEnabled) {
                     filterComplex.push(`[${bgmInputIndex}:a]volume=${bgmVol}[bgm_vol]`);
                     filterComplex.push(`[bgm_vol][dubbed_all]sidechaincompress=threshold=0.08:ratio=6:attack=20:release=350[bgm_ducked]`);
-                    filterComplex.push(`[bgm_ducked][dubbed_all]amix=inputs=2:normalize=0[final_audio]`);
+                    // Spectral vocal bleed filter (cleans residual speech frequencies during dialogue)
+                    filterComplex.push(`[bgm_ducked]equalizer=f=1100:t=q:w=1.5:g=-6[bgm_clean]`);
+                    filterComplex.push(`[bgm_clean][dubbed_all]amix=inputs=2:normalize=0[final_audio]`);
                 } else {
                     filterComplex.push(`[${bgmInputIndex}:a]volume=${bgmVol}[bgm_vol]`);
                     filterComplex.push(`[bgm_vol][dubbed_all]amix=inputs=2:normalize=0[final_audio]`);
