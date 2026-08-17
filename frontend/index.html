@@ -1424,6 +1424,10 @@
               <i data-lucide="square-dashed" class="workspace-icon-glow w-5 h-5 text-indigo-500 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
               <span class="text-xs font-medium">Add Blur Box (Censor)</span>
             </button>
+            <button id="btn-export-stems" class="group flex flex-col items-center justify-center gap-2 bg-[var(--bg-hover)] hover:brightness-110 border border-[var(--border-light)] p-3 rounded-xl transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.92] col-span-2" title="Export Clean Voice WAV + Isolated BGM WAV + SRT Subtitles">
+              <i data-lucide="layers" class="workspace-icon-glow w-5 h-5 text-violet-400 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
+              <span class="text-xs font-medium">Export Audio Stems</span>
+            </button>
           </div>
           <div class="mt-auto pt-4 flex flex-col gap-2">
             <button
@@ -1488,6 +1492,15 @@
                 >
                   <i data-lucide="search-code" class="w-[14px] h-[14px] transition-transform duration-300 group-hover:scale-110 group-active:scale-90"></i>
                   Find &amp; Replace
+                </button>
+
+                <button
+                  id="btn-shift-time"
+                  class="group bg-[var(--bg-hover)] border border-[var(--border-light)] hover:bg-emerald-500/20 hover:border-emerald-500 hover:text-emerald-400 text-[var(--text-primary)] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-md active:scale-[0.95]"
+                  title="Shift / Offset Subtitle Timestamps (e.g. ±1.5s)"
+                >
+                  <i data-lucide="clock-arrow-up" class="w-[14px] h-[14px] transition-transform duration-300 group-hover:scale-110 group-active:scale-90"></i>
+                  Shift Time
                 </button>
 
                 <div class="h-4 w-px bg-[var(--border-light)] mx-1"></div>
@@ -2197,6 +2210,82 @@
               Replace All
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SHIFT TIMESTAMPS MODAL -->
+    <div id="shift-time-modal" class="hidden fixed inset-0 z-[10000] flex items-center justify-center">
+      <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="shift-time-backdrop"></div>
+      <div class="relative bg-[var(--bg-panel)] border border-[var(--border-light)] rounded-xl shadow-2xl w-full max-w-md mx-4 animate-modal-center overflow-hidden">
+        <div class="flex items-center justify-between p-4 border-b border-[var(--border-color)] bg-[var(--bg-base)]">
+          <div class="flex items-center gap-2.5">
+            <h3 class="text-[var(--text-bright)] font-semibold flex items-center gap-2">
+              <i data-lucide="clock-arrow-up" class="w-[18px] h-[18px] text-emerald-400"></i>
+              Shift Subtitle Timestamps
+            </h3>
+          </div>
+          <button id="shift-time-close" class="text-[var(--text-secondary)] hover:text-red-400 transition-all duration-300 hover:rotate-90 hover:scale-110 active:scale-90">
+            <i data-lucide="x" class="w-5 h-5"></i>
+          </button>
+        </div>
+        <div class="px-5 py-4 flex flex-col gap-4">
+          <p class="text-xs text-[var(--text-secondary)] leading-relaxed">
+            Quickly adjust timestamps forward or backward to fix delay or synchronize dialogue with video.
+          </p>
+
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs font-medium text-[var(--text-secondary)]">Apply To</label>
+            <div class="grid grid-cols-2 gap-2">
+              <label class="flex items-center gap-2 p-2.5 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)] hover:bg-[var(--bg-hover)] cursor-pointer transition-colors text-xs text-[var(--text-primary)]">
+                <input type="radio" name="shift-scope" value="all" checked class="text-[var(--accent-primary)] focus:ring-0" />
+                <span>All Subtitles</span>
+              </label>
+              <label class="flex items-center gap-2 p-2.5 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)] hover:bg-[var(--bg-hover)] cursor-pointer transition-colors text-xs text-[var(--text-primary)]">
+                <input type="radio" name="shift-scope" value="selected" class="text-[var(--accent-primary)] focus:ring-0" />
+                <span id="shift-scope-selected-label">Selected Only (0)</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs font-medium text-[var(--text-secondary)]">Time Offset (Seconds)</label>
+            <div class="flex items-center gap-2">
+              <input
+                id="shift-time-input"
+                type="number"
+                step="0.1"
+                placeholder="e.g. -1.5 or +2.0"
+                value="-0.5"
+                class="flex-1 bg-[var(--bg-base)] border border-[var(--border-light)] rounded-lg px-3 py-2 text-sm text-[var(--text-primary)] font-mono outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 placeholder-[var(--text-muted)] transition-all"
+              />
+              <span class="text-xs text-[var(--text-muted)] font-mono">seconds</span>
+            </div>
+            <div class="flex flex-wrap gap-1.5 mt-1">
+              <button type="button" class="shift-preset-btn px-2 py-1 rounded text-[11px] font-mono bg-[var(--bg-base)] hover:bg-emerald-500/20 hover:text-emerald-400 border border-[var(--border-light)] text-[var(--text-secondary)] transition-all" data-val="-2.0">-2.0s</button>
+              <button type="button" class="shift-preset-btn px-2 py-1 rounded text-[11px] font-mono bg-[var(--bg-base)] hover:bg-emerald-500/20 hover:text-emerald-400 border border-[var(--border-light)] text-[var(--text-secondary)] transition-all" data-val="-1.0">-1.0s</button>
+              <button type="button" class="shift-preset-btn px-2 py-1 rounded text-[11px] font-mono bg-[var(--bg-base)] hover:bg-emerald-500/20 hover:text-emerald-400 border border-[var(--border-light)] text-[var(--text-secondary)] transition-all" data-val="-0.5">-0.5s</button>
+              <button type="button" class="shift-preset-btn px-2 py-1 rounded text-[11px] font-mono bg-[var(--bg-base)] hover:bg-emerald-500/20 hover:text-emerald-400 border border-[var(--border-light)] text-[var(--text-secondary)] transition-all" data-val="+0.5">+0.5s</button>
+              <button type="button" class="shift-preset-btn px-2 py-1 rounded text-[11px] font-mono bg-[var(--bg-base)] hover:bg-emerald-500/20 hover:text-emerald-400 border border-[var(--border-light)] text-[var(--text-secondary)] transition-all" data-val="+1.0">+1.0s</button>
+              <button type="button" class="shift-preset-btn px-2 py-1 rounded text-[11px] font-mono bg-[var(--bg-base)] hover:bg-emerald-500/20 hover:text-emerald-400 border border-[var(--border-light)] text-[var(--text-secondary)] transition-all" data-val="+2.0">+2.0s</button>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <input type="checkbox" id="shift-include-audio" checked class="rounded border-[var(--border-light)] bg-[var(--bg-base)] text-emerald-500 focus:ring-0 cursor-pointer" />
+            <label for="shift-include-audio" class="text-xs text-[var(--text-secondary)] cursor-pointer select-none">
+              Also shift synthesized audio timing (A1 track)
+            </label>
+          </div>
+        </div>
+        <div class="px-5 py-3.5 border-t border-[var(--border-color)] flex items-center justify-end gap-2 bg-[var(--bg-base)]">
+          <button id="shift-time-cancel" class="px-3.5 py-1.5 rounded-lg text-xs font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] transition-colors">
+            Cancel
+          </button>
+          <button id="shift-time-apply" class="px-4 py-1.5 rounded-lg text-xs font-medium bg-emerald-600 hover:bg-emerald-500 text-white shadow-md transition-all active:scale-[0.96] flex items-center gap-1.5">
+            <i data-lucide="check" class="w-3.5 h-3.5"></i>
+            Apply Shift
+          </button>
         </div>
       </div>
     </div>
@@ -4398,7 +4487,7 @@
         <div class="flex items-center gap-3 px-6 pb-5">
           <div class="update-version-pill flex items-center gap-2 px-3.5 py-1.5 bg-[var(--bg-hover)] border border-[var(--border-light)] rounded-full cursor-default">
             <i data-lucide="package" class="w-3 h-3 text-[var(--text-muted)]"></i>
-            <span class="text-xs font-mono text-[var(--text-secondary)]">v<span id="update-current-version">2.1.0</span></span>
+            <span class="text-xs font-mono text-[var(--text-secondary)]">v<span id="update-current-version">1.0.0</span></span>
           </div>
           <div class="flex-1 flex items-center gap-1.5">
             <div class="h-px flex-1 bg-gradient-to-r from-[var(--border-light)] to-amber-500/50"></div>
@@ -7990,33 +8079,68 @@
                     throw new Error("AI returned empty or invalid JSON array.");
                   }
 
-                  // Time String to Seconds Converter (Retained your robust original logic)
+                  // Time String to Seconds Converter (Handles MM:SS.ss, HH:MM:SS.ss, MM:SS:ms, raw seconds)
                   const parseAiTime = (timeVal) => {
                     if (timeVal === undefined || timeVal === null) return 0;
-                    if (typeof timeVal === "number") return timeVal;
+                    if (typeof timeVal === "number") return isNaN(timeVal) ? 0 : Math.max(0, timeVal);
                     const str = String(timeVal).trim().replace(",", ".");
+                    if (!str) return 0;
 
-                    if (str.includes(":")) {
-                      const parts = str.split(":");
-                      if (parts.length === 4) {
-                        const msStr = parts[3].trim();
-                        const msPart = parseFloat(msStr) / Math.pow(10, msStr.length);
-                        return parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]) + msPart;
-                      }
-                      if (parts.length === 3) {
-                        if (parts[2].includes(".")) return parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
-                        const asHHMMSS = parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
-                        const msStr = parts[2].trim();
-                        if (parseFloat(msStr) > 59 || msStr.length >= 3 || (typeof duration !== "undefined" && duration > 0 && asHHMMSS > duration + 30)) {
-                          const msPart = parseFloat(msStr) / Math.pow(10, msStr.length);
-                          return parseFloat(parts[0]) * 60 + parseFloat(parts[1]) + msPart;
-                        }
-                        return asHHMMSS;
-                      }
-                      if (parts.length === 2) return parseFloat(parts[0]) * 60 + parseFloat(parts[1]);
-                      return 0;
+                    // Simple number string like "125.5"
+                    if (!str.includes(":")) {
+                      const num = parseFloat(str.replace(/[^0-9.]/g, ""));
+                      return isNaN(num) ? 0 : Math.max(0, num);
                     }
-                    return parseFloat(str.replace(/[^0-9.]/g, "")) || 0;
+
+                    const parts = str.split(":").map((p) => p.trim());
+
+                    if (parts.length === 4) {
+                      // HH:MM:SS:ms or HH:MM:SS.ms
+                      const hrs = parseFloat(parts[0]) || 0;
+                      const mins = parseFloat(parts[1]) || 0;
+                      const secs = parseFloat(parts[2]) || 0;
+                      const msStr = parts[3];
+                      const ms = parseFloat(msStr) / Math.pow(10, msStr.length);
+                      return hrs * 3600 + mins * 60 + secs + ms;
+                    }
+
+                    if (parts.length === 3) {
+                      const p0 = parseFloat(parts[0]) || 0;
+                      const p1 = parseFloat(parts[1]) || 0;
+                      const p2 = parseFloat(parts[2]) || 0;
+
+                      // HH:MM:SS.ss (e.g. "00:02:15.50")
+                      if (parts[2].includes(".")) {
+                        return p0 * 3600 + p1 * 60 + p2;
+                      }
+
+                      // Check if 3rd part is millisecond fraction (length >= 3 or > 59)
+                      const msStr = parts[2];
+                      if (msStr.length >= 3 || p2 > 59) {
+                        const ms = p2 / Math.pow(10, msStr.length);
+                        return p0 * 60 + p1 + ms;
+                      }
+
+                      // Check against project duration
+                      const maxDur = (targetProject && targetProject.duration) || (typeof duration !== "undefined" ? duration : 0);
+                      const asHHMMSS = p0 * 3600 + p1 * 60 + p2;
+                      if (maxDur > 0 && asHHMMSS > maxDur + 60 && (p0 * 60 + p1) <= maxDur + 10) {
+                        const ms = p2 / Math.pow(10, msStr.length);
+                        return p0 * 60 + p1 + ms;
+                      }
+
+                      return asHHMMSS;
+                    }
+
+                    if (parts.length === 2) {
+                      // MM:SS or MM:SS.ss
+                      const mins = parseFloat(parts[0]) || 0;
+                      const secs = parseFloat(parts[1]) || 0;
+                      return mins * 60 + secs;
+                    }
+
+                    const fallback = parseFloat(str.replace(/[^0-9.]/g, ""));
+                    return isNaN(fallback) ? 0 : Math.max(0, fallback);
                   };
 
                   // Map results perfectly into your Timeline variables
@@ -8040,6 +8164,8 @@
                       textEnd: parseAiTime(endRaw).toFixed(2),
                       audioStart: parseAiTime(startRaw).toFixed(2),
                       audioEnd: parseAiTime(endRaw).toFixed(2),
+                      originalText: sub.originalText || sub.original || null,
+                      speaker: sub.speaker || null,
                       text: textRaw,
                       voice: "KH Khmer",
                       gender: detectedGender,
@@ -14298,6 +14424,126 @@
         findInput.addEventListener("input", runSearch);
       })();
 
+      // ── SHIFT TIMESTAMPS MODAL ──────────────────────────────────────
+      (() => {
+        const modal = document.getElementById("shift-time-modal");
+        const backdrop = document.getElementById("shift-time-backdrop");
+        const btnOpen = document.getElementById("btn-shift-time");
+        const btnClose = document.getElementById("shift-time-close");
+        const btnCancel = document.getElementById("shift-time-cancel");
+        const btnApply = document.getElementById("shift-time-apply");
+        const shiftInput = document.getElementById("shift-time-input");
+        const includeAudioCheck = document.getElementById("shift-include-audio");
+        const selectedScopeLabel = document.getElementById("shift-scope-selected-label");
+        const presetBtns = document.querySelectorAll(".shift-preset-btn");
+
+        if (!modal || !btnOpen) return;
+
+        const openModal = () => {
+          if (!subtitles || subtitles.length === 0) {
+            return showToast("No subtitles available to shift.", "warning");
+          }
+          const selectedSubIds = new Set(
+            selectedItems
+              .filter((id) => id.startsWith("text-") || id.startsWith("audio-"))
+              .map((id) => id.replace(/^(text-|audio-)/, ""))
+          );
+          if (selectedScopeLabel) {
+            selectedScopeLabel.textContent = `Selected Only (${selectedSubIds.size})`;
+          }
+          modal.classList.remove("hidden");
+          if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: modal });
+          if (shiftInput) {
+            shiftInput.focus();
+            shiftInput.select();
+          }
+        };
+
+        const closeModal = () => {
+          modal.classList.add("hidden");
+        };
+
+        btnOpen.addEventListener("click", openModal);
+        if (btnClose) btnClose.addEventListener("click", closeModal);
+        if (btnCancel) btnCancel.addEventListener("click", closeModal);
+        if (backdrop) backdrop.addEventListener("click", closeModal);
+
+        presetBtns.forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const val = btn.getAttribute("data-val");
+            if (shiftInput && val) {
+              shiftInput.value = val;
+              shiftInput.focus();
+            }
+          });
+        });
+
+        if (btnApply) {
+          btnApply.addEventListener("click", () => {
+            const offset = parseFloat(shiftInput?.value);
+            if (isNaN(offset) || offset === 0) {
+              return showToast("Please enter a valid non-zero time offset.", "warning");
+            }
+
+            const targetProject = activeProjectIndex >= 0 ? projects[activeProjectIndex] : null;
+            if (!targetProject || !targetProject.subtitles || targetProject.subtitles.length === 0) {
+              return showToast("No active project subtitles to shift.", "error");
+            }
+
+            const scopeRadio = document.querySelector('input[name="shift-scope"]:checked');
+            const scope = scopeRadio ? scopeRadio.value : "all";
+
+            const selectedSubIds = new Set(
+              selectedItems
+                .filter((id) => id.startsWith("text-") || id.startsWith("audio-"))
+                .map((id) => id.replace(/^(text-|audio-)/, ""))
+            );
+
+            if (scope === "selected" && selectedSubIds.size === 0) {
+              return showToast("No subtitles selected to shift.", "warning");
+            }
+
+            saveStateToPast();
+
+            const shiftAudio = includeAudioCheck ? includeAudioCheck.checked : true;
+            let count = 0;
+
+            targetProject.subtitles.forEach((sub) => {
+              if (scope === "all" || selectedSubIds.has(sub.id)) {
+                count++;
+                const oldStart = parseFloat(sub.textStart) || 0;
+                const oldEnd = parseFloat(sub.textEnd) || (oldStart + 2);
+
+                const newStart = Math.max(0, oldStart + offset);
+                const newEnd = Math.max(newStart + 0.1, oldEnd + offset);
+
+                sub.textStart = newStart.toFixed(2);
+                sub.textEnd = newEnd.toFixed(2);
+
+                if (shiftAudio) {
+                  const oldAudioStart = parseFloat(sub.audioStart) || oldStart;
+                  const oldAudioEnd = parseFloat(sub.audioEnd) || oldEnd;
+                  const newAudioStart = Math.max(0, oldAudioStart + offset);
+                  const newAudioEnd = Math.max(newAudioStart + 0.1, oldAudioEnd + offset);
+                  sub.audioStart = newAudioStart.toFixed(2);
+                  sub.audioEnd = newAudioEnd.toFixed(2);
+                }
+              }
+            });
+
+            if (projects[activeProjectIndex] === targetProject) {
+              subtitles = targetProject.subtitles;
+              renderSubtitles();
+              if (typeof renderTimeline === "function") renderTimeline();
+            }
+
+            maybeAutoSaveSubtitles(targetProject, targetProject.subtitles);
+            showToast(`Shifted ${count} subtitle${count > 1 ? "s" : ""} by ${offset > 0 ? "+" : ""}${offset.toFixed(2)}s`, "success");
+            closeModal();
+          });
+        }
+      })();
+
       function autoAssignVoxProfiles(subs) {
         const voxData =
           typeof voxCmp2Load === "function"
@@ -14442,6 +14688,44 @@
           showToast("Communication with system failed.", "error");
         }
       });
+
+      // --- EXPORT AUDIO STEMS (CLEAN VOICE WAV + ISOLATED BGM + SRT PACKAGE) ---
+      const btnExportStems = document.getElementById("btn-export-stems");
+      if (btnExportStems) {
+        btnExportStems.addEventListener("click", async () => {
+          if (!mainVideo.src) return showToast("Please load a video first.", "error");
+          if (activeProjectIndex === -1) return;
+
+          const targetProject = projects[activeProjectIndex];
+          if (!targetProject.subtitles || targetProject.subtitles.length === 0) {
+            return showToast("No subtitles available to export stems.", "error");
+          }
+
+          showToast("Packaging audio stems (Voice WAV + BGM + SRT)...", "info");
+
+          try {
+            const res = await fetch("http://localhost:3001/api/export-stems", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                subtitles: targetProject.subtitles,
+                bgmPath: targetProject.bgmTrack?.file || null,
+                videoName: targetProject.file?.name || "project",
+                customFolder: localStorage.getItem("aiDubberCustomOutputsFolder") || null
+              })
+            });
+
+            const data = await res.json();
+            if (data.success) {
+              showToast(`Audio Stems exported! (${data.files?.length || 0} files created)`, "success");
+            } else {
+              showToast(data.error || "Failed to export audio stems.", "error");
+            }
+          } catch (err) {
+            showToast("Error exporting audio stems: " + err.message, "error");
+          }
+        });
+      }
 
       // 1. Zoom Logic
       // 1. Smart Zoom Logic (Adaptive GPU/CPU Performance)
@@ -16449,6 +16733,10 @@
             <td class="px-4 py-2 font-mono text-xs ${timeTextColor} transition-colors">${formatTime(parseFloat(sub.textStart))}</td>
             <td class="px-4 py-2 font-mono text-xs ${timeTextColor} transition-colors">${formatTime(parseFloat(sub.textEnd))}</td>
             <td class="px-4 py-2">
+                ${sub.originalText ? `<div class="text-[11px] text-[var(--text-muted)] font-mono truncate max-w-[420px] mb-1 flex items-center gap-1.5 opacity-80 select-none">
+                  ${sub.speaker ? `<span class="text-[9px] px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-sans font-semibold shrink-0">${sub.speaker}</span>` : ''}
+                  <span class="truncate">${sub.originalText.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</span>
+                </div>` : ''}
                 <input type="text" value="${sub.text.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&#39;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}" class="subtitle-text-input w-full bg-transparent border-none outline-none font-khmer text-[13px] ${textInputColor} group-hover:text-[var(--text-bright)] focus:ring-2 focus:ring-[var(--accent-primary)] focus:bg-[var(--bg-base)] rounded px-2 py-1 -ml-2 transition-all">
             </td>
             <td class="px-4 py-2 overflow-visible relative z-[1]" onclick="event.stopPropagation()">
@@ -16482,32 +16770,25 @@
           checkbox.addEventListener("change", (e) => {
             const isNowSelected = e.target.checked;
 
-            // Build ownership map so we select/deselect all audio clips truly owned by this subtitle
-            const ownerMap = buildOwnershipMap(subtitles);
-            const ownedAudioIds = [...ownerMap.entries()].filter(([, ownerId]) => ownerId === sub.id).map(([audioId]) => audioId);
+            const textTag = `text-${sub.id}`;
+            const audioTag = `audio-${sub.id}`;
 
             if (isNowSelected) {
-              if (!selectedItems.includes(`text-${sub.id}`)) selectedItems.push(`text-${sub.id}`);
-              ownedAudioIds.forEach((aid) => {
-                if (!selectedItems.includes(`audio-${aid}`)) selectedItems.push(`audio-${aid}`);
-              });
+              if (!selectedItems.includes(textTag)) selectedItems.push(textTag);
+              if (!selectedItems.includes(audioTag)) selectedItems.push(audioTag);
             } else {
-              const removeKeys = new Set([`text-${sub.id}`, ...ownedAudioIds.map((aid) => `audio-${aid}`)]);
-              selectedItems = selectedItems.filter((item) => !removeKeys.has(item));
+              selectedItems = selectedItems.filter((item) => item !== textTag && item !== audioTag);
             }
 
-            // Full re-render so all owned audio blocks repaint at their correct audioStart positions
+            // Sync visual highlights instantly
             renderSubtitles();
-            if (bgmTrack.src) renderTrackA2();
-            updateContextualControls();
+            if (typeof updateGenerateButtonState === "function") updateGenerateButtonState();
           });
 
+          // --- ROW EDIT LOGIC (SYNC TABLE & TIMELINE) ---
           const textInput = tr.querySelector(".subtitle-text-input");
+
           textInput.addEventListener("focus", () => {
-            // Snapshot ONLY this row, not the whole script. The old code
-            // stringified the entire subtitle array on every focus AND every
-            // blur, which stalled long projects and kept a full copy of the
-            // script alive on every row element.
             textInput._origText = textInput.value;
             try {
               const _s = subtitles.find((x) => String(x.id) === String(sub.id));
@@ -16619,130 +16900,90 @@
           const voxRowWrap = tr.querySelector(".vox-row-wrap");
           const voxRowTrigger = tr.querySelector(".vox-row-trigger");
           const voxRowLabel = tr.querySelector(".vox-row-label");
-          const voxRowChevron = tr.querySelector(".vox-row-chevron");
           const voxRowPanel = tr.querySelector(".vox-row-panel");
           const voxRowList = tr.querySelector(".vox-row-list");
+          const voxRowChevron = tr.querySelector(".vox-row-chevron");
 
-          // Helper: update trigger colors + label, sync hidden input, fire change
-          const setVoxRowValue = (val, profiles) => {
-            if (!genderHidden) return;
-            const oldVal = genderHidden.value;
-            genderHidden.value = val;
+          if (genderHidden && voxRowWrap && voxRowTrigger && voxRowLabel && voxRowPanel && voxRowList && voxRowChevron) {
+            const isRowOpen = () => voxRowPanel.style.gridTemplateRows === "1fr";
 
-            const profile = profiles?.find((p) => (p.id || p.name) === val);
-            const isMale = profile ? (profile.gender || "").toLowerCase() === "male" : val === "Male";
-            const color = isMale ? "blue" : "pink";
-
-            if (voxRowTrigger) {
-              voxRowTrigger.className = voxRowTrigger.className
-                .replace(/text-(blue|pink|violet)-400/g, "")
-                .replace(/border-(blue|pink|violet)-[^/\s]+\/\d+/g, "")
-                .replace(/bg-(blue|pink|violet)-[^/\s]+\/\d+/g, "")
-                .trim();
-              voxRowTrigger.classList.add(`text-${color}-400`, `border-${color}-400/30`, `bg-${color}-500/5`);
-            }
-
-            const displayLabel = profile ? profile.label || profile.name : val;
-            const icon = isMale ? "♂" : "♀";
-            if (voxRowLabel) voxRowLabel.innerHTML = `<span class="shrink-0">${icon}</span><span class="truncate">${displayLabel}</span>`;
-
-            // Update badge
-            const badge = voxRowWrap?.closest(".flex.items-center.gap-2")?.querySelector(".vox-gender-badge") || voxRowWrap?.parentElement?.querySelector(".vox-gender-badge");
-            if (badge) {
-              badge.className = `vox-gender-badge text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${isMale ? "text-blue-400 border-blue-400/30 bg-blue-500/10" : "text-pink-400 border-pink-400/30 bg-pink-500/10"}`;
-              badge.textContent = isMale ? "M" : "F";
-            }
-
-            // Update checkmarks in list
-            voxRowList?.querySelectorAll(".vox-row-opt").forEach((b) => {
-              b.querySelector(".vox-opt-check")?.classList.toggle("opacity-0", b.dataset.value !== val);
-            });
-
-            if (oldVal !== val) {
-              genderHidden.dispatchEvent(new Event("change", { bubbles: true }));
-            }
-          };
-
-          // Helper: build option buttons in panel
-          const buildVoxRowList = (options) => {
-            if (!voxRowList) return;
-            voxRowList.innerHTML = options
-              .map((o) => {
-                const isMale = o.isMale ?? (o.gender || "").toLowerCase() === "male";
-                const color = isMale ? "blue" : "pink";
-                const icon = isMale ? "♂" : "♀";
-                return `<button data-value="${o.value}" class="vox-row-opt w-full text-left flex items-center gap-2 px-2 py-1.5 rounded hover:bg-[var(--bg-hover)] transition-colors text-xs text-[var(--text-primary)] font-khmer">
-                <span class="text-${color}-400 w-3 text-center shrink-0">${icon}</span>
-                <span class="flex-1 truncate">${o.label}</span>
-                <i data-lucide="check" class="vox-opt-check w-3 h-3 text-[var(--accent-primary)] shrink-0 transition-opacity ${o.selected ? "opacity-100" : "opacity-0"}"></i>
-              </button>`;
-              })
-              .join("");
-            voxRowList.querySelectorAll(".vox-row-opt").forEach((btn) => {
-              btn.addEventListener("click", (e) => {
-                e.stopPropagation();
-                setVoxRowValue(btn.dataset.value, null);
-                // close
-                if (voxRowPanel) voxRowPanel.style.gridTemplateRows = "0fr";
-                if (voxRowChevron) voxRowChevron.style.transform = "rotate(0deg)";
-              });
-            });
-          };
-
-          // Open/close toggle on trigger
-          if (voxRowTrigger) {
-            voxRowTrigger.addEventListener("click", (e) => {
-              e.stopPropagation();
-              const isOpen = voxRowPanel?.style.gridTemplateRows === "1fr";
-              // close all other open row panels first
+            const openRowDropdown = () => {
               document.querySelectorAll(".vox-row-panel").forEach((p) => {
                 if (p !== voxRowPanel) p.style.gridTemplateRows = "0fr";
               });
               document.querySelectorAll(".vox-row-chevron").forEach((c) => {
-                if (c !== voxRowChevron) c.style.transform = "rotate(0deg)";
+                if (c !== voxRowChevron) c.classList.remove("rotate-180");
               });
-              if (voxRowPanel) voxRowPanel.style.gridTemplateRows = isOpen ? "0fr" : "1fr";
-              if (voxRowChevron) voxRowChevron.style.transform = isOpen ? "rotate(0deg)" : "rotate(180deg)";
+              voxRowPanel.style.gridTemplateRows = "1fr";
+              voxRowChevron.classList.add("rotate-180");
+            };
+
+            const closeRowDropdown = () => {
+              voxRowPanel.style.gridTemplateRows = "0fr";
+              voxRowChevron.classList.remove("rotate-180");
+            };
+
+            voxRowTrigger.addEventListener("click", (e) => {
+              e.stopPropagation();
+              isRowOpen() ? closeRowDropdown() : openRowDropdown();
             });
-          }
 
-          // Close on outside click (shared single listener via delegation)
-          if (!document._voxRowOutside) {
-            document._voxRowOutside = true;
-            document.addEventListener("click", () => {
-              document.querySelectorAll(".vox-row-panel").forEach((p) => {
-                p.style.gridTemplateRows = "0fr";
-              });
-              document.querySelectorAll(".vox-row-chevron").forEach((c) => {
-                c.style.transform = "rotate(0deg)";
-              });
+            document.addEventListener("click", (e) => {
+              if (!voxRowWrap.contains(e.target)) closeRowDropdown();
             });
-          }
 
-          // Now alias genderSelect to genderHidden for all code below that uses genderSelect
-          const genderSelect = genderHidden;
+            const buildVoxRowList = (options) => {
+              voxRowList.innerHTML = "";
+              options.forEach((opt) => {
+                const btn = document.createElement("button");
+                btn.type = "button";
+                btn.className = `w-full flex items-center justify-between px-2 py-1.5 rounded text-xs transition-colors text-left font-khmer cursor-pointer border border-transparent ${
+                  opt.selected ? "bg-violet-500/15 text-violet-400 font-semibold border-violet-500/20" : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+                }`;
+                btn.innerHTML = `
+                <div class="flex items-center gap-1.5">
+                  <span class="text-[9px] font-bold px-1 py-0.2 rounded ${opt.isMale ? "text-blue-400 bg-blue-500/15" : "text-pink-400 bg-pink-500/15"}">${opt.isMale ? "M" : "F"}</span>
+                  ${opt.color ? `<span class="w-2 h-2 rounded-full shrink-0 border border-white/20" style="background-color: ${opt.color}"></span>` : ""}
+                  <span class="truncate">${opt.label}</span>
+                </div>
+                ${opt.selected ? '<i data-lucide="check" class="w-3 h-3 text-violet-400 shrink-0"></i>' : ""}
+              `;
+                btn.addEventListener("click", (e) => {
+                  e.stopPropagation();
+                  setVoxRowValue(opt.value, voxCmp2Settings.profiles);
+                  closeRowDropdown();
+                });
+                voxRowList.appendChild(btn);
+              });
+              _lucideCreateIcons({ root: voxRowList });
+            };
 
-          if (genderSelect) {
-            // 1. Safely load VoxCPM2 configuration from local settings
-            let voxCmp2Settings = { enabled: false, profiles: [] };
-            try {
-              voxCmp2Settings =
-                typeof voxCmp2Load === "function"
-                  ? voxCmp2Load()
-                  : JSON.parse(localStorage.getItem("voxcmp2_settings")) || {
-                      enabled: false,
-                      profiles: [],
-                    };
-            } catch (e) {
-              console.warn("Could not load VoxCPM2 settings for UI rendering.", e);
-            }
+            const setVoxRowValue = (val, profilesList) => {
+              genderHidden.value = val;
+              const found = (profilesList || []).find((p) => p.id === val || p.name === val);
+              const label = found ? found.label || found.name : val;
+              voxRowLabel.textContent = label;
 
+              const isMale = found ? (found.gender || "").toLowerCase() === "male" : val === "Male";
+              voxRowTrigger.className = `vox-row-trigger w-full flex items-center justify-between gap-1.5 bg-[var(--bg-base)] border rounded text-xs px-2 h-[26px] outline-none cursor-pointer transition-colors min-w-[130px] ${
+                isMale ? "text-blue-400 border-blue-400/30 bg-blue-500/5" : "text-pink-400 border-pink-400/30 bg-pink-500/5"
+              } ${typeof bouncingGenderId !== "undefined" && bouncingGenderId === sub.id ? "animate-cute-bounce" : ""}`;
+
+              genderHidden.dispatchEvent(new Event("change"));
+            };
+
+            const voxCmp2Settings =
+              typeof voxCmp2Load === "function"
+                ? voxCmp2Load()
+                : JSON.parse(localStorage.getItem("voxcmp2_settings")) || {
+                    enabled: false,
+                    profiles: [],
+                  };
             const isVoxCpmActive = voxCmp2Settings.enabled === true;
             const currentVoiceTag = (sub.gender || "").trim().toLowerCase();
 
             // 2. Branch UI rendering based on active engine
             if (isVoxCpmActive && voxCmp2Settings.profiles && voxCmp2Settings.profiles.length > 0) {
-              // --- MODE A: VOXCPM2 LOCAL AI ENABLED ---
               const profileOpts = voxCmp2Settings.profiles.map((p) => ({
                 value: p.id || p.name,
                 label: p.label || p.name,
@@ -16787,126 +17028,80 @@
               buildVoxRowList(profileOpts);
               setVoxRowValue(targetProfileId, voxCmp2Settings.profiles);
 
-              // Badge
-              const badgeContainer = genderHidden.closest(".flex.items-center.gap-2") || genderHidden.parentElement;
-              const existingBadge = badgeContainer.querySelector(".vox-gender-badge");
-              if (existingBadge) existingBadge.remove();
-              const existingDot = badgeContainer.querySelector(".vox-profile-color-dot");
-              if (existingDot) existingDot.remove();
-              const isMaleProfile = (matchedProfile.gender || "").toLowerCase() === "male";
-              const badge = document.createElement("span");
-              badge.className = `vox-gender-badge text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${isMaleProfile ? "text-blue-400 border-blue-400/30 bg-blue-500/10" : "text-pink-400 border-pink-400/30 bg-pink-500/10"}`;
-              badge.textContent = isMaleProfile ? "M" : "F";
-              badgeContainer.appendChild(badge);
-              if (matchedProfile.color) {
-                const dot = document.createElement("span");
-                dot.className = "vox-profile-color-dot w-2.5 h-2.5 rounded-full border border-white/20 shrink-0";
-                dot.style.backgroundColor = matchedProfile.color;
-                dot.title = matchedProfile.label || matchedProfile.name || "";
-                badgeContainer.appendChild(dot);
-              }
-
               const liveSubIdx = subtitles.findIndex((s) => s.id === sub.id);
               if (liveSubIdx > -1) {
                 subtitles[liveSubIdx].gender = targetProfileId;
-                sub.gender = targetProfileId;
               }
             } else {
-              // --- MODE B: NATIVE EDGE-TTS FALLBACK (VOXCPM2 DISABLED) ---
-              const standardOpts = [
+              // --- MODE B: DEFAULT EDGE-TTS MODE ---
+              const isMale = sub.gender === "Male" || currentVoiceTag === "male";
+              const currentVal = isMale ? "Male" : "Female";
+
+              const defaultOpts = [
                 {
                   value: "Female",
                   label: "Female",
                   isMale: false,
-                  selected: false,
+                  selected: !isMale,
                 },
-                { value: "Male", label: "Male", isMale: true, selected: false },
+                {
+                  value: "Male",
+                  label: "Male",
+                  isMale: true,
+                  selected: isMale,
+                },
               ];
 
-              // Smartly resolve to native Male/Female based on the existing metadata tag
-              let resolvedStandardGender = "Female";
+              buildVoxRowList(defaultOpts);
+              setVoxRowValue(currentVal, defaultOpts);
 
-              if (sub.gender === "Male" || sub.gender === "Female") {
-                resolvedStandardGender = sub.gender;
-              } else {
-                let allProfiles = [];
-                try {
-                  const savedData = typeof voxCmp2Load === "function" ? voxCmp2Load() : null;
-                  if (savedData?.profiles) allProfiles = savedData.profiles;
-                } catch (e) {}
-
-                const linkedProfile = allProfiles.find((p) => (p.id && p.id === sub.gender) || (p.name && p.name === sub.gender));
-
-                if (linkedProfile) {
-                  resolvedStandardGender = linkedProfile.gender === "Male" ? "Male" : "Female";
-                } else {
-                  const isFemale = currentVoiceTag.includes("female") || currentVoiceTag.includes("woman");
-                  const isMale = !isFemale && (currentVoiceTag.includes("male") || currentVoiceTag.includes("man"));
-                  if (isFemale) resolvedStandardGender = "Female";
-                  if (isMale) resolvedStandardGender = "Male";
-                }
-              }
-
-              standardOpts.forEach((o) => {
-                o.selected = o.value === resolvedStandardGender;
-              });
-              buildVoxRowList(standardOpts);
-              setVoxRowValue(resolvedStandardGender, null);
-
-              // Only write back if value actually changed
               const liveSubIdx = subtitles.findIndex((s) => s.id === sub.id);
-              if (liveSubIdx > -1 && subtitles[liveSubIdx].gender !== resolvedStandardGender) {
-                subtitles[liveSubIdx].gender = resolvedStandardGender;
-                sub.gender = resolvedStandardGender;
+              if (liveSubIdx > -1) {
+                subtitles[liveSubIdx].gender = currentVal;
               }
             }
 
-            // 3. Attach native change listener to handle manual selections seamlessly
-            genderSelect.addEventListener("change", (e) => {
-              if (typeof saveStateToPast === "function") saveStateToPast();
-
-              // Update badge + color immediately on change (VoxCPM2 mode)
-              const voxData = typeof voxCmp2Load === "function" ? voxCmp2Load() : null;
-              if (voxData?.enabled && voxData.profiles?.length > 0) {
-                const selectedProfile = voxData.profiles.find((p) => (p.id || p.name) === e.target.value);
-                if (selectedProfile) {
-                  const isMale = (selectedProfile.gender || "").toLowerCase() === "male";
-                  genderSelect.classList.remove("text-pink-400", "border-pink-400/30", "bg-pink-500/5", "text-blue-400", "border-blue-400/30", "bg-blue-500/5");
-                  genderSelect.classList.add(isMale ? "text-blue-400" : "text-pink-400", isMale ? "border-blue-400/30" : "border-pink-400/30", isMale ? "bg-blue-500/5" : "bg-pink-500/5");
-                  const badgeContainer = genderSelect.closest(".flex.items-center.gap-2") || genderSelect.parentElement;
-                  const badge = badgeContainer.querySelector(".vox-gender-badge");
-                  if (badge) {
-                    badge.className = `vox-gender-badge text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${isMale ? "text-blue-400 border-blue-400/30 bg-blue-500/10" : "text-pink-400 border-pink-400/30 bg-pink-500/10"}`;
-                    badge.textContent = isMale ? "M" : "F";
-                  }
-                  let dot = badgeContainer.querySelector(".vox-profile-color-dot");
-                  if (selectedProfile.color) {
-                    if (!dot) {
-                      dot = document.createElement("span");
-                      dot.className = "vox-profile-color-dot w-2.5 h-2.5 rounded-full border border-white/20 shrink-0";
-                      badgeContainer.appendChild(dot);
-                    }
-                    dot.style.backgroundColor = selectedProfile.color;
-                    dot.title = selectedProfile.label || selectedProfile.name || "";
-                  } else if (dot) {
-                    dot.remove();
-                  }
-                }
-              }
-
+            genderHidden.addEventListener("change", (e) => {
+              const selectedValue = e.target.value;
               const currentIndex = subtitles.findIndex((s) => s.id === sub.id);
               if (currentIndex > -1) {
-                subtitles[currentIndex].gender = e.target.value;
+                subtitles[currentIndex].gender = selectedValue;
 
-                // Reset audio status to prompt regeneration
-                subtitles[currentIndex].audioStatus = "idle";
-                subtitles[currentIndex].audioUrl = null;
+                if (subtitles[currentIndex].audioStatus === "ready") {
+                  subtitles[currentIndex].audioStatus = "idle";
+                  subtitles[currentIndex].audioUrl = null;
+                  subtitles[currentIndex].file = null;
 
-                if (typeof activeAudios !== "undefined" && activeAudios[sub.id]) {
-                  activeAudios[sub.id].pause();
+                  if (activeAudios[sub.id]) {
+                    activeAudios[sub.id].pause();
+                    if (typeof window.releaseAudioChain === "function") window.releaseAudioChain(activeAudios[sub.id]);
+                    activeAudios[sub.id].removeAttribute("src");
+                    activeAudios[sub.id].load();
+                    delete activeAudios[sub.id];
+                  }
+
+                  const statusCell = tr.querySelector("td:last-child");
+                  if (statusCell) {
+                    const isRowSelected = selectedItems.includes(`text-${sub.id}`) || selectedItems.includes(`audio-${sub.id}`);
+                    const statusTextColor = isRowSelected ? "text-[var(--text-primary)] font-semibold" : "text-[var(--text-muted)]";
+                    statusCell.innerHTML = `<span class="text-xs transition-colors ${statusTextColor} font-medium">Pending</span>`;
+                  }
+
+                  const a1Block = document.getElementById(`ui-a1-${sub.id}`);
+                  if (a1Block) a1Block.remove();
+                }
+              }
+            });
+
+            // 🟢 TWO-WAY RE-RENDER ON CLICK (Male/Female or Voice Switch)
+            voxRowTrigger.addEventListener("click", () => {
+              const currentIndex = subtitles.findIndex((s) => s.id === sub.id);
+              if (currentIndex > -1) {
+                if (subtitles[currentIndex].audioStatus === "ready") {
+                  subtitles[currentIndex].audioStatus = "idle";
+                  subtitles[currentIndex].audioUrl = null;
+                  subtitles[currentIndex].file = null;
                   if (typeof window.releaseAudioChain === "function") window.releaseAudioChain(activeAudios[sub.id]);
-                  activeAudios[sub.id].src = "";
-                  activeAudios[sub.id].load();
                   delete activeAudios[sub.id];
                 }
               }
@@ -16988,43 +17183,42 @@
               // Shift + Click: Select a range
               const currentType = "text";
               const lastType = lastTimelineItem.split("-")[0];
+              const lastId = lastTimelineItem.replace(`${lastType}-`, "");
 
-              if (currentType === lastType) {
-                const sortedSubs = [...subtitles].sort((a, b) => parseFloat(a.textStart) - parseFloat(b.textStart));
-                const currentId = sub.id;
-                const lastId = lastTimelineItem.split("-")[1];
-                const currentIndex = sortedSubs.findIndex((s) => s.id === currentId);
-                const lastIndex = sortedSubs.findIndex((s) => s.id === lastId);
+              const lastIndex = subtitles.findIndex((s) => String(s.id) === String(lastId));
+              const currentIndex = subtitles.findIndex((s) => String(s.id) === String(sub.id));
 
-                if (currentIndex !== -1 && lastIndex !== -1) {
-                  const minIdx = Math.min(currentIndex, lastIndex);
-                  const maxIdx = Math.max(currentIndex, lastIndex);
-                  const newSelection = new Set([...selectedItems]);
-                  for (let i = minIdx; i <= maxIdx; i++) {
-                    newSelection.add(`text-${sortedSubs[i].id}`);
-                    newSelection.add(`audio-${sortedSubs[i].id}`);
-                  }
-                  selectedItems = Array.from(newSelection);
+              if (lastIndex > -1 && currentIndex > -1) {
+                const startIdx = Math.min(lastIndex, currentIndex);
+                const endIdx = Math.max(lastIndex, currentIndex);
+
+                // Build a batch array of elements to select
+                const batchItems = [];
+                for (let i = startIdx; i <= endIdx; i++) {
+                  batchItems.push(`${currentType}-${subtitles[i].id}`);
                 }
+
+                // Append uniquely to preserve other selections
+                selectedItems = [...new Set([...selectedItems, ...batchItems])];
               }
             } else if (e.ctrlKey || e.metaKey) {
-              // Ctrl + Click: Add/Remove single item with ownership
-              if (selectedItems.includes(`text-${sub.id}`)) {
-                deselectSubtitleWithOwnership(sub.id);
+              // Ctrl + Click: Toggle single selection
+              const targetItem = `text-${sub.id}`;
+              if (selectedItems.includes(targetItem)) {
+                selectedItems = selectedItems.filter((id) => id !== targetItem);
               } else {
-                selectSubtitleWithOwnership(sub.id, true);
+                selectedItems.push(targetItem);
               }
-              lastTimelineItem = `text-${sub.id}`;
+              lastTimelineItem = targetItem;
             } else {
-              // Standard Click: Select ONLY this subtitle + its owned audio clips
-              selectSubtitleWithOwnership(sub.id, false);
+              // Normal Click: Single selection (Selects BOTH text and audio simultaneously!)
+              selectedItems = [`text-${sub.id}`, `audio-${sub.id}`];
               lastTimelineItem = `text-${sub.id}`;
             }
 
-            // Apply the UI updates
+            // Sync visual highlights instantly across both Tracks & Table
             renderSubtitles();
-            if (bgmTrack.src) renderTrackA2();
-            updateContextualControls();
+            updateGenerateButtonState();
 
             // 3. Scroll the timeline view
             if (typeof scrollTimelineToItem === "function") {
@@ -17032,6 +17226,7 @@
             }
           });
 
+          // Append completed table row
           tableFragment.appendChild(tr);
 
           // --- T1 BLOCK GENERATION ---
@@ -17126,10 +17321,24 @@
 
             let iconHtml = sub.audioStatus === "ready" ? `<i data-lucide="audio-lines" class="w-3 h-3 mr-1 opacity-70 shrink-0"></i>` : `<i data-lucide="loader-2" class="w-3 h-3 mr-1 animate-spin shrink-0"></i>`;
 
+            const waveformBars = sub.audioStatus === "ready" ? `
+              <div class="waveform-bars-visual flex items-center gap-[1.5px] h-3 ml-2 mr-1 opacity-60 overflow-hidden shrink-0 select-none">
+                <span class="w-[2px] h-[35%] bg-white rounded-full"></span>
+                <span class="w-[2px] h-[70%] bg-white rounded-full"></span>
+                <span class="w-[2px] h-[100%] bg-white rounded-full"></span>
+                <span class="w-[2px] h-[60%] bg-white rounded-full"></span>
+                <span class="w-[2px] h-[85%] bg-white rounded-full"></span>
+                <span class="w-[2px] h-[40%] bg-white rounded-full"></span>
+                <span class="w-[2px] h-[95%] bg-white rounded-full"></span>
+                <span class="w-[2px] h-[50%] bg-white rounded-full"></span>
+              </div>
+            ` : '';
+
             a1Block.innerHTML = `
                 ${iconHtml}
                 <span class="font-mono text-[9px] shrink-0">${(sub.speed || 1.0).toFixed(1)}x</span>
                 <span class="font-mono text-[9px] ml-1.5 opacity-60 shrink-0">V:${(sub.volume ?? 1.0).toFixed(1)}</span>
+                ${waveformBars}
                 ${sub.reverb?.enabled ? `<span class="ml-1 text-[8px] font-bold text-purple-200 bg-purple-500/40 border border-purple-400/50 rounded px-0.5 leading-tight shrink-0">RVB</span>` : ""}
             `;
             a1Block.addEventListener("mousedown", (e) => {
@@ -19668,13 +19877,13 @@
             Object.values(activeAudios).forEach((audio) => audio && audio.pause());
           }
 
-          // 3. A2 Track (BGM) Sync
-          // 3. A2 Track (BGM) Sync
+          // 3. A2 Track (BGM) Sync with Smart Audio Ducking
           if (bgmTrack.src) {
             if (!bgmAudio) bgmAudio = new Audio(bgmTrack.src);
 
-            // --- Real-time fade envelope ---
+            // --- Real-time fade envelope & Smart Audio Ducking ---
             let fadeMult = 1.0;
+            let duckMult = 1.0;
             if (!bgmTrack.isMuted) {
               const offset = currentTime - bgmTrack.start;
               const fi = bgmTrack.fadeIn || 0;
@@ -19684,8 +19893,25 @@
               } else if (fo > 0 && offset > bgmTrack.duration - fo) {
                 fadeMult = Math.max(0, (bgmTrack.duration - offset) / fo);
               }
+
+              // Check if any dubbed dialogue audio is currently speaking
+              let isVoiceSpeaking = false;
+              for (let i = 0; i < subtitles.length; i++) {
+                const s = subtitles[i];
+                if (s.audioStatus === "ready") {
+                  const sStart = parseFloat(s.audioStart || s.textStart || 0);
+                  const sEnd = parseFloat(s.audioEnd || s.textEnd || 0);
+                  if (currentTime >= sStart - 0.05 && currentTime <= sEnd + 0.05) {
+                    isVoiceSpeaking = true;
+                    break;
+                  }
+                }
+              }
+              if (isVoiceSpeaking) {
+                duckMult = 0.25; // Smooth cinematic ducking to 25%
+              }
             }
-            bgmAudio.volume = bgmTrack.isMuted ? 0 : Math.min(1.0, (bgmTrack.volume ?? 0.5) * fadeMult);
+            bgmAudio.volume = bgmTrack.isMuted ? 0 : Math.min(1.0, (bgmTrack.volume ?? 0.5) * fadeMult * duckMult);
 
             if (!isPlaying) {
               bgmAudio.pause();
@@ -23249,7 +23475,7 @@
         resizeObserver.observe(videoContainerNode);
       }
 
-      const CURRENT_APP_VERSION = "7.3.1";
+      const CURRENT_APP_VERSION = "1.0.0";
       const aboutAppVersionDisplay = document.getElementById("about-app-version");
       if (aboutAppVersionDisplay) aboutAppVersionDisplay.textContent = `Version ${CURRENT_APP_VERSION}`;
 
