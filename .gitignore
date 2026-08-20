@@ -1,1 +1,52 @@
+# Dependencies
 node_modules/
+.pnp
+.pnp.js
+
+# Python Virtual Environments & Caches
+.venv/
+venv/
+ENV/
+env/
+__pycache__/
+*.py[cod]
+whisper_engine/venv/
+whisper_engine/__pycache__/
+
+# Build & Distributables
+dist/
+build/
+out/
+
+# Storage & Runtime Caches (preserve directory structure via .gitkeep)
+storage/audio_cache/*
+!storage/audio_cache/.gitkeep
+storage/custom_outputs/*
+!storage/custom_outputs/.gitkeep
+storage/exports/*
+!storage/exports/.gitkeep
+storage/logs/*
+!storage/logs/.gitkeep
+storage/outputs/*
+!storage/outputs/.gitkeep
+storage/separated/*
+!storage/separated/.gitkeep
+storage/test_sandbox/*
+!storage/test_sandbox/.gitkeep
+storage/uploads/*
+!storage/uploads/.gitkeep
+
+# Electron & OS runtime files
+Singleton*
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+C:\\*
