@@ -351,6 +351,130 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal) {
     };
 }
 
+// ── Khmer Dubbing & Subtitle Dialogue Engine ──────────────────────────
+function sanitizeKhmerDialogue(text) {
+    if (!text || typeof text !== 'string') return '';
+    let cleaned = text
+        // Strip zero-width and invisible control characters
+        .replace(/[\u200B-\u200D\uFEFF\u00A0]/g, '')
+        // Normalize whitespace
+        .replace(/[ \t]+/g, ' ')
+        .trim();
+
+    // Strip robotic formal question start "តើ" if directly preceding spoken pronouns or verbs
+    cleaned = cleaned
+        .replace(/^តើ\s*(?=(?:ឯង|បង|អូន|លោក|នាង|អ្នក|យើង|ពួកយើង|ពួកឯង|មាន|កើត|ធ្វើ|ទៅ|មក|មែន|ចង់|អាច|គួរ|ស្មាន|ម៉េច|ណា|នរណា|ហេតុ|អី|ប៉ុន្មាន|យ៉ាង|ពិត|ដឹង|ឮ|ឃើញ))/u, '')
+        // Fix excessive punctuation
+        .replace(/\?{2,}/g, '?')
+        .replace(/!{2,}/g, '!')
+        .replace(/\.{4,}/g, '...')
+        .trim();
+    return cleaned;
+}
+
+function applyGlossary(text, glossary) {
+    if (!text || !glossary) return text;
+    let result = text;
+    if (typeof glossary === 'object' && !Array.isArray(glossary)) {
+        for (const [key, val] of Object.entries(glossary)) {
+            if (key && val && typeof key === 'string' && typeof val === 'string') {
+                const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                result = result.replace(new RegExp(escaped, 'gi'), val);
+            }
+        }
+    } else if (Array.isArray(glossary)) {
+        for (const item of glossary) {
+            if (item && item.from && item.to) {
+                const escaped = item.from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                result = result.replace(new RegExp(escaped, 'gi'), item.to);
+            }
+        }
+    }
+    return result;
+}
+
+function getKhmerDramaRegisterGuidance(genreRegister) {
+    if (genreRegister === 'historical' || genreRegister === 'imperial' || genreRegister === 'wuxia') {
+        return `
+5. Historical, Imperial Palace & Wuxia Register (រឿងបុរាណ/រាជវាំង/ក្បាច់គុន/ទេវតា):
+   - Use authentic Cambodian classical royal court language, martial arts terms, and dramatic tone:
+     * Sovereign & Royal Court: "ព្រះអង្គ", "ព្រះមហាក្សត្រ", "ព្រះរាជបញ្ជា", "ក្រាបទូល", "សូមទ្រង់ព្រះមេត្តា".
+     * Self-referral: "ទូលបង្គំ" (men to royalty), "ខ្ញុំម្ចាស់" (women to royalty), "យើង" (Emperor/King/Master).
+     * Family & Consorts: "ម្ចាស់បង", "ម្ចាស់អូន", "ព្រះមាតា", "ព្រះបិតា", "រាជបុត្រ", "ព្រះនាង", "អ្នកម្នាង".
+     * Martial Arts / Sects / Masters: "លោកម្ចាស់", "លោកគ្រូ", "សិស្សច្បង", "សិស្សប្អូន", "លោកមេបក្ស", "និកាយ", "វិជ្ជាគុណ".
+     * Short Dramatic Conflict: "អាមនុស្សថោកទាប!", "កុំសង្ឃឹមថារួចខ្លួន!", "ឯងចង់ងាប់មែនទេ?!", "ទទួលបញ្ជា!".`;
+    } else if (genreRegister === 'action') {
+        return `
+5. Action, Military & Crime Register (រឿងសកម្មភាព/កងទ័ព/ឧក្រិដ្ឋកម្ម):
+   - Use punchy, high-adrenaline, ultra-short tactical dialogue:
+     * Urgent commands: "ប្រយ័ត្ន!", "បាញ់!", "ដកថយ!", "កុំកម្រើក!", "ទៅលឿន!", "រត់!", "តាមចាប់វា!", "លើកដៃឡើង!".`;
+    } else if (genreRegister === 'comedy') {
+        return `
+5. Comedy & Lively Register (រឿងកំប្លែង/កំប្លុកកំប្លែង):
+   - Use humorous, lively, and entertaining spoken Cambodian colloquialisms:
+     * Natural reactions: "អីយ៉ា!", "ងាប់ហើយ!", "កុំចេះដឹង!", "ពិតមែនហ្អេស?!", "កំប្លែងមែន!", "អញហើយ!".`;
+    } else {
+        return `
+5. Modern Romance, CEO & Urban Register (រឿងសម័យ/ស្នេហា/ប្រធានក្រុមហ៊ុន):
+   - Use natural, fluid, modern conversational Khmer:
+     * Natural pronouns & titles: "បង", "អូន", "លោកប្រធាន", "អ្នកនាង", "ឯង", "ខ្ញុំ", "ម៉ាក់", "ប៉ា".
+     * Real conversational dialogue:
+       - "你在干什么？" -> "ឯងធ្វើអីហ្នឹង?" / "បងធ្វើអីហ្នឹង?"
+       - "你没事吧？" -> "ឯងមិនអីទេ?" / "បងមិនអីទេ?"
+       - "别管我！" -> "កុំរវល់នឹងខ្ញុំ!" / "កុំចេះដឹង!"
+       - "对不起，我来晚了" -> "សុំទោស បងមកយឺត"
+       - "我喜欢你" -> "បងស្រឡាញ់អូន" / "ខ្ញុំចូលចិត្តឯង"
+       - "怎么办？" -> "ធ្វើម៉េចទៅ?"`;
+    }
+}
+
+const KHMER_DUBBING_RULES = `💎 ULTRA-CONCISE & READABLE KHMER DUBBING RULES (ខ្លី ខ្លឹម ងាយអាន ឥតទាក់ ដូចរឿងភាគទូរទស្សន៍):
+
+1. STRICT ULTRA-CONCISE LENGTH (ខ្លី ខ្លឹម ចំៗ កាត់ពាក្យវែងអន្លាយចោល):
+   - In Asian/Chinese dramas, speech is fast and compact (3 to 6 syllables). The Khmer dub MUST be equally SHORT and COMPACT (strictly 3 to 10 Khmer syllables max, 3 to 8 words per line).
+   - Never generate long sentences, textbook paragraphs, or multi-clause explanations.
+   - If dialogue is long, capture only the core punchline/meaning.
+
+2. ABSOLUTE BAN ON ROBOTIC & FORMAL TEXTBOOK WORDS (ហាមដាច់ខាតពាក្យអូសបន្លាយបែបសៀវភៅ):
+   - 🚫 BAN "តើ..." at the beginning of questions (e.g. ❌ "តើឯងធ្វើអ្វី?" -> ✅ "ឯងធ្វើអីហ្នឹង?").
+   - 🚫 BAN unnecessary past tense "បាន..." (e.g. ❌ "ខ្ញុំបានដឹងហើយ" -> ✅ "ខ្ញុំដឹងហើយ").
+   - 🚫 BAN continuous "កំពុងតែ..." (e.g. ❌ "កំពុងតែទៅ..." -> ✅ "កំពុងទៅ...").
+   - 🚫 BAN possessive "របស់អ្នក / របស់ខ្ញុំ" (e.g. ❌ "ដៃរបស់អ្នក" -> ✅ "ដៃឯង" / "ដៃបង").
+   - 🚫 BAN polite filler "សូមមេត្តា / សូម..." unless addressing kings or royal superiors.
+   - 🚫 BAN word-for-word translation ("ចំពោះរឿងនេះ", "គឺជារឿងដែល", "ដើម្បីធ្វើការ", "មានការ...").
+
+3. GOLDEN DUBBING REPLACEMENTS (គំរូពាក្យសន្ទនាភាពយន្តខ្លី):
+   - ❌ "តើអ្នកកំពុងតែធ្វើអ្វីនៅទីនេះ?" -> ✅ "ឯងធ្វើអីហ្នឹង?" / "បងធ្វើអី?"
+   - ❌ "តើមានរឿងអ្វីបានកើតឡើងចំពោះអ្នក?" -> ✅ "កើតអីហ្នឹង?" / "មានរឿងអី?"
+   - ❌ "តើនេះជាការពិតមែនទេ?" -> ✅ "ពិតមែនហ្អេស?!" / "មែនអត់?"
+   - ❌ "ខ្ញុំសូមអភ័យទោសដែលបានមកយឺត" -> ✅ "សុំទោស ខ្ញុំមកយឺត" / "សុំទោស បងមកយឺត"
+   - ❌ "កុំមានការព្រួយបារម្ភចំពោះខ្ញុំអី" -> ✅ "កុំបារម្ភពីខ្ញុំ" / "ទុកចិត្តចុះ"
+   - ❌ "តើអ្នកអាចប្រាប់ការពិតដល់ខ្ញុំបានទេ?" -> ✅ "ប្រាប់ការពិតមក" / "និយាយមក"
+   - ❌ "ខ្ញុំមិនអាចយល់ស្របនឹងរឿងនេះបានឡើយ" -> ✅ "ខ្ញុំមិនព្រមដាច់ខាត!" / "មិនអាចទេ!"
+   - ❌ "សូមជួយសង្គ្រោះជីវិតខ្ញុំផង" -> ✅ "ជួយផង!" / "ជួយខ្ញុំផង!"
+   - ❌ "តើឯងចង់ស្លាប់មែនទេ?" -> ✅ "ចង់ងាប់មែនទេ?!"
+   - ❌ "ខ្ញុំនឹងមិនលើកលែងទោសឲ្យអ្នកឡើយ" -> ✅ "កុំសង្ឃឹមថារួចខ្លួន!" / "ខ្ញុំមិនលើកលែងទេ!"
+   - ❌ "តើអ្នកចង់មានន័យថាយ៉ាងដូចម្ដេច?" -> ✅ "ចង់មានន័យថាម៉េច?"
+   - ❌ "កុំមកប៉ះពាល់រូបរាងកាយរបស់ខ្ញុំ" -> ✅ "កុំប៉ះខ្ញុំ!"
+   - ❌ "តើពួកយើងគួរតែធ្វើបែបណាទៅ?" -> ✅ "ធ្វើម៉េចទៅ?"
+   - ❌ "ខ្ញុំមិនចង់ឃើញមុខរបស់អ្នកទៀតឡើយ" -> ✅ "ទៅឲ្យឆ្ងាយ!" / "ចេញឲ្យផុតទៅ!"
+   - ❌ "សូមបិទមាត់របស់អ្នកភ្លាមទៅ" -> ✅ "បិទមាត់!" / "ស្ងាត់មាត់!"
+   - ❌ "ខ្ញុំមិនដែលគិតថាអ្នកជាមនុស្សបែបនេះសោះ" -> ✅ "ស្មានមិនដល់ថាឯងចឹងសោះ!"
+   - ❌ "អ្នកមិនចាំបាច់មកខ្វល់ខ្វាយពីខ្ញុំទេ" -> ✅ "កុំចេះដឹង!" / "កុំរវល់នឹងខ្ញុំ!"
+   - ❌ "តើអ្នកទៅណា?" -> ✅ "ទៅណា?" / "បងទៅណា?"
+   - ❌ "ខ្ញុំស្រឡាញ់អ្នកខ្លាំងណាស់" -> ✅ "បងស្រឡាញ់អូន" / "ខ្ញុំស្រឡាញ់ឯង"
+   - ❌ "ហេតុអ្វីបានជាអ្នកធ្វើបែបនេះ?" -> ✅ "ម៉េចធ្វើចឹង?!" / "ហេតុអីធ្វើចឹង?"
+   - ❌ "តើអ្នកសុខសប្បាយជាទេ?" -> ✅ "យ៉ាងម៉េចហើយ?" / "មិនអីទេហី?"
+   - ❌ "ឆាប់ចេញពីទីនេះភ្លាម" -> ✅ "ចេញភ្លាម!" / "ទៅឲ្យលឿន!"
+
+4. FLUID CONVERSATIONAL PARTICLES (ពាក្យបន្ថែមបែបសន្ទនាធម្មជាតិ):
+   - Localize Asian particles (的, 了, 吧, 呢, 啊, 嘛) into natural colloquial Khmer ("ហ្នឹង", "ហើយ", "តើ", "ចុះ", "មែនទេ", "ណា", "ហ្ហ៎ា", "អត់", "ហី", "ទៅ", "មក").
+
+5. SUBTITLE LEGIBILITY & SPACING (អានស្រួល មើលច្បាស់ក្នុង ១វិនាទី):
+   - Insert a clean standard space between grammatical clauses (e.g. "សុំទោស ខ្ញុំមកយឺត").
+   - DO NOT insert zero-width characters (ZWSP). Ensure clean standard UTF-8 Khmer text.
+   - Keep punctuation clean, minimal, and expressive (!, ?, ..., ?!).`;
+
 // 4. Transcription & Gemini Speech-to-Text Pipeline
 app.post('/api/transcribe', async (req, res) => {
     const {
@@ -360,6 +484,7 @@ app.post('/api/transcribe', async (req, res) => {
         targetLanguage = 'Khmer',
         genre = 'historical',
         dramaRegister,
+        glossary,
         apiKey,
         model = 'gemini-2.0-flash',
         requestId,
@@ -408,70 +533,36 @@ app.post('/api/transcribe', async (req, res) => {
     try {
         const durationHint = (duration && Number(duration) > 0) ? `\nTotal video duration: ${Number(duration).toFixed(1)} seconds.` : '';
         const genreRegister = genre || dramaRegister || 'historical';
-        
-        let genreGuidance = '';
-        if (genreRegister === 'historical' || genreRegister === 'imperial') {
-            genreGuidance = `
-6. Historical & Imperial Drama Vocabulary Register (រឿងបុរាណ/រាជវង្ស):
-   - Use authentic Cambodian royal honorifics, court language, and martial arts vocabulary:
-     * Self-referral to royalty/seniors: "ទូលបង្គំ", "ទូលព្រះបង្គំ" (NOT plain "ខ្ញុំ").
-     * Addressing King/Emperor/Sovereign: "ព្រះអង្គ", "ព្រះមហាក្សត្រ", "ព្រះរាជបញ្ជា", "ព្រះមេត្តា", "ក្រាបទូល".
-     * Addressing Royalty/Spouse: "រាជបុត្រ", "ម្ចាស់ក្សត្រី", "ម្ចាស់បង", "ម្ចាស់អូន", "អ្នកម្នាង".
-     * Military / Martial terms: "មេទ័ព", "លោកមេទ័ព", "គ្រូបាអាចារ្យ", "និកាយ", "បក្ស".
-   - Dialogue must sound majestic, dramatic, and historically authentic.`;
-        } else if (genreRegister === 'action') {
-            genreGuidance = `
-6. Action & Military Drama Register (រឿងសកម្មភាព/កងទ័ព):
-   - Use punchy, tactical, adrenaline-filled dialogue:
-     * Urgent commands: "ប្រយ័ត្ន!", "បាញ់!", "ដកថយ!", "ទៅលឿន!", "កុំកម្រើក!".
-   - Fast, intense, high-energy phrasing.`;
-        } else {
-            genreGuidance = `
-6. Modern Romance & Drama Register (រឿងសម័យ/ស្នេហា):
-   - Use natural, fluid, modern conversational Khmer:
-     * Natural pronouns: "ខ្ញុំ", "ឯង", "បង", "អូន", "ម៉ាក់", "ប៉ា", "លោក", "អ្នកនាង".
-   - Emotional, witty, and engaging modern spoken Khmer.`;
-        }
+        const genreGuidance = getKhmerDramaRegisterGuidance(genreRegister);
+        const glossaryHint = glossary ? `\n\nCUSTOM CHARACTER / GLOSSARY DICTIONARY (STRICTLY USE THESE TRANSLATIONS):\n${typeof glossary === 'string' ? glossary : JSON.stringify(glossary, null, 2)}` : '';
 
-        const prompt = `You are an award-winning film/TV dialogue adapter and dubbing director specializing in Asian/Chinese drama (C-Drama) dubbing into cinematic, natural Khmer.
+        const prompt = `You are an elite master film/TV dialogue adapter and dubbing director specializing in Asian and Chinese drama (C-Drama: 古装/宫斗/仙侠/武侠/现代甜宠/总裁/动作) localization into cinematic, natural, ultra-concise, and highly readable Khmer.
 
 TASK:
-Listen to the audio carefully and transcribe and translate all spoken dialogue into natural, concise Khmer subtitles suitable for professional video dubbing.
+Listen to the audio carefully and transcribe and translate all spoken dialogue into SHORT, PUNCHY, and READABLE Khmer subtitles specifically optimized for professional voice dubbing and fast on-screen reading.
 
-CRITICAL DUBBING & TIMELINE SYNCHRONIZATION RULES:
+${KHMER_DUBBING_RULES}
+${glossaryHint}
+
+TIMESTAMPS & ACTING RULES:
 1. Exact Timestamps:
-   - "start" and "end" timestamps MUST correspond precisely to the real-time playback position from audio start (00:00.00). Format timestamps as MM:SS.ss (or HH:MM:SS.ss).
-   - DO NOT skip or compress intro music, sound effects, or silence. If speech starts at 2 minutes (02:00.00), the first subtitle start time MUST be 02:00.00 or later, NEVER 00:00.00.
+   - "start" and "end" timestamps MUST correspond precisely to the real-time playback position from audio start (00:00.00). Format: MM:SS.ss (or HH:MM:SS.ss).
+   - Divide subtitles into short lines (2 to 4 seconds per line). Timestamps must stay locked to speaker voices.${durationHint}
 
-2. Dubbing Pacing & Syllable Matching (C-Drama Pacing):
-   - In Asian/Chinese dramas, speech is fast and compact (often only 3-5 syllables).
-   - Translate into PUNCHY, CONCISE, SPOKEN Khmer that matches the speaker's emotional rhythm and dialogue duration.
-   - AVOID verbose, wordy, or formal literal translations that take too long to speak or read.
-   - Examples of concise dubbing:
-     * "我明白了" -> "ខ្ញុំយល់ហើយ" (Concise & Natural), NOT "ខ្ញុំយល់ពីអ្វីដែលអ្នកនិយាយហើយ" (Too Long).
-     * "你没事吧" -> "ឯងមិនអីទេ?" (Concise & Natural), NOT "តើអ្នកមានបញ្ហាអ្វីកើតឡើងទេ?" (Too Long).
-     * "快走" -> "ទៅលឿន!", NOT "សូមប្រញាប់ចាកចេញពីទីនេះ".
+2. Gender & Emotion Detection:
+   - Gender: "Male" / "Female".
+   - Emotion: "Neutral", "Angry", "Sad", "Whisper", "Excited", "Royal", "Romantic", "Fear".${genreGuidance}
 
-3. Natural Segments:
-   - Divide subtitles into short, readable lines (2 to 5 seconds per line).
-   - Ensure timestamps do not drift and stay locked to the speaker's voice on the timeline.${durationHint}
-
-4. Accurate Speaker Identification:
-   - Assign accurate speaker gender (Male / Female) and role (e.g. Speaker 1, Speaker 2).
-
-5. Emotional Acting Detection:
-   - Assign the dominant dramatic emotion for each line: "Neutral", "Angry", "Sad", "Whisper", "Excited", "Royal", "Fear".${genreGuidance}
-
-7. Output Format:
-   - Output ONLY a valid JSON array of objects with the exact schema below. No explanations, no markdown blocks.
+3. Output Format:
+   - Output ONLY a valid JSON array of objects with the exact schema below. No markdown, no extra text.
 
 SCHEMA:
 [
   {
     "start": "00:00.00",
     "end": "00:05.50",
-    "originalText": "Original Chinese/English dialogue",
-    "text": "Khmer subtitle translation",
+    "originalText": "Original spoken dialogue",
+    "text": "Short punchy Khmer translation",
     "gender": "Male",
     "speaker": "Speaker 1",
     "emotion": "Neutral"
@@ -537,9 +628,19 @@ SCHEMA:
             });
         }
 
+        const sanitizedData = parsedData.map(item => {
+            let clean = sanitizeKhmerDialogue(item.text || '');
+            if (glossary) clean = applyGlossary(clean, glossary);
+            return {
+                ...item,
+                text: clean,
+                originalText: item.originalText ? item.originalText.trim() : (item.original || undefined)
+            };
+        });
+
         res.json({
             success: true,
-            data: parsedData,
+            data: sanitizedData,
             rawText: rawContent
         });
 
@@ -551,13 +652,15 @@ SCHEMA:
     }
 });
 
-// 4b. Translate SRT / Text directly with Concise Dubbing Rules & Drama Register
+// 4b. Translate SRT / Text directly with Ultra-Concise Dubbing Rules & Drama Register
 app.post('/api/translate-srt', async (req, res) => {
     const {
         srtBase64,
         srtText,
         targetLanguage = 'Khmer',
         genre = 'historical',
+        dramaRegister,
+        glossary,
         apiKey,
         model = 'gemini-2.0-flash',
         requestId
@@ -581,41 +684,32 @@ app.post('/api/translate-srt', async (req, res) => {
     }
 
     try {
-        let genreGuidance = '';
-        if (genre === 'historical' || genre === 'imperial') {
-            genreGuidance = `
-5. Historical / Imperial Palace Honorifics:
-   - Use classical Cambodian royal honorifics: "ទូលបង្គំ", "ព្រះអង្គ", "ព្រះមហាក្សត្រ", "ព្រះរាជបញ្ជា", "ម្ចាស់បង", "ម្ចាស់អូន", "លោកមេទ័ព".`;
-        } else if (genre === 'action') {
-            genreGuidance = `
-5. Action & High Urgency:
-   - Short, punchy commands: "ប្រយ័ត្ន!", "បាញ់!", "ទៅលឿន!".`;
-        } else {
-            genreGuidance = `
-5. Modern Conversational Flow:
-   - Natural modern spoken dialogue: "ខ្ញុំ", "ឯង", "បង", "អូន", "ម៉ាក់", "ប៉ា".`;
-        }
+        const genreRegister = genre || dramaRegister || 'historical';
+        const genreGuidance = getKhmerDramaRegisterGuidance(genreRegister);
+        const glossaryHint = glossary ? `\n\nCUSTOM CHARACTER / GLOSSARY DICTIONARY (STRICTLY USE THESE TRANSLATIONS):\n${typeof glossary === 'string' ? glossary : JSON.stringify(glossary, null, 2)}` : '';
 
-        const prompt = `You are a professional film/TV dialogue adapter and voice-dubbing director specializing in Asian/Chinese drama (C-Drama) localization into natural Khmer.
+        const prompt = `You are an elite master film/TV dialogue adapter and dubbing director specializing in Asian and Chinese drama (C-Drama: 古装/宫斗/仙侠/武侠/现代甜宠/总裁/动作) localization into cinematic, natural, ultra-concise, and highly readable Khmer.
 
 TASK:
-Translate each dialogue line into natural, concise Khmer dialogue optimized for voice dubbing and subtitle timing.
+Translate each dialogue line into SHORT, PUNCHY, and READABLE Khmer dialogue specifically crafted for voice dubbing and clean on-screen subtitle reading.
 
-CRITICAL DUBBING & CONCISENESS RULES:
-1. Pacing & Syllable Matching:
-   - Original drama dialogue is fast and brief. Keep Khmer translations SHORT, PUNCHY, and CONVERSATIONAL.
-   - Example: "我明白了" -> "ខ្ញុំយល់ហើយ", NOT "ខ្ញុំយល់ពីអ្វីដែលអ្នកនិយាយហើយ".
-2. Exact 1-to-1 Line Match:
+${KHMER_DUBBING_RULES}
+${glossaryHint}
+
+LINE MATCHING & EMOTION RULES:
+1. Exact 1-to-1 Line Match:
    - Output an array with the exact same number of items as the input lines.
-3. Gender Tagging:
+   - Keep each translation strictly 3 to 10 syllables (3 to 8 words).
+
+2. Gender Tagging & Emotional Acting Detection:
    - Assign "Male" or "Female" for each line based on context.
-4. Emotional Acting Detection:
-   - Assign the dramatic emotion: "Neutral", "Angry", "Sad", "Whisper", "Excited", "Royal", "Fear".${genreGuidance}
-5. Output Format:
+   - Assign the dramatic emotion: "Neutral", "Angry", "Sad", "Whisper", "Excited", "Royal", "Romantic", "Fear".${genreGuidance}
+
+3. Output Format:
    - Return ONLY a valid JSON array of objects:
 [
   {
-    "text": "Khmer translation",
+    "text": "Short Khmer translation",
     "gender": "Male",
     "emotion": "Neutral"
   }
@@ -663,15 +757,153 @@ ${content}`;
             parsedData = [];
         }
 
+        const sanitizedData = parsedData.map(item => {
+            let clean = sanitizeKhmerDialogue(item.text || '');
+            if (glossary) clean = applyGlossary(clean, glossary);
+            return {
+                ...item,
+                text: clean
+            };
+        });
+
         res.json({
             success: true,
-            data: parsedData,
+            data: sanitizedData,
             rawText: rawContent
         });
     } catch (e) {
         if (e.name === 'AbortError') return res.json({ success: false, error: 'CANCELLED' });
         res.status(500).json({ success: false, error: e.message });
     }
+});
+
+// 4c. Single Dialogue Line AI Rewriter (Shorten, Dramatic, Royal, Comedy)
+app.post('/api/rewrite-dialogue', async (req, res) => {
+    const {
+        text,
+        originalText,
+        mode = 'shorten', // 'shorten' | 'dramatic' | 'royal' | 'comedy'
+        genre = 'historical',
+        glossary,
+        apiKey,
+        model = 'gemini-2.0-flash',
+        requestId
+    } = req.body;
+
+    if (!text || !text.trim()) {
+        return res.status(400).json({ success: false, error: 'No dialogue text provided.' });
+    }
+
+    if (!apiKey || !apiKey.trim()) {
+        return res.status(400).json({ success: false, error: 'INVALID_API_KEY', message: 'API key is required.' });
+    }
+
+    let modeInstruction = '';
+    if (mode === 'shorten') {
+        modeInstruction = 'Make the Khmer subtitle dialogue ULTRA-SHORT (strictly 3 to 6 words / 3 to 7 syllables maximum), highly punchy, clear, and easy to read in 0.8 seconds. Drop all non-essential words while preserving the core emotional meaning.';
+    } else if (mode === 'dramatic') {
+        modeInstruction = 'Make the Khmer dialogue HIGHLY DRAMATIC, emotionally charged, intense, and cinematic. Use strong spoken drama vocabulary (កាច កម្សត់ ឬតានតឹង) suitable for professional voice dubbing.';
+    } else if (mode === 'royal') {
+        modeInstruction = 'Convert the Khmer dialogue into classical royal court / imperial palace language (រាជស័ព្ទ/រាជវាំង/បុរាណ) using terms like ព្រះអង្គ, ក្រាបទូល, ទូលបង្គំ, ខ្ញុំម្ចាស់, ម្ចាស់បង, ព្រះរាជបញ្ជា, etc. Keep it compact and speakable.';
+    } else if (mode === 'comedy') {
+        modeInstruction = 'Rewrite the Khmer dialogue into a witty, humorous, lively, and entertaining Cambodian colloquialism (កំប្លុកកំប្លែង ភាសានិយាយសាមញ្ញរស់រវើក). Keep it punchy and short.';
+    } else {
+        modeInstruction = 'Polish the Khmer dialogue to be ultra-concise, natural, and speakable for film dubbing.';
+    }
+
+    const glossaryHint = glossary ? `\n\nCUSTOM GLOSSARY:\n${typeof glossary === 'string' ? glossary : JSON.stringify(glossary)}` : '';
+
+    const prompt = `You are a master Cambodian film dubbing adapter and script doctor.
+Rewrite the following dialogue line according to this instruction:
+${modeInstruction}
+
+INPUT LINE: "${text}"
+${originalText ? `ORIGINAL REFERENCE: "${originalText}"` : ''}
+${glossaryHint}
+
+RULES:
+1. Return ONLY the rewritten Khmer dialogue string. No explanations, no quotes, no markdown, no JSON, just the single final line.
+2. Ensure proper spacing between clauses for readability.
+3. Absolutely NO robotic textbook words (no "តើ...", "បាន...", "កំពុងតែ...", "របស់អ្នក").`;
+
+    const payload = {
+        contents: [
+            {
+                role: "user",
+                parts: [{ text: prompt }]
+            }
+        ]
+    };
+
+    const abortCtrl = new AbortController();
+    if (requestId) activeTranscribeRequests.set(requestId, abortCtrl);
+
+    try {
+        const geminiResult = await executeGeminiGenerate(apiKey, model, payload, abortCtrl.signal);
+        if (requestId) activeTranscribeRequests.delete(requestId);
+
+        if (!geminiResult.success) {
+            return res.status(geminiResult.status || 500).json({
+                success: false,
+                error: geminiResult.error || 'REWRITE_FAILED',
+                message: geminiResult.message
+            });
+        }
+
+        const json = geminiResult.json;
+        let rawContent = json?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        let cleanText = sanitizeKhmerDialogue(rawContent.replace(/^["'`]+|["'`]+$/g, '').trim());
+        if (glossary) {
+            cleanText = applyGlossary(cleanText, glossary);
+        }
+
+        res.json({
+            success: true,
+            rewrittenText: cleanText,
+            mode
+        });
+    } catch (e) {
+        if (e.name === 'AbortError') return res.json({ success: false, error: 'CANCELLED' });
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// 4d. Smart Lip-Sync Speech Rate Auto-Fit Helper
+app.post('/api/autofit-speech-rate', (req, res) => {
+    const { subtitles = [] } = req.body;
+    const updated = subtitles.map(sub => {
+        const text = (sub.text || '').trim();
+        const start = parseFloat(sub.textStart || sub.start || 0);
+        const end = parseFloat(sub.textEnd || sub.end || 0);
+        const availableSec = Math.max(0.5, end - start);
+        
+        // Count approximate Khmer syllables/words and character clusters (~11-13 chars/sec)
+        const words = text.split(/\s+/).filter(Boolean);
+        const rawLen = text.replace(/[\s\p{P}]/gu, '').length;
+        const estimatedCharsDuration = rawLen > 0 ? (rawLen / 12.0) + 0.25 : 0.5;
+        const estimatedWordsDuration = words.length * 0.38 + 0.3;
+        const estimatedNaturalDuration = Math.max(estimatedCharsDuration, estimatedWordsDuration);
+        
+        let recommendedSpeed = 1.0;
+        if (estimatedNaturalDuration > availableSec) {
+            const ratio = estimatedNaturalDuration / availableSec;
+            // Cap between 1.0 and 1.45 (100% to 145%)
+            recommendedSpeed = Math.min(1.45, Math.max(1.0, Math.round(ratio * 100) / 100));
+        } else if (estimatedNaturalDuration < availableSec * 0.5 && availableSec > 3.0) {
+            recommendedSpeed = 0.95;
+        }
+
+        const ratePct = Math.round((recommendedSpeed - 1.0) * 100);
+        const rateStr = ratePct >= 0 ? `+${ratePct}%` : `${ratePct}%`;
+
+        return {
+            ...sub,
+            speed: recommendedSpeed,
+            rate: rateStr
+        };
+    });
+
+    res.json({ success: true, subtitles: updated });
 });
 
 app.post('/api/cancel-transcribe', (req, res) => {
@@ -683,6 +915,84 @@ app.post('/api/cancel-transcribe', (req, res) => {
     }
     res.json({ success: true });
 });
+
+// 4b. Whisper Local Verification & Transcription Endpoints
+app.get('/api/check-whisper-folder', (req, res) => {
+    const folderPath = req.query.path;
+    if (!folderPath || !fs.existsSync(folderPath)) {
+        return res.json({ valid: false, missing: ['Folder does not exist'] });
+    }
+    const isWin = process.platform === 'win32';
+    const runner = isWin ? 'run.bat' : 'run.sh';
+    const script = 'transcribe.py';
+    
+    const missing = [];
+    if (!fs.existsSync(path.join(folderPath, script))) missing.push(script);
+    if (!fs.existsSync(path.join(folderPath, runner))) missing.push(runner);
+    
+    res.json({
+        valid: missing.length === 0,
+        missing
+    });
+});
+
+app.post('/api/transcribe-whisper', async (req, res) => {
+    const { whisperFolder, audioPath, videoPath, model = 'medium', device = 'auto' } = req.body;
+    if (!whisperFolder || !fs.existsSync(whisperFolder)) {
+        return res.status(400).json({ success: false, error: 'Whisper folder not found' });
+    }
+    const inputAudio = audioPath || videoPath;
+    if (!inputAudio || !fs.existsSync(inputAudio)) {
+        return res.status(400).json({ success: false, error: 'Input audio not found' });
+    }
+
+    const outSrt = path.join(AUDIO_CACHE_DIR, `whisper_${Date.now()}.srt`);
+    const isWin = process.platform === 'win32';
+    const runnerFile = isWin ? 'run.bat' : 'run.sh';
+    const runnerPath = path.join(whisperFolder, runnerFile);
+    const args = ['--audio', inputAudio, '--output_srt', outSrt, '--model', model, '--device', device];
+
+    let child;
+    let stderrBuffer = '';
+    try {
+        if (fs.existsSync(runnerPath)) {
+            child = isWin
+                ? spawn('cmd.exe', ['/c', runnerPath, ...args], { cwd: whisperFolder, windowsHide: true })
+                : spawn('bash', [runnerPath, ...args], { cwd: whisperFolder });
+        } else {
+            const pyScript = path.join(whisperFolder, 'transcribe.py');
+            child = spawn(PYTHON_CMD, [pyScript, ...args], { cwd: whisperFolder, windowsHide: true });
+        }
+    } catch (spawnErr) {
+        return res.status(500).json({ success: false, error: 'Failed to start Whisper process: ' + spawnErr.message });
+    }
+
+    child.stderr.on('data', (d) => {
+        stderrBuffer += d.toString();
+    });
+
+    child.on('error', (err) => {
+        res.status(500).json({ success: false, error: err.message });
+    });
+
+    child.on('close', (code) => {
+        if (code === 0 && fs.existsSync(outSrt)) {
+            try {
+                const srtText = fs.readFileSync(outSrt, 'utf8');
+                res.json({ success: true, srtText, srtPath: outSrt });
+            } catch (e) {
+                res.status(500).json({ success: false, error: 'Failed to read SRT: ' + e.message });
+            }
+        } else {
+            const cleanError = stderrBuffer.trim();
+            res.status(500).json({
+                success: false,
+                error: cleanError ? cleanError.split('\n').pop() || `Whisper exited with code ${code}` : `Whisper exited with code ${code}`
+            });
+        }
+    });
+});
+
 
 // 4c. Export Audio Stems (Clean Voice Stem + Isolated BGM + SRT Package)
 app.post('/api/export-stems', async (req, res) => {

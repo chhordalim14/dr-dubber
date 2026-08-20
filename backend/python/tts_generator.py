@@ -58,8 +58,11 @@ async def generate_speech(text: str, voice: str, rate: str, pitch: str, volume: 
         if not vol_str.endswith("%"):
             vol_str += "%"
 
+        # Clean up zero-width and invisible control characters
+        clean_text = text.replace('\u200b', '').replace('\u200c', '').replace('\u200d', '').replace('\ufeff', '').strip()
+
         communicate = edge_tts.Communicate(
-            text=text,
+            text=clean_text,
             voice=voice,
             rate=rate_str,
             pitch=pitch_str,
