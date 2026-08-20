@@ -1392,13 +1392,22 @@
               <span class="text-xs font-medium">Load A1 Audio</span>
             </button>
 
-            <button
-              id="btn-isolate-bgm"
-              class="group flex flex-col items-center justify-center gap-2 bg-[var(--bg-hover)] hover:brightness-110 border border-[var(--border-light)] p-3 rounded-xl transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.92] cursor-pointer"
-            >
-              <i id="icon-isolate" data-lucide="wand-2" class="w-5 h-5 text-pink-500 workspace-icon-glow transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
-              <span id="text-isolate" class="text-xs font-medium">Isolate BGM</span>
-            </button>
+            <div class="relative group/isolate-wrap">
+              <button
+                id="btn-isolate-bgm"
+                class="w-full group flex flex-col items-center justify-center gap-2 bg-[var(--bg-hover)] hover:brightness-110 border border-[var(--border-light)] p-3 rounded-xl transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.92] cursor-pointer"
+              >
+                <i id="icon-isolate" data-lucide="wand-2" class="w-5 h-5 text-pink-500 workspace-icon-glow transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
+                <span id="text-isolate" class="text-xs font-medium">Isolate BGM</span>
+              </button>
+              <button
+                id="btn-isolate-bgm-all"
+                title="Isolate BGM for ALL open project tabs"
+                class="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider bg-pink-500/20 text-pink-400 border border-pink-500/30 hover:bg-pink-500 hover:text-white transition-all shadow-sm z-10 active:scale-95"
+              >
+                ALL
+              </button>
+            </div>
 
             <button
               id="btn-mute-audio"
@@ -1510,6 +1519,26 @@
                 >
                   <i data-lucide="sparkles" class="w-[14px] h-[14px] text-pink-400 transition-transform duration-300 group-hover:scale-110 group-active:scale-90"></i>
                   Micro Lip-Sync
+                </button>
+
+                <button
+                  id="btn-open-glossary"
+                  onclick="openGlossaryModal()"
+                  class="group bg-[var(--bg-hover)] border border-[var(--border-light)] hover:bg-cyan-500/20 hover:border-cyan-500 hover:text-cyan-400 text-[var(--text-primary)] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-md active:scale-[0.95]"
+                  title="📖 Drama Glossary / Character Name Dictionary"
+                >
+                  <i data-lucide="book-open" class="w-[14px] h-[14px] text-cyan-400 transition-transform duration-300 group-hover:scale-110"></i>
+                  Glossary
+                </button>
+
+                <button
+                  id="btn-open-batch-dubber"
+                  onclick="openBatchDubberModal()"
+                  class="group bg-[var(--bg-hover)] border border-[var(--border-light)] hover:bg-amber-500/20 hover:border-amber-500 hover:text-amber-400 text-[var(--text-primary)] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-md active:scale-[0.95]"
+                  title="🚀 Batch Multi-Episode Dubbing Queue"
+                >
+                  <i data-lucide="rocket" class="w-[14px] h-[14px] text-amber-400 transition-transform duration-300 group-hover:scale-110"></i>
+                  Batch Dubber
                 </button>
 
                 <div class="h-4 w-px bg-[var(--border-light)] mx-1"></div>
@@ -1722,15 +1751,18 @@
                   <span id="genre-label" class="hidden sm:inline font-khmer text-xs text-amber-400 font-semibold">បុរាណ/រាជវង្ស</span>
                   <i data-lucide="chevron-down" class="w-3 h-3 text-[var(--text-muted)] shrink-0"></i>
                 </button>
-                <div id="genre-dropdown-menu" class="hidden absolute bottom-full mb-2 left-0 w-[190px] bg-[var(--bg-panel)] border border-[var(--border-color)] shadow-2xl rounded-xl py-1 z-50 animate-dropdown font-khmer origin-bottom-left">
+                <div id="genre-dropdown-menu" class="hidden absolute bottom-full mb-2 left-0 w-[210px] bg-[var(--bg-panel)] border border-[var(--border-color)] shadow-2xl rounded-xl py-1 z-50 animate-dropdown font-khmer origin-bottom-left">
                   <button data-genre="historical" class="genre-opt w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-[var(--bg-hover)] text-amber-400 font-semibold cursor-pointer">
-                    <span class="text-sm">👑</span> <span>រឿងបុរាណ / រាជវង្ស</span>
+                    <span class="text-sm">👑</span> <span>បុរាណ / រាជវាំង / ក្បាច់គុន</span>
                   </button>
                   <button data-genre="modern" class="genre-opt w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-[var(--bg-hover)] text-cyan-400 cursor-pointer">
-                    <span class="text-sm">🏙️</span> <span>រឿងសម័យ / ស្នេហា</span>
+                    <span class="text-sm">🏙️</span> <span>សម័យ / ស្នេហា / CEO</span>
                   </button>
                   <button data-genre="action" class="genre-opt w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-[var(--bg-hover)] text-rose-400 cursor-pointer">
-                    <span class="text-sm">💥</span> <span>រឿងសកម្មភាព / កងទ័ព</span>
+                    <span class="text-sm">💥</span> <span>សកម្មភាព / កងទ័ព / ឧក្រិដ្ឋ</span>
+                  </button>
+                  <button data-genre="comedy" class="genre-opt w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-[var(--bg-hover)] text-emerald-400 cursor-pointer">
+                    <span class="text-sm">😂</span> <span>កំប្លែង / កំប្លុកកំប្លែង</span>
                   </button>
                 </div>
               </div>
@@ -1749,6 +1781,16 @@
               </button>
 
               <button
+                id="btn-smart-lipsync"
+                onclick="autoFitLipSyncRates()"
+                class="group px-3 sm:px-4 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ease-out bg-[var(--bg-base)] border border-[var(--border-light)] hover:border-pink-400 text-[var(--text-secondary)] hover:text-pink-400 shadow-sm active:scale-[0.95]"
+                title="⚡ Smart Lip-Sync: Calculate and auto-adjust speech speed rates to fit actor window"
+              >
+                <i data-lucide="sparkles" class="w-[14px] h-[14px] text-pink-400 shrink-0 transition-transform duration-300 group-hover:scale-110"></i>
+                <span class="hidden sm:inline">Smart Lip-Sync</span>
+              </button>
+
+              <button
                 id="btn-match-audio-end"
                 class="group px-3 sm:px-4 py-1.5 rounded-lg text-xs font-medium flex items-center gap-2 transition-all duration-300 ease-out bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-muted)] opacity-70 hover:opacity-100 shadow-sm active:scale-[0.95]"
                 title="When ON: after Generate Audio / Stop, each subtitle's end time snaps to match its own audio's end time."
@@ -1761,6 +1803,16 @@
                 <i id="icon-generate" data-lucide="audio-lines" class="w-[14px] h-[14px] shrink-0"></i>
                 <span class="hidden sm:inline" id="text-generate">Generate Selected Audio</span>
                 <span class="sm:hidden" id="text-generate-mobile">Generate</span>
+              </button>
+
+              <button
+                id="btn-generate-audio-all"
+                title="Generate selected (or pending) audio for ALL project tabs"
+                class="group px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ease-out bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-secondary)] hover:text-[var(--text-bright)] hover:border-amber-400/50 shadow-sm active:scale-[0.95]"
+              >
+                <i id="icon-generate-all" data-lucide="layers" class="w-[14px] h-[14px] text-amber-400 shrink-0 transition-transform duration-300 group-hover:scale-110"></i>
+                <span class="hidden md:inline" id="text-generate-all">Generate All Tabs</span>
+                <span class="md:hidden">All Tabs</span>
               </button>
             </div>
           </div>
@@ -2505,6 +2557,109 @@
         <div class="p-4 border-t border-[var(--border-color)] bg-[var(--bg-base)] flex justify-end gap-3 shrink-0">
           <button id="btn-cancel-edit-sub" class="px-4 py-2 rounded-lg text-sm font-medium border border-[var(--border-light)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-sm active:scale-[0.95]">Cancel</button>
           <button id="btn-confirm-edit-sub" class="bg-[var(--accent-primary)] text-white px-6 py-2 rounded-lg text-sm font-medium hover:brightness-110 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-lg active:scale-[0.95]">Save All Changes</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── DRAMA GLOSSARY / CHARACTER NAME DICTIONARY MODAL ── -->
+    <div id="modal-glossary" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[250] hidden opacity-0 transition-opacity duration-300" onclick="closeGlossaryModal()">
+      <div class="bg-[var(--bg-panel)] border border-[var(--border-light)] rounded-2xl w-[560px] max-h-[85vh] shadow-2xl flex flex-col overflow-hidden text-[var(--text-primary)] transform scale-95 transition-transform duration-300" onclick="event.stopPropagation()">
+        <!-- Header -->
+        <div class="flex justify-between items-center p-4 border-b border-[var(--border-color)] bg-[var(--bg-base)]">
+          <h2 class="text-[var(--text-bright)] font-semibold flex items-center gap-2">
+            <i data-lucide="book-open" class="w-5 h-5 text-cyan-400"></i>
+            <span>Drama Glossary &amp; Character Dictionary</span>
+          </h2>
+          <button onclick="closeGlossaryModal()" class="text-[var(--text-secondary)] hover:text-red-400 transition-colors">
+            <i data-lucide="x" class="w-5 h-5"></i>
+          </button>
+        </div>
+        
+        <!-- Content -->
+        <div class="p-5 flex flex-col gap-4 overflow-y-auto custom-scrollbar flex-1">
+          <p class="text-xs text-[var(--text-muted)] leading-relaxed">
+            Define custom character names, titles, or specialized terminology. Gemini will strictly apply these exact translations to all dialogue lines.
+          </p>
+
+          <!-- Add Entry Form -->
+          <div class="flex items-center gap-2 p-3 bg-[var(--bg-base)] rounded-xl border border-[var(--border-light)]">
+            <input type="text" id="glossary-input-from" placeholder="Original (e.g. 顾总 / Lord)" class="flex-1 bg-[var(--bg-panel)] border border-[var(--border-light)] rounded-lg px-3 py-2 text-xs text-[var(--text-bright)] outline-none focus:border-cyan-400 font-mono" />
+            <span class="text-xs text-[var(--text-muted)] font-bold">➔</span>
+            <input type="text" id="glossary-input-to" placeholder="Khmer Dub (e.g. លោកប្រធានគូ)" class="flex-1 bg-[var(--bg-panel)] border border-[var(--border-light)] rounded-lg px-3 py-2 text-xs text-[var(--text-bright)] outline-none focus:border-cyan-400 font-khmer" />
+            <button onclick="addGlossaryItem()" class="px-3 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1 shadow-sm transition-all active:scale-95">
+              <i data-lucide="plus" class="w-3.5 h-3.5"></i> Add
+            </button>
+          </div>
+
+          <!-- Entries List -->
+          <div class="flex flex-col gap-2">
+            <div class="flex items-center justify-between">
+              <label class="text-xs text-[var(--text-secondary)] font-medium">Saved Dictionary Terms</label>
+              <span id="glossary-count" class="text-[10px] text-cyan-400 font-mono font-bold">0 terms</span>
+            </div>
+            <div id="glossary-items-list" class="flex flex-col gap-1.5 max-h-52 overflow-y-auto custom-scrollbar p-1">
+              <!-- Dynamically populated rows -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="p-4 border-t border-[var(--border-color)] bg-[var(--bg-base)] flex justify-between items-center shrink-0">
+          <button onclick="clearAllGlossary()" class="text-xs text-red-400 hover:text-red-300 font-medium flex items-center gap-1 transition-colors">
+            <i data-lucide="trash" class="w-3.5 h-3.5"></i> Clear All
+          </button>
+          <button onclick="closeGlossaryModal()" class="px-5 py-2 bg-[var(--accent-primary)] text-white rounded-lg text-xs font-semibold shadow-md hover:brightness-110 active:scale-95 transition-all">
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── BATCH MULTI-EPISODE DUBBER MODAL ── -->
+    <div id="modal-batch-dubber" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[260] hidden opacity-0 transition-opacity duration-300" onclick="closeBatchDubberModal()">
+      <div class="bg-[var(--bg-panel)] border border-[var(--border-light)] rounded-2xl w-[620px] max-h-[85vh] shadow-2xl flex flex-col overflow-hidden text-[var(--text-primary)] transform scale-95 transition-transform duration-300" onclick="event.stopPropagation()">
+        <!-- Header -->
+        <div class="flex justify-between items-center p-4 border-b border-[var(--border-color)] bg-[var(--bg-base)]">
+          <h2 class="text-[var(--text-bright)] font-semibold flex items-center gap-2">
+            <i data-lucide="rocket" class="w-5 h-5 text-amber-400"></i>
+            <span>Batch Multi-Episode Dubber</span>
+          </h2>
+          <button onclick="closeBatchDubberModal()" class="text-[var(--text-secondary)] hover:text-red-400 transition-colors">
+            <i data-lucide="x" class="w-5 h-5"></i>
+          </button>
+        </div>
+
+        <!-- Content -->
+        <div class="p-5 flex flex-col gap-4 overflow-y-auto custom-scrollbar flex-1">
+          <div class="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-3">
+            <i data-lucide="sparkles" class="w-5 h-5 text-amber-400 shrink-0 mt-0.5"></i>
+            <p class="text-xs text-amber-200/90 leading-relaxed">
+              Batch Mode automatically processes all open project tabs: <strong>Transcribe ➔ Translate to Short Khmer ➔ Auto-Fit Lip-Sync Voice ➔ Final Video Render</strong>.
+            </p>
+          </div>
+
+          <div class="flex flex-col gap-2">
+            <div class="flex items-center justify-between">
+              <label class="text-xs text-[var(--text-secondary)] font-medium">Projects / Episodes in Queue</label>
+              <span id="batch-queue-count" class="text-xs font-mono text-amber-400 font-bold">0 Tabs</span>
+            </div>
+            <div id="batch-projects-list" class="flex flex-col gap-2 max-h-56 overflow-y-auto custom-scrollbar p-1">
+              <!-- Dynamically populated cards -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="p-4 border-t border-[var(--border-color)] bg-[var(--bg-base)] flex justify-between items-center shrink-0">
+          <span id="batch-status-label" class="text-xs text-[var(--text-muted)] font-mono">Ready to process</span>
+          <div class="flex items-center gap-2">
+            <button onclick="closeBatchDubberModal()" class="px-4 py-2 rounded-lg text-xs font-medium border border-[var(--border-light)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-all">
+              Cancel
+            </button>
+            <button id="btn-start-batch-run" onclick="runBatchDubbingQueue()" class="px-5 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-bold rounded-lg text-xs shadow-lg shadow-amber-500/20 active:scale-95 transition-all flex items-center gap-1.5">
+              <i data-lucide="play" class="w-3.5 h-3.5 fill-current"></i> Start Batch Processing
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -4118,6 +4273,48 @@
                   <input type="range" id="setting-blur-strength" min="5" max="50" value="20" class="relative w-full appearance-none bg-transparent cursor-pointer" style="height: 20px" oninput="updateBlurStrength(this.value)" />
                 </div>
               </div>
+            </div>
+          </div>
+
+          <!-- ── STUDIO AUTO-DUCKING & BGM MIX ── -->
+          <div class="flex flex-col gap-2 p-3 rounded-xl bg-[var(--bg-base)] border border-[var(--border-light)]">
+            <div class="flex items-center justify-between">
+              <label class="text-xs text-[var(--text-secondary)] font-medium flex items-center gap-2">
+                <i data-lucide="sliders" class="w-3.5 h-3.5 text-cyan-400"></i>
+                Studio Auto-Ducking
+              </label>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="toggle-render-ducking" class="sr-only peer" checked onchange="toggleRenderDucking(this.checked)" />
+                <div class="w-9 h-5 bg-[var(--border-light)] rounded-full peer peer-checked:bg-[var(--accent-primary)] transition-colors duration-200"></div>
+                <div class="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200 peer-checked:translate-x-4"></div>
+              </label>
+            </div>
+            <p class="text-[10px] text-[var(--text-muted)] -mt-1">Smoothly dips BGM background volume when speech is active to keep vocals crisp.</p>
+            <div id="ducking-depth-container" class="grid grid-cols-3 gap-1.5 pt-1">
+              <button type="button" onclick="setDuckingDepth('light')" id="duck-depth-light" class="duck-depth-btn h-7 rounded-lg text-[11px] font-semibold border border-[var(--border-light)] text-[var(--text-secondary)] hover:border-cyan-400/50 transition-all">Light (-8dB)</button>
+              <button type="button" onclick="setDuckingDepth('standard')" id="duck-depth-standard" class="duck-depth-btn h-7 rounded-lg text-[11px] font-semibold border border-cyan-400 bg-cyan-400/15 text-cyan-300 transition-all">Standard (-14dB)</button>
+              <button type="button" onclick="setDuckingDepth('deep')" id="duck-depth-deep" class="duck-depth-btn h-7 rounded-lg text-[11px] font-semibold border border-[var(--border-light)] text-[var(--text-secondary)] hover:border-cyan-400/50 transition-all">Deep (-20dB)</button>
+            </div>
+          </div>
+
+          <!-- ── SUBTITLE VISUAL STYLE PRESETS ── -->
+          <div class="flex flex-col gap-2 p-3 rounded-xl bg-[var(--bg-base)] border border-[var(--border-light)]">
+            <label class="text-xs text-[var(--text-secondary)] font-medium flex items-center justify-between">
+              <span class="flex items-center gap-1.5"><i data-lucide="palette" class="w-3.5 h-3.5 text-amber-400"></i> Subtitle Style Preset</span>
+            </label>
+            <div class="grid grid-cols-2 gap-2 pt-1">
+              <button type="button" onclick="setSubStylePreset('classic')" id="sub-preset-classic" class="sub-preset-btn h-8 rounded-lg text-xs font-semibold border border-[var(--accent-primary)] bg-[var(--accent-primary)]/15 text-[var(--accent-text)] transition-all flex items-center justify-center gap-1.5">
+                🎬 Classic Cinema
+              </button>
+              <button type="button" onclick="setSubStylePreset('tiktok_pop')" id="sub-preset-tiktok_pop" class="sub-preset-btn h-8 rounded-lg text-xs font-semibold border border-[var(--border-light)] text-[var(--text-secondary)] hover:border-amber-400 hover:text-amber-300 transition-all flex items-center justify-center gap-1.5">
+                ⚡ TikTok Pop (Yellow)
+              </button>
+              <button type="button" onclick="setSubStylePreset('neon_cyan')" id="sub-preset-neon_cyan" class="sub-preset-btn h-8 rounded-lg text-xs font-semibold border border-[var(--border-light)] text-[var(--text-secondary)] hover:border-cyan-400 hover:text-cyan-300 transition-all flex items-center justify-center gap-1.5">
+                💎 Neon Cyan
+              </button>
+              <button type="button" onclick="setSubStylePreset('royal_gold')" id="sub-preset-royal_gold" class="sub-preset-btn h-8 rounded-lg text-xs font-semibold border border-[var(--border-light)] text-[var(--text-secondary)] hover:border-yellow-400 hover:text-yellow-300 transition-all flex items-center justify-center gap-1.5">
+                👑 Royal Gold
+              </button>
             </div>
           </div>
 
@@ -7231,9 +7428,10 @@
       const genreLabel = document.getElementById("genre-label");
 
       const genreConfig = {
-        historical: { icon: "👑", label: "បុរាណ/រាជវង្ស", color: "text-amber-400" },
-        modern: { icon: "🏙️", label: "សម័យ/ស្នេហា", color: "text-cyan-400" },
-        action: { icon: "💥", label: "សកម្មភាព/កងទ័ព", color: "text-rose-400" },
+        historical: { icon: "👑", label: "បុរាណ/រាជវាំង/ក្បាច់គុន", color: "text-amber-400" },
+        modern: { icon: "🏙️", label: "សម័យ/ស្នេហា/CEO", color: "text-cyan-400" },
+        action: { icon: "💥", label: "សកម្មភាព/កងទ័ព/ឧក្រិដ្ឋ", color: "text-rose-400" },
+        comedy: { icon: "😂", label: "កំប្លែង/កំប្លុកកំប្លែង", color: "text-emerald-400" },
       };
 
       const setDramaGenre = (g) => {
@@ -7967,6 +8165,7 @@
                       mimeType: "text/plain",
                       targetLanguage: targetProject.targetLanguage || targetLanguage,
                       genre: activeDramaGenre || "historical",
+                      glossary: typeof getDramaGlossaryDict === "function" ? getDramaGlossaryDict() : null,
                       apiKey: key,
                       model: activeModel,
                       requestId: targetProject.geminiRequestId,
@@ -8116,6 +8315,7 @@
                       duration: totalDur,
                       targetLanguage: targetProject.targetLanguage || targetLanguage,
                       genre: activeDramaGenre || "historical",
+                      glossary: typeof getDramaGlossaryDict === "function" ? getDramaGlossaryDict() : null,
                       apiKey: key,
                       model: activeModel,
                       requestId: targetProject.geminiRequestId,
@@ -11547,6 +11747,21 @@
         localStorage.setItem("aiDubberWhisperFolder", normalized);
       });
 
+      // Stream Whisper real-time logs to UI box
+      if (window.electronAPI && window.electronAPI.onWhisperLog) {
+        window.electronAPI.onWhisperLog((logData) => {
+          const logBox = document.getElementById("whisper-log-box");
+          if (logBox) {
+            const line = document.createElement("div");
+            line.className = "text-[10px] text-[var(--text-secondary)] whitespace-pre-wrap";
+            line.textContent = logData;
+            logBox.appendChild(line);
+            logBox.scrollTop = logBox.scrollHeight;
+          }
+        });
+      }
+
+
       // Demucs segment slider — smooth live update
       const demucsSegmentInput = document.getElementById("setting-demucs-segment");
       const demucsSegmentDisplay = document.getElementById("display-demucs-segment");
@@ -12044,6 +12259,396 @@
           renderSubtitles();
         }
       }
+
+      // ══════════════════════════════════════════════════════════════════════
+      // CREATOR FEATURE 1: ONE-CLICK AI DIALOGUE REWRITER (⚡ SHORTEN, 🎭 DRAMATIC, 👑 ROYAL, 😆 COMEDY)
+      // ══════════════════════════════════════════════════════════════════════
+      window.triggerAiRewrite = async (subId, mode) => {
+        const subIndex = subtitles.findIndex((s) => String(s.id) === String(subId));
+        if (subIndex === -1) return;
+        const sub = subtitles[subIndex];
+
+        // Retrieve active Gemini API Key
+        let activeKey = "";
+        try {
+          const keys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]");
+          if (Array.isArray(keys) && keys.length > 0) {
+            activeKey = keys[0];
+          }
+        } catch (e) {}
+
+        if (!activeKey) {
+          showToast("Please enter a Gemini API Key in Settings ➔ General first.", "error");
+          if (typeof openSettingsModal === "function") openSettingsModal();
+          return;
+        }
+
+        const modeLabels = {
+          shorten: "Shortening dialogue (កាត់ឲ្យខ្លី)",
+          dramatic: "Adding dramatic emotion (បន្ថែមអារម្មណ៍)",
+          royal: "Applying royal register (រាជស័ព្ទ)",
+          comedy: "Applying comedy style (កំប្លែង)",
+        };
+        showToast(`${modeLabels[mode] || "Rewriting"}...`, "info");
+
+        // Save state to undo history before making the change
+        if (pastStates.length > 50) pastStates.shift();
+        pastStates.push({
+          subs: JSON.parse(JSON.stringify(subtitles)),
+          bgm: JSON.parse(JSON.stringify(bgmTrack)),
+        });
+
+        try {
+          const glossary = typeof getDramaGlossaryDict === "function" ? getDramaGlossaryDict() : null;
+          const activeModel = localStorage.getItem("aiDubberModel") || "gemini-2.0-flash";
+
+          const res = await fetch("http://localhost:3001/api/rewrite-dialogue", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              text: sub.text,
+              originalText: sub.originalText || "",
+              mode: mode,
+              genre: activeDramaGenre || "historical",
+              glossary: glossary,
+              apiKey: activeKey,
+              model: activeModel,
+            }),
+          });
+
+          const data = await res.json();
+          if (data.success && data.rewrittenText) {
+            subtitles[subIndex].text = data.rewrittenText;
+            // Clear generated audio so it can be re-dubbed with the new dialogue
+            subtitles[subIndex].audioStatus = "idle";
+            subtitles[subIndex].audioUrl = null;
+            subtitles[subIndex].file = null;
+
+            if (typeof renderSubtitles === "function") renderSubtitles();
+            showToast(`✓ Rewritten: "${data.rewrittenText}"`, "success");
+          } else {
+            showToast(data.error || data.message || "Rewrite failed.", "error");
+          }
+        } catch (err) {
+          console.error("AI Rewrite error:", err);
+          showToast("Network error while rewriting dialogue.", "error");
+        }
+      };
+
+      // ══════════════════════════════════════════════════════════════════════
+      // CREATOR FEATURE 2: SMART LIP-SYNC SPEECH RATE AUTO-FIT
+      // ══════════════════════════════════════════════════════════════════════
+      window.autoFitLipSyncRates = async () => {
+        if (!subtitles || subtitles.length === 0) {
+          showToast("No subtitles loaded to auto-fit.", "info");
+          return;
+        }
+
+        try {
+          const res = await fetch("http://localhost:3001/api/autofit-speech-rate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ subtitles }),
+          });
+          const data = await res.json();
+          if (data.success && Array.isArray(data.subtitles)) {
+            let adjustedCount = 0;
+            data.subtitles.forEach((updatedSub, i) => {
+              if (subtitles[i]) {
+                if (subtitles[i].speed !== updatedSub.speed) adjustedCount++;
+                subtitles[i].speed = updatedSub.speed;
+                subtitles[i].rate = updatedSub.rate;
+              }
+            });
+            if (typeof renderSubtitles === "function") renderSubtitles();
+            showToast(`⚡ Smart Lip-Sync: Adjusted speech rates for ${data.subtitles.length} lines (${adjustedCount} adapted).`, "success");
+          }
+        } catch (e) {
+          console.error("Auto-fit error:", e);
+          showToast("Failed to calculate speech rates.", "error");
+        }
+      };
+
+      // ══════════════════════════════════════════════════════════════════════
+      // CREATOR FEATURE 3 & 6: STUDIO AUTO-DUCKING & SUBTITLE VISUAL PRESETS
+      // ══════════════════════════════════════════════════════════════════════
+      let currentDuckingDepth = localStorage.getItem("drDubberDuckingDepth") || "standard";
+      let currentDuckingEnabled = localStorage.getItem("drDubberDuckingEnabled") !== "false";
+      let currentSubtitlePreset = localStorage.getItem("drDubberSubPreset") || "classic";
+
+      window.setDuckingDepth = (depth) => {
+        currentDuckingDepth = depth;
+        localStorage.setItem("drDubberDuckingDepth", depth);
+        document.querySelectorAll(".duck-depth-btn").forEach((btn) => {
+          btn.className = "duck-depth-btn h-7 rounded-lg text-[11px] font-semibold border border-[var(--border-light)] text-[var(--text-secondary)] hover:border-cyan-400/50 transition-all";
+        });
+        const activeBtn = document.getElementById(`duck-depth-${depth}`);
+        if (activeBtn) {
+          activeBtn.className = "duck-depth-btn h-7 rounded-lg text-[11px] font-semibold border border-cyan-400 bg-cyan-400/15 text-cyan-300 transition-all";
+        }
+      };
+
+      window.toggleRenderDucking = (enabled) => {
+        currentDuckingEnabled = enabled;
+        localStorage.setItem("drDubberDuckingEnabled", enabled ? "true" : "false");
+        const container = document.getElementById("ducking-depth-container");
+        if (container) {
+          container.style.opacity = enabled ? "1" : "0.4";
+          container.style.pointerEvents = enabled ? "auto" : "none";
+        }
+      };
+
+      window.setSubStylePreset = (preset) => {
+        currentSubtitlePreset = preset;
+        localStorage.setItem("drDubberSubPreset", preset);
+        document.querySelectorAll(".sub-preset-btn").forEach((btn) => {
+          btn.className = "sub-preset-btn h-8 rounded-lg text-xs font-semibold border border-[var(--border-light)] text-[var(--text-secondary)] hover:border-[var(--accent-primary)] hover:text-[var(--accent-text)] transition-all flex items-center justify-center gap-1.5";
+        });
+        const activeBtn = document.getElementById(`sub-preset-${preset}`);
+        if (activeBtn) {
+          activeBtn.className = "sub-preset-btn h-8 rounded-lg text-xs font-semibold border border-[var(--accent-primary)] bg-[var(--accent-primary)]/15 text-[var(--accent-text)] transition-all flex items-center justify-center gap-1.5";
+        }
+      };
+
+      window.getRenderDuckingDepth = () => currentDuckingDepth;
+      window.isRenderDuckingEnabled = () => currentDuckingEnabled;
+      window.getSubtitleStylePreset = () => currentSubtitlePreset;
+
+      // ══════════════════════════════════════════════════════════════════════
+      // CREATOR FEATURE 4: CUSTOM DRAMA GLOSSARY & CHARACTER NAME DICTIONARY
+      // ══════════════════════════════════════════════════════════════════════
+      const GLOSSARY_KEY = "drDubberGlossary";
+
+      window.loadGlossary = () => {
+        try {
+          return JSON.parse(localStorage.getItem(GLOSSARY_KEY) || "[]");
+        } catch (e) {
+          return [];
+        }
+      };
+
+      window.saveGlossary = (items) => {
+        localStorage.setItem(GLOSSARY_KEY, JSON.stringify(items));
+        renderGlossaryList();
+      };
+
+      window.getDramaGlossaryDict = () => {
+        const list = window.loadGlossary();
+        if (!Array.isArray(list) || list.length === 0) return null;
+        const dict = {};
+        list.forEach((item) => {
+          if (item && item.from && item.to) {
+            dict[item.from.trim()] = item.to.trim();
+          }
+        });
+        return dict;
+      };
+
+      window.openGlossaryModal = () => {
+        const modal = document.getElementById("modal-glossary");
+        if (!modal) return;
+        renderGlossaryList();
+        modal.classList.remove("hidden");
+        requestAnimationFrame(() => {
+          modal.classList.add("opacity-100");
+          modal.querySelector("div")?.classList.add("scale-100");
+        });
+        _lucideCreateIcons();
+      };
+
+      window.closeGlossaryModal = () => {
+        const modal = document.getElementById("modal-glossary");
+        if (!modal) return;
+        modal.classList.remove("opacity-100");
+        modal.querySelector("div")?.classList.remove("scale-100");
+        setTimeout(() => modal.classList.add("hidden"), 300);
+      };
+
+      window.addGlossaryItem = () => {
+        const fromInput = document.getElementById("glossary-input-from");
+        const toInput = document.getElementById("glossary-input-to");
+        const fromVal = (fromInput?.value || "").trim();
+        const toVal = (toInput?.value || "").trim();
+
+        if (!fromVal || !toVal) {
+          showToast("Please enter both the original name and Khmer dub name.", "warning");
+          return;
+        }
+
+        const items = window.loadGlossary();
+        const existingIdx = items.findIndex((i) => i.from.toLowerCase() === fromVal.toLowerCase());
+        if (existingIdx > -1) {
+          items[existingIdx].to = toVal;
+        } else {
+          items.push({ from: fromVal, to: toVal });
+        }
+        window.saveGlossary(items);
+        if (fromInput) fromInput.value = "";
+        if (toInput) toInput.value = "";
+        showToast(`Saved term: ${fromVal} ➔ ${toVal}`, "success");
+      };
+
+      window.deleteGlossaryItem = (index) => {
+        const items = window.loadGlossary();
+        if (index >= 0 && index < items.length) {
+          items.splice(index, 1);
+          window.saveGlossary(items);
+        }
+      };
+
+      window.clearAllGlossary = () => {
+        window.saveGlossary([]);
+        showToast("Glossary cleared.", "info");
+      };
+
+      window.renderGlossaryList = () => {
+        const listEl = document.getElementById("glossary-items-list");
+        const countEl = document.getElementById("glossary-count");
+        if (!listEl) return;
+
+        const items = window.loadGlossary();
+        if (countEl) countEl.textContent = `${items.length} ${items.length === 1 ? "term" : "terms"}`;
+
+        if (items.length === 0) {
+          listEl.innerHTML = `
+            <div class="py-8 text-center text-xs text-[var(--text-muted)] flex flex-col items-center gap-1.5">
+              <i data-lucide="book" class="w-6 h-6 opacity-40"></i>
+              <p>No custom terms added yet. Add names like <code>顾总 ➔ លោកប្រធានគូ</code> above.</p>
+            </div>`;
+          _lucideCreateIcons();
+          return;
+        }
+
+        listEl.innerHTML = items
+          .map(
+            (item, idx) => `
+          <div class="flex items-center justify-between p-2 rounded-lg bg-[var(--bg-base)] border border-[var(--border-light)] hover:border-cyan-400/30 transition-colors">
+            <div class="flex items-center gap-2 overflow-hidden">
+              <span class="text-xs font-mono font-bold text-cyan-300 truncate max-w-[140px]">${item.from.replace(/</g, "&lt;")}</span>
+              <span class="text-xs text-[var(--text-muted)]">➔</span>
+              <span class="text-xs font-khmer font-medium text-[var(--text-bright)] truncate max-w-[200px]">${item.to.replace(/</g, "&lt;")}</span>
+            </div>
+            <button onclick="deleteGlossaryItem(${idx})" class="text-[var(--text-muted)] hover:text-red-400 p-1 rounded transition-colors" title="Delete term">
+              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
+        `
+          )
+          .join("");
+        _lucideCreateIcons();
+      };
+
+      // ══════════════════════════════════════════════════════════════════════
+      // CREATOR FEATURE 5: BATCH MULTI-EPISODE DUBBING QUEUE
+      // ══════════════════════════════════════════════════════════════════════
+      window.openBatchDubberModal = () => {
+        const modal = document.getElementById("modal-batch-dubber");
+        if (!modal) return;
+        renderBatchProjectsList();
+        modal.classList.remove("hidden");
+        requestAnimationFrame(() => {
+          modal.classList.add("opacity-100");
+          modal.querySelector("div")?.classList.add("scale-100");
+        });
+        _lucideCreateIcons();
+      };
+
+      window.closeBatchDubberModal = () => {
+        const modal = document.getElementById("modal-batch-dubber");
+        if (!modal) return;
+        modal.classList.remove("opacity-100");
+        modal.querySelector("div")?.classList.remove("scale-100");
+        setTimeout(() => modal.classList.add("hidden"), 300);
+      };
+
+      window.renderBatchProjectsList = () => {
+        const listEl = document.getElementById("batch-projects-list");
+        const countEl = document.getElementById("batch-queue-count");
+        if (!listEl) return;
+
+        const validProjects = projects.filter((p) => p && p.file);
+        if (countEl) countEl.textContent = `${validProjects.length} ${validProjects.length === 1 ? "Episode" : "Episodes"}`;
+
+        if (validProjects.length === 0) {
+          listEl.innerHTML = `
+            <div class="py-8 text-center text-xs text-[var(--text-muted)] flex flex-col items-center gap-1.5">
+              <i data-lucide="folder-open" class="w-6 h-6 opacity-40"></i>
+              <p>No video projects loaded in workspace. Open or import video files first.</p>
+            </div>`;
+          _lucideCreateIcons();
+          return;
+        }
+
+        listEl.innerHTML = validProjects
+          .map((p, idx) => {
+            const subCount = (p.subtitles || []).length;
+            const readyAudios = (p.subtitles || []).filter((s) => s.audioStatus === "ready" || s.file).length;
+            const isDone = subCount > 0 && readyAudios === subCount;
+            const statusBadge = isDone
+              ? `<span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">Ready to Render</span>`
+              : `<span class="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-semibold">${subCount} Subtitles (${readyAudios} Audio)</span>`;
+
+            return `
+            <div class="flex items-center justify-between p-3 rounded-xl bg-[var(--bg-base)] border border-[var(--border-light)]">
+              <div class="flex items-center gap-2.5 overflow-hidden">
+                <div class="w-8 h-8 rounded-lg bg-amber-500/10 text-amber-400 flex items-center justify-center font-bold text-xs shrink-0">
+                  E${idx + 1}
+                </div>
+                <div class="flex flex-col min-w-0">
+                  <span class="text-xs font-semibold text-[var(--text-bright)] truncate">${p.file.name.replace(/</g, "&lt;")}</span>
+                  <span class="text-[10px] text-[var(--text-muted)] font-mono">${(p.duration || 0).toFixed(1)}s</span>
+                </div>
+              </div>
+              <div>${statusBadge}</div>
+            </div>
+          `;
+          })
+          .join("");
+        _lucideCreateIcons();
+      };
+
+      window.runBatchDubbingQueue = async () => {
+        const validProjects = projects.filter((p) => p && p.file);
+        if (validProjects.length === 0) {
+          showToast("No project tabs available to batch process.", "warning");
+          return;
+        }
+
+        const btn = document.getElementById("btn-start-batch-run");
+        const statusLabel = document.getElementById("batch-status-label");
+        if (btn) btn.disabled = true;
+
+        showToast(`Starting batch dubbing queue for ${validProjects.length} episodes...`, "info");
+
+        for (let i = 0; i < validProjects.length; i++) {
+          const p = validProjects[i];
+          if (statusLabel) statusLabel.textContent = `Processing Episode ${i + 1}/${validProjects.length}: ${p.file.name}...`;
+
+          // Switch tab context
+          const projIndex = projects.indexOf(p);
+          if (projIndex > -1) {
+            switchProject(projIndex);
+          }
+
+          // Auto-Fit Lip Sync speech rate if subtitles exist
+          if (p.subtitles && p.subtitles.length > 0) {
+            await autoFitLipSyncRates();
+          }
+
+          // Trigger audio generation if pending
+          const pendingSubs = (p.subtitles || []).filter((s) => s.audioStatus !== "ready" && !s.file);
+          if (pendingSubs.length > 0) {
+            showToast(`Generating speech for Episode ${i + 1}...`, "info");
+            if (typeof generateSelectedAudio === "function") {
+              await generateSelectedAudio();
+            }
+          }
+        }
+
+        if (statusLabel) statusLabel.textContent = "✓ Batch Queue Finished!";
+        if (btn) btn.disabled = false;
+        showToast("✓ Batch processing queue completed!", "success");
+      };
 
       function voxCmp2SaveUrl(value) {
         const data = voxCmp2Load();
@@ -15044,6 +15649,13 @@
               // Strip the tag so the dialogue text is clean
               textContent = textContent.replace(/^\[(Male|Female)(?::([^\]]+))?\]\s*/i, "").trim();
             }
+
+            // Strip zero-width characters and normalize spaces
+            textContent = textContent
+              .replace(/[\u200B-\u200D\uFEFF\u00A0]/g, "")
+              .replace(/[ \t]+/g, " ")
+              .trim();
+
             return {
               id: crypto.randomUUID().substring(0, 8),
               textStart: sTime.toFixed(2),
@@ -16869,6 +17481,12 @@
                   <span class="truncate">${sub.originalText.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</span>
                 </div>` : ''}
                 <input type="text" value="${sub.text.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&#39;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}" class="subtitle-text-input w-full bg-transparent border-none outline-none font-khmer text-[13px] ${textInputColor} group-hover:text-[var(--text-bright)] focus:ring-2 focus:ring-[var(--accent-primary)] focus:bg-[var(--bg-base)] rounded px-2 py-1 -ml-2 transition-all">
+                <div class="flex items-center gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button type="button" onclick="event.stopPropagation(); triggerAiRewrite('${sub.id}', 'shorten')" class="px-1.5 py-0.5 rounded text-[10px] bg-[var(--bg-base)] border border-[var(--border-light)] hover:border-emerald-500 hover:text-emerald-400 text-[var(--text-muted)] transition-colors flex items-center gap-0.5 cursor-pointer shadow-xs" title="Make Shorter (កាត់ឲ្យខ្លី)">⚡ Shorten</button>
+                  <button type="button" onclick="event.stopPropagation(); triggerAiRewrite('${sub.id}', 'dramatic')" class="px-1.5 py-0.5 rounded text-[10px] bg-[var(--bg-base)] border border-[var(--border-light)] hover:border-rose-500 hover:text-rose-400 text-[var(--text-muted)] transition-colors flex items-center gap-0.5 cursor-pointer shadow-xs" title="Dramatic (បន្ថែមអារម្មណ៍)">🎭 Drama</button>
+                  <button type="button" onclick="event.stopPropagation(); triggerAiRewrite('${sub.id}', 'royal')" class="px-1.5 py-0.5 rounded text-[10px] bg-[var(--bg-base)] border border-[var(--border-light)] hover:border-amber-500 hover:text-amber-400 text-[var(--text-muted)] transition-colors flex items-center gap-0.5 cursor-pointer shadow-xs" title="Royal Court (រាជស័ព្ទ)">👑 Royal</button>
+                  <button type="button" onclick="event.stopPropagation(); triggerAiRewrite('${sub.id}', 'comedy')" class="px-1.5 py-0.5 rounded text-[10px] bg-[var(--bg-base)] border border-[var(--border-light)] hover:border-pink-500 hover:text-pink-400 text-[var(--text-muted)] transition-colors flex items-center gap-0.5 cursor-pointer shadow-xs" title="Comedy (កំប្លែង)">😆 Comedy</button>
+                </div>
             </td>
             <td class="px-4 py-2 overflow-visible relative z-[1]" onclick="event.stopPropagation()">
             <div class="flex items-center gap-1.5">
@@ -18238,6 +18856,48 @@
 
         // 3. Force Lucide to instantly draw the new icon!
         _lucideCreateIcons({ root: btnGenerateAudio });
+        if (typeof updateGenerateAllButtonState === "function") updateGenerateAllButtonState();
+      };
+
+      let isGeneratingAudioAll = false;
+
+      const updateGenerateAllButtonState = () => {
+        const btnAll = document.getElementById("btn-generate-audio-all");
+        if (!btnAll) return;
+
+        const isAnyRunning = isGeneratingAudioAll || projects.some((p) => p.isGeneratingAudio || p._voxQueued);
+
+        btnAll.classList.remove(
+          "bg-red-600",
+          "border-red-500",
+          "text-white",
+          "shadow-md",
+          "shadow-red-900/30",
+          "hover:bg-red-700",
+          "bg-[var(--bg-base)]",
+          "border-[var(--border-light)]",
+          "text-[var(--text-secondary)]",
+        );
+
+        if (isAnyRunning) {
+          btnAll.classList.add("bg-red-600", "border-red-500", "text-white", "shadow-md", "shadow-red-900/30", "hover:bg-red-700");
+          btnAll.innerHTML = `
+            <i data-lucide="x-circle" class="w-[14px] h-[14px] shrink-0 animate-pulse text-white"></i>
+            <span class="hidden md:inline">Stop All Tabs</span>
+            <span class="md:hidden">Stop All</span>
+          `;
+        } else {
+          btnAll.classList.add("bg-[var(--bg-base)]", "border-[var(--border-light)]", "text-[var(--text-secondary)]");
+          btnAll.innerHTML = `
+            <i data-lucide="layers" class="w-[14px] h-[14px] text-amber-400 shrink-0 transition-transform duration-300 group-hover:scale-110"></i>
+            <span class="hidden md:inline">Generate All Tabs</span>
+            <span class="md:hidden">All Tabs</span>
+          `;
+        }
+
+        if (typeof lucide !== "undefined") {
+          _lucideCreateIcons({ root: btnAll });
+        }
       };
 
       // --- NATIVE PARTICLE BURST ENGINE ---
@@ -18854,13 +19514,29 @@
         saveCurrentProjectState();
 
         const subsToGenerate = subtitles.filter((s) => selectedItems.includes(`text-${s.id}`) || selectedItems.includes(`audio-${s.id}`));
+        const idsToProcess = subsToGenerate.length > 0 ? subsToGenerate.map((s) => s.id) : null;
 
-        if (subsToGenerate.length === 0) {
+        if (!idsToProcess || idsToProcess.length === 0) {
           return showToast("No subtitles selected for generation.", "info");
         }
 
-        // --- 🟢 CHECK LOCAL AI SETTINGS ---
-        // Retrieve local storage configuration directly matching the Settings UI keys
+        await generateStandardAudioForProject(targetProject, idsToProcess, false);
+      });
+
+      async function generateStandardAudioForProject(targetProject, explicitIds = null, isBatch = false) {
+        if (!targetProject || !targetProject.subtitles || targetProject.subtitles.length === 0) {
+          return { success: false, error: "No subtitles" };
+        }
+
+        const idsToProcess = explicitIds && explicitIds.length > 0
+          ? explicitIds
+          : targetProject.subtitles.map((s) => s.id);
+
+        if (idsToProcess.length === 0) {
+          return { success: false, error: "No subtitles to process" };
+        }
+
+        // Retrieve local storage configuration
         const voxCmp2Data =
           typeof voxCmp2Load === "function"
             ? voxCmp2Load()
@@ -18874,28 +19550,28 @@
 
         if (isVoxCmp2Enabled && (!voxCmp2Data.serverUrl || voxCmp2Data.serverUrl.trim() === "")) {
           showToast("Please enter your VoxCMP2 AI Server URL in Settings first.", "error");
-          document.getElementById("btn-open-settings").click();
-          return;
+          document.getElementById("btn-open-settings")?.click();
+          return { success: false, error: "VoxCPM2 server URL not set" };
         }
 
         const cancelRef = { cancelled: false };
         targetProject._cancelGenRef = cancelRef;
 
         const jobAbortController = new AbortController();
-
-        isGeneratingAudio = true;
-        cancelGeneration = false;
-        generateAbortController = jobAbortController;
         targetProject.generateAbortController = jobAbortController;
-        projectsPendingAudit.add(targetProject); // only this tab gets swept by the post-generation audit
-        syncProcessStateToProject();
-        updateGenerateButtonState();
-        saveStateToPast();
+        targetProject.isGeneratingAudio = true;
+        projectsPendingAudit.add(targetProject);
 
-        const idsToProcess = subsToGenerate.map((s) => s.id);
+        const isActiveTab = projects[activeProjectIndex] === targetProject;
+        if (isActiveTab) {
+          isGeneratingAudio = true;
+          cancelGeneration = false;
+          generateAbortController = jobAbortController;
+          syncProcessStateToProject();
+          updateGenerateButtonState();
+          saveStateToPast();
+        }
 
-        // --- 🟢 STRICT 1-BY-1 QUEUE CONCURRENCY FIX ---
-        // Force concurrency exactly to 1 when VoxCMP2 is enabled, otherwise use standard user settings
         const concurrentLimit = isVoxCmp2Enabled ? 1 : parseInt(localStorage.getItem("aiDubberConcurrentAudio") || "3", 10);
 
         let renderTimeout = null;
@@ -18917,25 +19593,19 @@
           const projSub = targetProject.subtitles.find((s) => s.id === sub.id);
           if (projSub) Object.assign(projSub, sub);
 
-          // Only patch the DOM if this project's tab is currently visible
           if (projects[activeProjectIndex] === targetProject) {
-            // Also sync the live subtitles array
             const liveIdx = subtitles.findIndex((s) => s.id === sub.id);
             if (liveIdx > -1) subtitles[liveIdx] = { ...sub };
             if (typeof updateSubtitleRowStatus === "function") {
               updateSubtitleRowStatus(sub);
             }
           }
-          // Always keep the tab badge in sync (dot color / pulse).
-          // Debounced: this fires once per generated clip, and a full rebuild
-          // destroys and recreates every tab button (plus its listeners) each
-          // time - with several tabs generating at once that alone can pin the
-          // main thread.
           if (typeof scheduleRenderProjectTabs === "function") scheduleRenderProjectTabs();
         };
 
         const metadataPromises = [];
         const queue = [...idsToProcess];
+
         const processSingleAudio = async (subId) => {
           if (cancelRef.cancelled) return;
 
@@ -18970,11 +19640,8 @@
             try {
               let response;
 
-              // --- 🟢 CONDITIONAL ROUTING AWAY FROM EDGE-TTS ---
               if (isVoxCmp2Enabled) {
-                // Apply smart auto-detection instantly to fetch the highly specific assigned local profile
                 const matchedProfile = resolveSmartVoxCpmProfile(sub.gender, voxCmp2Data.profiles);
-
                 response = await fetch("http://localhost:3001/api/generate-voxcmp2", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
@@ -18990,7 +19657,6 @@
                   signal: jobAbortController.signal,
                 });
               } else {
-                // Standard edge-tts generation fallback
                 response = await fetch("http://localhost:3001/api/generate-audio", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
@@ -19022,9 +19688,6 @@
 
               if (data.success) {
                 const freshUrl = `${data.url}&t=${Date.now()}`;
-
-                // ✅ IMMEDIATE UI UPDATE — mark ready as soon as server confirms success.
-                // Don't block the UI on audio metadata loading.
                 const safeIndex = targetSubs.findIndex((s) => s.id === subId);
                 if (safeIndex > -1) {
                   spinOffOrphanAudioIfNeeded(targetSubs[safeIndex]);
@@ -19033,7 +19696,6 @@
                   targetSubs[safeIndex].audioUrl = freshUrl;
                   targetSubs[safeIndex].file = data.file;
                   targetSubs[safeIndex].audioStart = startTime.toFixed(2);
-                  // Default speed/end — will be refined by background metadata load below
                   if (!targetSubs[safeIndex].speed) targetSubs[safeIndex].speed = 1.0;
                   if (data.duration && data.duration > 0) {
                     targetSubs[safeIndex].baseAudioDuration = data.duration;
@@ -19049,8 +19711,6 @@
                   success = true;
                   batchedRenderSubtitlesImmediate(targetSubs[safeIndex]);
 
-                  // 🔥 PRE-WARM: immediately load audio into activeAudios so it's
-                  // playable right away, even while other rows are still generating.
                   if (projects[activeProjectIndex] === targetProject) {
                     if (activeAudios[subId]) {
                       activeAudios[subId].pause();
@@ -19071,7 +19731,7 @@
                   }
                 }
 
-                // 🔄 BACKGROUND metadata load — refines duration/speed without blocking UI
+                // Background duration load
                 const bgIndex = targetSubs.findIndex((s) => s.id === subId);
                 if (bgIndex > -1) {
                   const resolvedMetaUrl = freshUrl.startsWith("http") ? freshUrl : `http://localhost:3001${freshUrl}`;
@@ -19132,18 +19792,12 @@
                 }
               } else {
                 const apiErrMsg = data.message || data.error || "Server returned failure status";
-                const isApiLimitErr = /429|quota|limit|demand|exhaust|overload|resource|unavailable|503|API key/i.test(apiErrMsg);
-                if (data.errorCode === "TTS_NETWORK_TIMEOUT") {
-                  showToast("Voice generation couldn't reach the TTS server. Your internet connection may be unstable — try switching WiFi/hotspot or a different network.", "error");
-                } else if (data.errorCode === "TTS_LANGUAGE_MISMATCH") {
-                  const mismatchIdx = targetSubs.findIndex((s) => s.id === subId);
-                  const lineLabel = mismatchIdx > -1 ? `Subtitle #${mismatchIdx + 1}` : "This subtitle";
-                  showToast(`${lineLabel}: Edge TTS couldn't generate audio — the text language likely doesn't match the selected voice. ភាសាដែលបានជ្រើសរើសអាចនឹងខុសពីភាសាដែលអ្នកបានបង្កើតសម្លេង។ សូមពិនិត្យមើលត្រង់នឹងម្ដងទៀត!`, "error");
-                } else if (isApiLimitErr) {
-                  showToast("API keys have hit limits or Google is experiencing high demand.", "error", {
-                    linkUrl: "https://t.me/daidubberpro_official/151",
-                    linkText: "ចុចទីនេះ អានបន្ថែម",
-                  });
+                if (!isBatch) {
+                  if (data.errorCode === "TTS_NETWORK_TIMEOUT") {
+                    showToast("Voice generation couldn't reach the TTS server.", "error");
+                  } else if (data.errorCode === "TTS_LANGUAGE_MISMATCH") {
+                    showToast("Edge TTS text language likely doesn't match selected voice.", "error");
+                  }
                 }
                 throw new Error(apiErrMsg);
               }
@@ -19154,12 +19808,10 @@
                 break;
               }
 
-              const isNetworkError = error.message === "Failed to fetch" || error.message?.includes("NetworkError") || error.message?.includes("net::ERR") || error.message?.includes("timeout") || error.message?.includes("load timeout");
-
-              console.warn(`[Retry ${attempt}/${maxRetries}] ${isNetworkError ? "⚡ Network loss" : "❌ Server error"} for subtitle ${subId}:`, error.message);
+              const isNetworkError = error.message === "Failed to fetch" || error.message?.includes("NetworkError") || error.message?.includes("net::ERR");
+              console.warn(`[Retry ${attempt}/${maxRetries}] Audio gen retry for subtitle ${subId}:`, error.message);
 
               if (attempt >= maxRetries) {
-                console.error(`Gave up on subtitle ${subId} after ${maxRetries} attempts.`);
                 const safeIndex = targetSubs.findIndex((s) => s.id === subId);
                 if (safeIndex > -1) targetSubs[safeIndex].audioStatus = "error";
                 if (projects[activeProjectIndex] === targetProject) {
@@ -19169,19 +19821,13 @@
               } else {
                 const baseDelay = isNetworkError ? 3000 : 1500;
                 const backoff = Math.min(baseDelay * Math.pow(2, attempt - 1), 30000);
-
-                console.log(`⏳ Waiting ${(backoff / 1000).toFixed(1)}s before retry ${attempt + 1}/${maxRetries}...`);
-
                 const retryIndex = targetSubs.findIndex((s) => s.id === subId);
                 if (retryIndex > -1) {
                   targetSubs[retryIndex].audioStatus = "generating";
-                  targetSubs[retryIndex]._retryInfo = `Retry ${attempt}/${maxRetries - 1} in ${(backoff / 1000).toFixed(0)}s`;
+                  targetSubs[retryIndex]._retryInfo = `Retry in ${(backoff / 1000).toFixed(0)}s`;
                   if (projects[activeProjectIndex] === targetProject) {
                     const liveIdx = subtitles.findIndex((s) => s.id === subId);
-                    if (liveIdx > -1) {
-                      subtitles[liveIdx].audioStatus = "generating";
-                      subtitles[liveIdx]._retryInfo = targetSubs[retryIndex]._retryInfo;
-                    }
+                    if (liveIdx > -1) subtitles[liveIdx]._retryInfo = targetSubs[retryIndex]._retryInfo;
                   }
                   batchedRenderSubtitles(targetSubs[retryIndex]);
                 }
@@ -19217,7 +19863,6 @@
           }
         };
 
-        // --- ENFORCE DYNAMIC CONCURRENCY LIMIT ---
         const workers = [];
         const activeThreads = Math.min(concurrentLimit, idsToProcess.length);
         for (let i = 0; i < activeThreads; i++) {
@@ -19232,144 +19877,63 @@
             renderTimeout = null;
           }
 
-          // ⏳ Wait for all background metadata loads to finish before running Auto-Fit
-          // so baseAudioDuration is populated on every ready subtitle.
-          const META_TIMEOUT = 8000; // 8s max wait for all background duration loads
+          const META_TIMEOUT = 8000;
           await Promise.race([Promise.allSettled(metadataPromises), new Promise((r) => setTimeout(r, META_TIMEOUT))]);
 
           const succeededCount = targetProject.subtitles.filter((s) => idsToProcess.includes(s.id) && s.audioStatus === "ready").length;
 
-          // 🟢 THE FIX: Removed `if (!cancelRef.cancelled)` restriction!
-          // Auto-Fit now runs on whatever successfully generated before stopping.
-          const isActiveProject = projects[activeProjectIndex] === targetProject;
-
-          // ── DOUBLE-CHECK HELPER ──────────────────────────────────────────
-          // Returns true if every ready sub in the given array already has its
-          // speed and audioEnd correctly fitted (nothing left to do).
-          const isAutoFitAlreadyApplied = (subsArray, projDur) => {
-            if (autoFitState === 0) return true;
-            const margins = { 1: 0.15, 2: 0.0, 3: -0.15 };
-            const overlapMargin = margins[autoFitState];
-            const sorted = [...subsArray].sort((a, b) => parseFloat(a.textStart) - parseFloat(b.textStart));
-            return sorted.every((sub, idx) => {
-              if (sub.audioStatus !== "ready" || !sub.baseAudioDuration) return true;
-              const nextSub = sorted[idx + 1];
-              const startTime = parseFloat(sub.textStart);
-              const maxDuration = nextSub ? parseFloat(nextSub.textStart) - startTime + overlapMargin : projDur - startTime;
-              const visualDuration = sub.baseAudioDuration / (sub.speed || 1.0);
-              return !(visualDuration > maxDuration && maxDuration > 0.1);
-            });
-          };
-
-          const isSyncEndAlreadyApplied = (subsArray, projDur) => {
-            if (!matchAudioEndEnabled) return true;
-            return subsArray.every((sub) => {
-              if (sub.audioStatus !== "ready" || sub.audioEnd == null) return true;
-              const clampedEnd = Math.min(parseFloat(sub.audioEnd), projDur).toFixed(2);
-              return parseFloat(sub.textEnd) === parseFloat(clampedEnd);
-            });
-          };
-          // ── END DOUBLE-CHECK HELPER ──────────────────────────────────────
-
+          // Apply Auto-Fit & Sync End
           let optimizedCount = 0;
           if (autoFitState > 0 && targetProject.subtitles.length > 0) {
             const margins = { 1: 0.15, 2: 0.0, 3: -0.15 };
             const overlapMargin = margins[autoFitState];
             const projDuration = targetProject.duration > 0 ? targetProject.duration : Infinity;
+            const sorted = [...targetProject.subtitles].sort((a, b) => parseFloat(a.textStart) - parseFloat(b.textStart));
 
-            // Double-check: skip if already correctly applied
-            if (!isAutoFitAlreadyApplied(targetProject.subtitles, projDuration)) {
-              const sorted = [...targetProject.subtitles].sort((a, b) => parseFloat(a.textStart) - parseFloat(b.textStart));
-
-              sorted.forEach((sub, idx) => {
-                if (sub.audioStatus === "ready" && sub.baseAudioDuration) {
-                  const nextSub = sorted[idx + 1];
-                  const startTime = parseFloat(sub.textStart);
-                  const maxDuration = nextSub ? parseFloat(nextSub.textStart) - startTime + overlapMargin : projDuration - startTime;
-
-                  const visualDuration = sub.baseAudioDuration / (sub.speed || 1.0);
-                  if (visualDuration > maxDuration && maxDuration > 0.1) {
-                    const requiredSpeed = Math.max(0.5, Math.min(2.5, sub.baseAudioDuration / maxDuration));
-                    const realIdx = targetProject.subtitles.findIndex((s) => s.id === sub.id);
-                    if (realIdx > -1) {
-                      targetProject.subtitles[realIdx].speed = requiredSpeed;
-                      let finalEnd = startTime + sub.baseAudioDuration / requiredSpeed;
-                      if (finalEnd > projDuration) finalEnd = projDuration;
-                      targetProject.subtitles[realIdx].audioEnd = finalEnd.toFixed(2);
-                      optimizedCount++;
-                    }
+            sorted.forEach((sub, idx) => {
+              if (sub.audioStatus === "ready" && sub.baseAudioDuration) {
+                const nextSub = sorted[idx + 1];
+                const startTime = parseFloat(sub.textStart);
+                const maxDuration = nextSub ? parseFloat(nextSub.textStart) - startTime + overlapMargin : projDuration - startTime;
+                const visualDuration = sub.baseAudioDuration / (sub.speed || 1.0);
+                if (visualDuration > maxDuration && maxDuration > 0.1) {
+                  const requiredSpeed = Math.max(0.5, Math.min(2.5, sub.baseAudioDuration / maxDuration));
+                  const realIdx = targetProject.subtitles.findIndex((s) => s.id === sub.id);
+                  if (realIdx > -1) {
+                    targetProject.subtitles[realIdx].speed = requiredSpeed;
+                    let finalEnd = startTime + sub.baseAudioDuration / requiredSpeed;
+                    if (finalEnd > projDuration) finalEnd = projDuration;
+                    targetProject.subtitles[realIdx].audioEnd = finalEnd.toFixed(2);
+                    optimizedCount++;
                   }
                 }
-              });
-            } else {
-              console.log(`[AutoFit] Tab "${targetProject.name || targetProject.fileName}" already fitted — skipping.`);
-            }
+              }
+            });
           }
 
-          // 🔗 SYNC END TO AUDIO — runs after Auto-Fit so textEnd matches the
-          // *final* audioEnd (post speed-fit), at the same trigger point as Auto-Fit.
           let matchedCount = 0;
           if (matchAudioEndEnabled && targetProject.subtitles.length > 0) {
             const safeDur = targetProject.duration > 0 ? targetProject.duration : Infinity;
-            // Double-check: skip if already correctly applied
-            if (!isSyncEndAlreadyApplied(targetProject.subtitles, safeDur)) {
-              matchedCount = applyMatchAudioEndToSubs(targetProject.subtitles, safeDur);
-            } else {
-              console.log(`[SyncEnd] Tab "${targetProject.name || targetProject.fileName}" already synced — skipping.`);
-            }
+            matchedCount = applyMatchAudioEndToSubs(targetProject.subtitles, safeDur);
           }
 
-          if (isActiveProject && (optimizedCount > 0 || matchedCount > 0)) {
+          saveProjectStateDirectly(targetProject);
+
+          if (isActiveTab) {
             subtitles = targetProject.subtitles.map((s) => ({ ...s }));
             renderSubtitles();
             updateContextualControls();
           }
 
-          // ✅ BACKGROUND TAB FIX: persist fitted/synced state for non-active tabs
-          // so switching to them later shows the correct data.
-          if (!isActiveProject && (optimizedCount > 0 || matchedCount > 0)) {
-            targetProject.subtitles = targetProject.subtitles.map((s) => ({
-              ...s,
-            }));
+          if (!isBatch && !cancelRef.cancelled) {
+            showToast("Audio Generation Complete!", "success");
+            Stats.inc(Stats.keys.lines, succeededCount);
           }
 
-          const strengthName = ["", "Weak", "Med", "Strong"][autoFitState];
-
-          if (cancelRef.cancelled) {
-            // Silently notify the user that Auto-Fit/Sync-End still cleaned up their stopped project
-            if (optimizedCount > 0 || matchedCount > 0) {
-              let msg = "Stopped.";
-              if (optimizedCount > 0) msg += ` Auto-Fit (${strengthName}) synced ${optimizedCount} clips.`;
-              if (matchedCount > 0) msg += ` Sync End matched ${matchedCount} clips.`;
-              showToast(msg + " ⚡", "info");
-            }
-          } else {
-            if (optimizedCount > 0 || matchedCount > 0) {
-              let msg = "Generation Complete!";
-              if (optimizedCount > 0) msg += ` Auto-Fit (${strengthName}) synced ${optimizedCount} clips.`;
-              if (matchedCount > 0) msg += ` Sync End matched ${matchedCount} clips.`;
-              showToast(msg + " ⚡", "success");
-            } else {
-              showToast("Audio Generation Complete!", "success");
-              Stats.inc(Stats.keys.lines, succeededCount);
-            }
-          }
+          return { success: true, count: succeededCount };
         } catch (error) {
-          console.error("Critical Generation Error:", error);
-          if (!cancelRef.cancelled) {
-            const errMsg = error?.message || "";
-            const isApiLimit = /429|quota|limit|demand|exhaust|overload|resource|unavailable|503|API key/i.test(errMsg);
-            showToast(
-              isApiLimit ? "API keys have hit limits or Google is experiencing high demand." : "An unexpected error occurred during generation.",
-              "error",
-              isApiLimit
-                ? {
-                    linkUrl: "https://t.me/daidubberpro_official/151",
-                    linkText: "ចុចទីនេះ អានបន្ថែម",
-                  }
-                : {},
-            );
-          }
+          console.error("Project generation error:", error);
+          return { success: false, error: error.message };
         } finally {
           targetProject.isGeneratingAudio = false;
           targetProject.generateAbortController = null;
@@ -19380,35 +19944,124 @@
             cancelGeneration = false;
             generateAbortController = null;
             saveCurrentProjectState();
-
             syncProcessStateToProject();
             updateGenerateButtonState();
             renderSubtitles();
             if (typeof updateAudioBlocks === "function") updateAudioBlocks();
-          } else {
-            targetProject.isGeneratingAudio = false;
-            targetProject.subtitles = targetProject.subtitles.map((s) => ({
-              ...s,
-            }));
-            // 🛠 FIX: If this completed project's controller was the one stored in
-            // the global, clear the global too — otherwise switching back to this
-            // tab finds isGeneratingAudio=true and stays stuck in Stop mode.
-            if (generateAbortController === jobAbortController) {
-              isGeneratingAudio = false;
-              cancelGeneration = false;
-              generateAbortController = null;
-            }
           }
+          if (typeof updateGenerateAllButtonState === "function") updateGenerateAllButtonState();
           renderProjectTabs();
-
-          // ✅ AUDIT: Once no project is still generating, sweep all tabs to catch
-          // any that missed Auto-Fit / Sync-End due to concurrency race conditions.
-          const anyStillRunning = projects.some((p) => p.isGeneratingAudio || p._voxQueued);
-          if (!anyStillRunning) {
-            setTimeout(() => auditAllProjectsPostGeneration(), 200);
-          }
         }
-      });
+      }
+
+      async function generateSelectedAudioAllProjects() {
+        const isAnyRunning = isGeneratingAudioAll || isGeneratingAudio || voxQueueRunning || projects.some((p) => p.isGeneratingAudio || p._voxQueued);
+
+        if (isAnyRunning) {
+          isGeneratingAudioAll = false;
+          cancelGeneration = true;
+          isGeneratingAudio = false;
+          voxQueueRunning = false;
+
+          projects.forEach((p) => {
+            p.isGeneratingAudio = false;
+            p._voxQueued = false;
+            if (p._cancelGenRef) p._cancelGenRef.cancelled = true;
+            if (p.generateAbortController) p.generateAbortController.abort();
+          });
+
+          updateGenerateButtonState();
+          updateGenerateAllButtonState();
+          renderProjectTabs();
+          showToast("Stopped audio generation for all project tabs.", "info");
+          return;
+        }
+
+        if (!tempAudioPath || tempAudioPath.trim() === "") {
+          showToast("Please set the 'Generated Audio Temp Path' in Settings first.", "error");
+          document.getElementById("btn-open-settings")?.click();
+          return;
+        }
+
+        const eligibleProjects = projects.filter((p) => p.subtitles && p.subtitles.length > 0);
+        if (eligibleProjects.length === 0) {
+          showToast("No subtitles found in any open project tab.", "info");
+          return;
+        }
+
+        const voxCmp2Data =
+          typeof voxCmp2Load === "function"
+            ? voxCmp2Load()
+            : JSON.parse(localStorage.getItem("voxcmp2_settings")) || {
+                enabled: false,
+              };
+
+        if (voxCmp2Data.enabled) {
+          if (!_voxPingReady) {
+            showToast("Please Start the VoxCPM2 Server first.", "warning");
+            return;
+          }
+
+          eligibleProjects.forEach((p) => {
+            if (p === projects[activeProjectIndex]) {
+              const selectedSubIds = [...new Set(selectedItems.filter((id) => id.startsWith("text-") || id.startsWith("audio-")).map((id) => id.split("-").slice(1).join("-")))];
+              p._selectedIds = selectedSubIds.length > 0 ? selectedSubIds : p.subtitles.filter((s) => s.audioStatus === "idle" || s.audioStatus === "error").map((s) => s.id);
+            } else if (!p._selectedIds) {
+              const pending = p.subtitles.filter((s) => s.audioStatus === "idle" || s.audioStatus === "error");
+              p._selectedIds = pending.length > 0 ? pending.map((s) => s.id) : p.subtitles.map((s) => s.id);
+            }
+            p._voxQueued = true;
+          });
+
+          updateGenerateButtonState();
+          updateGenerateAllButtonState();
+          showToast(`Queued ${eligibleProjects.length} project tab(s) for VoxCPM2 generation. ⚡`, "success");
+          voxCmp2RunProjectQueue();
+          return;
+        }
+
+        // Standard TTS Queue
+        isGeneratingAudioAll = true;
+        cancelGeneration = false;
+        updateGenerateAllButtonState();
+        updateGenerateButtonState();
+        showToast(`Starting audio generation for ${eligibleProjects.length} project tab(s)...`, "info");
+
+        for (let i = 0; i < eligibleProjects.length; i++) {
+          if (!isGeneratingAudioAll || cancelGeneration) break;
+          const p = eligibleProjects[i];
+          const tabLabel = p.file?.name || p.name || `Tab ${i + 1}`;
+
+          let ids = null;
+          if (p === projects[activeProjectIndex]) {
+            const selectedSubIds = [...new Set(selectedItems.filter((id) => id.startsWith("text-") || id.startsWith("audio-")).map((id) => id.split("-").slice(1).join("-")))];
+            ids = selectedSubIds.length > 0 ? selectedSubIds : p.subtitles.filter((s) => s.audioStatus === "idle" || s.audioStatus === "error").map((s) => s.id);
+          } else if (p._selectedIds && p._selectedIds.length > 0) {
+            ids = p._selectedIds;
+          } else {
+            const pending = p.subtitles.filter((s) => s.audioStatus === "idle" || s.audioStatus === "error");
+            ids = pending.length > 0 ? pending.map((s) => s.id) : p.subtitles.map((s) => s.id);
+          }
+
+          if (!ids || ids.length === 0) ids = p.subtitles.map((s) => s.id);
+
+          showToast(`[${i + 1}/${eligibleProjects.length}] Generating audio for ${tabLabel}...`, "info");
+          await generateStandardAudioForProject(p, ids, true);
+        }
+
+        isGeneratingAudioAll = false;
+        updateGenerateAllButtonState();
+        updateGenerateButtonState();
+        renderProjectTabs();
+        showToast("✨ Audio generation complete for all project tabs!", "success");
+      }
+
+      const btnGenerateAudioAll = document.getElementById("btn-generate-audio-all");
+      if (btnGenerateAudioAll) {
+        btnGenerateAudioAll.addEventListener("click", () => {
+          generateSelectedAudioAllProjects();
+        });
+      }
 
       // --- 🟣 VOXCPM2 CROSS-PROJECT QUEUE ---
       let voxQueueRunning = false;
@@ -21257,12 +21910,30 @@
         }
       }
 
+      let isIsolatingBgm = false;
+      let isIsolatingBgmAll = false;
+      let isolateAbortController = null;
+
       const updateIsolateBgmButton = () => {
         const btnIsolateBgm = document.getElementById("btn-isolate-bgm");
+        const btnIsolateBgmAll = document.getElementById("btn-isolate-bgm-all");
+
+        if (btnIsolateBgmAll) {
+          if (isIsolatingBgmAll) {
+            btnIsolateBgmAll.className = "absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider bg-red-600 text-white border border-red-500 shadow-sm z-10 animate-pulse active:scale-95";
+            btnIsolateBgmAll.textContent = "STOP";
+            btnIsolateBgmAll.title = "Stop BGM isolation for all project tabs";
+          } else {
+            btnIsolateBgmAll.className = "absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider bg-pink-500/20 text-pink-400 border border-pink-500/30 hover:bg-pink-500 hover:text-white transition-all shadow-sm z-10 active:scale-95";
+            btnIsolateBgmAll.textContent = "ALL";
+            btnIsolateBgmAll.title = "Isolate BGM for ALL open project tabs";
+          }
+        }
+
         if (!btnIsolateBgm) return;
 
         // Reset base classes to strip out any stuck states
-        btnIsolateBgm.className = "group flex flex-col items-center justify-center gap-2 border p-3 rounded-xl transition-all duration-300 ease-out active:scale-[0.92] cursor-pointer";
+        btnIsolateBgm.className = "w-full group flex flex-col items-center justify-center gap-2 border p-3 rounded-xl transition-all duration-300 ease-out active:scale-[0.92] cursor-pointer";
 
         if (isIsolatingBgm) {
           // Active "Stop" State
@@ -21270,21 +21941,21 @@
           btnIsolateBgm.innerHTML = `
             <i data-lucide="x-circle" class="w-5 h-5 animate-pulse"></i>
             <span class="text-xs font-medium">Stop Isolating</span>
-        `;
+          `;
         } else if (!videoFile || projects[activeProjectIndex]?.isAudioOnly) {
           // Disabled State (No video loaded, or SRT Only tab)
           btnIsolateBgm.classList.add("bg-[var(--bg-base)]", "border-[var(--border-light)]", "text-[var(--text-muted)]", "opacity-60", "cursor-not-allowed");
           btnIsolateBgm.innerHTML = `
             <i data-lucide="wand-2" class="w-5 h-5 opacity-50"></i>
             <span class="text-xs font-medium">Isolate BGM</span>
-        `;
+          `;
         } else {
           // Ready / Idle State
           btnIsolateBgm.classList.add("bg-[var(--bg-hover)]", "border-[var(--border-light)]", "hover:brightness-110", "hover:-translate-y-1", "hover:shadow-lg");
           btnIsolateBgm.innerHTML = `
             <i data-lucide="wand-2" class="w-5 h-5 text-pink-500 workspace-icon-glow transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
             <span class="text-xs font-medium text-[var(--text-primary)]">Isolate BGM</span>
-        `;
+          `;
         }
 
         // Force icons to redraw immediately
@@ -21293,10 +21964,239 @@
         }
       };
 
-      const btnIsolateBgm = document.getElementById("btn-isolate-bgm");
-      let isIsolatingBgm = false;
-      let isolateAbortController = null;
+      async function isolateBgmForProject(targetProject, isBatch = false) {
+        if (!targetProject) return { success: false, error: "No project provided" };
+        if (targetProject.isAudioOnly) {
+          if (!isBatch) showToast("Isolate BGM requires a loaded video. Not available for SRT Only tabs.", "error");
+          return { success: false, error: "SRT Only" };
+        }
+        if (!targetProject.file && !targetProject.blobUrl) {
+          if (!isBatch) showToast("Load a video first before using Isolate BGM.", "info");
+          return { success: false, error: "No video file" };
+        }
 
+        // Generate a uniquely identifiable Job ID for this specific tab/run
+        const uniqueJobId = "bgm_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
+        targetProject.bgmJobId = uniqueJobId;
+
+        // Lock UI for this specific tab
+        targetProject.isIsolatingBgm = true;
+        targetProject.isolateAbortController = new AbortController();
+
+        if (projects[activeProjectIndex] === targetProject) {
+          isIsolatingBgm = true;
+          isolateAbortController = targetProject.isolateAbortController;
+          updateIsolateBgmButton();
+        }
+        if (typeof renderProjectTabs === "function") renderProjectTabs();
+
+        try {
+          if (!isBatch) {
+            showToast("Extracting & Isolating BGM (This may take a while)...", "info");
+          }
+
+          const formData = new FormData();
+          const videoSource = targetProject.blobUrl || (mainVideo && mainVideo.src) || "";
+          
+          let videoBlob;
+          if (targetProject.file && typeof targetProject.file.slice === "function") {
+            videoBlob = targetProject.file;
+          } else if (videoSource) {
+            const videoFetchRes = await fetch(videoSource);
+            videoBlob = await videoFetchRes.blob();
+          } else {
+            throw new Error("Could not access video data for " + (targetProject.name || "project"));
+          }
+
+          formData.append("videoFile", videoBlob, targetProject.file?.name || "video.mp4");
+          formData.append("jobId", uniqueJobId);
+
+          const isMacForGpu = navigator.platform.toUpperCase().includes("MAC") || navigator.userAgent.includes("Mac");
+          const savedGpuPref = localStorage.getItem("aiDubberUseGPU");
+          const useGPU = savedGpuPref !== null ? savedGpuPref !== "false" : !isMacForGpu;
+          formData.append("useGPU", useGPU);
+
+          const vocalEngine = localStorage.getItem("aiDubberVocalEngine") || "spleeter";
+          formData.append("engine", vocalEngine);
+
+          if (vocalEngine === "demucs") {
+            const demucsFolder = localStorage.getItem("aiDubberDemucsFolder") || "";
+            const demucsSegment = localStorage.getItem("aiDubberDemucsSegment") || "7";
+
+            if (!demucsFolder.trim()) {
+              targetProject.isIsolatingBgm = false;
+              if (projects[activeProjectIndex] === targetProject) {
+                isIsolatingBgm = false;
+                updateIsolateBgmButton();
+              }
+              showToast("Demucs folder path is not set in Settings.", "error");
+              return { success: false, error: "Demucs path not set" };
+            }
+
+            formData.append("demucsFolder", demucsFolder);
+            formData.append("demucsSegment", demucsSegment);
+          }
+
+          const response = await fetch("http://localhost:3001/api/remove-vocals", {
+            method: "POST",
+            body: formData,
+            signal: targetProject.isolateAbortController.signal,
+          });
+
+          const queued = await response.json();
+          if (!response.ok || !queued.success) {
+            throw new Error(queued.error || "Failed to start BGM isolation");
+          }
+
+          // Poll for result
+          const data = await new Promise((resolve, reject) => {
+            const poll = setInterval(async () => {
+              if (!targetProject.isIsolatingBgm) {
+                clearInterval(poll);
+                return reject(Object.assign(new Error("Cancelled"), { name: "AbortError" }));
+              }
+              try {
+                const statusRes = await fetch(`http://localhost:3001/api/bgm-job-status?jobId=${encodeURIComponent(uniqueJobId)}`, { signal: targetProject.isolateAbortController.signal });
+                const status = await statusRes.json();
+                if (status.status === "done") {
+                  clearInterval(poll);
+                  resolve(status);
+                } else if (status.status === "error") {
+                  clearInterval(poll);
+                  const bgmErr = new Error(status.error || "BGM isolation failed on server.");
+                  bgmErr.errorCode = status.errorCode;
+                  reject(bgmErr);
+                } else if (status.status === "cancelled") {
+                  clearInterval(poll);
+                  reject(Object.assign(new Error("Cancelled"), { name: "AbortError" }));
+                }
+              } catch (e) {
+                clearInterval(poll);
+                reject(e);
+              }
+            }, 2500);
+          });
+
+          if (!data.success) {
+            throw new Error(data.error || "Failed to isolate BGM");
+          }
+
+          // Probe audio duration and attach
+          const bgmAudioProbe = new Audio(`http://localhost:3001${data.url}`);
+          const bgmRealDuration = await new Promise((resolve) => {
+            bgmAudioProbe.onloadedmetadata = () => resolve(bgmAudioProbe.duration);
+            bgmAudioProbe.onerror = () => resolve(targetProject.duration || 0);
+          });
+          const videoDuration = targetProject.duration && targetProject.duration > 0 ? targetProject.duration : bgmRealDuration;
+          targetProject.bgmTrack = {
+            src: `http://localhost:3001${data.url}`,
+            file: data.file,
+            name: (targetProject.file?.name || "Audio") + " (Instrumental)",
+            start: 0,
+            duration: Math.min(bgmRealDuration, videoDuration),
+            volume: getGlobalBgmVolume(),
+            isMuted: false,
+            fadeIn: 0,
+            fadeOut: 0,
+          };
+
+          targetProject.vocalUrl = `http://localhost:3001${data.vocalUrl}`;
+
+          if (projects[activeProjectIndex] === targetProject) {
+            bgmTrack = { ...targetProject.bgmTrack };
+            if (typeof replaceBgmAudioSource === "function") replaceBgmAudioSource(bgmTrack.src);
+            if (typeof renderTrackA2 === "function") renderTrackA2();
+
+            const a1Canvas = document.getElementById("a1-waveform-canvas");
+            if (a1Canvas && typeof drawVocalWaveformOnA1 === "function") {
+              drawVocalWaveformOnA1(targetProject.vocalUrl);
+            }
+
+            if (!isBatch) showToast("BGM successfully isolated!", "success");
+          } else if (!isBatch) {
+            showToast("Background BGM isolation finished!", "success");
+          }
+
+          return { success: true };
+        } catch (error) {
+          if (error.name === "AbortError" || error.message?.includes("Cancelled")) {
+            console.log("BGM fetch aborted cleanly for tab.");
+            return { success: false, cancelled: true };
+          }
+          console.error("BGM Isolation Error:", error);
+          if (error.errorCode === "SMART_APP_CONTROL_BLOCK") {
+            showToast("BGM isolation was blocked by Windows Smart App Control.", "error");
+          } else if (!isBatch) {
+            showToast(error.message || "BGM Isolation failed.", "error");
+          }
+          return { success: false, error: error.message };
+        } finally {
+          targetProject.isIsolatingBgm = false;
+          if (projects[activeProjectIndex] === targetProject) {
+            isIsolatingBgm = false;
+            updateIsolateBgmButton();
+          }
+          if (typeof renderProjectTabs === "function") renderProjectTabs();
+        }
+      }
+
+      async function isolateBgmAllProjects() {
+        if (isIsolatingBgmAll) {
+          const confirmed = await customConfirm("Stop BGM isolation for all project tabs?", "Stop All", "Yes, Stop");
+          if (!confirmed) return;
+
+          isIsolatingBgmAll = false;
+          isIsolatingBgm = false;
+          projects.forEach((p) => {
+            if (p.isIsolatingBgm) {
+              p.isIsolatingBgm = false;
+              if (p.isolateAbortController) p.isolateAbortController.abort();
+              if (p.bgmJobId) {
+                fetch("http://localhost:3001/api/cancel-remove-vocals", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ jobId: p.bgmJobId }),
+                }).catch(() => {});
+              }
+            }
+          });
+          updateIsolateBgmButton();
+          if (typeof renderProjectTabs === "function") renderProjectTabs();
+          showToast("Batch BGM Isolation Stopped.", "info");
+          return;
+        }
+
+        const eligible = projects.filter((p) => !p.isAudioOnly && (p.file || p.blobUrl));
+        if (eligible.length === 0) {
+          showToast("No video project tabs found to isolate BGM.", "info");
+          return;
+        }
+
+        isIsolatingBgmAll = true;
+        updateIsolateBgmButton();
+        showToast(`Starting BGM isolation for ${eligible.length} project tab(s)...`, "info");
+
+        let completed = 0;
+        for (let i = 0; i < eligible.length; i++) {
+          if (!isIsolatingBgmAll) break;
+          const p = eligible[i];
+          const tabLabel = p.file?.name || p.name || `Tab ${i + 1}`;
+          showToast(`[${i + 1}/${eligible.length}] Isolating BGM for ${tabLabel}...`, "info");
+
+          const res = await isolateBgmForProject(p, true);
+          if (res && res.success) completed++;
+        }
+
+        isIsolatingBgmAll = false;
+        updateIsolateBgmButton();
+        if (typeof renderProjectTabs === "function") renderProjectTabs();
+
+        if (completed > 0) {
+          showToast(`✨ BGM isolation complete for ${completed}/${eligible.length} project(s)!`, "success");
+        }
+      }
+
+      const btnIsolateBgm = document.getElementById("btn-isolate-bgm");
       if (btnIsolateBgm) {
         btnIsolateBgm.addEventListener("click", async () => {
           const targetProject = projects[activeProjectIndex];
@@ -21305,225 +22205,38 @@
             return;
           }
 
-          // ==========================================
-          // 1. CANCELLATION LOGIC (WITH CONFIRM MODAL)
-          // ==========================================
           if (isIsolatingBgm) {
-            // 1. Trigger the confirmation dialog
             const confirmed = await customConfirm("Are you sure you want to stop BGM isolation for this video?", "Stop Isolating", "Yes, Stop");
-
-            // 2. If they click Cancel, abort the stop process and let it keep running
             if (!confirmed) return;
 
-            console.log("User confirmed Stop Isolating...");
-
-            // A. Instantly unlock the UI before waiting for any network requests
             isIsolatingBgm = false;
             targetProject.isIsolatingBgm = false;
             updateIsolateBgmButton();
 
-            // B. Abort the frontend fetch request so it stops waiting
             if (isolateAbortController) isolateAbortController.abort();
             if (targetProject.isolateAbortController) targetProject.isolateAbortController.abort();
 
-            // C. Fire the kill signal to the backend ONLY for this specific tab's job
             try {
               await fetch("http://localhost:3001/api/cancel-remove-vocals", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ jobId: targetProject.bgmJobId }), // Send exact ID
+                body: JSON.stringify({ jobId: targetProject.bgmJobId }),
               });
-            } catch (e) {
-              console.error("Failed to send cancel signal to backend", e);
-            }
+            } catch (e) {}
 
             showToast("BGM Isolation Stopped.", "info");
             return;
           }
 
-          // ==========================================
-          // 2. START LOGIC
-          // ==========================================
-          if (targetProject.isAudioOnly) {
-            return showToast("Isolate BGM requires a loaded video. Not available for SRT Only tabs.", "error");
-          }
+          await isolateBgmForProject(targetProject, false);
+        });
+      }
 
-          if (!targetProject.file && !targetProject.blobUrl) {
-            return showToast("Load a video first before using Isolate BGM.", "info");
-          }
-
-          // Generate a uniquely identifiable Job ID for this specific tab/run
-          const uniqueJobId = "bgm_" + Date.now();
-          targetProject.bgmJobId = uniqueJobId;
-
-          // Lock UI for this specific tab
-          targetProject.isIsolatingBgm = true;
-          targetProject.isolateAbortController = new AbortController();
-
-          if (projects[activeProjectIndex] === targetProject) {
-            isIsolatingBgm = true;
-            isolateAbortController = targetProject.isolateAbortController;
-            updateIsolateBgmButton();
-          }
-
-          try {
-            showToast("Extracting & Isolating BGM (This may take a while)...", "info");
-
-            const formData = new FormData();
-
-            const videoSource = targetProject.blobUrl || mainVideo.src;
-            const videoFetchRes = await fetch(videoSource);
-            const videoBlob = await videoFetchRes.blob();
-            formData.append("videoFile", videoBlob, targetProject.file.name);
-
-            // Inject the unique Job ID so the backend can track it
-            formData.append("jobId", uniqueJobId);
-
-            const isMacForGpu = navigator.platform.toUpperCase().includes("MAC") || navigator.userAgent.includes("Mac");
-            const savedGpuPref = localStorage.getItem("aiDubberUseGPU");
-            const useGPU = savedGpuPref !== null ? savedGpuPref !== "false" : !isMacForGpu;
-            formData.append("useGPU", useGPU);
-
-            const vocalEngine = localStorage.getItem("aiDubberVocalEngine") || "spleeter";
-            formData.append("engine", vocalEngine);
-
-            if (vocalEngine === "demucs") {
-              const demucsFolder = localStorage.getItem("aiDubberDemucsFolder") || "";
-              const demucsSegment = localStorage.getItem("aiDubberDemucsSegment") || "7";
-
-              if (!demucsFolder.trim()) {
-                targetProject.isIsolatingBgm = false;
-                isIsolatingBgm = false;
-                updateIsolateBgmButton();
-                showToast("Demucs folder path is not set. Please go to Settings → General and browse your Demucs folder.", "error");
-                return;
-              }
-
-              formData.append("demucsFolder", demucsFolder);
-              formData.append("demucsSegment", demucsSegment);
-            }
-
-            const response = await fetch("http://localhost:3001/api/remove-vocals", {
-              method: "POST",
-              body: formData,
-              signal: targetProject.isolateAbortController.signal,
-            });
-
-            const queued = await response.json();
-
-            if (!response.ok || !queued.success) {
-              throw new Error(queued.error || "Failed to start BGM isolation");
-            }
-
-            // Poll for result — server processes in background so audio gen is never blocked
-            const data = await new Promise((resolve, reject) => {
-              const poll = setInterval(async () => {
-                // If user cancelled while polling, stop immediately
-                if (!targetProject.isIsolatingBgm) {
-                  clearInterval(poll);
-                  return reject(
-                    Object.assign(new Error("Cancelled"), {
-                      name: "AbortError",
-                    }),
-                  );
-                }
-                try {
-                  const statusRes = await fetch(`http://localhost:3001/api/bgm-job-status?jobId=${encodeURIComponent(uniqueJobId)}`, { signal: targetProject.isolateAbortController.signal });
-                  const status = await statusRes.json();
-                  if (status.status === "done") {
-                    clearInterval(poll);
-                    resolve(status);
-                  } else if (status.status === "error") {
-                    clearInterval(poll);
-                    const bgmErr = new Error(status.error || "BGM isolation failed on server.");
-                    bgmErr.errorCode = status.errorCode;
-                    reject(bgmErr);
-                  } else if (status.status === "cancelled") {
-                    clearInterval(poll);
-                    reject(
-                      Object.assign(new Error("Cancelled"), {
-                        name: "AbortError",
-                      }),
-                    );
-                  }
-                  // status === 'pending' → keep polling
-                } catch (e) {
-                  clearInterval(poll);
-                  reject(e);
-                }
-              }, 2500);
-              // NOTE: deliberately NOT registered in _pollers. This poller owns
-              // the promise below and must be allowed to reject it itself when
-              // targetProject.isIsolatingBgm goes false (see closeProjectTab).
-            });
-
-            if (!data.success) {
-              throw new Error(data.error || "Failed to isolate BGM");
-            }
-
-            // Apply the isolated tracks to the project memory
-            // Probe the real audio duration first, then clamp to THIS project's video length
-            const bgmAudioProbe = new Audio(`http://localhost:3001${data.url}`);
-            const bgmRealDuration = await new Promise((resolve) => {
-              bgmAudioProbe.onloadedmetadata = () => resolve(bgmAudioProbe.duration);
-              bgmAudioProbe.onerror = () => resolve(targetProject.duration || bgmRealDuration);
-            });
-            const videoDuration = targetProject.duration && targetProject.duration > 0 ? targetProject.duration : bgmRealDuration;
-            targetProject.bgmTrack = {
-              src: `http://localhost:3001${data.url}`,
-              file: data.file,
-              name: targetProject.file.name + " (Instrumental)",
-              start: 0,
-              duration: Math.min(bgmRealDuration, videoDuration),
-              volume: getGlobalBgmVolume(),
-              isMuted: false,
-              fadeIn: 0,
-              fadeOut: 0,
-            };
-
-            targetProject.vocalUrl = `http://localhost:3001${data.vocalUrl}`;
-
-            // Update UI if the user is still looking at this specific tab
-            if (projects[activeProjectIndex] === targetProject) {
-              bgmTrack = { ...targetProject.bgmTrack };
-              if (typeof replaceBgmAudioSource === "function") replaceBgmAudioSource(bgmTrack.src);
-              if (typeof renderTrackA2 === "function") renderTrackA2();
-
-              const a1Canvas = document.getElementById("a1-waveform-canvas");
-              if (a1Canvas && typeof drawVocalWaveformOnA1 === "function") {
-                drawVocalWaveformOnA1(targetProject.vocalUrl);
-              }
-
-              showToast("BGM successfully isolated!", "success");
-            } else {
-              showToast("Background BGM isolation finished!", "success");
-            }
-          } catch (error) {
-            // Check if the error was just us intentionally cancelling it
-            if (error.name === "AbortError" || error.message.includes("Cancelled")) {
-              console.log("Fetch aborted cleanly.");
-            } else {
-              console.error("BGM Isolation Error:", error);
-              if (error.errorCode === "SMART_APP_CONTROL_BLOCK") {
-                showToast("BGM isolation was blocked by Windows Smart App Control. Please turn it off in Windows Security → App & browser control → Smart App Control, then restart the app.", "error");
-              } else {
-                showToast(error.message || "BGM Isolation failed.", "error");
-              }
-            }
-          } finally {
-            // ==========================================
-            // 3. THE BULLETPROOF UNLOCKER
-            // ==========================================
-            // No matter what happens (success, fail, or cancel), unlock the tab!
-            targetProject.isIsolatingBgm = false;
-
-            // Only update the visual button if the user is looking at THIS tab
-            if (projects[activeProjectIndex] === targetProject) {
-              isIsolatingBgm = false;
-              updateIsolateBgmButton();
-            }
-            if (typeof renderProjectTabs === "function") renderProjectTabs();
-          }
+      const btnIsolateBgmAll = document.getElementById("btn-isolate-bgm-all");
+      if (btnIsolateBgmAll) {
+        btnIsolateBgmAll.addEventListener("click", (e) => {
+          e.stopPropagation();
+          isolateBgmAllProjects();
         });
       }
 
@@ -22266,6 +22979,9 @@
                 audioTracks,
                 bgmTrack: bgmTrackData,
                 isOriginalAudioMuted,
+                duckingEnabled: typeof isRenderDuckingEnabled === "function" ? isRenderDuckingEnabled() : true,
+                duckingDepth: typeof getRenderDuckingDepth === "function" ? getRenderDuckingDepth() : "standard",
+                subtitlePreset: typeof getSubtitleStylePreset === "function" ? getSubtitleStylePreset() : "classic",
                 outputFileName: finalFileName,
                 audioOnly: window._renderMode === "audio",
                 audioFormat: window._audioFormat || "mp3",
@@ -22772,6 +23488,9 @@
                 audioTracks,
                 bgmTrack: bgmTrackData,
                 isOriginalAudioMuted: proj.isOriginalAudioMuted === true || (proj.currentVolume !== undefined ? proj.currentVolume === 0 : false),
+                duckingEnabled: typeof isRenderDuckingEnabled === "function" ? isRenderDuckingEnabled() : true,
+                duckingDepth: typeof getRenderDuckingDepth === "function" ? getRenderDuckingDepth() : "standard",
+                subtitlePreset: typeof getSubtitleStylePreset === "function" ? getSubtitleStylePreset() : "classic",
                 outputFileName: fileName,
                 audioOnly: isAudioOnly,
                 audioFormat: isAudioOnly ? audioFmt : "mp3",

@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const http = require('http');
+const { spawn, exec } = require('child_process');
 
 // Fast startup hardware flags
 app.commandLine.appendSwitch('enable-gpu-rasterization');
@@ -281,6 +282,120 @@ ipcMain.handle('app:clearCache', async (event, cachePath) => {
 ipcMain.handle('app:openExternal', async (event, targetUrl) => {
     if (targetUrl) shell.openExternal(targetUrl);
     return true;
+});
+
+// Whisper Local Transcription Handlers
+const activeWhisperJobs = new Map();
+
+ipcMain.handle('whisper:checkFolder', async (event, folderPath) => {
+    if (!folderPath || !fs.existsSync(folderPath)) {
+        return { valid: false, missing: ['Folder does not exist'] };
+    }
+    const isWin = process.platform === 'win32';
+    const runner = isWin ? 'run.bat' : 'run.sh';
+    const script = 'transcribe.py';
+    
+    const missing = [];
+    if (!fs.existsSync(path.join(folderPath, script))) missing.push(script);
+    if (!fs.existsSync(path.join(folderPath, runner))) missing.push(runner);
+    
+    return {
+        valid: missing.length === 0,
+        missing
+    };
+});
+
+ipcMain.handle('whisper:transcribe', async (event, { id, whisperFolder, audioPath, videoPath, model, device }) => {
+    if (!whisperFolder || !fs.existsSync(whisperFolder)) {
+        return { success: false, error: 'Whisper folder not found' };
+    }
+    const inputAudio = audioPath || videoPath;
+    if (!inputAudio || !fs.existsSync(inputAudio)) {
+        return { success: false, error: 'Input audio not found' };
+    }
+
+    const outSrt = path.join(AUDIO_CACHE_DIR, `whisper_${Date.now()}_${id || 'job'}.srt`);
+    const isWin = process.platform === 'win32';
+    const runnerFile = isWin ? 'run.bat' : 'run.sh';
+    const runnerPath = path.join(whisperFolder, runnerFile);
+    
+    return new Promise((resolve) => {
+        let child;
+        let stderrBuffer = '';
+        const args = ['--audio', inputAudio, '--output_srt', outSrt];
+        if (model) args.push('--model', model);
+        if (device) args.push('--device', device);
+
+        try {
+            if (fs.existsSync(runnerPath)) {
+                if (isWin) {
+                    child = spawn('cmd.exe', ['/c', runnerPath, ...args], { cwd: whisperFolder, windowsHide: true });
+                } else {
+                    child = spawn('bash', [runnerPath, ...args], { cwd: whisperFolder });
+                }
+            } else {
+                const pyScript = path.join(whisperFolder, 'transcribe.py');
+                const pyCmd = process.platform === 'win32' ? 'python' : 'python3';
+                child = spawn(pyCmd, [pyScript, ...args], { cwd: whisperFolder, windowsHide: true });
+            }
+        } catch (spawnErr) {
+            return resolve({ success: false, error: 'Failed to start Whisper process: ' + spawnErr.message });
+        }
+
+        if (id) activeWhisperJobs.set(id, child);
+
+        child.stdout.on('data', (d) => {
+            const str = d.toString();
+            console.log('[Whisper]', str);
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('whisper:log', str);
+            }
+        });
+
+        child.stderr.on('data', (d) => {
+            const str = d.toString();
+            stderrBuffer += str;
+            console.warn('[Whisper Stderr]', str);
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('whisper:log', str);
+            }
+        });
+
+        child.on('error', (err) => {
+            if (id) activeWhisperJobs.delete(id);
+            resolve({ success: false, error: err.message });
+        });
+
+        child.on('close', (code) => {
+            if (id) activeWhisperJobs.delete(id);
+            if (code === 0 && fs.existsSync(outSrt)) {
+                try {
+                    const srtText = fs.readFileSync(outSrt, 'utf8');
+                    resolve({ success: true, srtText, srtPath: outSrt });
+                } catch (e) {
+                    resolve({ success: false, error: 'Failed to read SRT output: ' + e.message });
+                }
+            } else {
+                const cleanError = stderrBuffer.trim();
+                resolve({
+                    success: false,
+                    error: cleanError ? cleanError.split('\n').pop() || `Whisper exited with code ${code}` : `Whisper exited with code ${code}`
+                });
+            }
+        });
+    });
+});
+
+ipcMain.handle('whisper:cancel', async (event, id) => {
+    if (id && activeWhisperJobs.has(id)) {
+        const proc = activeWhisperJobs.get(id);
+        try {
+            proc.kill();
+        } catch (e) {}
+        activeWhisperJobs.delete(id);
+        return { success: true, cancelled: true };
+    }
+    return { success: false };
 });
 
 // VoxCPM2 Server handlers

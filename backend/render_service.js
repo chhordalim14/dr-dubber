@@ -67,8 +67,10 @@ function renderVideo(options, onProgress, onComplete, onError) {
         bgmVolume = 0.5,
         voiceVolume = 1.0,
         duckingEnabled = true,
+        duckingDepth = 'standard', // 'light' | 'standard' | 'deep'
         muteOriginal = true,
         burnSubtitles = true,
+        subtitlePreset = 'classic', // 'classic' | 'tiktok_pop' | 'neon_cyan' | 'royal_gold'
         subtitleFont = 'KantumruyPro-Bold',
         subtitleFontSize = 24,
         subtitleFontColor = '&H00FFFFFF',
@@ -132,7 +134,7 @@ function renderVideo(options, onProgress, onComplete, onError) {
         // 2. Build Filter Graph for Audio & Video
         const filterComplex = [];
 
-        // Audio mixing
+        // Audio mixing & Studio Auto-Ducking
         if (audioInputIndices.length > 0) {
             const dubbedStreams = [];
             for (let i = 0; i < audioInputIndices.length; i++) {
@@ -153,8 +155,14 @@ function renderVideo(options, onProgress, onComplete, onError) {
             if (bgmInputIndex >= 0) {
                 const bgmVol = bgmVolume;
                 if (duckingEnabled) {
+                    let sidechainParams = 'threshold=0.08:ratio=7:attack=15:release=350';
+                    if (duckingDepth === 'light') {
+                        sidechainParams = 'threshold=0.12:ratio=4:attack=25:release=400';
+                    } else if (duckingDepth === 'deep') {
+                        sidechainParams = 'threshold=0.04:ratio=12:attack=10:release=300';
+                    }
                     filterComplex.push(`[${bgmInputIndex}:a]volume=${bgmVol}[bgm_vol]`);
-                    filterComplex.push(`[bgm_vol][dubbed_all]sidechaincompress=threshold=0.08:ratio=6:attack=20:release=350[bgm_ducked]`);
+                    filterComplex.push(`[bgm_vol][dubbed_all]sidechaincompress=${sidechainParams}[bgm_ducked]`);
                     // Spectral vocal bleed filter (cleans residual speech frequencies during dialogue)
                     filterComplex.push(`[bgm_ducked]equalizer=f=1100:t=q:w=1.5:g=-6[bgm_clean]`);
                     filterComplex.push(`[bgm_clean][dubbed_all]amix=inputs=2:normalize=0[final_audio]`);
@@ -220,7 +228,7 @@ function renderVideo(options, onProgress, onComplete, onError) {
             videoFilterStr = `[${currentVTag}]`;
         }
 
-        // Subtitles burning or soft muxing
+        // Subtitles burning or soft muxing with Visual Preset support
         let softSrtInputIndex = -1;
         if (burnSubtitles && subtitles.length > 0) {
             const srtPath = path.join(tempDir, 'subtitles_burn.srt');
@@ -229,7 +237,18 @@ function renderVideo(options, onProgress, onComplete, onError) {
             const fontsDir = path.join(__dirname, '..', 'frontend', 'fonts').replace(/\\/g, '/').replace(/:/g, '\\:');
             
             if (hasSubtitlesFilter()) {
-                const subStyle = `Fontname=${subtitleFont},Fontsize=${subtitleFontSize},PrimaryColour=${subtitleFontColor},OutlineColour=${subtitleOutlineColor},BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV=30`;
+                let subStyle = `Fontname=${subtitleFont},Fontsize=${subtitleFontSize},PrimaryColour=${subtitleFontColor},OutlineColour=${subtitleOutlineColor},BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV=30`;
+                if (subtitlePreset === 'tiktok_pop') {
+                    // Bright Yellow Pop with heavy dark outline & bold punch for Shorts / TikTok
+                    subStyle = `Fontname=${subtitleFont},Fontsize=${Math.round(subtitleFontSize * 1.15)},PrimaryColour=&H0000E5FF,OutlineColour=&H00000000,BorderStyle=1,Outline=4,Shadow=2,Alignment=2,MarginV=45,Bold=1`;
+                } else if (subtitlePreset === 'neon_cyan') {
+                    // Vibrant Neon Cyan
+                    subStyle = `Fontname=${subtitleFont},Fontsize=${subtitleFontSize},PrimaryColour=&H00FFFF00,OutlineColour=&H00111111,BorderStyle=1,Outline=3,Shadow=2,Alignment=2,MarginV=35,Bold=1`;
+                } else if (subtitlePreset === 'royal_gold') {
+                    // Imperial Gold for Historical dramas
+                    subStyle = `Fontname=${subtitleFont},Fontsize=${subtitleFontSize},PrimaryColour=&H003AD3F5,OutlineColour=&H00151535,BorderStyle=1,Outline=3,Shadow=2,Alignment=2,MarginV=35,Bold=1`;
+                }
+
                 filterComplex.push(`${videoFilterStr}subtitles=filename='${escapedSrtPath}':fontsdir='${fontsDir}':force_style='${subStyle}'[final_video]`);
             } else {
                 filterComplex.push(`${videoFilterStr}null[final_video]`);
