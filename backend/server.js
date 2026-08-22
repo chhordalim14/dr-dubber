@@ -1531,51 +1531,59 @@ app.post('/api/generate-batch-audio', async (req, res) => {
     });
 });
 
-app.post('/api/generate-voxcmp2', (req, res) => {
-    const { text, gender = 'Male', tempPath, speed = 1.0, emotion = 'Neutral', index } = req.body;
-    let voice = (gender === 'Female' || gender === 'female') ? 'km-KH-SreymomNeural' : 'km-KH-PisethNeural';
+app.post('/api/generate-voxcmp2', async (req, res) => {
+    const { text, serverUrl = 'http://localhost:8808', tempPath, profile, index, speed = 1.0, emotion = 'Neutral' } = req.body;
     const outFile = resolveAudioOutputFile(tempPath, index);
-    const pyScript = getPythonScriptPath('tts_generator.py');
 
-    const prosody = getEmotionProsody(emotion, '+0Hz', '+0%', speed);
+    const baseUrl = (serverUrl || 'http://localhost:8808').replace(/\/+$/, '');
+    const targetEndpoint = `${baseUrl}/api/generate`;
 
-    const child = spawn(PYTHON_CMD, [
-        pyScript,
-        '--text', text,
-        '--voice', voice,
-        '--rate', prosody.rate,
-        '--pitch', prosody.pitch,
-        '--volume', prosody.volume,
-        '--output', outFile
-    ]);
-    trackProcess(child);
+    try {
+        const payload = {
+            text,
+            instruction: (profile && profile.instruction) || '',
+            reference_audio: (profile && profile.audioPath) || '',
+            speed: parseFloat(speed) || 1.0,
+            emotion: emotion || 'Neutral',
+            output_path: outFile,
+            profile: profile || null
+        };
 
-    let output = '';
-    let stderr = '';
-    child.stdout.on('data', d => output += d.toString());
-    child.stderr.on('data', d => stderr += d.toString());
-    child.on('error', (err) => {
-        console.error('[TTS Error]', err);
-        if (!res.headersSent) res.status(500).json({ success: false, error: err.message });
-    });
-    child.on('close', (code) => {
-        try {
-            if (!output.trim()) {
-                console.error(`[VoxCPM2 TTS Failed] Code ${code}, Stderr: ${stderr}`);
-                return res.status(500).json({ success: false, error: stderr.trim() || `TTS process exited with code ${code}` });
-            }
-            const data = JSON.parse(output);
-            res.json({
-                success: true,
-                file: outFile,
-                duration: data.duration || 0,
-                url: `/api/audio?path=${encodeURIComponent(outFile)}`
-            });
-        } catch (e) {
-            console.error('[VoxCPM2 Parse Error]', e.message, 'Output:', output, 'Stderr:', stderr);
-            res.status(500).json({ success: false, error: output.trim() || stderr.trim() || e.message });
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 120000); // 2 minute timeout for neural synthesis
+
+        const response = await fetch(targetEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal: controller.signal
+        });
+        clearTimeout(timeout);
+
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`VoxCPM2 server returned HTTP ${response.status}: ${errText}`);
         }
-    });
+
+        const data = await response.json();
+        if (data.success === false) {
+            throw new Error(data.error || 'VoxCPM2 generation failed.');
+        }
+
+        const duration = data.duration || 0;
+        return res.json({
+            success: true,
+            file: outFile,
+            duration: duration,
+            url: `/api/audio?path=${encodeURIComponent(outFile)}`
+        });
+    } catch (err) {
+        console.error('[VoxCPM2 Request Failed]', err.message);
+        return res.status(500).json({
+            success: false,
+            error: `VoxCPM2 synthesis failed: ${err.message}. Please ensure the VoxCPM2 server is started in Settings -> VoxCPM2 AI.`
+        });
+    }
 });
 
 // 5c. Hardware Encoders Endpoint

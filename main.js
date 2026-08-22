@@ -466,16 +466,100 @@ ipcMain.handle('whisper:cancel', async (event, id) => {
 });
 
 // VoxCPM2 Server handlers
-ipcMain.handle('voxcpm2:startServer', async () => {
-    return { success: true, status: 'running', message: 'Ready' };
+let activeVoxServerJob = null;
+let activeVoxServerPort = 8808;
+
+ipcMain.handle('voxcpm2:startServer', async (event, opts = {}) => {
+    let scriptPath = (opts && opts.pythonPath) ? opts.pythonPath.trim() : '';
+    if (!scriptPath) {
+        const defaultApp = path.join('D:', 'VoxCPM2', 'app.py');
+        if (fs.existsSync(defaultApp)) scriptPath = defaultApp;
+    }
+
+    if (activeVoxServerJob && activeVoxServerJob.child && !activeVoxServerJob.child.killed) {
+        return { success: true, status: 'running', port: activeVoxServerPort, message: `Running on port ${activeVoxServerPort}` };
+    }
+
+    if (!scriptPath || !fs.existsSync(scriptPath)) {
+        return { success: false, error: `VoxCPM2 script not found at "${scriptPath}". Please configure the path in settings.` };
+    }
+
+    const scriptDir = path.dirname(scriptPath);
+    const venvPythonWin = path.join(scriptDir, 'venv', 'Scripts', 'python.exe');
+    const pythonExe = fs.existsSync(venvPythonWin) ? venvPythonWin : (process.platform === 'win32' ? 'python' : 'python3');
+    const port = opts.port || 8808;
+    activeVoxServerPort = port;
+
+    const env = Object.assign({}, process.env, {
+        HF_HOME: path.join(scriptDir, 'cache'),
+        MODELSCOPE_CACHE: path.join(scriptDir, 'cache'),
+        PIP_CACHE_DIR: path.join(scriptDir, 'cache', 'pip'),
+        PYTHONUNBUFFERED: '1'
+    });
+
+    try {
+        const child = spawn(pythonExe, [scriptPath, '--port', String(port)], {
+            cwd: scriptDir,
+            env,
+            windowsHide: true
+        });
+
+        activeVoxServerJob = { child, scriptPath, port };
+
+        child.stdout.on('data', (d) => {
+            const str = d.toString();
+            console.log('[VoxCPM2]', str);
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('voxcpm2:log', { type: 'stdout', text: str });
+            }
+        });
+
+        child.stderr.on('data', (d) => {
+            const str = d.toString();
+            console.warn('[VoxCPM2 Stderr]', str);
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('voxcpm2:log', { type: 'stderr', text: str });
+            }
+        });
+
+        child.on('close', (code) => {
+            console.log(`[VoxCPM2] Process exited with code ${code}`);
+            activeVoxServerJob = null;
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('voxcpm2:serverStopped', { code });
+            }
+        });
+
+        child.on('error', (err) => {
+            console.error('[VoxCPM2 Error]', err);
+            activeVoxServerJob = null;
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('voxcpm2:serverStopped', { error: err.message });
+            }
+        });
+
+        return { success: true, status: 'running', port, message: `Server starting on port ${port}...` };
+    } catch (err) {
+        return { success: false, error: err.message };
+    }
 });
 
 ipcMain.handle('voxcpm2:stopServer', async () => {
+    if (activeVoxServerJob && activeVoxServerJob.child) {
+        killProcessTree(activeVoxServerJob.child);
+        activeVoxServerJob = null;
+        return { success: true, status: 'stopped' };
+    }
     return { success: true, status: 'stopped' };
 });
 
 ipcMain.handle('voxcpm2:serverStatus', async () => {
-    return { running: true, ready: true };
+    const isRunning = !!(activeVoxServerJob && activeVoxServerJob.child && !activeVoxServerJob.child.killed);
+    return { running: isRunning, port: activeVoxServerPort, ready: isRunning };
+});
+
+ipcMain.on('voxcpm2:writeLog', (event, msg) => {
+    // Renderer log mirror
 });
 
 // Presets
@@ -514,6 +598,10 @@ function cleanupChildProcesses() {
                 }
             }
             activeWhisperJobs.clear();
+        }
+        if (activeVoxServerJob && activeVoxServerJob.child && !activeVoxServerJob.child.killed) {
+            killProcessTree(activeVoxServerJob.child);
+            activeVoxServerJob = null;
         }
     } catch (e) {}
 }
