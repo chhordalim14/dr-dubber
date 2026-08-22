@@ -17,6 +17,7 @@ whisper_engine/__pycache__/
 dist/
 build/
 out/
+release/
 
 # Storage & Runtime Caches (preserve directory structure via .gitkeep)
 storage/audio_cache/*

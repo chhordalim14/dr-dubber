@@ -5,17 +5,31 @@ const os = require('os');
 const http = require('http');
 const { spawn, exec } = require('child_process');
 
-// Fast startup hardware flags
+// Fast startup, GPU video decoding & CPU/RAM optimization flags
 app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('enable-zero-copy');
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
+app.commandLine.appendSwitch('enable-accelerated-video-decode');
+app.commandLine.appendSwitch('enable-accelerated-mjpeg-decode');
+app.commandLine.appendSwitch('enable-features', 'VaapiVideoDecoder,CanvasOopRasterization');
+app.commandLine.appendSwitch('js-flags', '--max-old-space-size=4096');
 
 const PORT = 3001;
 
-// Storage directories
+// Storage directories (safe for packaged app & dev)
 const ROOT_DIR = __dirname;
-const EXPORTS_DIR = path.join(ROOT_DIR, 'storage', 'exports');
-const AUDIO_CACHE_DIR = path.join(ROOT_DIR, 'storage', 'audio_cache');
+const userDataDir = app.getPath('userData');
+const STORAGE_BASE = app.isPackaged ? path.join(userDataDir, 'storage') : path.join(ROOT_DIR, 'storage');
+process.env.APP_STORAGE_DIR = STORAGE_BASE;
+
+const EXPORTS_DIR = path.join(STORAGE_BASE, 'exports');
+const AUDIO_CACHE_DIR = path.join(STORAGE_BASE, 'audio_cache');
+
+[EXPORTS_DIR, AUDIO_CACHE_DIR].forEach(dir => {
+    if (!fs.existsSync(dir)) {
+        try { fs.mkdirSync(dir, { recursive: true }); } catch (e) {}
+    }
+});
 
 let mainWindow = null;
 
@@ -38,7 +52,9 @@ function createWindow() {
             preload: path.join(ROOT_DIR, 'preload.js'),
             nodeIntegration: false,
             contextIsolation: true,
-            webSecurity: false
+            webSecurity: false,
+            spellcheck: false,
+            backgroundThrottling: true
         }
     });
 
@@ -226,6 +242,9 @@ ipcMain.handle('app:saveTextFile', async (event, { content, filePath }) => {
 
 ipcMain.handle('app:autoSaveSrt', async (event, { content, fileName, mode, sourceFilePath, customFolderPath }) => {
     try {
+        const cleanBase = (fileName || 'subtitles').replace(/[/\\?%*:|"<>]/g, '_');
+        const srtFileName = cleanBase.endsWith('.srt') ? cleanBase : `${cleanBase}.srt`;
+
         let targetDir = customFolderPath;
         if (mode === 'source' && sourceFilePath) {
             targetDir = path.dirname(sourceFilePath);
@@ -233,8 +252,19 @@ ipcMain.handle('app:autoSaveSrt', async (event, { content, fileName, mode, sourc
         if (!targetDir) targetDir = EXPORTS_DIR;
         if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
 
-        const targetFile = path.join(targetDir, `${fileName || 'subtitles'}.srt`);
+        const targetFile = path.join(targetDir, srtFileName);
         fs.writeFileSync(targetFile, content, 'utf8');
+
+        // Also save to Desktop / OneDrive "transcribe output" folder
+        const desktopOut = path.join(os.homedir(), 'Desktop', 'transcribe output');
+        const oneDriveDesktop = path.join(os.homedir(), 'OneDrive', 'Desktop', 'transcribe output');
+        [desktopOut, oneDriveDesktop, 'C:\\Export\\AIDubber\\outputs'].forEach(dir => {
+            try {
+                if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+                fs.writeFileSync(path.join(dir, srtFileName), content, 'utf8');
+            } catch (e) {}
+        });
+
         return { success: true, filePath: targetFile };
     } catch (e) {
         return { success: false, error: e.message };
@@ -342,7 +372,7 @@ ipcMain.handle('whisper:transcribe', async (event, { id, whisperFolder, audioPat
             return resolve({ success: false, error: 'Failed to start Whisper process: ' + spawnErr.message });
         }
 
-        if (id) activeWhisperJobs.set(id, child);
+        if (id) activeWhisperJobs.set(id, { child, outSrt });
 
         child.stdout.on('data', (d) => {
             const str = d.toString();
@@ -368,13 +398,16 @@ ipcMain.handle('whisper:transcribe', async (event, { id, whisperFolder, audioPat
 
         child.on('close', (code) => {
             if (id) activeWhisperJobs.delete(id);
-            if (code === 0 && fs.existsSync(outSrt)) {
+            if (fs.existsSync(outSrt)) {
                 try {
                     const srtText = fs.readFileSync(outSrt, 'utf8');
-                    resolve({ success: true, srtText, srtPath: outSrt });
-                } catch (e) {
-                    resolve({ success: false, error: 'Failed to read SRT output: ' + e.message });
-                }
+                    if (srtText && srtText.trim().length > 0) {
+                        return resolve({ success: true, srtText, srtPath: outSrt, partial: code !== 0 });
+                    }
+                } catch (e) {}
+            }
+            if (code === 0) {
+                resolve({ success: true, srtText: '', srtPath: outSrt });
             } else {
                 const cleanError = stderrBuffer.trim();
                 resolve({
@@ -388,12 +421,21 @@ ipcMain.handle('whisper:transcribe', async (event, { id, whisperFolder, audioPat
 
 ipcMain.handle('whisper:cancel', async (event, id) => {
     if (id && activeWhisperJobs.has(id)) {
-        const proc = activeWhisperJobs.get(id);
+        const job = activeWhisperJobs.get(id);
+        const child = job.child || job;
+        const outSrt = job.outSrt;
         try {
-            proc.kill();
+            child.kill();
         } catch (e) {}
         activeWhisperJobs.delete(id);
-        return { success: true, cancelled: true };
+
+        let partialSrt = '';
+        if (outSrt && fs.existsSync(outSrt)) {
+            try {
+                partialSrt = fs.readFileSync(outSrt, 'utf8');
+            } catch (e) {}
+        }
+        return { success: true, cancelled: true, srtText: partialSrt, srtPath: outSrt };
     }
     return { success: false };
 });
@@ -436,6 +478,30 @@ ipcMain.on('window:close', () => {
     if (mainWindow) mainWindow.close();
 });
 
+// Clean up any lingering background child processes on exit
+function cleanupChildProcesses() {
+    try {
+        if (typeof activeWhisperJobs !== 'undefined') {
+            for (const [id, proc] of activeWhisperJobs.entries()) {
+                if (proc && !proc.killed) {
+                    try {
+                        if (process.platform === 'win32') {
+                            exec(`taskkill /pid ${proc.pid} /T /F`, () => {});
+                        } else {
+                            proc.kill('SIGKILL');
+                        }
+                    } catch (e) {}
+                }
+            }
+            activeWhisperJobs.clear();
+        }
+    } catch (e) {}
+}
+
+app.on('before-quit', cleanupChildProcesses);
+app.on('will-quit', cleanupChildProcesses);
+
 app.on('window-all-closed', () => {
+    cleanupChildProcesses();
     if (process.platform !== 'darwin') app.quit();
 });

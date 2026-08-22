@@ -1,4 +1,4 @@
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -16,13 +16,41 @@ let _subtitlesFilterSupported = null;
 function hasSubtitlesFilter() {
     if (_subtitlesFilterSupported !== null) return _subtitlesFilterSupported;
     try {
-        const { execSync } = require('child_process');
         const filters = execSync('ffmpeg -filters', { encoding: 'utf8' });
         _subtitlesFilterSupported = filters.includes(' subtitles ') || filters.includes('subtitles ');
     } catch (e) {
         _subtitlesFilterSupported = false;
     }
     return _subtitlesFilterSupported;
+}
+
+let _detectedEncoders = null;
+function detectAvailableEncoders() {
+    if (_detectedEncoders) return _detectedEncoders;
+    try {
+        const out = execSync('ffmpeg -encoders', { encoding: 'utf8', timeout: 5000 });
+        _detectedEncoders = {
+            nvenc: out.includes('h264_nvenc'),
+            qsv: out.includes('h264_qsv'),
+            amf: out.includes('h264_amf'),
+            mf: out.includes('h264_mf'),
+            videotoolbox: out.includes('h264_videotoolbox'),
+            libx264: out.includes('libx264')
+        };
+    } catch (e) {
+        _detectedEncoders = { libx264: true };
+    }
+    return _detectedEncoders;
+}
+
+function getVideoDuration(videoPath) {
+    try {
+        const out = execSync(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${videoPath}"`, { encoding: 'utf8', timeout: 5000 });
+        const dur = parseFloat(out.trim());
+        return (dur && !isNaN(dur) && dur > 0) ? dur : null;
+    } catch (e) {
+        return null;
+    }
 }
 
 function parseTimeToSeconds(timeStr) {
@@ -59,7 +87,101 @@ function createSrtFile(subtitles, outputPath) {
     fs.writeFileSync(outputPath, srtContent, 'utf8');
 }
 
-function renderVideo(options, onProgress, onComplete, onError) {
+/**
+ * Fast Dialogue Stem Pre-Assembly.
+ * Combines all subtitle audio cues into a single master PCM dialogue track in a lightning-fast pass.
+ * This prevents passing 100-500 inputs into the main video render filter graph.
+ */
+async function assembleDialogueStem(validSubs, tempDir, voiceVolume = 1.0) {
+    if (!validSubs || validSubs.length === 0) return null;
+    const stemPath = path.join(tempDir, 'dialogue_stem.wav');
+
+    if (validSubs.length === 1) {
+        const item = validSubs[0];
+        const aPath = item.file || item.audioPath;
+        const startSec = parseTimeToSeconds(item.audioStart || item.textStart || item.startTime || 0);
+        const delayMs = Math.max(0, Math.round(startSec * 1000));
+        const subVol = parseFloat(item.volume || '1.0') || 1.0;
+        const totalVol = (voiceVolume * subVol).toFixed(2);
+        const args = [
+            '-y', '-i', aPath,
+            '-af', `adelay=${delayMs}|${delayMs},volume=${totalVol}`,
+            '-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2',
+            stemPath
+        ];
+        await new Promise((resolve, reject) => {
+            const p = spawn('ffmpeg', args, { windowsHide: true });
+            p.on('close', code => (code === 0 && fs.existsSync(stemPath)) ? resolve() : reject(new Error(`Stem exit code ${code}`)));
+            p.on('error', reject);
+        });
+        return fs.existsSync(stemPath) ? stemPath : null;
+    }
+
+    const args = ['-y'];
+    const filterParts = [];
+    const streamNames = [];
+
+    validSubs.forEach((sub, i) => {
+        const aPath = sub.file || sub.audioPath;
+        args.push('-i', aPath);
+        const startSec = parseTimeToSeconds(sub.audioStart || sub.textStart || sub.startTime || 0);
+        const delayMs = Math.max(0, Math.round(startSec * 1000));
+        const subVol = parseFloat(sub.volume || '1.0') || 1.0;
+        const totalVol = (voiceVolume * subVol).toFixed(2);
+        filterParts.push(`[${i}:a]adelay=${delayMs}|${delayMs},volume=${totalVol}[a${i}]`);
+        streamNames.push(`[a${i}]`);
+    });
+
+    filterParts.push(`${streamNames.join('')}amix=inputs=${validSubs.length}:normalize=0[aout]`);
+
+    const filterScriptPath = path.join(tempDir, 'audio_stem_filter.txt');
+    fs.writeFileSync(filterScriptPath, filterParts.join(';\n'), 'utf8');
+
+    args.push('-filter_complex_script', filterScriptPath);
+    args.push('-map', '[aout]', '-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2', stemPath);
+
+    await new Promise((resolve, reject) => {
+        const p = spawn('ffmpeg', args, { windowsHide: true });
+        p.on('close', code => (code === 0 && fs.existsSync(stemPath)) ? resolve() : reject(new Error(`Stem exit code ${code}`)));
+        p.on('error', reject);
+    });
+
+    return fs.existsSync(stemPath) ? stemPath : null;
+}
+
+function applyEncoderSettings(args, encoderPreference, resolution) {
+    const encoders = detectAvailableEncoders();
+    let chosen = encoderPreference || 'auto';
+
+    if (chosen === 'auto') {
+        if (encoders.nvenc) chosen = 'h264_nvenc';
+        else if (encoders.qsv) chosen = 'h264_qsv';
+        else if (encoders.mf && process.platform === 'win32') chosen = 'h264_mf';
+        else if (encoders.amf) chosen = 'h264_amf';
+        else if (encoders.videotoolbox && process.platform === 'darwin') chosen = 'h264_videotoolbox';
+        else chosen = 'libx264';
+    }
+
+    const cpuCores = (os.cpus() && os.cpus().length) || 4;
+    const renderThreads = Math.max(2, Math.min(cpuCores - 1, 8));
+    args.push('-threads', String(renderThreads));
+
+    if (chosen === 'h264_nvenc' && encoders.nvenc) {
+        args.push('-c:v', 'h264_nvenc', '-preset', 'p4', '-tune', 'hq', '-b:v', resolution === '1080p' ? '6500k' : '4500k');
+    } else if (chosen === 'h264_qsv' && encoders.qsv) {
+        args.push('-c:v', 'h264_qsv', '-preset', 'veryfast', '-b:v', resolution === '1080p' ? '6500k' : '4500k');
+    } else if (chosen === 'h264_amf' && encoders.amf) {
+        args.push('-c:v', 'h264_amf', '-usage', 'transcoding', '-quality', 'speed', '-b:v', resolution === '1080p' ? '6500k' : '4500k');
+    } else if (chosen === 'h264_mf' && encoders.mf) {
+        args.push('-c:v', 'h264_mf', '-b:v', resolution === '1080p' ? '6500k' : '4500k');
+    } else if (chosen === 'h264_videotoolbox' && encoders.videotoolbox) {
+        args.push('-c:v', 'h264_videotoolbox', '-b:v', resolution === '1080p' ? '6500k' : '4500k');
+    } else {
+        args.push('-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'fastdecode', '-crf', '20');
+    }
+}
+
+async function renderVideo(options, onProgress, onComplete, onError) {
     const {
         videoPath,
         subtitles = [],
@@ -77,13 +199,14 @@ function renderVideo(options, onProgress, onComplete, onError) {
         subtitleOutlineColor = '&H00000000',
         subtitlePosition = 'bottom',
         resolution = '1080p',
-        encoder = 'libx264',
+        encoder = 'auto',
         outputPath,
         videoColorAdj,
         colorAdjustments,
         videoVignette,
         isFlippedH,
-        isFlippedV
+        isFlippedV,
+        duration: providedDuration
     } = options;
 
     try {
@@ -104,7 +227,22 @@ function renderVideo(options, onProgress, onComplete, onError) {
             return aPath && fs.existsSync(aPath);
         });
 
-        // 1. Build FFmpeg command arguments
+        // 1. Pre-assemble dialogue stem in background (eliminates hundreds of stream inputs)
+        let dialogueStemPath = null;
+        if (validSubs.length > 0) {
+            try {
+                dialogueStemPath = await assembleDialogueStem(validSubs, tempDir, voiceVolume);
+            } catch (stemErr) {
+                console.warn('[Render Warning] Fast dialogue stem pre-assembly failed, falling back to direct inputs:', stemErr.message);
+                dialogueStemPath = null;
+            }
+        }
+
+        // Determine real video duration for accurate progress & ETA
+        const videoDuration = providedDuration || getVideoDuration(videoPath) || 60;
+        const renderStartTime = Date.now();
+
+        // 2. Build FFmpeg command arguments
         const args = ['-y'];
 
         // Main video input (input 0)
@@ -112,46 +250,24 @@ function renderVideo(options, onProgress, onComplete, onError) {
 
         // BGM input (input 1, if present)
         let bgmInputIndex = -1;
+        let nextInputIndex = 1;
         if (bgmPath && fs.existsSync(bgmPath)) {
             args.push('-i', bgmPath);
-            bgmInputIndex = 1;
+            bgmInputIndex = nextInputIndex++;
         }
 
-        // Subtitle audio inputs (inputs 2, 3, ...)
-        const audioInputIndices = [];
-        let nextInputIndex = bgmInputIndex >= 0 ? 2 : 1;
-
-        for (const sub of validSubs) {
-            const aPath = sub.file || sub.audioPath;
-            args.push('-i', aPath);
-            audioInputIndices.push({
-                index: nextInputIndex++,
-                startSec: parseTimeToSeconds(sub.audioStart || sub.textStart || sub.startTime || 0),
-                volume: parseFloat(sub.volume || '1.0') || 1.0
-            });
+        // Dialogue audio input
+        let dialogueInputIndex = -1;
+        if (dialogueStemPath && fs.existsSync(dialogueStemPath)) {
+            args.push('-i', dialogueStemPath);
+            dialogueInputIndex = nextInputIndex++;
         }
 
-        // 2. Build Filter Graph for Audio & Video
+        // 3. Build Filter Graph for Audio & Video
         const filterComplex = [];
 
         // Audio mixing & Studio Auto-Ducking
-        if (audioInputIndices.length > 0) {
-            const dubbedStreams = [];
-            for (let i = 0; i < audioInputIndices.length; i++) {
-                const item = audioInputIndices[i];
-                const delayMs = Math.max(0, Math.round(item.startSec * 1000));
-                const padName = `dub_${i}`;
-                filterComplex.push(`[${item.index}:a]adelay=${delayMs}|${delayMs},volume=${voiceVolume}[${padName}]`);
-                dubbedStreams.push(`[${padName}]`);
-            }
-
-            const totalDubbed = dubbedStreams.length;
-            if (totalDubbed > 1) {
-                filterComplex.push(`${dubbedStreams.join('')}amix=inputs=${totalDubbed}:normalize=0[dubbed_all]`);
-            } else {
-                filterComplex.push(`${dubbedStreams[0]}anull[dubbed_all]`);
-            }
-
+        if (dialogueInputIndex >= 0) {
             if (bgmInputIndex >= 0) {
                 const bgmVol = bgmVolume;
                 if (duckingEnabled) {
@@ -162,16 +278,15 @@ function renderVideo(options, onProgress, onComplete, onError) {
                         sidechainParams = 'threshold=0.04:ratio=12:attack=10:release=300';
                     }
                     filterComplex.push(`[${bgmInputIndex}:a]volume=${bgmVol}[bgm_vol]`);
-                    filterComplex.push(`[bgm_vol][dubbed_all]sidechaincompress=${sidechainParams}[bgm_ducked]`);
-                    // Spectral vocal bleed filter (cleans residual speech frequencies during dialogue)
+                    filterComplex.push(`[bgm_vol][${dialogueInputIndex}:a]sidechaincompress=${sidechainParams}[bgm_ducked]`);
                     filterComplex.push(`[bgm_ducked]equalizer=f=1100:t=q:w=1.5:g=-6[bgm_clean]`);
-                    filterComplex.push(`[bgm_clean][dubbed_all]amix=inputs=2:normalize=0[final_audio]`);
+                    filterComplex.push(`[bgm_clean][${dialogueInputIndex}:a]amix=inputs=2:normalize=0[final_audio]`);
                 } else {
                     filterComplex.push(`[${bgmInputIndex}:a]volume=${bgmVol}[bgm_vol]`);
-                    filterComplex.push(`[bgm_vol][dubbed_all]amix=inputs=2:normalize=0[final_audio]`);
+                    filterComplex.push(`[bgm_vol][${dialogueInputIndex}:a]amix=inputs=2:normalize=0[final_audio]`);
                 }
             } else {
-                filterComplex.push(`[dubbed_all]anull[final_audio]`);
+                filterComplex.push(`[${dialogueInputIndex}:a]anull[final_audio]`);
             }
         } else if (bgmInputIndex >= 0) {
             filterComplex.push(`[${bgmInputIndex}:a]volume=${bgmVolume}[final_audio]`);
@@ -190,9 +305,9 @@ function renderVideo(options, onProgress, onComplete, onError) {
 
         // Color Adjustments & Filters
         const ca = colorAdjustments || videoColorAdj || {};
-        const brightness = ca.brightness !== undefined ? (parseFloat(ca.brightness) - 100) / 100 : 0; // -1.0 to 1.0
-        const contrast = ca.contrast !== undefined ? parseFloat(ca.contrast) / 100 : 1.0; // 0.0 to 2.0
-        const saturation = ca.saturation !== undefined ? parseFloat(ca.saturation) / 100 : 1.0; // 0.0 to 2.0
+        const brightness = ca.brightness !== undefined ? (parseFloat(ca.brightness) - 100) / 100 : 0;
+        const contrast = ca.contrast !== undefined ? parseFloat(ca.contrast) / 100 : 1.0;
+        const saturation = ca.saturation !== undefined ? parseFloat(ca.saturation) / 100 : 1.0;
         const hue = ca.hue !== undefined ? parseFloat(ca.hue) : 0;
         const sharpness = ca.sharpness !== undefined ? parseFloat(ca.sharpness) : 0;
 
@@ -228,24 +343,21 @@ function renderVideo(options, onProgress, onComplete, onError) {
             videoFilterStr = `[${currentVTag}]`;
         }
 
-        // Subtitles burning or soft muxing with Visual Preset support
+        // Subtitles burning or soft muxing
         let softSrtInputIndex = -1;
         if (burnSubtitles && subtitles.length > 0) {
             const srtPath = path.join(tempDir, 'subtitles_burn.srt');
             createSrtFile(subtitles, srtPath);
             const escapedSrtPath = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:');
             const fontsDir = path.join(__dirname, '..', 'frontend', 'fonts').replace(/\\/g, '/').replace(/:/g, '\\:');
-            
+
             if (hasSubtitlesFilter()) {
                 let subStyle = `Fontname=${subtitleFont},Fontsize=${subtitleFontSize},PrimaryColour=${subtitleFontColor},OutlineColour=${subtitleOutlineColor},BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV=30`;
                 if (subtitlePreset === 'tiktok_pop') {
-                    // Bright Yellow Pop with heavy dark outline & bold punch for Shorts / TikTok
                     subStyle = `Fontname=${subtitleFont},Fontsize=${Math.round(subtitleFontSize * 1.15)},PrimaryColour=&H0000E5FF,OutlineColour=&H00000000,BorderStyle=1,Outline=4,Shadow=2,Alignment=2,MarginV=45,Bold=1`;
                 } else if (subtitlePreset === 'neon_cyan') {
-                    // Vibrant Neon Cyan
                     subStyle = `Fontname=${subtitleFont},Fontsize=${subtitleFontSize},PrimaryColour=&H00FFFF00,OutlineColour=&H00111111,BorderStyle=1,Outline=3,Shadow=2,Alignment=2,MarginV=35,Bold=1`;
                 } else if (subtitlePreset === 'royal_gold') {
-                    // Imperial Gold for Historical dramas
                     subStyle = `Fontname=${subtitleFont},Fontsize=${subtitleFontSize},PrimaryColour=&H003AD3F5,OutlineColour=&H00151535,BorderStyle=1,Outline=3,Shadow=2,Alignment=2,MarginV=35,Bold=1`;
                 }
 
@@ -271,10 +383,9 @@ function renderVideo(options, onProgress, onComplete, onError) {
             args.push('-c:s', 'mov_text');
         }
 
-        // Codec & Encoding settings
-        args.push('-c:v', encoder === 'h264_qsv' ? 'h264_qsv' : 'libx264');
-        args.push('-preset', 'fast');
-        args.push('-crf', '20');
+        // Hardware-Accelerated Video Encoder Configuration
+        applyEncoderSettings(args, encoder, resolution);
+
         args.push('-c:a', 'aac');
         args.push('-b:a', '192k');
         args.push('-pix_fmt', 'yuv420p');
@@ -284,6 +395,14 @@ function renderVideo(options, onProgress, onComplete, onError) {
         const ffmpeg = spawn('ffmpeg', args, { windowsHide: true });
         activeRenderProcess = ffmpeg;
 
+        function cleanupTempDir() {
+            try {
+                if (tempDir && fs.existsSync(tempDir)) {
+                    fs.rmSync(tempDir, { recursive: true, force: true });
+                }
+            } catch (e) {}
+        }
+
         let fullStderr = '';
         ffmpeg.stderr.on('data', (data) => {
             const text = data.toString();
@@ -291,17 +410,25 @@ function renderVideo(options, onProgress, onComplete, onError) {
             const timeMatch = text.match(/time=(\d{2}):(\d{2}):(\d{2}\.\d{2})/);
             if (timeMatch) {
                 const currentSec = parseFloat(timeMatch[1]) * 3600 + parseFloat(timeMatch[2]) * 60 + parseFloat(timeMatch[3]);
-                const progressPct = Math.min(99, Math.round((currentSec / 60) * 100));
+                const progressPct = Math.min(99, Math.max(1, Math.round((currentSec / videoDuration) * 100)));
+                const elapsedSec = (Date.now() - renderStartTime) / 1000;
+                const speed = currentSec / (elapsedSec || 0.001);
+                const etaSec = Math.max(0, Math.round((videoDuration - currentSec) / (speed || 1)));
+                const etaStr = etaSec < 60 ? `${etaSec}s` : `${Math.floor(etaSec / 60)}m ${etaSec % 60}s`;
+
                 currentRenderJob.progress = progressPct;
-                if (onProgress) onProgress(progressPct, 'Rendering...');
+                currentRenderJob.eta = etaStr;
+                if (onProgress) onProgress(progressPct, etaStr);
             }
         });
 
         ffmpeg.on('close', (code) => {
             activeRenderProcess = null;
+            cleanupTempDir();
             if (code === 0 && fs.existsSync(outputPath)) {
                 currentRenderJob.status = 'done';
                 currentRenderJob.progress = 100;
+                currentRenderJob.eta = '0s';
                 if (onComplete) onComplete(outputPath);
             } else {
                 console.error(`[Render FFmpeg Error Code ${code}] Full stderr:\n`, fullStderr);
@@ -313,6 +440,7 @@ function renderVideo(options, onProgress, onComplete, onError) {
 
         ffmpeg.on('error', (err) => {
             activeRenderProcess = null;
+            cleanupTempDir();
             currentRenderJob.status = 'error';
             currentRenderJob.error = err.message;
             if (onError) onError(err);
@@ -327,7 +455,14 @@ function renderVideo(options, onProgress, onComplete, onError) {
 
 function cancelRender() {
     if (activeRenderProcess) {
-        activeRenderProcess.kill('SIGKILL');
+        try {
+            if (process.platform === 'win32') {
+                const { exec } = require('child_process');
+                exec(`taskkill /pid ${activeRenderProcess.pid} /T /F`, () => {});
+            } else {
+                activeRenderProcess.kill('SIGKILL');
+            }
+        } catch (e) {}
         activeRenderProcess = null;
         currentRenderJob.status = 'cancelled';
         return true;
@@ -342,5 +477,6 @@ function getRenderProgress() {
 module.exports = {
     renderVideo,
     cancelRender,
-    getRenderProgress
+    getRenderProgress,
+    detectAvailableEncoders
 };

@@ -8,6 +8,7 @@ import sys
 import os
 import argparse
 import time
+import gc
 
 def format_timestamp(seconds: float) -> str:
     """Format seconds into standard SRT timestamp: HH:MM:SS,mmm"""
@@ -30,31 +31,44 @@ def detect_best_device(requested_device: str):
 
     try:
         import ctranslate2
-        if "cuda" in ctranslate2.get_supported_compute_types("cuda"):
+        supported = ctranslate2.get_supported_compute_types("cuda")
+        if "float16" in supported:
             return "cuda", "float16"
+        elif "int8_float16" in supported:
+            return "cuda", "int8_float16"
     except Exception:
         pass
 
     return "cpu", "int8"
 
-def transcribe_faster_whisper(audio_path, output_srt, model_size="medium", device="auto", language=None):
-    """Transcribe using faster-whisper (CTranslate2 engine)."""
+def transcribe_faster_whisper(audio_path, output_srt, model_size="medium", device="auto", language=None, beam_size=1):
+    """Transcribe using faster-whisper (CTranslate2 engine) with optimized multi-threading & greedy decoding."""
     from faster_whisper import WhisperModel
 
     resolved_device, compute_type = detect_best_device(device)
-    print(f"[Whisper ⚡] Initializing faster-whisper model '{model_size}' on '{resolved_device}' ({compute_type})...", flush=True)
+    cpu_cores = os.cpu_count() or 4
+    cpu_threads = min(8, cpu_cores) if resolved_device == "cpu" else 0
+    num_workers = 2 if cpu_cores >= 4 else 1
+
+    print(f"[Whisper ⚡] Initializing faster-whisper model '{model_size}' on '{resolved_device}' ({compute_type}, threads={cpu_threads or 'auto'}, workers={num_workers}, beam_size={beam_size})...", flush=True)
 
     t_start_load = time.time()
-    model = WhisperModel(model_size, device=resolved_device, compute_type=compute_type)
+    model = WhisperModel(
+        model_size,
+        device=resolved_device,
+        compute_type=compute_type,
+        cpu_threads=cpu_threads,
+        num_workers=num_workers
+    )
     print(f"[Whisper ⚡] Model ready in {time.time() - t_start_load:.2f}s", flush=True)
 
     print(f"[Whisper 🎙️] Processing audio: {os.path.basename(audio_path)}", flush=True)
     t_start_transcribe = time.time()
 
     transcribe_kwargs = {
-        "beam_size": 5,
+        "beam_size": max(1, int(beam_size)),
         "vad_filter": True,
-        "vad_parameters": dict(min_silence_duration_ms=500)
+        "vad_parameters": dict(min_silence_duration_ms=400)
     }
     if language and language.lower() != "auto":
         transcribe_kwargs["language"] = language
@@ -65,31 +79,37 @@ def transcribe_faster_whisper(audio_path, output_srt, model_size="medium", devic
     print(f"[Whisper 🌐] Language: {info.language.upper()} ({prob_pct}) | Duration: {info.duration:.1f}s", flush=True)
 
     cues = []
-    for idx, seg in enumerate(segments, 1):
-        start_str = format_timestamp(seg.start)
-        end_str = format_timestamp(seg.end)
-        text = seg.text.strip()
-        cues.append(f"{idx}\n{start_str} --> {end_str}\n{text}\n")
-        print(f"[{start_str} ➔ {end_str}] {text}", flush=True)
-
-    srt_content = "\n".join(cues)
     os.makedirs(os.path.dirname(os.path.abspath(output_srt)), exist_ok=True)
     with open(output_srt, "w", encoding="utf-8") as f:
-        f.write(srt_content)
+        for idx, seg in enumerate(segments, 1):
+            start_str = format_timestamp(seg.start)
+            end_str = format_timestamp(seg.end)
+            text = seg.text.strip()
+            cue_str = f"{idx}\n{start_str} --> {end_str}\n{text}\n\n"
+            cues.append(cue_str)
+            f.write(cue_str)
+            f.flush()
+            print(f"[{start_str} ➔ {end_str}] {text}", flush=True)
 
     elapsed = time.time() - t_start_transcribe
     print(f"[Whisper ✨] Complete! Generated {len(cues)} subtitle cues in {elapsed:.2f}s", flush=True)
     print(f"[Whisper 📁] Saved SRT: {output_srt}", flush=True)
+
+    del model
+    gc.collect()
     return True
 
 def transcribe_openai_whisper(audio_path, output_srt, model_size="medium", device="auto", language=None):
     """Fallback transcription using openai-whisper."""
     import whisper
 
-    print(f"[Whisper ⚡] Fallback: Loading OpenAI Whisper model '{model_size}'...", flush=True)
-    model = whisper.load_model(model_size)
+    resolved_device = "cuda" if device == "cuda" else ("cpu" if device == "cpu" else ("cuda" if detect_best_device("auto")[0] == "cuda" else "cpu"))
+    print(f"[Whisper ⚡] Fallback: Loading OpenAI Whisper model '{model_size}' on '{resolved_device}'...", flush=True)
+    model = whisper.load_model(model_size, device=resolved_device)
 
-    transcribe_options = {}
+    transcribe_options = {
+        "fp16": (resolved_device == "cuda")
+    }
     if language and language.lower() != "auto":
         transcribe_options["language"] = language
 
@@ -98,21 +118,24 @@ def transcribe_openai_whisper(audio_path, output_srt, model_size="medium", devic
     result = model.transcribe(audio_path, **transcribe_options)
 
     cues = []
-    for idx, seg in enumerate(result.get("segments", []), 1):
-        start_str = format_timestamp(seg["start"])
-        end_str = format_timestamp(seg["end"])
-        text = seg["text"].strip()
-        cues.append(f"{idx}\n{start_str} --> {end_str}\n{text}\n")
-        print(f"[{start_str} ➔ {end_str}] {text}", flush=True)
-
-    srt_content = "\n".join(cues)
     os.makedirs(os.path.dirname(os.path.abspath(output_srt)), exist_ok=True)
     with open(output_srt, "w", encoding="utf-8") as f:
-        f.write(srt_content)
+        for idx, seg in enumerate(result.get("segments", []), 1):
+            start_str = format_timestamp(seg["start"])
+            end_str = format_timestamp(seg["end"])
+            text = seg["text"].strip()
+            cue_str = f"{idx}\n{start_str} --> {end_str}\n{text}\n\n"
+            cues.append(cue_str)
+            f.write(cue_str)
+            f.flush()
+            print(f"[{start_str} ➔ {end_str}] {text}", flush=True)
 
     elapsed = time.time() - t_start
     print(f"[Whisper ✨] Complete! Generated {len(cues)} subtitle cues in {elapsed:.2f}s", flush=True)
     print(f"[Whisper 📁] Saved SRT: {output_srt}", flush=True)
+
+    del model
+    gc.collect()
     return True
 
 def main():
@@ -125,6 +148,7 @@ def main():
     parser.add_argument("--model", "-m", default="medium", help="Whisper model size (tiny, base, small, medium, large-v3)")
     parser.add_argument("--device", "-d", default="auto", help="Hardware device: auto, cpu, cuda")
     parser.add_argument("--language", "-l", default="auto", help="Language code (e.g. en, zh, ja, or auto)")
+    parser.add_argument("--beam_size", "-b", type=int, default=1, help="Beam size (1 for 3x fastest greedy decoding, 5 for standard beam)")
 
     args = parser.parse_args()
 
@@ -139,7 +163,7 @@ def main():
 
     # Attempt faster-whisper first, then fallback to openai-whisper
     try:
-        transcribe_faster_whisper(args.audio, output_srt, args.model, args.device, args.language)
+        transcribe_faster_whisper(args.audio, output_srt, args.model, args.device, args.language, args.beam_size)
     except ImportError:
         print("[Whisper] 'faster-whisper' not found in environment, trying 'whisper' fallback...", flush=True)
         try:

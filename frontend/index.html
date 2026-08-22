@@ -1513,25 +1513,6 @@
                 </button>
 
                 <button
-                  id="btn-micro-lipsync"
-                  class="group bg-[var(--bg-hover)] border border-[var(--border-light)] hover:bg-pink-500/20 hover:border-pink-500 hover:text-pink-400 text-[var(--text-primary)] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-md active:scale-[0.95]"
-                  title="👄 Auto Micro Lip-Sync: Snap all speech durations to actor mouth timing with zero pitch distortion"
-                >
-                  <i data-lucide="sparkles" class="w-[14px] h-[14px] text-pink-400 transition-transform duration-300 group-hover:scale-110 group-active:scale-90"></i>
-                  Micro Lip-Sync
-                </button>
-
-                <button
-                  id="btn-open-glossary"
-                  onclick="openGlossaryModal()"
-                  class="group bg-[var(--bg-hover)] border border-[var(--border-light)] hover:bg-cyan-500/20 hover:border-cyan-500 hover:text-cyan-400 text-[var(--text-primary)] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-md active:scale-[0.95]"
-                  title="📖 Drama Glossary / Character Name Dictionary"
-                >
-                  <i data-lucide="book-open" class="w-[14px] h-[14px] text-cyan-400 transition-transform duration-300 group-hover:scale-110"></i>
-                  Glossary
-                </button>
-
-                <button
                   id="btn-open-batch-dubber"
                   onclick="openBatchDubberModal()"
                   class="group bg-[var(--bg-hover)] border border-[var(--border-light)] hover:bg-amber-500/20 hover:border-amber-500 hover:text-amber-400 text-[var(--text-primary)] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-md active:scale-[0.95]"
@@ -1770,6 +1751,16 @@
               <button id="btn-transcribe" disabled class="px-3 sm:px-4 py-1.5 rounded-lg text-xs font-medium flex items-center gap-2 transition-all duration-300 ease-out bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-muted)] opacity-60 cursor-not-allowed">
                 <i id="icon-transcribe" data-lucide="sparkles" class="w-[14px] h-[14px] shrink-0"></i>
                 <span id="text-transcribe" class="hidden sm:inline">Transcribe</span>
+              </button>
+
+              <button
+                id="btn-transcribe-all"
+                title="Transcribe & Translate ALL open project tabs"
+                class="group px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ease-out bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-secondary)] hover:text-[var(--text-bright)] hover:border-emerald-400/50 shadow-sm active:scale-[0.95]"
+              >
+                <i id="icon-transcribe-all" data-lucide="layers" class="w-[14px] h-[14px] text-emerald-400 shrink-0 transition-transform duration-300 group-hover:scale-110"></i>
+                <span class="hidden md:inline" id="text-transcribe-all">Transcribe All Tabs</span>
+                <span class="md:hidden">All Tabs</span>
               </button>
 
               <button
@@ -2561,60 +2552,6 @@
       </div>
     </div>
 
-    <!-- ── DRAMA GLOSSARY / CHARACTER NAME DICTIONARY MODAL ── -->
-    <div id="modal-glossary" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[250] hidden opacity-0 transition-opacity duration-300" onclick="closeGlossaryModal()">
-      <div class="bg-[var(--bg-panel)] border border-[var(--border-light)] rounded-2xl w-[560px] max-h-[85vh] shadow-2xl flex flex-col overflow-hidden text-[var(--text-primary)] transform scale-95 transition-transform duration-300" onclick="event.stopPropagation()">
-        <!-- Header -->
-        <div class="flex justify-between items-center p-4 border-b border-[var(--border-color)] bg-[var(--bg-base)]">
-          <h2 class="text-[var(--text-bright)] font-semibold flex items-center gap-2">
-            <i data-lucide="book-open" class="w-5 h-5 text-cyan-400"></i>
-            <span>Drama Glossary &amp; Character Dictionary</span>
-          </h2>
-          <button onclick="closeGlossaryModal()" class="text-[var(--text-secondary)] hover:text-red-400 transition-colors">
-            <i data-lucide="x" class="w-5 h-5"></i>
-          </button>
-        </div>
-        
-        <!-- Content -->
-        <div class="p-5 flex flex-col gap-4 overflow-y-auto custom-scrollbar flex-1">
-          <p class="text-xs text-[var(--text-muted)] leading-relaxed">
-            Define custom character names, titles, or specialized terminology. Gemini will strictly apply these exact translations to all dialogue lines.
-          </p>
-
-          <!-- Add Entry Form -->
-          <div class="flex items-center gap-2 p-3 bg-[var(--bg-base)] rounded-xl border border-[var(--border-light)]">
-            <input type="text" id="glossary-input-from" placeholder="Original (e.g. 顾总 / Lord)" class="flex-1 bg-[var(--bg-panel)] border border-[var(--border-light)] rounded-lg px-3 py-2 text-xs text-[var(--text-bright)] outline-none focus:border-cyan-400 font-mono" />
-            <span class="text-xs text-[var(--text-muted)] font-bold">➔</span>
-            <input type="text" id="glossary-input-to" placeholder="Khmer Dub (e.g. លោកប្រធានគូ)" class="flex-1 bg-[var(--bg-panel)] border border-[var(--border-light)] rounded-lg px-3 py-2 text-xs text-[var(--text-bright)] outline-none focus:border-cyan-400 font-khmer" />
-            <button onclick="addGlossaryItem()" class="px-3 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1 shadow-sm transition-all active:scale-95">
-              <i data-lucide="plus" class="w-3.5 h-3.5"></i> Add
-            </button>
-          </div>
-
-          <!-- Entries List -->
-          <div class="flex flex-col gap-2">
-            <div class="flex items-center justify-between">
-              <label class="text-xs text-[var(--text-secondary)] font-medium">Saved Dictionary Terms</label>
-              <span id="glossary-count" class="text-[10px] text-cyan-400 font-mono font-bold">0 terms</span>
-            </div>
-            <div id="glossary-items-list" class="flex flex-col gap-1.5 max-h-52 overflow-y-auto custom-scrollbar p-1">
-              <!-- Dynamically populated rows -->
-            </div>
-          </div>
-        </div>
-
-        <!-- Footer -->
-        <div class="p-4 border-t border-[var(--border-color)] bg-[var(--bg-base)] flex justify-between items-center shrink-0">
-          <button onclick="clearAllGlossary()" class="text-xs text-red-400 hover:text-red-300 font-medium flex items-center gap-1 transition-colors">
-            <i data-lucide="trash" class="w-3.5 h-3.5"></i> Clear All
-          </button>
-          <button onclick="closeGlossaryModal()" class="px-5 py-2 bg-[var(--accent-primary)] text-white rounded-lg text-xs font-semibold shadow-md hover:brightness-110 active:scale-95 transition-all">
-            Done
-          </button>
-        </div>
-      </div>
-    </div>
-
     <!-- ── BATCH MULTI-EPISODE DUBBER MODAL ── -->
     <div id="modal-batch-dubber" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[260] hidden opacity-0 transition-opacity duration-300" onclick="closeBatchDubberModal()">
       <div class="bg-[var(--bg-panel)] border border-[var(--border-light)] rounded-2xl w-[620px] max-h-[85vh] shadow-2xl flex flex-col overflow-hidden text-[var(--text-primary)] transform scale-95 transition-transform duration-300" onclick="event.stopPropagation()">
@@ -2753,7 +2690,8 @@
 
                 <!-- Hidden native select (still used by existing JS listeners) -->
                 <select id="setting-ai-model" class="hidden">
-                  <option value="gemini-2.5-flash" selected>Gemini 2.5 Flash</option>
+                  <option value="gemini-3.7-flash" selected>Gemini 3.7 Flash</option>
+                  <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
                   <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
                   <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro</option>
                   <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
@@ -2764,8 +2702,8 @@
                 <div class="relative" id="gemini-model-dropdown-wrap">
                   <button id="gemini-model-trigger" class="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)] hover:border-[var(--accent-primary)] transition-all text-sm text-[var(--text-primary)]">
                     <span class="flex items-center gap-2.5">
-                      <i id="gemini-model-icon" data-lucide="zap" class="w-4 h-4 text-yellow-400 shrink-0"></i>
-                      <span id="gemini-model-label">Gemini 2.5 Flash (Free Tier & Ultra Fast)</span>
+                      <i id="gemini-model-icon" data-lucide="zap" class="w-4 h-4 text-amber-400 shrink-0"></i>
+                      <span id="gemini-model-label">Gemini 3.7 Flash (Hybrid Reasoning & Ultra Fast)</span>
                     </span>
                     <i data-lucide="chevron-down" id="gemini-model-chevron" class="w-4 h-4 text-[var(--text-muted)] shrink-0 transition-transform duration-300"></i>
                   </button>
@@ -2774,11 +2712,20 @@
                   <div id="gemini-model-panel" class="absolute z-50 left-0 right-0 mt-1.5 rounded-xl border border-[var(--border-light)] bg-[var(--bg-panel)] shadow-2xl overflow-hidden grid grid-rows-[0fr] transition-[grid-template-rows] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]">
                     <div class="overflow-hidden">
                       <div id="gemini-model-list" class="flex flex-col p-1.5 gap-0.5 overflow-y-auto" style="max-height: 220px; scroll-behavior: smooth; scrollbar-width: thin; scrollbar-color: var(--border-light) transparent">
-                        <p class="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider px-2 pt-1 pb-0.5">High Speed & Free Tier (Recommended)</p>
+                        <p class="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider px-2 pt-1 pb-0.5">High Speed & Latest Reasoning (Recommended)</p>
+                        <button
+                          data-model="gemini-3.7-flash"
+                          data-label="Gemini 3.7 Flash (Hybrid Reasoning & Ultra Fast)"
+                          class="gemini-model-opt w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--bg-hover)] transition-colors text-sm text-[var(--text-primary)] hover:text-[var(--text-bright)] bg-[var(--accent-primary)] text-white"
+                        >
+                          <i data-lucide="zap" class="w-4 h-4 text-amber-400 shrink-0"></i>
+                          <span class="flex-1 font-semibold">Gemini 3.7 Flash</span>
+                          <span class="text-[10px] text-amber-300 bg-amber-400/15 px-1.5 py-0.5 rounded border border-amber-400/30">3.7 Flash ⚡</span>
+                        </button>
                         <button
                           data-model="gemini-2.5-flash"
                           data-label="Gemini 2.5 Flash (Free Tier & Ultra Fast)"
-                          class="gemini-model-opt w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--bg-hover)] transition-colors text-sm text-[var(--text-primary)] hover:text-[var(--text-bright)] bg-[var(--accent-primary)] text-white"
+                          class="gemini-model-opt w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--bg-hover)] transition-colors text-sm text-[var(--text-primary)] hover:text-[var(--text-bright)]"
                         >
                           <i data-lucide="zap" class="w-4 h-4 text-yellow-400 shrink-0"></i>
                           <span class="flex-1">Gemini 2.5 Flash</span>
@@ -5619,11 +5566,9 @@
         if (ownsTranscribe) {
           p.isTranscribing = true;
           p.transcribeAbortController = transcribeAbortController;
-        } else if (!p._isBackgroundTranscribing) {
-          // Only clear if not actively running in background
-          p.isTranscribing = false;
-        }
-        if (!isTranscribing) {
+        } else if (p.transcribeAbortController || isTranscribingAll) {
+          // Keep p.isTranscribing true if this project has an active transcribe job or batch transcribe is running
+        } else {
           p.isTranscribing = false;
         }
 
@@ -7375,13 +7320,9 @@
         // stamping isTranscribing=true onto Project 2 when you switch tabs.
         if (isTranscribing && p.transcribeAbortController === transcribeAbortController) {
           p.isTranscribing = true;
+        } else if (p.transcribeAbortController || isTranscribingAll) {
+          // Keep project's own transcribe status
         } else {
-          // Global is idle, or the running job belongs to a different project
-          p.isTranscribing = p.transcribeAbortController
-            ? p.isTranscribing // keep its own saved value
-            : false;
-        }
-        if (!isTranscribing) {
           p.isTranscribing = false;
         }
         if (isGeneratingAudio && p.generateAbortController === generateAbortController) {
@@ -7556,17 +7497,14 @@
         if (document.getElementById("autosave-srt-toggle")) autoSaveSrtRenderUI();
       });
 
-      // ── Auto Save Subtitle: core save routine, called after transcription ──
-      async function maybeAutoSaveSubtitles(targetProject, subsArray) {
+      // ── Auto Save Subtitle: core save routine, called after transcription or cancel ──
+      async function maybeAutoSaveSubtitles(targetProject, subsArray, forceSave = false) {
         try {
           const enabled = localStorage.getItem("aiDubberAutoSaveSrt") === "true";
-          if (!enabled || !subsArray || !subsArray.length) return;
+          if ((!enabled && !forceSave) || !subsArray || !subsArray.length) return;
 
           const includeGender = localStorage.getItem("aiDubberAutoSaveSrtIncludeGender") === "true";
 
-          // TODO: once VoxCPM2 profile field is confirmed, branch here —
-          // e.g. if VoxCPM2 is the active engine, use sub.<voxProfileField>.label
-          // instead of sub.gender, so the tag shows the cloned voice name.
           const buildGenderTag = (sub) => {
             if (!includeGender) return "";
             const label = sub.gender || "Unknown";
@@ -7580,42 +7518,42 @@
             srtBuild += `${buildGenderTag(sub)}${sub.text || ""}\n\n`;
           });
 
-          const mode = localStorage.getItem("aiDubberAutoSaveSrtMode") || "source";
-          const customFolderPath = localStorage.getItem("aiDubberAutoSaveSrtCustomPath") || "";
-          const sourceFilePath = (targetProject.file && targetProject.file.path) || targetProject.videoFilePath || null;
-          const baseName = targetProject.file && targetProject.file.name ? targetProject.file.name.replace(/\.[^/.]+$/, "") : "subtitle";
+          let mode = localStorage.getItem("aiDubberAutoSaveSrtMode") || "source";
+          let customFolderPath = localStorage.getItem("aiDubberAutoSaveSrtCustomPath") || "";
+          let sourceFilePath = (targetProject.file && targetProject.file.path) || targetProject.videoFilePath || null;
+          let baseName = (targetProject.file && targetProject.file.name ? targetProject.file.name.replace(/\.[^/.]+$/, "") : (targetProject.name || "subtitle")).trim();
 
-          if (mode === "source" && !sourceFilePath) {
-            showToast("Auto Save skipped — original file path is unknown for this project.", "warning");
-            return;
-          }
-          if (mode === "custom" && !customFolderPath) {
-            showToast("Auto Save skipped — no custom folder set in Settings.", "warning");
-            highlightSettingsField("autosave-srt-custom-path");
-            return;
+          if (mode === "source" && !sourceFilePath && customFolderPath) {
+            mode = "custom";
+          } else if (mode === "custom" && !customFolderPath && sourceFilePath) {
+            mode = "source";
           }
 
-          if (mode === "custom") {
-            const _autoSavePathCheck = await window.electronAPI.checkPathExists(customFolderPath);
-            if (!_autoSavePathCheck.exists) {
-              showToast("Auto Save skipped — the custom subtitle folder no longer exists. Please update it in Settings.", "error");
-              highlightSettingsField("autosave-srt-custom-path");
-              return;
+          // 1. Save via backend API
+          fetch("http://localhost:3001/api/save-srt", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              content: srtBuild,
+              fileName: baseName,
+              sourceFilePath,
+              customFolder: customFolderPath,
+            }),
+          }).catch(() => {});
+
+          // 2. Save via Electron Native API
+          if (window.electronAPI && window.electronAPI.autoSaveSrt) {
+            const result = await window.electronAPI.autoSaveSrt({
+              content: srtBuild,
+              fileName: baseName,
+              mode,
+              sourceFilePath,
+              customFolderPath,
+            });
+
+            if (result && result.success) {
+              showToast(`Subtitle saved: ${result.filePath}`, "success");
             }
-          }
-
-          const result = await window.electronAPI.autoSaveSrt({
-            content: srtBuild,
-            fileName: baseName,
-            mode,
-            sourceFilePath,
-            customFolderPath,
-          });
-
-          if (result && result.success) {
-            showToast(`Subtitle auto-saved: ${result.filePath}`, "success");
-          } else {
-            showToast(`Auto Save failed: ${(result && result.error) || "Unknown error"}`, "error");
           }
         } catch (e) {
           console.error("Auto Save Subtitle error:", e);
@@ -7668,7 +7606,7 @@
           const angle = Math.random() * Math.PI * 2;
           const distance = 80 + Math.random() * 160;
           const dx = Math.cos(angle) * distance;
-          const dy = Math.sin(angle) * distance - 60; // slight upward bias
+          const dy = Math.sin(angle) * distance - 60;
 
           piece.style.cssText = `
             position: fixed;
@@ -7709,16 +7647,52 @@
       const textTranscribe = document.getElementById("text-transcribe");
 
       let isTranscribing = false;
+      let isTranscribingAll = false;
       let transcribeAbortController = null;
       let transcribeTimerInterval = null;
       let transcribeStartTime = null;
+
+      const updateTranscribeAllButtonState = () => {
+        const btnAll = document.getElementById("btn-transcribe-all");
+        if (!btnAll) return;
+        const hasAnyVideo = typeof projects !== "undefined" && Array.isArray(projects) && projects.some((p) => p.file || p.blobUrl);
+        if (isTranscribingAll) {
+          btnAll.disabled = false;
+          btnAll.className = "group px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ease-out bg-red-600 border border-red-600 text-white shadow-md shadow-red-900/20 active:scale-[0.95] animate-pulse cursor-pointer";
+          btnAll.innerHTML = `
+            <i data-lucide="x-circle" class="w-[14px] h-[14px] shrink-0"></i>
+            <span class="hidden md:inline">Stop All</span>
+            <span class="md:hidden">Stop</span>
+          `;
+          btnAll.title = "Stop transcription for all project tabs";
+        } else if (!hasAnyVideo) {
+          btnAll.disabled = true;
+          btnAll.className = "group px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ease-out bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-muted)] opacity-60 cursor-not-allowed";
+          btnAll.innerHTML = `
+            <i id="icon-transcribe-all" data-lucide="layers" class="w-[14px] h-[14px] text-[var(--text-muted)] shrink-0"></i>
+            <span class="hidden md:inline" id="text-transcribe-all">Transcribe All Tabs</span>
+            <span class="md:hidden">All Tabs</span>
+          `;
+          btnAll.title = "Upload videos in project tabs first to Transcribe All";
+        } else {
+          btnAll.disabled = false;
+          btnAll.className = "group px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ease-out bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-secondary)] hover:text-[var(--text-bright)] hover:border-emerald-400/50 shadow-sm active:scale-[0.95] cursor-pointer";
+          btnAll.innerHTML = `
+            <i id="icon-transcribe-all" data-lucide="layers" class="w-[14px] h-[14px] text-emerald-400 shrink-0 transition-transform duration-300 group-hover:scale-110"></i>
+            <span class="hidden md:inline" id="text-transcribe-all">Transcribe All Tabs</span>
+            <span class="md:hidden">All Tabs</span>
+          `;
+          btnAll.title = "Transcribe & Translate ALL open project tabs";
+        }
+        _lucideCreateIcons({ root: btnAll });
+      };
+
       const updateTranscribeButtonState = () => {
         if (!btnTranscribe) return;
 
         const masterCheckbox = document.getElementById("master-checkbox");
         if (masterCheckbox) {
           if (subtitles.length === 0 || (typeof isTranscribing !== "undefined" && isTranscribing)) {
-            // THE FIX 2: Sync the visual disabled state here too!
             masterCheckbox.disabled = true;
             masterCheckbox.checked = false;
             masterCheckbox.classList.remove("cursor-pointer");
@@ -7758,7 +7732,6 @@
 
         if (isTranscribing) {
           btnTranscribe.disabled = false;
-          // Red "Stop" state with a soft red glow on hover
           btnTranscribe.classList.add("bg-red-600", "border-red-600", "text-white", "shadow-md", "shadow-red-900/20", "hover:-translate-y-0.5", "hover:shadow-lg", "hover:shadow-red-500/40", "hover:brightness-110", "active:scale-[0.95]", "active:translate-y-0");
 
           btnTranscribe.innerHTML = `
@@ -7767,7 +7740,6 @@
           `;
         } else if (!videoFile) {
           btnTranscribe.disabled = true;
-          // Disabled state (flat and transparent)
           btnTranscribe.classList.add("bg-[var(--bg-base)]", "border-[var(--border-light)]", "text-[var(--text-muted)]", "opacity-60", "cursor-not-allowed");
 
           btnTranscribe.innerHTML = `
@@ -7776,7 +7748,6 @@
           `;
         } else {
           btnTranscribe.disabled = false;
-          // Premium "Ready" state with a beautiful emerald glow and physical press physics
           btnTranscribe.classList.add("bg-emerald-600", "border-emerald-600", "text-white", "shadow-md", "shadow-emerald-900/20", "hover:-translate-y-0.5", "hover:shadow-lg", "hover:shadow-emerald-500/40", "hover:brightness-110", "active:scale-[0.95]", "active:translate-y-0");
 
           btnTranscribe.innerHTML = `
@@ -7784,6 +7755,8 @@
             <span id="text-transcribe" class="hidden sm:inline">Transcribe</span>
           `;
         }
+
+        updateTranscribeAllButtonState();
 
         // --- TABLE UI UPDATES (THE LOADING ANIMATION) ---
         const tableBody = document.getElementById("subtitles-tbody") || document.querySelector("table tbody");
@@ -7849,710 +7822,766 @@
         }
       };
 
-      // 2. The Core Execution Logic
-      if (btnTranscribe) {
-        btnTranscribe.addEventListener("click", async () => {
-          // Lock the project FIRST — everything below depends on it
-          const targetProject = projects[activeProjectIndex];
+      // ── Core Project Transcription Engine ──────────────────────────────────
+      async function transcribeSingleProject(targetProject, isBatch = false, keyIndexOffset = 0) {
+        if (!targetProject) return { success: false, error: "No project provided" };
 
-          // A. Handle "Cancel" Click — cancel the SPECIFIC tab that was clicked, using ITS
-          // OWN abort controller directly. targetProject comes straight from
-          // projects[activeProjectIndex], i.e. exactly the tab whose button you just pressed —
-          // no reliance on the global pointer happening to be in sync.
-          if (targetProject && targetProject.isTranscribing) {
-            if (targetProject.transcribeAbortController) {
-              targetProject.transcribeAbortController.abort();
-            }
-            if (targetProject.whisperJobId && window.electronAPI && window.electronAPI.cancelWhisperTranscribe) {
-              window.electronAPI.cancelWhisperTranscribe(targetProject.whisperJobId);
-            }
-            // Local fetch is already aborted above, but that only kills the
-            // browser<->local-server connection — the backend keeps waiting on
-            // Gemini's response regardless. Tell it directly to stop listening
-            // (covers both Direct Gemini and Whisper + Translate, since both
-            // now carry the same geminiRequestId).
-            if (targetProject.geminiRequestId) {
-              fetch("http://localhost:3001/api/cancel-transcribe", {
+        if (targetProject.isTranscribing && !isBatch) {
+          if (targetProject.transcribeAbortController) {
+            try { targetProject.transcribeAbortController.abort(); } catch (e) {}
+          }
+          if (targetProject.whisperJobId && window.electronAPI && window.electronAPI.cancelWhisperTranscribe) {
+            window.electronAPI.cancelWhisperTranscribe(targetProject.whisperJobId).catch(() => {});
+          }
+          if (targetProject.geminiRequestId) {
+            fetch("http://localhost:3001/api/cancel-transcribe", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ requestId: targetProject.geminiRequestId }),
+            }).catch(() => {});
+            targetProject.geminiRequestId = null;
+          }
+          targetProject.isTranscribing = false;
+          targetProject._smartRetranslateInProgress = false;
+          targetProject.transcribeAbortController = null;
+          if (transcribeTimerInterval) {
+            clearInterval(transcribeTimerInterval);
+            transcribeTimerInterval = null;
+          }
+
+          // Ensure transcribe audio file is saved
+          try {
+            const localVideoPath = targetProject.videoFilePath || (targetProject.file && targetProject.file.path);
+            const customFolder = localStorage.getItem("aiDubberAutoSaveSrtCustomPath") || "";
+            const vidName = targetProject.file?.name || targetProject.name || "video";
+            const partIdx = projects.indexOf(targetProject) + 1;
+            if (localVideoPath && typeof localVideoPath === "string") {
+              fetch("http://localhost:3001/api/extract-audio", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ requestId: targetProject.geminiRequestId }),
+                body: JSON.stringify({
+                  videoPath: localVideoPath,
+                  videoName: vidName,
+                  partIndex: partIdx,
+                  customFolder,
+                  sourceFilePath: localVideoPath,
+                }),
               }).catch(() => {});
-              targetProject.geminiRequestId = null;
             }
-            targetProject.isTranscribing = false;
-            targetProject.transcribeAbortController = null;
-            if (transcribeTimerInterval) {
-              clearInterval(transcribeTimerInterval);
-              transcribeTimerInterval = null;
-            }
+          } catch (e) {}
 
-            // Only touch the shared button + globals if this tab is the one on-screen
-            if (projects[activeProjectIndex] === targetProject) {
-              isTranscribing = false;
-              transcribeAbortController = null;
-              updateTranscribeButtonState();
-            }
-            renderProjectTabs();
-            return;
-          }
-
-          if (!targetProject || !targetProject.file) return showToast("Please upload a video first.", "error");
-
-          // Which engine did the user pick in Settings? Computed BEFORE the instant-feedback
-          // block below so we already know whether this is a Whisper "smart re-translate"
-          // (T1 already has a transcript) by the time the loading UI first paints — that way
-          // it never flashes the "Whisper is transcribing locally..." card for a run that
-          // isn't actually re-running Whisper at all, just re-sending the existing timeline
-          // to Gemini for translation.
-          const engineMode = document.querySelector('input[name="transcription-engine"]:checked')?.value || "gemini";
-          const reuseExistingWhisperSrt = engineMode === "whisper" && targetProject.subtitles && targetProject.subtitles.length > 0;
-          targetProject._smartRetranslateInProgress = reuseExistingWhisperSrt;
-
-          // 🟢 INSTANT FEEDBACK: flip the button/table into "working" state AND wire up a
-          // REAL AbortController right away — BEFORE any awaited IPC/network calls below.
-          // This kills the perceived click-lag, and it means a "Stop Transcribing" click
-          // during the pre-flight checks below has something live to actually cancel.
-          // Every global/UI touch is guarded by "is this the tab I'm currently viewing?" —
-          // that's what keeps a background project's transcription from ever bleeding into
-          // whichever tab happens to be on-screen.
-          targetProject.isTranscribing = true;
-          targetProject.transcribeAbortController = new AbortController();
-          const signal = targetProject.transcribeAbortController.signal;
-          // Sent to the backend on every Gemini call below so a "Stop" click can
-          // tell the server to actually abort its outbound request to Google —
-          // not just drop the local connection. Works identically on Win/macOS
-          // since it's pure Node/Express, no OS-specific logic involved.
-          targetProject.geminiRequestId = crypto.randomUUID();
           if (projects[activeProjectIndex] === targetProject) {
-            isTranscribing = true;
-            transcribeAbortController = targetProject.transcribeAbortController;
+            isTranscribing = false;
+            transcribeAbortController = null;
             updateTranscribeButtonState();
-
-            // Live elapsed-time counter for the loading card
-            transcribeStartTime = Date.now();
-            if (transcribeTimerInterval) clearInterval(transcribeTimerInterval);
-            transcribeTimerInterval = setInterval(() => {
-              const elapsedEl = document.getElementById("transcribe-elapsed");
-              if (!elapsedEl) return;
-              const secs = Math.floor((Date.now() - transcribeStartTime) / 1000);
-              const mm = String(Math.floor(secs / 60)).padStart(2, "0");
-              const ss = String(secs % 60).padStart(2, "0");
-              elapsedEl.textContent = `${mm}:${ss}`;
-            }, 1000);
           }
           renderProjectTabs();
+          showToast("Transcription stopped. Transcribe file saved to folder.", "info");
+          return { success: false, error: "Cancelled" };
+        }
 
-          // Bails out and restores the button/table if a pre-flight check below fails
-          const abortStart = () => {
-            targetProject.isTranscribing = false;
-            targetProject._smartRetranslateInProgress = false;
-            targetProject.transcribeAbortController = null;
-            if (transcribeTimerInterval) {
-              clearInterval(transcribeTimerInterval);
-              transcribeTimerInterval = null;
-            }
-            if (projects[activeProjectIndex] === targetProject) {
-              isTranscribing = false;
-              transcribeAbortController = null;
-              updateTranscribeButtonState();
-            }
-            renderProjectTabs();
-          };
+        if (!targetProject.file && !targetProject.blobUrl) {
+          if (!isBatch) showToast("Please upload a video first.", "error");
+          return { success: false, error: "No video file" };
+        }
 
-          // ── Drive C Space Guard ──────────────────────────────────
-          if (window.electronAPI && window.electronAPI.getDriveSpace) {
+        const engineMode = document.querySelector('input[name="transcription-engine"]:checked')?.value || "gemini";
+        const reuseExistingWhisperSrt = engineMode === "whisper" && targetProject.subtitles && targetProject.subtitles.length > 0;
+        targetProject._smartRetranslateInProgress = reuseExistingWhisperSrt;
+
+        targetProject.isTranscribing = true;
+        targetProject.transcribeAbortController = new AbortController();
+        const signal = targetProject.transcribeAbortController.signal;
+        targetProject.geminiRequestId = crypto.randomUUID();
+
+        if (projects[activeProjectIndex] === targetProject) {
+          isTranscribing = true;
+          transcribeAbortController = targetProject.transcribeAbortController;
+          updateTranscribeButtonState();
+
+          transcribeStartTime = Date.now();
+          if (transcribeTimerInterval) clearInterval(transcribeTimerInterval);
+          transcribeTimerInterval = setInterval(() => {
+            const elapsedEl = document.getElementById("transcribe-elapsed");
+            if (!elapsedEl) return;
+            const secs = Math.floor((Date.now() - transcribeStartTime) / 1000);
+            const mm = String(Math.floor(secs / 60)).padStart(2, "0");
+            const ss = String(secs % 60).padStart(2, "0");
+            elapsedEl.textContent = `${mm}:${ss}`;
+          }, 1000);
+        }
+        renderProjectTabs();
+
+        const abortStart = () => {
+          targetProject.isTranscribing = false;
+          targetProject._smartRetranslateInProgress = false;
+          targetProject.transcribeAbortController = null;
+          if (transcribeTimerInterval) {
+            clearInterval(transcribeTimerInterval);
+            transcribeTimerInterval = null;
+          }
+          if (projects[activeProjectIndex] === targetProject) {
+            isTranscribing = false;
+            transcribeAbortController = null;
+            updateTranscribeButtonState();
+          }
+          renderProjectTabs();
+        };
+
+        // Drive Space Guard
+        if (window.electronAPI && window.electronAPI.getDriveSpace) {
+          try {
             const driveInfo = await window.electronAPI.getDriveSpace();
             if (driveInfo.success && driveInfo.freeGB < 3 && driveInfo.mount !== "/") {
-              showToast(`⚠️ Low Disk Space: Only ${driveInfo.freeGB} GB free on ${driveInfo.mount}. Please clean up your drive to avoid errors.`, "error");
+              showToast(`⚠️ Low Disk Space: Only ${driveInfo.freeGB} GB free on ${driveInfo.mount}.`, "error");
               abortStart();
-              return;
+              return { success: false, error: "Low disk space" };
             }
+          } catch (e) {}
+        }
+
+        // Whisper Folder Guard
+        if (engineMode === "whisper" && !reuseExistingWhisperSrt) {
+          const whisperFolder = (localStorage.getItem("aiDubberWhisperFolder") || "").trim();
+          if (!whisperFolder) {
+            showToast("Please set your Whisper folder path in Settings first.", "error");
+            document.getElementById("btn-open-settings")?.click();
+            abortStart();
+            return { success: false, error: "Missing Whisper folder" };
           }
-          // ─────────────────────────────────────────────────────────
-
-          // ── Whisper Folder Guard: path set + required files present ──
-          if (engineMode === "whisper" && !reuseExistingWhisperSrt) {
-            const whisperFolder = (localStorage.getItem("aiDubberWhisperFolder") || "").trim();
-            if (!whisperFolder) {
-              showToast("Please set your Whisper folder path in Settings first.", "error");
-              const btnOpenSettings = document.getElementById("btn-open-settings");
-              if (btnOpenSettings) btnOpenSettings.click();
-              abortStart();
-              return;
-            }
-            try {
-              const platform = detectWhisperPlatform();
-              const check = await verifyWhisperFolder(whisperFolder);
-              if (!check || !check.valid) {
-                const missing = (check && check.missing) || REQUIRED_WHISPER_FILES.common.concat(REQUIRED_WHISPER_FILES[platform] || []);
-                showToast(`Whisper folder is missing: ${missing.join(", ")}. Please select the correct folder.`, "error");
-                const btnOpenSettings = document.getElementById("btn-open-settings");
-                if (btnOpenSettings) btnOpenSettings.click();
-                abortStart();
-                return;
-              }
-            } catch (err) {
-              showToast("Couldn't verify the Whisper folder — check the path and try again.", "error");
-              abortStart();
-              return;
-            }
-          }
-          // ─────────────────────────────────────────────────────────
-
-          // B. API Key Check (Gemini engine only — Whisper runs 100% locally, no key needed)
-          let apiKeys = [];
-          {
-            apiKeys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]");
-            if (apiKeys.length === 0) {
-              showToast("Please add at least one Gemini API Key in Settings.", "error");
-              const btnOpenSettings = document.getElementById("btn-open-settings");
-              if (btnOpenSettings) btnOpenSettings.click();
-              abortStart();
-              return;
-            }
-          }
-
-          // (skip this when reusing the existing Whisper transcript already on the timeline)
-          if (!reuseExistingWhisperSrt) {
-            if (targetProject.subtitles.length > 0) {
-              saveStateToPast();
-            }
-            targetProject.subtitles = [];
-            selectedItems = [];
-            if (projects[activeProjectIndex] === targetProject) {
-              subtitles = [];
-              renderSubtitles();
-              // Redraw the animated loading card right back over the now-empty table —
-              // renderSubtitles() above just painted the plain "No subtitles" placeholder,
-              // which would otherwise sit there silently for the whole transcription.
-              updateTranscribeButtonState();
-            }
-          }
-
-          let success = false;
-
           try {
-            let extractData = null;
+            const platform = detectWhisperPlatform();
+            const check = await verifyWhisperFolder(whisperFolder);
+            if (!check || !check.valid) {
+              const missing = (check && check.missing) || REQUIRED_WHISPER_FILES.common.concat(REQUIRED_WHISPER_FILES[platform] || []);
+              showToast(`Whisper folder is missing: ${missing.join(", ")}.`, "error");
+              document.getElementById("btn-open-settings")?.click();
+              abortStart();
+              return { success: false, error: "Invalid Whisper folder" };
+            }
+          } catch (err) {
+            showToast("Couldn't verify Whisper folder.", "error");
+            abortStart();
+            return { success: false, error: "Whisper verify failed" };
+          }
+        }
 
-            if (!reuseExistingWhisperSrt) {
-              // ---------------------------------------------------------
-              // PHASE 1: EXTRACT AUDIO VIA LOCAL BACKEND (Fast & Reliable)
-              // ---------------------------------------------------------
-              if (projects[activeProjectIndex] === targetProject) showToast("Extracting audio via Node server...", "info");
+        // Gemini API Key Guard
+        let apiKeys = [];
+        {
+          apiKeys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]");
+          if (apiKeys.length === 0) {
+            showToast("Please add at least one Gemini API Key in Settings.", "error");
+            document.getElementById("btn-open-settings")?.click();
+            abortStart();
+            return { success: false, error: "Missing API Key" };
+          }
+        }
 
-              // Rehydrate the video as a real Blob from the project's blobUrl (works for both
-              // browser File objects and Electron file:// paths, which are NOT Blobs)
+        if (!reuseExistingWhisperSrt) {
+          if (targetProject.subtitles.length > 0) {
+            saveStateToPast();
+          }
+          targetProject.subtitles = [];
+          selectedItems = [];
+          if (projects[activeProjectIndex] === targetProject) {
+            subtitles = [];
+            renderSubtitles();
+            updateTranscribeButtonState();
+          }
+        }
+
+        let success = false;
+
+        try {
+          let extractData = null;
+
+          if (!reuseExistingWhisperSrt) {
+            if (projects[activeProjectIndex] === targetProject) showToast("Extracting audio via Node server...", "info");
+
+            const localVideoPath = targetProject.videoFilePath || (targetProject.file && targetProject.file.path);
+            let extractRes;
+
+            const vidName = targetProject.file?.name || targetProject.name || "video";
+            const partIdx = typeof keyIndexOffset === "number" ? keyIndexOffset + 1 : (projects.indexOf(targetProject) + 1);
+            const customFolderPath = localStorage.getItem("aiDubberAutoSaveSrtCustomPath") || "";
+
+            if (localVideoPath && typeof localVideoPath === "string") {
+              extractRes = await fetch("http://localhost:3001/api/extract-audio", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  videoPath: localVideoPath,
+                  videoName: vidName,
+                  partIndex: partIdx,
+                  customFolder: customFolderPath,
+                  sourceFilePath: localVideoPath,
+                }),
+                signal,
+              });
+            } else {
               const videoSource = targetProject.blobUrl || mainVideo.src;
               const videoFetchRes = await fetch(videoSource, { signal });
               const videoBlob = await videoFetchRes.blob();
 
               const formData = new FormData();
-              const safeName = targetProject.file.name.replace(/[^a-zA-Z0-9.]/g, "_");
-              const uniqueFilename = `transcribe_${Date.now()}_${safeName}`;
+              const safeName = vidName.replace(/[^a-zA-Z0-9.]/g, "_");
+              const uniqueFilename = `transcribe_${Date.now()}_${Math.random().toString(36).substring(2, 7)}_${safeName}`;
               formData.append("videoFile", videoBlob, uniqueFilename);
+              formData.append("videoName", vidName);
+              formData.append("partIndex", String(partIdx));
+              formData.append("customFolder", customFolderPath);
 
-              const extractRes = await fetch("http://localhost:3001/api/extract-audio", {
+              extractRes = await fetch("http://localhost:3001/api/extract-audio", {
                 method: "POST",
                 body: formData,
                 signal,
               });
-
-              const contentType = extractRes.headers.get("content-type");
-              if (!contentType || !contentType.includes("application/json")) {
-                throw new Error("Backend missing /api/extract-audio endpoint. Ensure server.mjs is running.");
-              }
-
-              extractData = await extractRes.json();
-              if (!extractData.success) {
-                // Intercept our custom no-audio flag
-                if (extractData.error === "NO_AUDIO_TRACK") {
-                  throw new Error("This video does not contain any audio track to transcribe!");
-                }
-                throw new Error(extractData.error || "Failed to extract audio");
-              }
             }
 
-            // ---------------------------------------------------------
-            // PHASE 2 (WHISPER PATH): Transcribe locally, OR reuse T1 timeline
-            // ---------------------------------------------------------
-            if (engineMode === "whisper") {
-              let parsedSubs, whisperSrtText;
-
-              if (reuseExistingWhisperSrt) {
-                // ── SMART RE-TRANSLATE: no whisperFolder / audio extraction needed.
-                // Bind the CURRENT T1 timeline (with any manual edits) as the .srt source. ──
-                if (projects[activeProjectIndex] === targetProject) showToast("Reusing existing transcript from timeline...", "info");
-
-                parsedSubs = targetProject.subtitles.map((s) => ({ ...s }));
-
-                let srtBuild = "";
-                parsedSubs.forEach((sub, i) => {
-                  srtBuild += `${i + 1}\n`;
-                  srtBuild += `${formatSrtTime(parseFloat(sub.textStart))} --> ${formatSrtTime(parseFloat(sub.textEnd))}\n`;
-                  srtBuild += `${sub.text || ""}\n\n`;
-                });
-                whisperSrtText = srtBuild;
-              } else {
-                const whisperFolder = (localStorage.getItem("aiDubberWhisperFolder") || "").trim();
-                if (projects[activeProjectIndex] === targetProject) showToast("Transcribing locally with Whisper...", "info");
-
-                const whisperJobId = crypto.randomUUID();
-                targetProject.whisperJobId = whisperJobId;
-
-                const whisperResult = await window.electronAPI.runWhisperTranscribe({
-                  id: whisperJobId,
-                  whisperFolder,
-                  audioPath: extractData.file,
-                  videoPath: targetProject.videoFilePath || null,
-                });
-
-                targetProject.whisperJobId = null;
-
-                if (signal.aborted || (whisperResult && whisperResult.cancelled)) {
-                  throw Object.assign(new Error("Aborted"), {
-                    name: "AbortError",
-                  });
-                }
-                if (!whisperResult || !whisperResult.success) {
-                  throw new Error((whisperResult && whisperResult.error) || "Whisper failed to produce a transcript.");
-                }
-
-                parsedSubs = parseSrtText(whisperResult.srtText);
-                if (!parsedSubs.length) {
-                  throw new Error("Whisper produced an empty transcript.");
-                }
-                whisperSrtText = whisperResult.srtText;
-
-                // 🟢 Load fresh Whisper output onto the T1 timeline right away, before Gemini
-                // is even called — so the user sees the transcript land immediately.
-                targetProject.subtitles = parsedSubs.map((s) => ({ ...s }));
-                if (projects[activeProjectIndex] === targetProject) {
-                  subtitles = targetProject.subtitles;
-                  renderSubtitles();
-                }
-                renderProjectTabs();
-              }
-
-              // ---------------------------------------------------------
-              // Send the Whisper .srt (fresh OR reused from timeline) to Gemini for translation
-              // ---------------------------------------------------------
-              if (projects[activeProjectIndex] === targetProject) showToast("Translating transcript with AI...", "info");
-
-              let translatedSubs = null;
-              let lastTranslateErrorType = "";
-              let activeModel = localStorage.getItem("aiDubberModel") || "gemini-2.5-flash";
-
-              // Encode the SRT transcript as a base64 text file, same as we do for audio uploads —
-              // more stable for long transcripts than embedding raw text in the prompt string
-              const srtToBase64 = (text) => {
-                try {
-                  return btoa(unescape(encodeURIComponent(text)));
-                } catch (e) {
-                  return "";
-                }
-              };
-              const srtBase64 = srtToBase64(whisperSrtText);
-
-              for (let i = 0; i < apiKeys.length; i++) {
-                if (signal.aborted) break;
-                const key = apiKeys[i];
-                try {
-                  const translateRes = await fetch("http://localhost:3001/api/translate-srt", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      srtBase64: srtBase64,
-                      mimeType: "text/plain",
-                      targetLanguage: targetProject.targetLanguage || targetLanguage,
-                      genre: activeDramaGenre || "historical",
-                      glossary: typeof getDramaGlossaryDict === "function" ? getDramaGlossaryDict() : null,
-                      apiKey: key,
-                      model: activeModel,
-                      requestId: targetProject.geminiRequestId,
-                    }),
-                    signal,
-                  });
-
-                  const translateData = await translateRes.json();
-                  if (!translateData.success) {
-                    const errorText = translateData.error || "";
-                    if (errorText === "QUOTA_ZERO") throw new Error("QUOTA_ZERO");
-                    if (errorText === "RATE_LIMIT_EXCEEDED" || translateRes.status === 429) throw new Error("RATE_LIMIT_EXCEEDED");
-                    if (errorText === "INVALID_API_KEY") throw new Error("INVALID_API_KEY");
-                    throw new Error(`TRANSLATE_FAILED|${errorText}`);
-                  }
-                  if (!Array.isArray(translateData.data) || translateData.data.length === 0) {
-                    throw new Error("AI returned empty or invalid translation.");
-                  }
-
-                  // Log the raw Gemini response, tagged so it's clear this came from Whisper + Translate mode
-                  try {
-                    fetch("http://localhost:3001/api/log-transcription", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        videoName: targetProject.file.name,
-                        responseText: translateData.rawText,
-                        mode: "Whisper + Translate",
-                      }),
-                    }).catch(() => {});
-                  } catch (e) {}
-
-                  translatedSubs = translateData.data;
-                  break; // success — stop rotating keys
-                } catch (translateErr) {
-                  if (translateErr.name === "AbortError") throw translateErr;
-                  console.warn(`Translate attempt with key ${i + 1} failed:`, translateErr.message);
-                  lastTranslateErrorType = translateErr.message || "UNKNOWN_ERROR";
-                  if (lastTranslateErrorType === "QUOTA_ZERO") break;
-                }
-              }
-
-              // Keep Whisper's original timestamps; swap in translated text line-by-line
-              let finalSubs = parsedSubs;
-              if (translatedSubs && translatedSubs.length === parsedSubs.length) {
-                finalSubs = parsedSubs.map((s, idx) => ({
-                  ...s,
-                  text: translatedSubs[idx].text,
-                  emotion: translatedSubs[idx].emotion || "Neutral",
-                }));
-              } else if (translatedSubs) {
-                finalSubs = parsedSubs.map((s, idx) => ({
-                  ...s,
-                  text: translatedSubs[idx] ? translatedSubs[idx].text : s.text,
-                  emotion: (translatedSubs[idx] && translatedSubs[idx].emotion) || "Neutral",
-                }));
-                showToast("Translation line count didn't match Whisper's — please review subtitles.", "warning");
-              } else if (lastTranslateErrorType === "QUOTA_ZERO") {
-                showToast(`Your API key has no free-tier quota for "${activeModel}". You can switch to a free-tier model like Gemini 2.5 Flash, 2.0 Flash in Settings.`, "error", {
-                  linkUrl: "https://ai.google.dev/gemini-api/docs/rate-limits",
-                  linkText: "View quota details",
-                });
-              } else if (lastTranslateErrorType === "RATE_LIMIT_EXCEEDED") {
-                showToast("All API Keys hit their Google rate limit while translating. Please wait a minute and try again. Keeping the original (untranslated) Whisper transcript for now.", "warning");
-              } else if (lastTranslateErrorType === "INVALID_API_KEY") {
-                showToast("All your Gemini API Keys appear invalid or expired. Please update them in Settings. Keeping the original (untranslated) Whisper transcript for now.", "error");
-              } else {
-                showToast("Translation failed — keeping original (untranslated) Whisper transcript.", "warning");
-              }
-
-              targetProject.subtitles = finalSubs.map((s) => ({ ...s }));
-
-              // Only fire the "all done" success toast if translation actually happened —
-              // otherwise it instantly overwrites the QUOTA_ZERO/rate-limit warning above,
-              // since showToast is a singleton (one message slot, not a queue).
-              const translationWorked = !!translatedSubs;
-
-              if (projects[activeProjectIndex] === targetProject) {
-                saveStateToPast();
-                subtitles = finalSubs;
-                autoAssignVoxProfiles(subtitles);
-                renderSubtitles();
-                if (translationWorked) {
-                  showToast("Whisper transcription + translation complete!", "success");
-                }
-              } else if (translationWorked) {
-                showToast("Background Whisper + translation finished!", "success");
-              }
-
-              renderProjectTabs();
-              success = true;
-              Stats.inc(Stats.keys.lines, finalSubs.length);
-              maybeAutoSaveSubtitles(targetProject, finalSubs);
-            } else {
-              // ---------------------------------------------------------
-              // PHASE 2 (GEMINI PATH): Download audio + send to AI Backend
-              // ---------------------------------------------------------
-
-              // Download the MP3 Blob from the backend
-              let cleanPath = extractData.url.replace(/\\/g, "/");
-              if (!cleanPath.startsWith("/")) cleanPath = "/" + cleanPath;
-              const encodedPath = cleanPath
-                .split("/")
-                .map((part) => encodeURIComponent(part))
-                .join("/");
-
-              const audioUrl = `http://localhost:3001${encodedPath}?t=${Date.now()}`;
-              const audioBlobRes = await fetch(audioUrl, { signal });
-
-              if (!audioBlobRes.ok) throw new Error(`Browser failed to download extracted audio. Status: ${audioBlobRes.status}`);
-              const audioBlob = await audioBlobRes.blob();
-
-              if (projects[activeProjectIndex] === targetProject) showToast("Audio extracted! Sending to AI Backend...", "info");
-
-              // Convert extracted Blob to Base64
-              const blobToBase64 = (blob) => {
-                return new Promise((resolve, reject) => {
-                  const reader = new FileReader();
-                  reader.onloadend = () => resolve(reader.result.split(",")[1]);
-                  reader.onerror = reject;
-                  reader.readAsDataURL(blob);
-                });
-              };
-
-              const audioBase64 = await blobToBase64(audioBlob);
-              const totalDur = (targetProject.duration || duration) > 0 ? (targetProject.duration || duration).toFixed(2) : 60;
-
-              // Cleanly get the exact model selected by the user
-              let activeModel = localStorage.getItem("aiDubberModel") || "gemini-2.5-flash";
-
-              let lastErrorType = "UNKNOWN_ERROR";
-              let lastErrorMessage = "";
-
-              for (let i = 0; i < apiKeys.length; i++) {
-                if (signal.aborted) break;
-                const key = apiKeys[i];
-                try {
-                  if (projects[activeProjectIndex] === targetProject) showToast(`Analyzing and Translating with AI (Key ${i + 1})...`, "info");
-
-                  // Call our local server endpoint instead of Google directly
-                  const transcribeRes = await fetch("http://localhost:3001/api/transcribe", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      audioBase64: audioBase64,
-                      mimeType: audioBlob.type || "audio/mp3",
-                      duration: totalDur,
-                      targetLanguage: targetProject.targetLanguage || targetLanguage,
-                      genre: activeDramaGenre || "historical",
-                      glossary: typeof getDramaGlossaryDict === "function" ? getDramaGlossaryDict() : null,
-                      apiKey: key,
-                      model: activeModel,
-                      requestId: targetProject.geminiRequestId,
-                    }),
-                    signal,
-                  });
-
-                  const genData = await transcribeRes.json();
-
-                  if (!genData.success) {
-                    const errorText = genData.error || "";
-                    if (errorText === "RATE_LIMIT_EXCEEDED" || transcribeRes.status === 429) throw new Error("RATE_LIMIT_EXCEEDED");
-                    if (errorText === "INVALID_API_KEY") throw new Error("INVALID_API_KEY");
-                    throw new Error(`GENERATION_FAILED|${errorText}`);
-                  }
-
-                  // Log the raw text exactly like you originally did
-                  try {
-                    fetch("http://localhost:3001/api/log-transcription", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        videoName: targetProject.file.name,
-                        responseText: genData.rawText,
-                        mode: "Direct (Gemini)",
-                      }),
-                    }).catch(() => {});
-                  } catch (e) {}
-
-                  // ---------------------------------------------------------
-                  // PHASE 3: PARSE RESULTS AND BUILD TIMELINE
-                  // ---------------------------------------------------------
-                  const parsedSubs = genData.data; // Already formatted as an Array by the backend Schema!
-                  if (!Array.isArray(parsedSubs) || parsedSubs.length === 0) {
-                    throw new Error("AI returned empty or invalid JSON array.");
-                  }
-
-                  // Time String to Seconds Converter (Handles MM:SS.ss, HH:MM:SS.ss, MM:SS:ms, raw seconds)
-                  const parseAiTime = (timeVal) => {
-                    if (timeVal === undefined || timeVal === null) return 0;
-                    if (typeof timeVal === "number") return isNaN(timeVal) ? 0 : Math.max(0, timeVal);
-                    const str = String(timeVal).trim().replace(",", ".");
-                    if (!str) return 0;
-
-                    // Simple number string like "125.5"
-                    if (!str.includes(":")) {
-                      const num = parseFloat(str.replace(/[^0-9.]/g, ""));
-                      return isNaN(num) ? 0 : Math.max(0, num);
-                    }
-
-                    const parts = str.split(":").map((p) => p.trim());
-
-                    if (parts.length === 4) {
-                      // HH:MM:SS:ms or HH:MM:SS.ms
-                      const hrs = parseFloat(parts[0]) || 0;
-                      const mins = parseFloat(parts[1]) || 0;
-                      const secs = parseFloat(parts[2]) || 0;
-                      const msStr = parts[3];
-                      const ms = parseFloat(msStr) / Math.pow(10, msStr.length);
-                      return hrs * 3600 + mins * 60 + secs + ms;
-                    }
-
-                    if (parts.length === 3) {
-                      const p0 = parseFloat(parts[0]) || 0;
-                      const p1 = parseFloat(parts[1]) || 0;
-                      const p2 = parseFloat(parts[2]) || 0;
-
-                      // HH:MM:SS.ss (e.g. "00:02:15.50")
-                      if (parts[2].includes(".")) {
-                        return p0 * 3600 + p1 * 60 + p2;
-                      }
-
-                      // Check if 3rd part is millisecond fraction (length >= 3 or > 59)
-                      const msStr = parts[2];
-                      if (msStr.length >= 3 || p2 > 59) {
-                        const ms = p2 / Math.pow(10, msStr.length);
-                        return p0 * 60 + p1 + ms;
-                      }
-
-                      // Check against project duration
-                      const maxDur = (targetProject && targetProject.duration) || (typeof duration !== "undefined" ? duration : 0);
-                      const asHHMMSS = p0 * 3600 + p1 * 60 + p2;
-                      if (maxDur > 0 && asHHMMSS > maxDur + 60 && (p0 * 60 + p1) <= maxDur + 10) {
-                        const ms = p2 / Math.pow(10, msStr.length);
-                        return p0 * 60 + p1 + ms;
-                      }
-
-                      return asHHMMSS;
-                    }
-
-                    if (parts.length === 2) {
-                      // MM:SS or MM:SS.ss
-                      const mins = parseFloat(parts[0]) || 0;
-                      const secs = parseFloat(parts[1]) || 0;
-                      return mins * 60 + secs;
-                    }
-
-                    const fallback = parseFloat(str.replace(/[^0-9.]/g, ""));
-                    return isNaN(fallback) ? 0 : Math.max(0, fallback);
-                  };
-
-                  // Map results perfectly into your Timeline variables
-                  const formattedSubs = parsedSubs.map((sub) => {
-                    const startRaw = sub.start !== undefined ? sub.start : 0;
-                    const endRaw = sub.end !== undefined ? sub.end : 0;
-                    const textRaw = sub.text || "";
-
-                    // Some transcription runs return gender in Khmer instead of English
-                    // (e.g. "ប្រុស"/"បុរស" for male, "ស្រី"/"នារី" for female). Recognize all forms.
-                    let detectedGender = "Female";
-                    const aiGender = (sub.gender || sub.voice || "").toLowerCase().trim();
-                    const isMaleTag = aiGender === "male" || aiGender.includes("ប្រុស") || aiGender.includes("បុរស");
-                    const isFemaleTag = aiGender === "female" || aiGender.includes("ស្រី") || aiGender.includes("នារី");
-                    if (isMaleTag) detectedGender = "Male";
-                    else if (isFemaleTag) detectedGender = "Female";
-
-                    return {
-                      id: crypto.randomUUID().substring(0, 8),
-                      textStart: parseAiTime(startRaw).toFixed(2),
-                      textEnd: parseAiTime(endRaw).toFixed(2),
-                      audioStart: parseAiTime(startRaw).toFixed(2),
-                      audioEnd: parseAiTime(endRaw).toFixed(2),
-                      originalText: sub.originalText || sub.original || null,
-                      speaker: sub.speaker || null,
-                      emotion: sub.emotion || "Neutral",
-                      text: textRaw,
-                      voice: "KH Khmer",
-                      gender: detectedGender,
-                      status: "done",
-                      audioStatus: "idle",
-                      audioUrl: null,
-                      baseAudioDuration: 0,
-                      speed: 1.0,
-                      volume: 1.0,
-                    };
-                  });
-
-                  // Update the UI Timeline!
-                  targetProject.subtitles = formattedSubs.map((s) => ({
-                    ...s,
-                  }));
-
-                  // 2. ONLY update the screen if the user is still looking at this specific video
-                  if (projects[activeProjectIndex] === targetProject) {
-                    saveStateToPast();
-                    subtitles = formattedSubs;
-                    autoAssignVoxProfiles(subtitles);
-                    renderSubtitles();
-                    showToast("Transcription Complete!", "success");
-                  } else {
-                    // If they switched to another tab, just show a friendly background notification
-                    showToast("Background transcription finished!", "success");
-                  }
-
-                  renderProjectTabs();
-                  success = true;
-                  Stats.inc(Stats.keys.lines, formattedSubs.length);
-                  maybeAutoSaveSubtitles(targetProject, formattedSubs);
-
-                  break; // Stop looping API keys!
-                } catch (err) {
-                  if (err.name === "AbortError") throw err;
-                  console.error(`Error with API Key ${i + 1}:`, err);
-                  lastErrorType = err.message || "UNKNOWN_ERROR";
-                  lastErrorMessage = err.toString();
-                }
-              }
-
-              if (!success && lastErrorType !== "ABORTED") {
-                let userFriendlyMessage = "Transcription failed. Please try again.";
-                let toastOptions = {};
-
-                if (lastErrorType === "RATE_LIMIT_EXCEEDED") {
-                  userFriendlyMessage = "All API Keys have hit their Google Rate Limits! Please wait a minute and try again.";
-                  toastOptions = {
-                    linkUrl: "https://t.me/daidubberpro_official/151",
-                    linkText: "ចុចទីនេះ អានបន្ថែម",
-                  };
-                } else if (lastErrorType === "INVALID_API_KEY") {
-                  userFriendlyMessage = "Your Gemini API Keys are invalid or expired. Please update them in Settings.";
-                } else if (lastErrorType.includes("|")) {
-                  const parts = lastErrorType.split("|");
-                  userFriendlyMessage = `Google API Error: ${parts[1]}`;
-                  toastOptions = {
-                    linkUrl: "https://t.me/daidubberpro_official/151",
-                    linkText: "ចុចទីនេះ អានបន្ថែម",
-                  };
-                }
-
-                showToast(userFriendlyMessage, "error", toastOptions);
-
-                if (typeof logErrorToServer === "function") {
-                  logErrorToServer("Transcription", lastErrorType, {
-                    rawError: lastErrorMessage,
-                    keysAttempted: apiKeys.length,
-                    videoName: targetProject.file.name,
-                    modelUsed: localStorage.getItem("aiDubberModel") || "gemini-2.5-flash",
-                  });
-                }
-              }
-            } // end else (Gemini path)
-          } catch (error) {
-            if (error.name === "AbortError") {
-              showToast("Transcription cancelled.", "info");
-            } else {
-              console.error("Transcription Error:", error);
-              const isApiErr = /rate.limit|quota|demand|exhaust|overload|unavailable|503|API key/i.test(error.message || "");
-              showToast(
-                error.message || "Failed to transcribe.",
-                "error",
-                isApiErr
-                  ? {
-                      linkUrl: "https://t.me/daidubberpro_official/151",
-                      linkText: "ចុចទីនេះ អានបន្ថែម",
-                    }
-                  : {},
-              );
-            }
-          } finally {
-            // Release the lock for this specific project
-            targetProject.isTranscribing = false;
-            targetProject._smartRetranslateInProgress = false;
-
-            // Stop the elapsed-time counter — the loading card is going away either way
-            if (transcribeTimerInterval) {
-              clearInterval(transcribeTimerInterval);
-              transcribeTimerInterval = null;
+            const contentType = extractRes.headers.get("content-type");
+            if (!contentType || !contentType.includes("application/json")) {
+              throw new Error("Backend missing /api/extract-audio endpoint.");
             }
 
-            // Only update the button UI if they are currently viewing this tab
-            if (projects[activeProjectIndex] === targetProject) {
-              isTranscribing = false;
-              updateTranscribeButtonState();
+            extractData = await extractRes.json();
+            if (!extractData.success) {
+              if (extractData.error === "NO_AUDIO_TRACK") {
+                throw new Error("This video does not contain any audio track to transcribe!");
+              }
+              throw new Error(extractData.error || "Failed to extract audio");
             }
-            renderProjectTabs();
           }
+
+          if (engineMode === "whisper") {
+            let parsedSubs, whisperSrtText;
+
+            if (reuseExistingWhisperSrt) {
+              if (projects[activeProjectIndex] === targetProject) showToast("Reusing existing transcript from timeline...", "info");
+              parsedSubs = targetProject.subtitles.map((s) => ({ ...s }));
+
+              let srtBuild = "";
+              parsedSubs.forEach((sub, i) => {
+                srtBuild += `${i + 1}\n`;
+                srtBuild += `${formatSrtTime(parseFloat(sub.textStart))} --> ${formatSrtTime(parseFloat(sub.textEnd))}\n`;
+                srtBuild += `${sub.text || ""}\n\n`;
+              });
+              whisperSrtText = srtBuild;
+            } else {
+              const whisperFolder = (localStorage.getItem("aiDubberWhisperFolder") || "").trim();
+              if (projects[activeProjectIndex] === targetProject) showToast("Transcribing locally with Whisper...", "info");
+
+              const whisperJobId = crypto.randomUUID();
+              targetProject.whisperJobId = whisperJobId;
+
+              const whisperResult = await window.electronAPI.runWhisperTranscribe({
+                id: whisperJobId,
+                whisperFolder,
+                audioPath: extractData.file,
+                videoPath: targetProject.videoFilePath || null,
+              });
+
+              targetProject.whisperJobId = null;
+
+              if (whisperResult && whisperResult.srtText && whisperResult.srtText.trim()) {
+                const partialSubs = parseSrtText(whisperResult.srtText);
+                if (partialSubs.length > 0) {
+                  targetProject.subtitles = partialSubs.map((s) => ({ ...s }));
+                  if (projects[activeProjectIndex] === targetProject) {
+                    subtitles = targetProject.subtitles;
+                    renderSubtitles();
+                  }
+                  maybeAutoSaveSubtitles(targetProject, targetProject.subtitles, true);
+                }
+              }
+
+              if (signal.aborted || (whisperResult && whisperResult.cancelled)) {
+                throw Object.assign(new Error("Aborted"), { name: "AbortError" });
+              }
+              if (!whisperResult || !whisperResult.success) {
+                throw new Error((whisperResult && whisperResult.error) || "Whisper failed to produce a transcript.");
+              }
+
+              parsedSubs = parseSrtText(whisperResult.srtText);
+              if (!parsedSubs.length) {
+                throw new Error("Whisper produced an empty transcript.");
+              }
+              whisperSrtText = whisperResult.srtText;
+
+              targetProject.subtitles = parsedSubs.map((s) => ({ ...s }));
+              if (projects[activeProjectIndex] === targetProject) {
+                subtitles = targetProject.subtitles;
+                renderSubtitles();
+              }
+              renderProjectTabs();
+              // Save raw Whisper transcript to folder immediately so it is safe on disk
+              maybeAutoSaveSubtitles(targetProject, targetProject.subtitles, true);
+            }
+
+            if (projects[activeProjectIndex] === targetProject) showToast("Translating transcript with AI...", "info");
+
+            let activeModel = localStorage.getItem("aiDubberModel") || "gemini-3.7-flash";
+            let lastErrorType = "UNKNOWN_ERROR";
+            let lastErrorMessage = "";
+
+            for (let i = 0; i < apiKeys.length; i++) {
+              if (signal.aborted) break;
+              const keyIdx = (i + keyIndexOffset) % apiKeys.length;
+              const key = apiKeys[keyIdx];
+              try {
+                const srtBase64 = btoa(unescape(encodeURIComponent(whisperSrtText)));
+                const translateRes = await fetch("http://localhost:3001/api/translate-srt", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    srtBase64,
+                    targetLanguage: targetProject.targetLanguage || targetLanguage,
+                    genre: activeDramaGenre || "historical",
+                    glossary: typeof getDramaGlossaryDict === "function" ? getDramaGlossaryDict() : null,
+                    apiKey: key,
+                    model: activeModel,
+                    requestId: targetProject.geminiRequestId,
+                  }),
+                  signal,
+                });
+
+                const genData = await translateRes.json();
+                if (!genData.success) {
+                  const errorText = genData.error || "";
+                  if (errorText === "RATE_LIMIT_EXCEEDED" || translateRes.status === 429) throw new Error("RATE_LIMIT_EXCEEDED");
+                  if (errorText === "INVALID_API_KEY") throw new Error("INVALID_API_KEY");
+                  throw new Error(`GENERATION_FAILED|${errorText}`);
+                }
+
+                const translatedMap = genData.data;
+                const finalSubs = parsedSubs.map((sub, idx) => {
+                  const tr = Array.isArray(translatedMap) ? translatedMap[idx] : null;
+                  let khmerText = (tr && (tr.text || tr.dubbedText)) || sub.text;
+                  let detectedGender = (tr && tr.gender) || sub.gender || "Female";
+                  const isMaleTag = detectedGender === "Male" || String(detectedGender).includes("ប្រុស") || String(detectedGender).includes("បុរស");
+                  const isFemaleTag = detectedGender === "Female" || String(detectedGender).includes("ស្រី") || String(detectedGender).includes("នារី");
+                  if (isMaleTag) detectedGender = "Male";
+                  else if (isFemaleTag) detectedGender = "Female";
+
+                  return {
+                    id: sub.id || crypto.randomUUID().substring(0, 8),
+                    textStart: sub.textStart,
+                    textEnd: sub.textEnd,
+                    audioStart: sub.audioStart || sub.textStart,
+                    audioEnd: sub.audioEnd || sub.textEnd,
+                    originalText: sub.originalText || sub.text,
+                    speaker: (tr && tr.speaker) || sub.speaker || null,
+                    emotion: (tr && tr.emotion) || "Neutral",
+                    text: khmerText,
+                    voice: "KH Khmer",
+                    gender: detectedGender,
+                    status: "done",
+                    audioStatus: "idle",
+                    audioUrl: null,
+                    baseAudioDuration: 0,
+                    speed: 1.0,
+                    volume: 1.0,
+                  };
+                });
+
+                targetProject.subtitles = finalSubs;
+                if (projects[activeProjectIndex] === targetProject) {
+                  saveStateToPast();
+                  subtitles = finalSubs;
+                  autoAssignVoxProfiles(subtitles);
+                  renderSubtitles();
+                  showToast("Transcription & Translation Complete!", "success");
+                } else {
+                  showToast(`Whisper + Translation complete for "${targetProject.file?.name || 'project tab'}"!`, "success");
+                }
+
+                renderProjectTabs();
+                success = true;
+                Stats.inc(Stats.keys.lines, finalSubs.length);
+                maybeAutoSaveSubtitles(targetProject, finalSubs);
+                break;
+              } catch (err) {
+                if (err.name === "AbortError") throw err;
+                console.error(`Error translating with API Key ${keyIdx + 1}:`, err);
+                lastErrorType = err.message || "UNKNOWN_ERROR";
+                lastErrorMessage = err.toString();
+              }
+            }
+
+            if (!success && lastErrorType !== "ABORTED") {
+              let userFriendlyMessage = "Translation failed. Please try again.";
+              let toastOptions = {};
+              if (lastErrorType === "RATE_LIMIT_EXCEEDED") {
+                userFriendlyMessage = "All API Keys hit rate limits. Please wait a minute.";
+                toastOptions = { linkUrl: "https://t.me/daidubberpro_official/151", linkText: "ចុចទីនេះ អានបន្ថែម" };
+              } else if (lastErrorType === "INVALID_API_KEY") {
+                userFriendlyMessage = "Your Gemini API Keys are invalid. Please update them in Settings.";
+              } else if (lastErrorType.includes("|")) {
+                userFriendlyMessage = `Google API Error: ${lastErrorType.split("|")[1]}`;
+                toastOptions = { linkUrl: "https://t.me/daidubberpro_official/151", linkText: "ចុចទីនេះ អានបន្ថែម" };
+              }
+              showToast(userFriendlyMessage, "error", toastOptions);
+            }
+          } else {
+            // Direct Gemini Audio Transcription
+            if (projects[activeProjectIndex] === targetProject) showToast("Uploading and transcribing audio...", "info");
+
+            const audioFetchRes = await fetch(extractData.url || `/api/audio?path=${encodeURIComponent(extractData.file)}`, { signal });
+            const audioBlob = await audioFetchRes.blob();
+
+            const blobToBase64 = (b) => {
+              return new Promise((res, rej) => {
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                  const base64String = reader.result.split(",")[1];
+                  res(base64String);
+                };
+                reader.onerror = rej;
+                reader.readAsDataURL(b);
+              });
+            };
+
+            const audioBase64 = await blobToBase64(audioBlob);
+            const totalDur = (targetProject.duration || duration) > 0 ? (targetProject.duration || duration).toFixed(2) : 60;
+            let activeModel = localStorage.getItem("aiDubberModel") || "gemini-3.7-flash";
+            let lastErrorType = "UNKNOWN_ERROR";
+            let lastErrorMessage = "";
+
+            for (let i = 0; i < apiKeys.length; i++) {
+              if (signal.aborted) break;
+              const keyIdx = (i + keyIndexOffset) % apiKeys.length;
+              const key = apiKeys[keyIdx];
+              try {
+                if (projects[activeProjectIndex] === targetProject) showToast(`Analyzing and Translating with AI (Key ${keyIdx + 1})...`, "info");
+
+                const transcribeRes = await fetch("http://localhost:3001/api/transcribe", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    audioBase64: audioBase64,
+                    mimeType: audioBlob.type || "audio/mp3",
+                    duration: totalDur,
+                    targetLanguage: targetProject.targetLanguage || targetLanguage,
+                    genre: activeDramaGenre || "historical",
+                    glossary: typeof getDramaGlossaryDict === "function" ? getDramaGlossaryDict() : null,
+                    apiKey: key,
+                    model: activeModel,
+                    requestId: targetProject.geminiRequestId,
+                    videoName: vidName,
+                    partIndex: partIdx,
+                    customFolder: customFolderPath,
+                    sourceFilePath: localVideoPath,
+                  }),
+                  signal,
+                });
+
+                const genData = await transcribeRes.json();
+                if (!genData.success) {
+                  const errorText = genData.error || "";
+                  if (errorText === "RATE_LIMIT_EXCEEDED" || transcribeRes.status === 429) throw new Error("RATE_LIMIT_EXCEEDED");
+                  if (errorText === "INVALID_API_KEY") throw new Error("INVALID_API_KEY");
+                  throw new Error(`GENERATION_FAILED|${errorText}`);
+                }
+
+                try {
+                  fetch("http://localhost:3001/api/log-transcription", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      videoName: targetProject.file?.name || "video",
+                      responseText: genData.rawText,
+                      mode: "Direct (Gemini)",
+                    }),
+                  }).catch(() => {});
+                } catch (e) {}
+
+                const parsedSubs = genData.data;
+                if (!Array.isArray(parsedSubs) || parsedSubs.length === 0) {
+                  throw new Error("AI returned empty or invalid JSON array.");
+                }
+
+                const parseAiTime = (timeVal) => {
+                  if (timeVal === undefined || timeVal === null) return 0;
+                  if (typeof timeVal === "number") return isNaN(timeVal) ? 0 : Math.max(0, timeVal);
+                  const str = String(timeVal).trim().replace(",", ".");
+                  if (!str) return 0;
+                  if (!str.includes(":")) {
+                    const num = parseFloat(str.replace(/[^0-9.]/g, ""));
+                    return isNaN(num) ? 0 : Math.max(0, num);
+                  }
+                  const parts = str.split(":").map((p) => p.trim());
+                  if (parts.length === 3) {
+                    const p0 = parseFloat(parts[0]) || 0;
+                    const p1 = parseFloat(parts[1]) || 0;
+                    const p2 = parseFloat(parts[2]) || 0;
+                    return p0 * 3600 + p1 * 60 + p2;
+                  }
+                  if (parts.length === 2) {
+                    const mins = parseFloat(parts[0]) || 0;
+                    const secs = parseFloat(parts[1]) || 0;
+                    return mins * 60 + secs;
+                  }
+                  const fallback = parseFloat(str.replace(/[^0-9.]/g, ""));
+                  return isNaN(fallback) ? 0 : Math.max(0, fallback);
+                };
+
+                const formattedSubs = parsedSubs.map((sub) => {
+                  const startRaw = sub.start !== undefined ? sub.start : 0;
+                  const endRaw = sub.end !== undefined ? sub.end : 0;
+                  const textRaw = sub.text || "";
+
+                  let detectedGender = "Female";
+                  const aiGender = (sub.gender || sub.voice || "").toLowerCase().trim();
+                  const isMaleTag = aiGender === "male" || aiGender.includes("ប្រុស") || aiGender.includes("បុរស");
+                  const isFemaleTag = aiGender === "female" || aiGender.includes("ស្រី") || aiGender.includes("នារី");
+                  if (isMaleTag) detectedGender = "Male";
+                  else if (isFemaleTag) detectedGender = "Female";
+
+                  return {
+                    id: crypto.randomUUID().substring(0, 8),
+                    textStart: parseAiTime(startRaw).toFixed(2),
+                    textEnd: parseAiTime(endRaw).toFixed(2),
+                    audioStart: parseAiTime(startRaw).toFixed(2),
+                    audioEnd: parseAiTime(endRaw).toFixed(2),
+                    originalText: sub.originalText || sub.original || null,
+                    speaker: sub.speaker || null,
+                    emotion: sub.emotion || "Neutral",
+                    text: textRaw,
+                    voice: "KH Khmer",
+                    gender: detectedGender,
+                    status: "done",
+                    audioStatus: "idle",
+                    audioUrl: null,
+                    baseAudioDuration: 0,
+                    speed: 1.0,
+                    volume: 1.0,
+                  };
+                });
+
+                targetProject.subtitles = formattedSubs.map((s) => ({ ...s }));
+                if (projects[activeProjectIndex] === targetProject) {
+                  saveStateToPast();
+                  subtitles = formattedSubs;
+                  autoAssignVoxProfiles(subtitles);
+                  renderSubtitles();
+                  showToast("Transcription Complete!", "success");
+                } else {
+                  showToast(`Transcription finished for "${targetProject.file?.name || 'project tab'}"!`, "success");
+                }
+
+                renderProjectTabs();
+                success = true;
+                Stats.inc(Stats.keys.lines, formattedSubs.length);
+                maybeAutoSaveSubtitles(targetProject, formattedSubs);
+                break;
+              } catch (err) {
+                if (err.name === "AbortError") throw err;
+                console.error(`Error with API Key ${keyIdx + 1}:`, err);
+                lastErrorType = err.message || "UNKNOWN_ERROR";
+                lastErrorMessage = err.toString();
+              }
+            }
+
+            if (!success && lastErrorType !== "ABORTED") {
+              let userFriendlyMessage = "Transcription failed. Please try again.";
+              let toastOptions = {};
+
+              if (lastErrorType === "RATE_LIMIT_EXCEEDED") {
+                userFriendlyMessage = "All API Keys have hit their Google Rate Limits! Please wait a minute and try again.";
+                toastOptions = { linkUrl: "https://t.me/daidubberpro_official/151", linkText: "ចុចទីនេះ អានបន្ថែម" };
+              } else if (lastErrorType === "INVALID_API_KEY") {
+                userFriendlyMessage = "Your Gemini API Keys are invalid or expired. Please update them in Settings.";
+              } else if (lastErrorType.includes("|")) {
+                const parts = lastErrorType.split("|");
+                userFriendlyMessage = `Google API Error: ${parts[1]}`;
+                toastOptions = { linkUrl: "https://t.me/daidubberpro_official/151", linkText: "ចុចទីនេះ អានបន្ថែម" };
+              }
+
+              showToast(userFriendlyMessage, "error", toastOptions);
+            }
+          }
+
+          return { success, count: targetProject.subtitles.length };
+        } catch (error) {
+          if (error.name === "AbortError") {
+            showToast("Transcription cancelled.", "info");
+          } else {
+            console.error("Transcription Error:", error);
+            showToast(error.message || "Failed to transcribe.", "error");
+          }
+          return { success: false, error: error.message };
+        } finally {
+          targetProject.isTranscribing = false;
+          targetProject._smartRetranslateInProgress = false;
+
+          if (transcribeTimerInterval) {
+            clearInterval(transcribeTimerInterval);
+            transcribeTimerInterval = null;
+          }
+
+          if (projects[activeProjectIndex] === targetProject) {
+            isTranscribing = false;
+            updateTranscribeButtonState();
+          }
+          renderProjectTabs();
+        }
+      }
+
+      // ── Transcribe All Project Tabs Simultaneously (1-Click Parallel) ───────
+      async function transcribeAllProjects() {
+        const isAnyRunning = isTranscribingAll || isTranscribing || projects.some((p) => p.isTranscribing);
+
+        if (isAnyRunning) {
+          isTranscribingAll = false;
+          isTranscribing = false;
+
+          projects.forEach((p) => {
+            if (p.transcribeAbortController) {
+              try { p.transcribeAbortController.abort(); } catch (e) {}
+            }
+            if (p.whisperJobId && window.electronAPI && window.electronAPI.cancelWhisperTranscribe) {
+              window.electronAPI.cancelWhisperTranscribe(p.whisperJobId).catch(() => {});
+            }
+            if (p.geminiRequestId) {
+              fetch("http://localhost:3001/api/cancel-transcribe", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ requestId: p.geminiRequestId }),
+              }).catch(() => {});
+              p.geminiRequestId = null;
+            }
+            p.isTranscribing = false;
+            p.transcribeAbortController = null;
+            p._smartRetranslateInProgress = false;
+          });
+
+          // Ensure ALL eligible projects have their transcribe file saved to folder
+          const customFolder = localStorage.getItem("aiDubberAutoSaveSrtCustomPath") || "";
+          const eligibleToSave = projects.filter((p) => p.file || p.blobUrl);
+          const saveAllTranscribePromises = eligibleToSave.map(async (p, idx) => {
+            try {
+              const localVideoPath = p.videoFilePath || (p.file && p.file.path);
+              const vidName = p.file?.name || p.name || `video_${idx + 1}`;
+              const partIdx = idx + 1;
+
+              if (localVideoPath && typeof localVideoPath === "string") {
+                await fetch("http://localhost:3001/api/extract-audio", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    videoPath: localVideoPath,
+                    videoName: vidName,
+                    partIndex: partIdx,
+                    customFolder,
+                    sourceFilePath: localVideoPath,
+                  }),
+                });
+              } else if (p.blobUrl) {
+                const videoFetchRes = await fetch(p.blobUrl);
+                const videoBlob = await videoFetchRes.blob();
+                const formData = new FormData();
+                const safeName = vidName.replace(/[^a-zA-Z0-9.]/g, "_");
+                const uniqueFilename = `transcribe_${Date.now()}_${Math.random().toString(36).substring(2, 7)}_${safeName}`;
+                formData.append("videoFile", videoBlob, uniqueFilename);
+                formData.append("videoName", vidName);
+                formData.append("partIndex", String(partIdx));
+                formData.append("customFolder", customFolder);
+                await fetch("http://localhost:3001/api/extract-audio", {
+                  method: "POST",
+                  body: formData,
+                });
+              }
+            } catch (err) {
+              console.warn("Failed to extract/save transcribe file for project " + (idx + 1), err);
+            }
+          });
+
+          await Promise.all(saveAllTranscribePromises);
+
+          updateTranscribeButtonState();
+          updateTranscribeAllButtonState();
+          renderProjectTabs();
+          showToast("Stopped transcription. Transcribe files saved to folder for all projects.", "info");
+          return;
+        }
+
+        const eligibleProjects = projects.filter((p) => p.file || p.blobUrl);
+        if (eligibleProjects.length === 0) {
+          showToast("No video files found in any open project tab.", "info");
+          return;
+        }
+
+        const engineMode = document.querySelector('input[name="transcription-engine"]:checked')?.value || "gemini";
+        if (engineMode === "whisper") {
+          const whisperFolder = (localStorage.getItem("aiDubberWhisperFolder") || "").trim();
+          if (!whisperFolder) {
+            showToast("Please set your Whisper folder path in Settings first.", "error");
+            document.getElementById("btn-open-settings")?.click();
+            return;
+          }
+        } else {
+          const apiKeys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]");
+          if (apiKeys.length === 0) {
+            showToast("Please add at least one Gemini API Key in Settings.", "error");
+            document.getElementById("btn-open-settings")?.click();
+            return;
+          }
+        }
+
+        isTranscribingAll = true;
+        updateTranscribeAllButtonState();
+        showToast(`⚡ Processing all ${eligibleProjects.length} project tab(s)...`, "success");
+
+        // Immediately mark all eligible projects as active
+        eligibleProjects.forEach((p) => {
+          p.isTranscribing = true;
         });
+        renderProjectTabs();
+
+        // 🚀 Worker Pool: Processes projects concurrently in managed batches (prevents rate limit drops)
+        const poolSize = engineMode === "whisper" ? 2 : Math.min(3, Math.max(2, (apiKeys.length || 1) * 2));
+        let activeIdx = 0;
+        let completedCount = 0;
+
+        const runWorker = async () => {
+          while (activeIdx < eligibleProjects.length) {
+            if (!isTranscribingAll) break;
+            const index = activeIdx++;
+            const proj = eligibleProjects[index];
+            try {
+              const res = await transcribeSingleProject(proj, true, index);
+              if (res && res.success) {
+                completedCount++;
+              }
+            } catch (e) {
+              console.error(`Project ${index + 1} transcribe error:`, e);
+            }
+          }
+        };
+
+        const workers = Array.from({ length: Math.min(eligibleProjects.length, poolSize) }, () => runWorker());
+        await Promise.all(workers);
+
+        isTranscribingAll = false;
+        updateTranscribeAllButtonState();
+        updateTranscribeButtonState();
+        renderProjectTabs();
+
+        if (completedCount > 0) {
+          showToast(`🎉 Completed and saved all ${completedCount} of ${eligibleProjects.length} project tab(s)!`, "success");
+        }
+      }
+
+      // Wire Event Listeners
+      if (btnTranscribe) {
+        btnTranscribe.addEventListener("click", async () => {
+          await transcribeSingleProject(projects[activeProjectIndex], false);
+        });
+      }
+
+      const btnTranscribeAll = document.getElementById("btn-transcribe-all");
+      if (btnTranscribeAll) {
+        btnTranscribeAll.addEventListener("click", transcribeAllProjects);
       }
 
       // --- Open Logs Folder ---
@@ -9086,7 +9115,14 @@
       const updateSubtitleDisplay = () => {
         if (showSubtitles && subtitles && subtitles.length > 0) {
           const currentTime = mainVideo.currentTime;
-          const activeSub = subtitles.find((sub) => currentTime >= parseFloat(sub.textStart) && currentTime <= parseFloat(sub.textEnd));
+          let activeSub = null;
+          for (let i = 0; i < subtitles.length; i++) {
+            const s = subtitles[i];
+            if (currentTime >= parseFloat(s.textStart) && currentTime <= parseFloat(s.textEnd)) {
+              activeSub = s;
+              break;
+            }
+          }
 
           if (activeSub && activeSub.text.trim() !== "") {
             const baseSize = globalSubtitleSize;
@@ -9094,8 +9130,8 @@
             const vWidth = mainVideo.videoWidth || 1080;
             const vHeight = mainVideo.videoHeight || 1920;
             const container = mainVideo.parentElement;
-            const cWidth = container.clientWidth || 300;
-            const cHeight = container.clientHeight || 500;
+            const cWidth = container?.clientWidth || 300;
+            const cHeight = container?.clientHeight || 500;
 
             // --- 1. Calculate Actual Rendered Video Size (Ignores Black Bars) ---
             const fitRatio = Math.min(cWidth / vWidth, cHeight / vHeight);
@@ -9128,20 +9164,13 @@
 
             let shadowStr = "";
             if (globalSubtitleShadowDepth > 0) {
-              // 1. Match the blur spread ratio (1.5x) we used in the server.js FFmpeg fix
               const blurRadius = globalSubtitleShadowDepth * 1.5;
-
-              // 2. Build the shadow cast
               const cast = `${globalSubtitleShadowDepth}px ${globalSubtitleShadowDepth}px ${blurRadius}px ${globalSubtitleShadowColor}`;
-
-              // 3. THE FIX: Stack the shadow 4 times. This simulates the solid \bord core mass
               shadowStr = `, ${cast}, ${cast}, ${cast}, ${cast}`;
             }
 
             subtitleText.style.textShadow = outlineStr !== "none" ? outlineStr + shadowStr : shadowStr ? shadowStr.substring(2) : "none";
 
-            // THE FIX: Use setProperty to forcefully inject the '!important' flag via JavaScript.
-            // This safely overpowers the .font-khmer CSS class without breaking the rest of your app!
             if (typeof globalSubtitleFont !== "undefined" && globalSubtitleFont) {
               subtitleText.style.setProperty("font-family", `"${globalSubtitleFont}", sans-serif`, "important");
             }
@@ -9149,84 +9178,90 @@
             subtitleText.style.fontStyle = globalSubtitleItalic ? "italic" : "normal";
             subtitleText.style.textDecoration = globalSubtitleUnderline ? "underline" : "none";
 
-            // --- 4. 100% Synced Backend Smart Wrap (True Dynamic Width) ---
-            let textToRender = activeSub.text
-              .replace(/<[^>]+>/g, "")
-              .replace(/\\N/g, " ")
-              .replace(/\n/g, " ")
-              .replace(/\s+/g, " ")
-              .trim();
+            // --- 4. Cached Smart Wrap (Only recalculate if text, size, or video width changes) ---
+            if (!activeSub._cachedChunks || activeSub._cachedText !== activeSub.text || activeSub._cachedBaseSize !== baseSize || activeSub._cachedVWidth !== vWidth) {
+              let textToRender = activeSub.text
+                .replace(/<[^>]+>/g, "")
+                .replace(/\\N/g, " ")
+                .replace(/\n/g, " ")
+                .replace(/\s+/g, " ")
+                .trim();
 
-            const marginSideBackend = Math.round(vWidth * 0.04);
-            const usableWidth = vWidth - marginSideBackend * 2;
+              const marginSideBackend = Math.round(vWidth * 0.04);
+              const usableWidth = vWidth - marginSideBackend * 2;
 
-            // Replicate the exact font-width logic from the server
-            const getCharWidth = (char) => {
-              if (/[\u3000-\u9FFF\uAC00-\uD7AF]/.test(char)) return backendFontSize * 1.05;
-              if (/[\u17B4-\u17D3]/.test(char)) return backendFontSize * 0.1;
-              if (/[\u1780-\u17B3A-Z]/.test(char)) return backendFontSize * 0.65;
-              return backendFontSize * 0.45;
-            };
+              const getCharWidth = (char) => {
+                if (/[\u3000-\u9FFF\uAC00-\uD7AF]/.test(char)) return backendFontSize * 1.05;
+                if (/[\u17B4-\u17D3]/.test(char)) return backendFontSize * 0.1;
+                if (/[\u1780-\u17B3A-Z]/.test(char)) return backendFontSize * 0.65;
+                return backendFontSize * 0.45;
+              };
 
-            let linesArray = [];
-            let currentLine = "";
-            let currentWidth = 0;
-            let lastSpaceIndex = -1;
-            let lastSpaceWidth = 0;
+              let linesArray = [];
+              let currentLine = "";
+              let currentWidth = 0;
+              let lastSpaceIndex = -1;
+              let lastSpaceWidth = 0;
 
-            for (let i = 0; i < textToRender.length; i++) {
-              const char = textToRender[i];
-              const charWidth = getCharWidth(char);
+              for (let i = 0; i < textToRender.length; i++) {
+                const char = textToRender[i];
+                const charWidth = getCharWidth(char);
 
-              if (char === " ") {
-                lastSpaceIndex = currentLine.length;
-                lastSpaceWidth = currentWidth;
-              }
-
-              currentLine += char;
-              currentWidth += charWidth;
-
-              if (currentWidth >= usableWidth) {
-                if (lastSpaceIndex !== -1 && currentWidth - lastSpaceWidth < usableWidth * 0.4) {
-                  linesArray.push(currentLine.substring(0, lastSpaceIndex).trim());
-                  currentLine = currentLine.substring(lastSpaceIndex + 1);
-                } else {
-                  // Hard break: Protect Khmer syllables
-                  let breakIdx = currentLine.length - 1;
-                  while (breakIdx > 0 && (currentLine[breakIdx - 1] === "\u17D2" || /[\u17B4-\u17D3]/.test(currentLine[breakIdx]))) {
-                    breakIdx--;
-                  }
-                  if (breakIdx <= 0) breakIdx = currentLine.length - 1;
-
-                  linesArray.push(currentLine.substring(0, breakIdx).trim());
-                  currentLine = currentLine.substring(breakIdx);
+                if (char === " ") {
+                  lastSpaceIndex = currentLine.length;
+                  lastSpaceWidth = currentWidth;
                 }
 
-                currentWidth = 0;
-                for (let c of currentLine) currentWidth += getCharWidth(c);
-                lastSpaceIndex = -1;
+                currentLine += char;
+                currentWidth += charWidth;
+
+                if (currentWidth >= usableWidth) {
+                  if (lastSpaceIndex !== -1 && currentWidth - lastSpaceWidth < usableWidth * 0.4) {
+                    linesArray.push(currentLine.substring(0, lastSpaceIndex).trim());
+                    currentLine = currentLine.substring(lastSpaceIndex + 1);
+                  } else {
+                    let breakIdx = currentLine.length - 1;
+                    while (breakIdx > 0 && (currentLine[breakIdx - 1] === "\u17D2" || /[\u17B4-\u17D3]/.test(currentLine[breakIdx]))) {
+                      breakIdx--;
+                    }
+                    if (breakIdx <= 0) breakIdx = currentLine.length - 1;
+
+                    linesArray.push(currentLine.substring(0, breakIdx).trim());
+                    currentLine = currentLine.substring(breakIdx);
+                  }
+
+                  currentWidth = 0;
+                  for (let c of currentLine) currentWidth += getCharWidth(c);
+                  lastSpaceIndex = -1;
+                }
               }
+
+              if (currentLine.trim().length > 0) {
+                linesArray.push(currentLine.trim());
+              }
+
+              const chunks = [];
+              for (let i = 0; i < linesArray.length; i += 2) {
+                chunks.push(linesArray.slice(i, i + 2).join("<br>"));
+              }
+              if (chunks.length === 0) chunks.push("");
+
+              activeSub._cachedChunks = chunks;
+              activeSub._cachedText = activeSub.text;
+              activeSub._cachedBaseSize = baseSize;
+              activeSub._cachedVWidth = vWidth;
             }
 
-            if (currentLine.trim().length > 0) {
-              linesArray.push(currentLine.trim());
-            }
+            const chunks = activeSub._cachedChunks;
 
-            // --- 5. Group into Max 2-Row Chunks ---
-            const chunks = [];
-            for (let i = 0; i < linesArray.length; i += 2) {
-              chunks.push(linesArray.slice(i, i + 2).join("<br>"));
-            }
-
-            // --- 6. Dynamic Time Division (Live Swap) ---
+            // --- 5. Dynamic Time Division (Live Swap) ---
             const startSec = parseFloat(activeSub.textStart);
             const endSec = parseFloat(activeSub.textEnd);
-            const totalDuration = endSec - startSec;
+            const totalDuration = Math.max(0.01, endSec - startSec);
             const timePerChunk = totalDuration / chunks.length;
             const timeIntoSub = currentTime - startSec;
 
             let currentChunkIdx = Math.floor(timeIntoSub / timePerChunk);
-
             if (currentChunkIdx >= chunks.length) currentChunkIdx = chunks.length - 1;
             if (currentChunkIdx < 0) currentChunkIdx = 0;
 
@@ -11010,34 +11045,14 @@
           };
           chromaLoopState[overlayId] = state;
 
-          const loop = (timestamp) => {
-            if (!wrapper.isConnected) return;
-            if (!chromaSettings[overlayId]?.enabled) {
-              vid.style.display = "";
-              liveCanvas.remove();
-              delete chromaLoopState[overlayId];
-              return;
-            }
-            if (vid.readyState < 2) {
-              state.animFrame = requestAnimationFrame(loop);
-              return;
-            }
-
-            // Throttle per overlay
-            if (timestamp - state.lastTime < FRAME_MS) {
-              state.animFrame = requestAnimationFrame(loop);
-              return;
-            }
-            state.lastTime = timestamp;
-
-            // Skip frame if worker still processing previous one
-            if (state.workerBusy) {
-              state.animFrame = requestAnimationFrame(loop);
-              return;
-            }
+          const captureAndProcess = () => {
+            if (!wrapper.isConnected || !chromaSettings[overlayId]?.enabled) return;
+            if (state.workerBusy) return;
 
             const vw = vid.videoWidth || wrapper.offsetWidth;
             const vh = vid.videoHeight || wrapper.offsetHeight;
+            if (!vw || !vh) return;
+
             if (vw !== state.cachedW || vh !== state.cachedH) {
               liveCanvas.width = vw;
               liveCanvas.height = vh;
@@ -11045,83 +11060,87 @@
               state.cachedH = vh;
             }
 
-            // Use requestVideoFrameCallback for frame-perfect capture if supported
-            const captureAndProcess = () => {
-              if (!wrapper.isConnected || !chromaSettings[overlayId]?.enabled) return;
-              if (state.workerBusy) return;
+            createImageBitmap(vid)
+              .then((bitmap) => {
+                const w = getIdleWorker();
+                w.busy = true;
+                state.workerBusy = true;
 
-              const vw = vid.videoWidth || wrapper.offsetWidth;
-              const vh = vid.videoHeight || wrapper.offsetHeight;
-              if (vw !== state.cachedW || vh !== state.cachedH) {
-                liveCanvas.width = vw;
-                liveCanvas.height = vh;
-                state.cachedW = vw;
-                state.cachedH = vh;
-              }
+                w.worker.onmessage = (e) => {
+                  w.busy = false;
+                  state.workerBusy = false;
+                  if (!wrapper.isConnected) {
+                    if (e.data.bitmap && typeof e.data.bitmap.close === "function") e.data.bitmap.close();
+                    return;
+                  }
+                  lCtx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
+                  lCtx.drawImage(e.data.bitmap, 0, 0, liveCanvas.width, liveCanvas.height);
+                  if (e.data.bitmap && typeof e.data.bitmap.close === "function") e.data.bitmap.close();
+                };
 
-              createImageBitmap(vid)
-                .then((bitmap) => {
-                  const w = getIdleWorker();
-                  w.busy = true;
-                  state.workerBusy = true;
+                w.worker.postMessage(
+                  {
+                    bitmap,
+                    kr,
+                    kg,
+                    kb,
+                    tolSq,
+                    edgeSq,
+                    smoothing,
+                    width: vw,
+                    height: vh,
+                    overlayId,
+                  },
+                  [bitmap],
+                );
+              })
+              .catch(() => {});
+          };
 
-                  w.worker.onmessage = (e) => {
-                    w.busy = false;
-                    state.workerBusy = false;
-                    if (!wrapper.isConnected) {
-                      e.data.bitmap.close();
-                      return;
-                    }
-                    lCtx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
-                    lCtx.drawImage(e.data.bitmap, 0, 0, liveCanvas.width, liveCanvas.height);
-                    e.data.bitmap.close();
-                  };
+          const loop = (timestamp) => {
+            if (!wrapper.isConnected) return;
+            if (!chromaSettings[overlayId]?.enabled) {
+              vid.style.opacity = "";
+              vid.style.position = "";
+              liveCanvas.remove();
+              delete chromaLoopState[overlayId];
+              return;
+            }
 
-                  w.worker.postMessage(
-                    {
-                      bitmap,
-                      kr,
-                      kg,
-                      kb,
-                      tolSq,
-                      edgeSq,
-                      smoothing,
-                      width: vw,
-                      height: vh,
-                      overlayId,
-                    },
-                    [bitmap],
-                  );
-                })
-                .catch(() => {});
-            };
+            if (vid.paused) {
+              state.animFrame = null;
+              return;
+            }
 
-            const loop = (timestamp) => {
-              if (!wrapper.isConnected) return;
-              if (!chromaSettings[overlayId]?.enabled) {
-                vid.style.opacity = "";
-                vid.style.position = "";
-                liveCanvas.remove();
-                delete chromaLoopState[overlayId];
-                return;
-              }
-              if (vid.readyState < 2) {
-                state.animFrame = requestAnimationFrame(loop);
-                return;
-              }
-
-              if (timestamp - state.lastTime >= FRAME_MS && !state.workerBusy) {
-                state.lastTime = timestamp;
-                captureAndProcess();
-              }
-
+            if (vid.readyState < 2) {
               state.animFrame = requestAnimationFrame(loop);
-            };
+              return;
+            }
+
+            if (timestamp - state.lastTime >= FRAME_MS && !state.workerBusy) {
+              state.lastTime = timestamp;
+              captureAndProcess();
+            }
 
             state.animFrame = requestAnimationFrame(loop);
           };
 
-          state.animFrame = requestAnimationFrame(loop);
+          const startLoop = () => {
+            if (!state.animFrame && !vid.paused && chromaSettings[overlayId]?.enabled) {
+              state.animFrame = requestAnimationFrame(loop);
+            }
+          };
+
+          vid.addEventListener("play", startLoop);
+          vid.addEventListener("seeked", captureAndProcess);
+          vid.addEventListener("timeupdate", () => {
+            if (vid.paused) captureAndProcess();
+          });
+
+          captureAndProcess();
+          if (!vid.paused) {
+            state.animFrame = requestAnimationFrame(loop);
+          }
         };
 
         // Expose to window so preset/tab-switch code can access them
@@ -11836,17 +11855,20 @@
       };
 
       const loadSettings = async () => {
-        // Default to Gemini 2.5 Flash (free tier & high speed)
-        let savedModel = localStorage.getItem("aiDubberModel") || "gemini-2.5-flash";
+        // Default to Gemini 3.7 Flash (Hybrid reasoning & ultra fast)
+        let savedModel = localStorage.getItem("aiDubberModel") || "gemini-3.7-flash";
         if (savedModel === "gemini-3.1-pro") {
           savedModel = "gemini-3.1-pro-preview";
+        }
+        if (savedModel === "gemini-2.0-flash") {
+          savedModel = "gemini-3.7-flash";
         }
 
         const modelSelect = document.getElementById("setting-ai-model");
         if (modelSelect) {
           modelSelect.value = savedModel;
           if (modelSelect.selectedIndex === -1) {
-            savedModel = "gemini-2.5-flash";
+            savedModel = "gemini-3.7-flash";
             modelSelect.value = savedModel;
           }
         }
@@ -12300,7 +12322,7 @@
 
         try {
           const glossary = typeof getDramaGlossaryDict === "function" ? getDramaGlossaryDict() : null;
-          const activeModel = localStorage.getItem("aiDubberModel") || "gemini-2.0-flash";
+          const activeModel = localStorage.getItem("aiDubberModel") || "gemini-3.7-flash";
 
           const res = await fetch("http://localhost:3001/api/rewrite-dialogue", {
             method: "POST",
@@ -12414,129 +12436,7 @@
       window.isRenderDuckingEnabled = () => currentDuckingEnabled;
       window.getSubtitleStylePreset = () => currentSubtitlePreset;
 
-      // ══════════════════════════════════════════════════════════════════════
-      // CREATOR FEATURE 4: CUSTOM DRAMA GLOSSARY & CHARACTER NAME DICTIONARY
-      // ══════════════════════════════════════════════════════════════════════
-      const GLOSSARY_KEY = "drDubberGlossary";
-
-      window.loadGlossary = () => {
-        try {
-          return JSON.parse(localStorage.getItem(GLOSSARY_KEY) || "[]");
-        } catch (e) {
-          return [];
-        }
-      };
-
-      window.saveGlossary = (items) => {
-        localStorage.setItem(GLOSSARY_KEY, JSON.stringify(items));
-        renderGlossaryList();
-      };
-
-      window.getDramaGlossaryDict = () => {
-        const list = window.loadGlossary();
-        if (!Array.isArray(list) || list.length === 0) return null;
-        const dict = {};
-        list.forEach((item) => {
-          if (item && item.from && item.to) {
-            dict[item.from.trim()] = item.to.trim();
-          }
-        });
-        return dict;
-      };
-
-      window.openGlossaryModal = () => {
-        const modal = document.getElementById("modal-glossary");
-        if (!modal) return;
-        renderGlossaryList();
-        modal.classList.remove("hidden");
-        requestAnimationFrame(() => {
-          modal.classList.add("opacity-100");
-          modal.querySelector("div")?.classList.add("scale-100");
-        });
-        _lucideCreateIcons();
-      };
-
-      window.closeGlossaryModal = () => {
-        const modal = document.getElementById("modal-glossary");
-        if (!modal) return;
-        modal.classList.remove("opacity-100");
-        modal.querySelector("div")?.classList.remove("scale-100");
-        setTimeout(() => modal.classList.add("hidden"), 300);
-      };
-
-      window.addGlossaryItem = () => {
-        const fromInput = document.getElementById("glossary-input-from");
-        const toInput = document.getElementById("glossary-input-to");
-        const fromVal = (fromInput?.value || "").trim();
-        const toVal = (toInput?.value || "").trim();
-
-        if (!fromVal || !toVal) {
-          showToast("Please enter both the original name and Khmer dub name.", "warning");
-          return;
-        }
-
-        const items = window.loadGlossary();
-        const existingIdx = items.findIndex((i) => i.from.toLowerCase() === fromVal.toLowerCase());
-        if (existingIdx > -1) {
-          items[existingIdx].to = toVal;
-        } else {
-          items.push({ from: fromVal, to: toVal });
-        }
-        window.saveGlossary(items);
-        if (fromInput) fromInput.value = "";
-        if (toInput) toInput.value = "";
-        showToast(`Saved term: ${fromVal} ➔ ${toVal}`, "success");
-      };
-
-      window.deleteGlossaryItem = (index) => {
-        const items = window.loadGlossary();
-        if (index >= 0 && index < items.length) {
-          items.splice(index, 1);
-          window.saveGlossary(items);
-        }
-      };
-
-      window.clearAllGlossary = () => {
-        window.saveGlossary([]);
-        showToast("Glossary cleared.", "info");
-      };
-
-      window.renderGlossaryList = () => {
-        const listEl = document.getElementById("glossary-items-list");
-        const countEl = document.getElementById("glossary-count");
-        if (!listEl) return;
-
-        const items = window.loadGlossary();
-        if (countEl) countEl.textContent = `${items.length} ${items.length === 1 ? "term" : "terms"}`;
-
-        if (items.length === 0) {
-          listEl.innerHTML = `
-            <div class="py-8 text-center text-xs text-[var(--text-muted)] flex flex-col items-center gap-1.5">
-              <i data-lucide="book" class="w-6 h-6 opacity-40"></i>
-              <p>No custom terms added yet. Add names like <code>顾总 ➔ លោកប្រធានគូ</code> above.</p>
-            </div>`;
-          _lucideCreateIcons();
-          return;
-        }
-
-        listEl.innerHTML = items
-          .map(
-            (item, idx) => `
-          <div class="flex items-center justify-between p-2 rounded-lg bg-[var(--bg-base)] border border-[var(--border-light)] hover:border-cyan-400/30 transition-colors">
-            <div class="flex items-center gap-2 overflow-hidden">
-              <span class="text-xs font-mono font-bold text-cyan-300 truncate max-w-[140px]">${item.from.replace(/</g, "&lt;")}</span>
-              <span class="text-xs text-[var(--text-muted)]">➔</span>
-              <span class="text-xs font-khmer font-medium text-[var(--text-bright)] truncate max-w-[200px]">${item.to.replace(/</g, "&lt;")}</span>
-            </div>
-            <button onclick="deleteGlossaryItem(${idx})" class="text-[var(--text-muted)] hover:text-red-400 p-1 rounded transition-colors" title="Delete term">
-              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
-            </button>
-          </div>
-        `
-          )
-          .join("");
-        _lucideCreateIcons();
-      };
+      window.getDramaGlossaryDict = () => null;
 
       // ══════════════════════════════════════════════════════════════════════
       // CREATOR FEATURE 5: BATCH MULTI-EPISODE DUBBING QUEUE
@@ -12607,6 +12507,17 @@
         _lucideCreateIcons();
       };
 
+      window.generateSelectedAudio = async () => {
+        const targetProject = projects[activeProjectIndex];
+        if (!targetProject || !targetProject.subtitles || targetProject.subtitles.length === 0) return;
+        saveCurrentProjectState();
+        const subsToGenerate = subtitles.filter((s) => selectedItems.includes(`text-${s.id}`) || selectedItems.includes(`audio-${s.id}`));
+        const idsToProcess = subsToGenerate.length > 0 ? subsToGenerate.map((s) => s.id) : targetProject.subtitles.map((s) => s.id);
+        if (idsToProcess.length > 0 && typeof generateStandardAudioForProject === "function") {
+          await generateStandardAudioForProject(targetProject, idsToProcess, false);
+        }
+      };
+
       window.runBatchDubbingQueue = async () => {
         const validProjects = projects.filter((p) => p && p.file);
         if (validProjects.length === 0) {
@@ -12616,37 +12527,53 @@
 
         const btn = document.getElementById("btn-start-batch-run");
         const statusLabel = document.getElementById("batch-status-label");
-        if (btn) btn.disabled = true;
+        if (btn) {
+          btn.disabled = true;
+          btn.innerHTML = `<span class="animate-spin inline-block mr-1">⏳</span> Processing...`;
+        }
 
-        showToast(`Starting batch dubbing queue for ${validProjects.length} episodes...`, "info");
+        showToast(`Starting batch dubbing queue for ${validProjects.length} episode(s)...`, "info");
 
         for (let i = 0; i < validProjects.length; i++) {
           const p = validProjects[i];
-          if (statusLabel) statusLabel.textContent = `Processing Episode ${i + 1}/${validProjects.length}: ${p.file.name}...`;
+          const epName = p.file?.name || `Episode ${i + 1}`;
+          if (statusLabel) statusLabel.textContent = `Processing Episode ${i + 1}/${validProjects.length}: ${epName}...`;
 
           // Switch tab context
           const projIndex = projects.indexOf(p);
-          if (projIndex > -1) {
+          if (projIndex > -1 && typeof switchProject === "function") {
             switchProject(projIndex);
           }
 
           // Auto-Fit Lip Sync speech rate if subtitles exist
-          if (p.subtitles && p.subtitles.length > 0) {
-            await autoFitLipSyncRates();
+          if (p.subtitles && p.subtitles.length > 0 && typeof autoFitLipSyncRates === "function") {
+            try {
+              if (statusLabel) statusLabel.textContent = `[${i + 1}/${validProjects.length}] Auto-fitting speech rates...`;
+              await autoFitLipSyncRates();
+            } catch (e) {}
           }
 
-          // Trigger audio generation if pending
-          const pendingSubs = (p.subtitles || []).filter((s) => s.audioStatus !== "ready" && !s.file);
-          if (pendingSubs.length > 0) {
-            showToast(`Generating speech for Episode ${i + 1}...`, "info");
-            if (typeof generateSelectedAudio === "function") {
-              await generateSelectedAudio();
+          // Trigger audio generation for pending subtitles
+          if (p.subtitles && p.subtitles.length > 0) {
+            const pendingSubs = p.subtitles.filter((s) => s.audioStatus !== "ready" && !s.file);
+            const targetIds = pendingSubs.length > 0 ? pendingSubs.map((s) => s.id) : p.subtitles.map((s) => s.id);
+            if (statusLabel) statusLabel.textContent = `[${i + 1}/${validProjects.length}] Generating voices (${targetIds.length} cues)...`;
+            showToast(`Generating speech for Episode ${i + 1} (${targetIds.length} cues)...`, "info");
+            
+            if (typeof generateStandardAudioForProject === "function") {
+              await generateStandardAudioForProject(p, targetIds, true);
             }
           }
+          if (typeof renderBatchProjectsList === "function") renderBatchProjectsList();
         }
 
         if (statusLabel) statusLabel.textContent = "✓ Batch Queue Finished!";
-        if (btn) btn.disabled = false;
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = `<i data-lucide="play" class="w-4 h-4 fill-current"></i> Start Batch Processing`;
+          if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: btn });
+        }
+        if (typeof renderBatchProjectsList === "function") renderBatchProjectsList();
         showToast("✓ Batch processing queue completed!", "success");
       };
 
@@ -14019,82 +13946,84 @@
 
       // --- ACTIVE SUBTITLE HIGHLIGHTING & AUTO-SCROLL ---
       let lastAutoScrolledId = null;
+      let _lastActiveSubRowId = null;
 
       const updateActiveRow = () => {
-        if (subtitles.length === 0 || !mainVideo.src) return;
-        const currentTime = mainVideo.currentTime;
-
-        const rows = document.querySelectorAll(".subtitle-row");
-        let foundActive = false;
-
-        // Build lookup maps ONCE per call. This used to do a linear
-        // subtitles.find() plus two selectedItems.includes() scans inside the
-        // per-row loop - O(rows x subtitles) several times a second, which on
-        // a 1000-line project is ~1,000,000 comparisons per tick.
-        const _subById = new Map();
-        for (let i = 0; i < subtitles.length; i++) _subById.set(subtitles[i].id, subtitles[i]);
-        const _selectedSet = new Set(selectedItems);
-
-        rows.forEach((row) => {
-          const subId = row.getAttribute("data-id");
-          const sub = _subById.get(subId);
-          if (!sub) return;
-
-          // Check if playing OR if selected
-          const isActive = currentTime >= parseFloat(sub.textStart) && currentTime <= parseFloat(sub.textEnd);
-          const isRowSelected = _selectedSet.has(`text-${subId}`) || _selectedSet.has(`audio-${subId}`);
-
-          const timeCells = row.querySelectorAll("td:nth-child(2), td:nth-child(3)");
-          const textInput = row.querySelector(".subtitle-text-input");
-
-          if (isActive) {
-            foundActive = true;
-
-            // THE FIX: Use our new custom soft background class instead of broken Tailwind hex opacities!
-            row.classList.add("active-play-row");
-            row.classList.remove("hover:bg-[var(--bg-hover)]");
-
-            timeCells.forEach((td) => {
-              td.classList.remove("text-[var(--text-secondary)]");
-              td.classList.add("text-[var(--accent-text)]", "font-semibold");
-            });
-
-            textInput.classList.remove("text-[var(--text-primary)]");
-            textInput.classList.add("text-[var(--text-bright)]", "font-semibold");
-
-            if (lastAutoScrolledId !== subId) {
-              row.scrollIntoView({ behavior: "smooth", block: "center" });
-              lastAutoScrolledId = subId;
+        if (!subtitles || subtitles.length === 0 || !mainVideo.src) {
+          if (_lastActiveSubRowId) {
+            const prevRow = document.querySelector(`.subtitle-row[data-id="${_lastActiveSubRowId}"]`);
+            if (prevRow) {
+              prevRow.classList.remove("active-play-row");
+              prevRow.classList.add("hover:bg-[var(--bg-hover)]");
             }
-          } else {
-            // THE FIX: Remove the custom soft background class
-            row.classList.remove("active-play-row");
-            row.classList.add("hover:bg-[var(--bg-hover)]");
+            _lastActiveSubRowId = null;
+            lastAutoScrolledId = null;
+          }
+          return;
+        }
 
-            // Check if we should keep it highlighted (because it's selected) or revert to normal!
-            if (isRowSelected) {
-              timeCells.forEach((td) => {
-                td.classList.remove("text-[var(--text-secondary)]");
-                td.classList.add("text-[var(--accent-text)]", "font-semibold");
-              });
-              textInput.classList.remove("text-[var(--text-primary)]");
-              textInput.classList.add("text-[var(--text-bright)]", "font-semibold");
-            } else {
-              // Revert completely to theme defaults
+        const currentTime = mainVideo.currentTime;
+        let activeSub = null;
+        for (let i = 0; i < subtitles.length; i++) {
+          const s = subtitles[i];
+          if (currentTime >= parseFloat(s.textStart) && currentTime <= parseFloat(s.textEnd)) {
+            activeSub = s;
+            break;
+          }
+        }
+        const activeId = activeSub ? activeSub.id : null;
+
+        // If active row hasn't changed, fast O(1) exit (zero DOM manipulation)
+        if (activeId === _lastActiveSubRowId) return;
+
+        // Un-highlight previously active row
+        if (_lastActiveSubRowId) {
+          const prevRow = document.querySelector(`.subtitle-row[data-id="${_lastActiveSubRowId}"]`);
+          if (prevRow) {
+            prevRow.classList.remove("active-play-row");
+            prevRow.classList.add("hover:bg-[var(--bg-hover)]");
+            const isRowSelected = selectedItems.includes(`text-${_lastActiveSubRowId}`) || selectedItems.includes(`audio-${_lastActiveSubRowId}`);
+            const timeCells = prevRow.querySelectorAll("td:nth-child(2), td:nth-child(3)");
+            const textInput = prevRow.querySelector(".subtitle-text-input");
+            if (!isRowSelected) {
               timeCells.forEach((td) => {
                 td.classList.add("text-[var(--text-secondary)]");
                 td.classList.remove("text-[var(--accent-text)]", "font-semibold");
               });
-
-              textInput.classList.add("text-[var(--text-primary)]");
-              textInput.classList.remove("text-[var(--text-bright)]", "font-semibold");
+              if (textInput) {
+                textInput.classList.add("text-[var(--text-primary)]");
+                textInput.classList.remove("text-[var(--text-bright)]", "font-semibold");
+              }
             }
           }
-        });
+        }
 
-        if (!foundActive) {
+        // Highlight newly active row
+        if (activeId) {
+          const newRow = document.querySelector(`.subtitle-row[data-id="${activeId}"]`);
+          if (newRow) {
+            newRow.classList.add("active-play-row");
+            newRow.classList.remove("hover:bg-[var(--bg-hover)]");
+            const timeCells = newRow.querySelectorAll("td:nth-child(2), td:nth-child(3)");
+            const textInput = newRow.querySelector(".subtitle-text-input");
+            timeCells.forEach((td) => {
+              td.classList.remove("text-[var(--text-secondary)]");
+              td.classList.add("text-[var(--accent-text)]", "font-semibold");
+            });
+            if (textInput) {
+              textInput.classList.remove("text-[var(--text-primary)]");
+              textInput.classList.add("text-[var(--text-bright)]", "font-semibold");
+            }
+            if (lastAutoScrolledId !== activeId) {
+              newRow.scrollIntoView({ behavior: "smooth", block: "nearest" });
+              lastAutoScrolledId = activeId;
+            }
+          }
+        } else {
           lastAutoScrolledId = null;
         }
+
+        _lastActiveSubRowId = activeId;
       };
 
       const renderLanguageOptions = () => {
@@ -15225,47 +15154,6 @@
             closeModal();
           });
         }
-      })();
-
-      // --- 👄 MICRO LIP-SYNC LOCK (AUTOMATIC TIMING DURATION FIT) ---
-      (function setupMicroLipSync() {
-        const btnMicroLipSync = document.getElementById("btn-micro-lipsync");
-        if (!btnMicroLipSync) return;
-
-        btnMicroLipSync.addEventListener("click", () => {
-          if (!subtitles || subtitles.length === 0) {
-            return showToast("No subtitles available to lip-sync.", "warning");
-          }
-
-          let syncCount = 0;
-          saveStateToPast();
-
-          subtitles.forEach((sub) => {
-            if (sub.audioStatus === "ready" && sub.baseAudioDuration && sub.baseAudioDuration > 0) {
-              const sStart = parseFloat(sub.textStart);
-              const sEnd = parseFloat(sub.textEnd);
-              const slotDuration = Math.max(0.4, sEnd - sStart);
-
-              // Compute optimal speed multiplier to fit mouth dialogue window
-              const calculatedSpeed = Math.max(0.85, Math.min(1.45, sub.baseAudioDuration / slotDuration));
-              sub.speed = Number(calculatedSpeed.toFixed(2));
-              sub.audioStart = sStart.toFixed(2);
-              sub.audioEnd = (sStart + (sub.baseAudioDuration / sub.speed)).toFixed(2);
-
-              if (activeAudios[sub.id]) {
-                activeAudios[sub.id].playbackRate = sub.speed;
-              }
-              syncCount++;
-            }
-          });
-
-          if (syncCount > 0) {
-            renderSubtitles();
-            showToast(`👄 Micro Lip-Sync locked for ${syncCount} dialogue clips!`, "success");
-          } else {
-            showToast("Generate speech first to apply Micro Lip-Sync.", "info");
-          }
-        });
       })();
 
       function autoAssignVoxProfiles(subs) {
@@ -17453,18 +17341,6 @@
           const spinnerColor = isRowSelected ? "text-[var(--accent-primary)]" : "text-[var(--accent-text)]";
           const playBtnClass = isRowSelected ? "bg-[var(--accent-primary)]/[0.15] text-[var(--accent-primary)] border-[var(--accent-primary)]/30 hover:bg-[var(--accent-primary)]/20" : "bg-[var(--bg-hover)] text-[var(--accent-text)] border-[var(--border-light)] hover:brightness-110";
 
-          const emotionIcons = {
-            Neutral: "😐",
-            Angry: "😡",
-            Sad: "😢",
-            Whisper: "🤫",
-            Excited: "⚡",
-            Royal: "👑",
-            Fear: "😨"
-          };
-          const currentEmotion = sub.emotion || "Neutral";
-          const currentEmotionIcon = emotionIcons[currentEmotion] || "😐";
-
           const tr = document.createElement("tr");
           tr.className = `subtitle-row group transition-colors hover:bg-[var(--bg-hover)] border-l-2 ${isRowSelected ? "bg-[var(--bg-hover)] border-[var(--accent-primary)]" : "border-transparent"}`;
           tr.setAttribute("data-id", sub.id);
@@ -17481,37 +17357,8 @@
                   <span class="truncate">${sub.originalText.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</span>
                 </div>` : ''}
                 <input type="text" value="${sub.text.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&#39;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}" class="subtitle-text-input w-full bg-transparent border-none outline-none font-khmer text-[13px] ${textInputColor} group-hover:text-[var(--text-bright)] focus:ring-2 focus:ring-[var(--accent-primary)] focus:bg-[var(--bg-base)] rounded px-2 py-1 -ml-2 transition-all">
-                <div class="flex items-center gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button type="button" onclick="event.stopPropagation(); triggerAiRewrite('${sub.id}', 'shorten')" class="px-1.5 py-0.5 rounded text-[10px] bg-[var(--bg-base)] border border-[var(--border-light)] hover:border-emerald-500 hover:text-emerald-400 text-[var(--text-muted)] transition-colors flex items-center gap-0.5 cursor-pointer shadow-xs" title="Make Shorter (កាត់ឲ្យខ្លី)">⚡ Shorten</button>
-                  <button type="button" onclick="event.stopPropagation(); triggerAiRewrite('${sub.id}', 'dramatic')" class="px-1.5 py-0.5 rounded text-[10px] bg-[var(--bg-base)] border border-[var(--border-light)] hover:border-rose-500 hover:text-rose-400 text-[var(--text-muted)] transition-colors flex items-center gap-0.5 cursor-pointer shadow-xs" title="Dramatic (បន្ថែមអារម្មណ៍)">🎭 Drama</button>
-                  <button type="button" onclick="event.stopPropagation(); triggerAiRewrite('${sub.id}', 'royal')" class="px-1.5 py-0.5 rounded text-[10px] bg-[var(--bg-base)] border border-[var(--border-light)] hover:border-amber-500 hover:text-amber-400 text-[var(--text-muted)] transition-colors flex items-center gap-0.5 cursor-pointer shadow-xs" title="Royal Court (រាជស័ព្ទ)">👑 Royal</button>
-                  <button type="button" onclick="event.stopPropagation(); triggerAiRewrite('${sub.id}', 'comedy')" class="px-1.5 py-0.5 rounded text-[10px] bg-[var(--bg-base)] border border-[var(--border-light)] hover:border-pink-500 hover:text-pink-400 text-[var(--text-muted)] transition-colors flex items-center gap-0.5 cursor-pointer shadow-xs" title="Comedy (កំប្លែង)">😆 Comedy</button>
-                </div>
             </td>
             <td class="px-4 py-2 overflow-visible relative z-[1]" onclick="event.stopPropagation()">
-            <div class="flex items-center gap-1.5">
-              <!-- Emotion Dropdown -->
-              <div class="relative emotion-row-wrap w-fit" data-id="${sub.id}">
-                <button
-                  type="button"
-                  class="emotion-row-trigger flex items-center gap-1 bg-[var(--bg-base)] border border-[var(--border-light)] hover:border-purple-400/50 rounded text-xs px-2 h-[26px] outline-none cursor-pointer transition-colors"
-                  title="Acting Emotion: ${currentEmotion}"
-                >
-                  <span class="text-xs">${currentEmotionIcon}</span>
-                  <span class="text-[10px] font-medium text-[var(--text-secondary)] hidden xl:inline">${currentEmotion}</span>
-                  <i data-lucide="chevron-down" class="w-2.5 h-2.5 text-[var(--text-muted)]"></i>
-                </button>
-                <div class="emotion-row-panel hidden absolute z-[999] top-full mt-1 left-0 rounded-lg border border-[var(--border-light)] bg-[var(--bg-panel)] shadow-xl p-1 flex flex-col gap-0.5 min-w-[110px]">
-                  <button type="button" data-emotion="Neutral" class="emotion-row-opt text-left px-2 py-1 rounded text-xs hover:bg-[var(--bg-hover)] flex items-center gap-1.5 cursor-pointer"><span>😐</span> <span>Neutral</span></button>
-                  <button type="button" data-emotion="Angry" class="emotion-row-opt text-left px-2 py-1 rounded text-xs hover:bg-[var(--bg-hover)] text-red-400 flex items-center gap-1.5 cursor-pointer"><span>😡</span> <span>Angry</span></button>
-                  <button type="button" data-emotion="Sad" class="emotion-row-opt text-left px-2 py-1 rounded text-xs hover:bg-[var(--bg-hover)] text-blue-400 flex items-center gap-1.5 cursor-pointer"><span>😢</span> <span>Sad</span></button>
-                  <button type="button" data-emotion="Whisper" class="emotion-row-opt text-left px-2 py-1 rounded text-xs hover:bg-[var(--bg-hover)] text-teal-400 flex items-center gap-1.5 cursor-pointer"><span>🤫</span> <span>Whisper</span></button>
-                  <button type="button" data-emotion="Excited" class="emotion-row-opt text-left px-2 py-1 rounded text-xs hover:bg-[var(--bg-hover)] text-amber-400 flex items-center gap-1.5 cursor-pointer"><span>⚡</span> <span>Excited</span></button>
-                  <button type="button" data-emotion="Royal" class="emotion-row-opt text-left px-2 py-1 rounded text-xs hover:bg-[var(--bg-hover)] text-yellow-300 flex items-center gap-1.5 cursor-pointer"><span>👑</span> <span>Royal</span></button>
-                  <button type="button" data-emotion="Fear" class="emotion-row-opt text-left px-2 py-1 rounded text-xs hover:bg-[var(--bg-hover)] text-purple-400 flex items-center gap-1.5 cursor-pointer"><span>😨</span> <span>Fear</span></button>
-                </div>
-              </div>
-
               <!-- Voice Select Wrap -->
               <div class="relative vox-row-wrap w-fit" data-id="${sub.id}">
                 <button
@@ -17527,8 +17374,7 @@
                   </div>
                 </div>
               </div>
-            </div>
-          </td>
+            </td>
             <td class="px-4 py-2 text-center">
                 ${sub.audioStatus === "idle" ? `<span class="text-xs transition-colors ${statusTextColor} font-medium">Pending</span>` : ""}
                 ${sub.audioStatus === "generating" ? `<div class="flex flex-col items-center justify-center gap-0.5"><i data-lucide="loader-2" class="w-4 h-4 animate-spin ${spinnerColor}"></i>${sub._retryInfo ? `<span class="text-[9px] text-amber-400 font-medium leading-none">${sub._retryInfo}</span>` : ""}</div>` : ""}
@@ -17889,47 +17735,6 @@
                   bouncingGenderId = null;
                 }
               }, 400);
-            });
-          }
-
-          // --- EMOTION DROPDOWN WIRING ---
-          const emotionTrigger = tr.querySelector(".emotion-row-trigger");
-          const emotionPanel = tr.querySelector(".emotion-row-panel");
-          const emotionRowWrap = tr.querySelector(".emotion-row-wrap");
-
-          if (emotionTrigger && emotionPanel && emotionRowWrap) {
-            emotionTrigger.addEventListener("click", (e) => {
-              e.stopPropagation();
-              const isHidden = emotionPanel.classList.contains("hidden");
-              document.querySelectorAll(".emotion-row-panel").forEach((p) => p.classList.add("hidden"));
-              if (isHidden) emotionPanel.classList.remove("hidden");
-            });
-
-            document.addEventListener("click", (e) => {
-              if (!emotionRowWrap.contains(e.target)) emotionPanel.classList.add("hidden");
-            });
-
-            emotionPanel.querySelectorAll(".emotion-row-opt").forEach((optBtn) => {
-              optBtn.addEventListener("click", (e) => {
-                e.stopPropagation();
-                const em = optBtn.getAttribute("data-emotion") || "Neutral";
-                const currentIndex = subtitles.findIndex((s) => s.id === sub.id);
-                if (currentIndex > -1) {
-                  subtitles[currentIndex].emotion = em;
-                  if (subtitles[currentIndex].audioStatus === "ready") {
-                    subtitles[currentIndex].audioStatus = "idle";
-                    subtitles[currentIndex].audioUrl = null;
-                    subtitles[currentIndex].file = null;
-                    if (activeAudios[sub.id]) {
-                      activeAudios[sub.id].pause();
-                      if (typeof window.releaseAudioChain === "function") window.releaseAudioChain(activeAudios[sub.id]);
-                      delete activeAudios[sub.id];
-                    }
-                  }
-                  renderSubtitles();
-                }
-                emotionPanel.classList.add("hidden");
-              });
             });
           }
 
@@ -20020,40 +19825,60 @@
           return;
         }
 
-        // Standard TTS Queue
+        // Standard TTS Parallel Runner with Dynamic Worker Pool
         isGeneratingAudioAll = true;
         cancelGeneration = false;
         updateGenerateAllButtonState();
         updateGenerateButtonState();
-        showToast(`Starting audio generation for ${eligibleProjects.length} project tab(s)...`, "info");
+        showToast(`⚡ Generating audio for all ${eligibleProjects.length} project tab(s)...`, "success");
 
-        for (let i = 0; i < eligibleProjects.length; i++) {
-          if (!isGeneratingAudioAll || cancelGeneration) break;
-          const p = eligibleProjects[i];
-          const tabLabel = p.file?.name || p.name || `Tab ${i + 1}`;
+        // Immediately mark all eligible projects as active
+        eligibleProjects.forEach((p) => {
+          p.isGeneratingAudio = true;
+        });
+        if (typeof renderProjectTabs === "function") renderProjectTabs();
 
-          let ids = null;
-          if (p === projects[activeProjectIndex]) {
-            const selectedSubIds = [...new Set(selectedItems.filter((id) => id.startsWith("text-") || id.startsWith("audio-")).map((id) => id.split("-").slice(1).join("-")))];
-            ids = selectedSubIds.length > 0 ? selectedSubIds : p.subtitles.filter((s) => s.audioStatus === "idle" || s.audioStatus === "error").map((s) => s.id);
-          } else if (p._selectedIds && p._selectedIds.length > 0) {
-            ids = p._selectedIds;
-          } else {
-            const pending = p.subtitles.filter((s) => s.audioStatus === "idle" || s.audioStatus === "error");
-            ids = pending.length > 0 ? pending.map((s) => s.id) : p.subtitles.map((s) => s.id);
+        // 🚀 Concurrency Worker Pool: 4 tabs processed in parallel
+        const poolSize = 4;
+        let activeIdx = 0;
+        let succeededCount = 0;
+
+        const runWorker = async () => {
+          while (activeIdx < eligibleProjects.length) {
+            if (!isGeneratingAudioAll || cancelGeneration) break;
+            const p = eligibleProjects[activeIdx++];
+            let ids = null;
+            if (p === projects[activeProjectIndex]) {
+              const selectedSubIds = [...new Set(selectedItems.filter((id) => id.startsWith("text-") || id.startsWith("audio-")).map((id) => id.split("-").slice(1).join("-")))];
+              ids = selectedSubIds.length > 0 ? selectedSubIds : p.subtitles.filter((s) => s.audioStatus === "idle" || s.audioStatus === "error").map((s) => s.id);
+            } else if (p._selectedIds && p._selectedIds.length > 0) {
+              ids = p._selectedIds;
+            } else {
+              const pending = p.subtitles.filter((s) => s.audioStatus === "idle" || s.audioStatus === "error");
+              ids = pending.length > 0 ? pending.map((s) => s.id) : p.subtitles.map((s) => s.id);
+            }
+
+            if (!ids || ids.length === 0) ids = p.subtitles.map((s) => s.id);
+
+            try {
+              await generateStandardAudioForProject(p, ids, true);
+              succeededCount++;
+            } catch (e) {
+              console.error("Audio generation error for tab:", e);
+            }
           }
+        };
 
-          if (!ids || ids.length === 0) ids = p.subtitles.map((s) => s.id);
-
-          showToast(`[${i + 1}/${eligibleProjects.length}] Generating audio for ${tabLabel}...`, "info");
-          await generateStandardAudioForProject(p, ids, true);
-        }
+        const workers = Array.from({ length: Math.min(eligibleProjects.length, poolSize) }, () => runWorker());
+        await Promise.all(workers);
 
         isGeneratingAudioAll = false;
         updateGenerateAllButtonState();
         updateGenerateButtonState();
         renderProjectTabs();
-        showToast("✨ Audio generation complete for all project tabs!", "success");
+        if (succeededCount > 0) {
+          showToast(`🎉 Completed audio generation for all ${succeededCount} of ${eligibleProjects.length} project tab(s)!`, "success");
+        }
       }
 
       const btnGenerateAudioAll = document.getElementById("btn-generate-audio-all");
@@ -20457,19 +20282,19 @@
       ambientCanvas.width = 32;
       ambientCanvas.height = 32;
 
+      let _cachedAmbientContainer = null;
       const updateAmbientColor = () => {
         if (!mainVideo.src || mainVideo.paused || mainVideo.hidden) return;
 
-        const videoContainer = document.querySelector(".ambient-video-glow");
-        if (!videoContainer) return;
+        if (!_cachedAmbientContainer) _cachedAmbientContainer = document.querySelector(".ambient-video-glow");
+        if (!_cachedAmbientContainer) return;
 
         if (document.documentElement.classList.contains("light-theme")) {
-          videoContainer.style.setProperty("--dynamic-ambient", "transparent");
+          _cachedAmbientContainer.style.setProperty("--dynamic-ambient", "transparent");
           return;
         }
 
         try {
-          // Draw the current video frame super tiny
           ambientCtx.drawImage(mainVideo, 0, 0, 32, 32);
           const frameData = ambientCtx.getImageData(0, 0, 32, 32).data;
 
@@ -20478,7 +20303,6 @@
             b = 0,
             sampleCount = 0;
 
-          // Sample every 4th pixel to save CPU
           for (let i = 0; i < frameData.length; i += 16) {
             r += frameData[i];
             g += frameData[i + 1];
@@ -20490,7 +20314,6 @@
           g = Math.floor(g / sampleCount);
           b = Math.floor(b / sampleCount);
 
-          // Boost the saturation slightly so the glow isn't muddy
           const max = Math.max(r, g, b);
           if (max > 0) {
             const boost = 255 / max;
@@ -20499,8 +20322,7 @@
             b = Math.min(255, Math.floor(b * Math.pow(boost, 0.4)));
           }
 
-          // Inject the real-time color strictly into the container (Stops UI layout thrashing!)
-          videoContainer.style.setProperty("--dynamic-ambient", `rgba(${r}, ${g}, ${b}, 0.8)`);
+          _cachedAmbientContainer.style.setProperty("--dynamic-ambient", `rgba(${r}, ${g}, ${b}, 0.8)`);
         } catch (e) {
           // Ignore errors if the video frame isn't ready
         }
@@ -20508,18 +20330,32 @@
 
       // --- SMOOTH PLAYHEAD ANIMATION (60 FPS) ---
       let renderFrameCount = 0;
-
-      // --- SMOOTH PLAYHEAD ANIMATION (60 FPS) ---
-      // This runs continuously at your monitor's refresh rate to make the UI glide
       let _lastSubId = null;
+      let _lastBgmSeekTime = 0;
+
       const smoothVisualLoop = () => {
         renderFrameCount++;
 
-        // Update subtitle on every frame (smooth scrubbing) but skip if same subtitle
+        // Update subtitle on frame if active subtitle or chunk index changed
         if (mainVideo.src && subtitles && subtitles.length > 0) {
           const ct = mainVideo.currentTime;
-          const activeSub = subtitles.find((s) => ct >= parseFloat(s.textStart) && ct <= parseFloat(s.textEnd));
-          const activeId = activeSub ? activeSub.id + "_" + Math.floor(ct * 4) : null; // re-render max 4x/sec within same sub
+          let activeSub = null;
+          for (let i = 0; i < subtitles.length; i++) {
+            const s = subtitles[i];
+            if (ct >= parseFloat(s.textStart) && ct <= parseFloat(s.textEnd)) {
+              activeSub = s;
+              break;
+            }
+          }
+
+          let activeId = null;
+          if (activeSub) {
+            const totalDur = Math.max(0.01, parseFloat(activeSub.textEnd) - parseFloat(activeSub.textStart));
+            const numChunks = (activeSub._cachedChunks && activeSub._cachedChunks.length) || 1;
+            const chunkIdx = numChunks > 1 ? Math.min(numChunks - 1, Math.max(0, Math.floor(((ct - parseFloat(activeSub.textStart)) / totalDur) * numChunks))) : 0;
+            activeId = activeSub.id + "_" + chunkIdx;
+          }
+
           if (activeId !== _lastSubId) {
             _lastSubId = activeId;
             updateSubtitleDisplay();
@@ -20530,7 +20366,7 @@
           const currentTime = mainVideo.currentTime;
           const progressPercent = (currentTime / duration) * 100;
 
-          // 1. Visual Sync — use transform for GPU-composited, jank-free playhead
+          // 1. Visual Sync — GPU-composited playhead
           progressBarFill.style.width = `${progressPercent}%`;
           const playheadPx = (progressPercent / 100) * timelineContent.offsetWidth;
           timelinePlayhead.style.transform = `translateX(${playheadPx}px)`;
@@ -20540,9 +20376,8 @@
             scrollToPlayhead();
           }
 
-          // --- TRIGGER AMBIENT GLOW ---
-          // Only calculate the color every 5 frames to keep the CPU perfectly cool
-          if (renderFrameCount % 10 === 0 && isPlaying) {
+          // --- TRIGGER AMBIENT GLOW (every 60 frames to avoid GPU readback stalls) ---
+          if (renderFrameCount % 60 === 0 && isPlaying) {
             updateAmbientColor();
           }
 
@@ -20555,15 +20390,8 @@
 
               if (isActive && sub.audioStatus === "ready" && sub.audioUrl && !isA1Muted) {
                 let audio = activeAudios[sub.id];
-                // Detect dead or stalled Audio objects:
-                // - No src set (cleared during tab switch)
-                // - src resolved to the page URL (relative path on empty src)
-                // - networkState === NETWORK_NO_SOURCE (browser gave up loading)
-                // - error set (failed to fetch)
                 const isDead = audio && (!audio.src || audio.src === "" || audio.src === window.location.href || audio.networkState === HTMLMediaElement.NETWORK_NO_SOURCE || audio.error != null);
                 if (!audio || isDead) {
-                  // The old element is about to be dropped - release its Web
-                  // Audio graph or its worklet stays connected forever.
                   if (audio && typeof window.releaseAudioChain === "function") window.releaseAudioChain(audio);
                   const baseUrl = sub.audioUrl.split("&t=")[0];
                   const cacheBust = Date.now();
@@ -20578,7 +20406,8 @@
                 }
 
                 if (audio.playbackRate !== (sub.speed || 1.0)) audio.playbackRate = sub.speed || 1.0;
-                if (audio.volume !== Math.min(1.0, sub.volume ?? 1.0)) audio.volume = Math.min(1.0, sub.volume ?? 1.0);
+                const targetSubVol = Math.min(1.0, sub.volume ?? 1.0);
+                if (Math.abs(audio.volume - targetSubVol) > 0.01) audio.volume = targetSubVol;
                 setAudioPitch(audio, sub.pitch || 0);
 
                 const actualSpeed = sub.speed || 1.0;
@@ -20588,11 +20417,10 @@
                   const seekTo = (offset > 0 ? offset : 0) * actualSpeed;
 
                   const doPlay = () => {
-                    // Re-check offset at actual play time — video may have moved
                     const liveOffset = mainVideo.currentTime - start;
                     const liveSeekTo = liveOffset * actualSpeed;
-                    if (liveOffset < 0 || liveOffset > end - start) return; // window already passed
-                    if (Math.abs(audio.currentTime - liveSeekTo) > 0.15) {
+                    if (liveOffset < 0 || liveOffset > end - start) return;
+                    if (Math.abs(audio.currentTime - liveSeekTo) > 0.2) {
                       audio.currentTime = liveSeekTo;
                     }
                     audio.play().catch((e) => console.log("A1 play delayed:", e));
@@ -20601,57 +20429,50 @@
                     }
                   };
 
-                  // If audio isn't buffered yet, seek after it has enough data
                   if (audio.readyState >= 3) {
-                    // HAVE_FUTURE_DATA or better — safe to seek and play immediately
-                    if (Math.abs(audio.currentTime - seekTo) > 0.15) {
+                    if (Math.abs(audio.currentTime - seekTo) > 0.2) {
                       audio.currentTime = seekTo;
                     }
                     audio.play().catch((e) => console.log("A1 play delayed:", e));
                     if (typeof window.syncReverbForSub === "function") {
                       Promise.resolve(window.syncReverbForSub(sub.id, audio)).catch((e) => console.warn("[Reverb] sync:", e && e.message));
                     }
-                  } else {
-                    // Not buffered yet — wait for canplay, then play from live offset
-                    if (!audio._playPending) {
-                      audio._playPending = true;
-                      // Elements restored with preload="metadata" park at
-                      // NETWORK_IDLE and would NEVER fire canplay on their own,
-                      // leaving _playPending stuck true and the clip silent for
-                      // the rest of the session. Kick the fetch explicitly.
-                      try {
-                        if (audio.readyState < 3 && audio.networkState !== HTMLMediaElement.NETWORK_LOADING) {
-                          audio.preload = "auto";
-                          audio.load();
-                        }
-                      } catch (e) {}
-                      audio.addEventListener(
-                        "canplay",
-                        function handler() {
-                          audio.removeEventListener("canplay", handler);
-                          audio._playPending = false;
-                          doPlay();
-                        },
-                        { once: true },
-                      );
-                    }
+                  } else if (!audio._playPending) {
+                    audio._playPending = true;
+                    try {
+                      if (audio.readyState < 3 && audio.networkState !== HTMLMediaElement.NETWORK_LOADING) {
+                        audio.preload = "auto";
+                        audio.load();
+                      }
+                    } catch (e) {}
+                    audio.addEventListener(
+                      "canplay",
+                      function handler() {
+                        audio.removeEventListener("canplay", handler);
+                        audio._playPending = false;
+                        doPlay();
+                      },
+                      { once: true },
+                    );
                   }
                 } else {
-                  // Keep audio perfectly in sync even while playing (fixes drift on video seek)
+                  // Stable sync with debounce
                   const offset = currentTime - start;
                   const expectedAudioTime = (offset > 0 ? offset : 0) * actualSpeed;
-                  if (Math.abs(audio.currentTime - expectedAudioTime) > 0.2) {
-                    audio.currentTime = expectedAudioTime;
+                  if (Math.abs(audio.currentTime - expectedAudioTime) > 0.5) {
+                    if (!audio._lastSeekTime || (Date.now() - audio._lastSeekTime > 1000)) {
+                      audio._lastSeekTime = Date.now();
+                      audio.currentTime = expectedAudioTime;
+                    }
                   }
                 }
               } else {
-                // Pause it if the playhead leaves the block
                 let audio = activeAudios[sub.id];
                 if (audio && !audio.paused) audio.pause();
               }
             });
 
-            // 2b. A1 Track — Detached/Orphan Audio Clips Sync (same engine as owned audio above)
+            // 2b. A1 Track — Detached/Orphan Audio Clips Sync
             detachedAudios.forEach((a) => {
               const start = parseFloat(a.audioStart);
               const end = parseFloat(a.audioEnd);
@@ -20673,11 +20494,11 @@
                 }
 
                 if (audio.playbackRate !== (a.speed || 1.0)) audio.playbackRate = a.speed || 1.0;
-                if (audio.volume !== Math.min(1.0, a.volume ?? 1.0)) audio.volume = Math.min(1.0, a.volume ?? 1.0);
+                const targetDetachedVol = Math.min(1.0, a.volume ?? 1.0);
+                if (Math.abs(audio.volume - targetDetachedVol) > 0.01) audio.volume = targetDetachedVol;
 
                 const actualSpeed = a.speed || 1.0;
-
-                const fileOffset = a.sourceOffset || 0; // seconds already elapsed in the underlying file before this clip's timeline start
+                const fileOffset = a.sourceOffset || 0;
 
                 if (audio.paused) {
                   const offset = currentTime - start;
@@ -20687,14 +20508,14 @@
                     const liveOffset = mainVideo.currentTime - start;
                     const liveSeekTo = liveOffset * actualSpeed + fileOffset;
                     if (liveOffset < 0 || liveOffset > end - start) return;
-                    if (Math.abs(audio.currentTime - liveSeekTo) > 0.15) {
+                    if (Math.abs(audio.currentTime - liveSeekTo) > 0.2) {
                       audio.currentTime = liveSeekTo;
                     }
                     audio.play().catch((e) => console.log("Detached A1 play delayed:", e));
                   };
 
                   if (audio.readyState >= 3) {
-                    if (Math.abs(audio.currentTime - seekTo) > 0.15) {
+                    if (Math.abs(audio.currentTime - seekTo) > 0.2) {
                       audio.currentTime = seekTo;
                     }
                     audio.play().catch((e) => console.log("Detached A1 play delayed:", e));
@@ -20713,8 +20534,11 @@
                 } else {
                   const offset = currentTime - start;
                   const expectedAudioTime = (offset > 0 ? offset : 0) * actualSpeed + fileOffset;
-                  if (Math.abs(audio.currentTime - expectedAudioTime) > 0.2) {
-                    audio.currentTime = expectedAudioTime;
+                  if (Math.abs(audio.currentTime - expectedAudioTime) > 0.5) {
+                    if (!audio._lastSeekTime || (Date.now() - audio._lastSeekTime > 1000)) {
+                      audio._lastSeekTime = Date.now();
+                      audio.currentTime = expectedAudioTime;
+                    }
                   }
                 }
               } else {
@@ -20723,19 +20547,21 @@
               }
             });
           } else {
-            // Pause all A1 audio immediately if the main video is paused
-            Object.values(activeAudios).forEach((audio) => audio && audio.pause());
+            Object.values(activeAudios).forEach((audio) => audio && !audio.paused && audio.pause());
           }
 
           // 3. A2 Track (BGM) Sync with Smart Audio Ducking
-          if (bgmTrack.src) {
-            if (!bgmAudio) bgmAudio = new Audio(bgmTrack.src);
+          if (bgmTrack && bgmTrack.src) {
+            if (!bgmAudio) {
+              bgmAudio = new Audio(bgmTrack.src);
+              bgmAudio.preload = "auto";
+            }
 
             // --- Real-time fade envelope & Smart Audio Ducking ---
             let fadeMult = 1.0;
             let duckMult = 1.0;
             if (!bgmTrack.isMuted) {
-              const offset = currentTime - bgmTrack.start;
+              const offset = currentTime - (bgmTrack.start || 0);
               const fi = bgmTrack.fadeIn || 0;
               const fo = bgmTrack.fadeOut || 0;
               if (fi > 0 && offset < fi) {
@@ -20761,60 +20587,68 @@
                 duckMult = 0.25; // Smooth cinematic ducking to 25%
               }
             }
-            bgmAudio.volume = bgmTrack.isMuted ? 0 : Math.min(1.0, (bgmTrack.volume ?? 0.5) * fadeMult * duckMult);
+
+            const targetVolume = bgmTrack.isMuted ? 0 : Math.min(1.0, (bgmTrack.volume ?? 0.5) * fadeMult * duckMult);
+            if (Math.abs(bgmAudio.volume - targetVolume) > 0.01) {
+              bgmAudio.volume = targetVolume;
+            }
 
             if (!isPlaying) {
-              bgmAudio.pause();
+              if (!bgmAudio.paused) bgmAudio.pause();
             } else {
-              const offset = currentTime - bgmTrack.start;
+              const offset = currentTime - (bgmTrack.start || 0);
               if (offset >= 0 && offset < bgmTrack.duration) {
-                if (Math.abs(bgmAudio.currentTime - offset) > 0.25) bgmAudio.currentTime = offset;
                 if (bgmAudio.paused) {
+                  bgmAudio.currentTime = offset;
                   bgmAudio.play().catch((e) => console.log("BGM play error", e));
+                } else if (Math.abs(bgmAudio.currentTime - offset) > 0.6) {
+                  // Only re-sync if drift is noticeable (> 600ms) with debounce
+                  if (!_lastBgmSeekTime || (Date.now() - _lastBgmSeekTime > 1500)) {
+                    _lastBgmSeekTime = Date.now();
+                    bgmAudio.currentTime = offset;
+                  }
                 }
               } else {
-                bgmAudio.pause();
+                if (!bgmAudio.paused) bgmAudio.pause();
               }
             }
           }
         }
 
-        // ✅ FIX 7: Only run subtitle scroll when playing — cuts 60fps DOM thrashing when paused
-        if (isPlaying)
-          document.querySelectorAll(".subtitle-row").forEach((row) => {
-            const input = row.querySelector(".subtitle-text-input");
-            if (!input) return;
-            const subId = row.getAttribute("data-id");
-            const isSelected = selectedItems.includes(`text-${subId}`);
+        // Marquee scroll only for selected items (zero DOM queries when no selected text items)
+        if (isPlaying && selectedItems && selectedItems.length > 0) {
+          const selectedTextIds = selectedItems
+            .filter((item) => typeof item === "string" && item.startsWith("text-"))
+            .map((item) => item.replace("text-", ""));
 
-            const isFocused = document.activeElement === input;
+          if (selectedTextIds.length > 0) {
+            selectedTextIds.forEach((subId) => {
+              const row = document.querySelector(`.subtitle-row[data-id="${subId}"]`);
+              const input = row?.querySelector(".subtitle-text-input");
+              if (!input || document.activeElement === input) return;
 
-            if (isSelected && !isFocused && input.scrollWidth > input.clientWidth) {
-              if (typeof input._exactScroll === "undefined") input._exactScroll = 0;
-              if (typeof input._delay === "undefined") input._delay = 60;
+              if (input.scrollWidth > input.clientWidth) {
+                if (typeof input._exactScroll === "undefined") input._exactScroll = 0;
+                if (typeof input._delay === "undefined") input._delay = 60;
 
-              if (input._delay > 0) {
-                input._delay--;
-                if (input._delay === 0 && input._exactScroll > 0) {
-                  input.scrollLeft = 0;
-                  input._exactScroll = 0;
-                  input._delay = 60;
+                if (input._delay > 0) {
+                  input._delay--;
+                  if (input._delay === 0 && input._exactScroll > 0) {
+                    input.scrollLeft = 0;
+                    input._exactScroll = 0;
+                    input._delay = 60;
+                  }
+                  return;
                 }
-                return;
+                input._exactScroll += 0.6;
+                input.scrollLeft = input._exactScroll;
+                if (input.scrollLeft >= input.scrollWidth - input.clientWidth - 1) {
+                  input._delay = 120;
+                }
               }
-              input._exactScroll += 0.6;
-              input.scrollLeft = input._exactScroll;
-              if (input.scrollLeft >= input.scrollWidth - input.clientWidth - 1) {
-                input._delay = 120;
-              }
-            } else if (!isFocused) {
-              if (input.scrollLeft > 0 || input._exactScroll > 0) {
-                input.scrollLeft = 0;
-                input._exactScroll = 0;
-                input._delay = 60;
-              }
-            }
-          });
+            });
+          }
+        }
 
         requestAnimationFrame(smoothVisualLoop);
       };
@@ -20830,6 +20664,26 @@
       mainVideo.addEventListener("seeked", () => {
         _lastSubId = null; // Force immediate re-render after any seek
         updateSubtitleDisplay();
+        if (bgmTrack && bgmTrack.src && bgmAudio) {
+          const offset = Math.max(0, mainVideo.currentTime - (bgmTrack.start || 0));
+          if (offset < bgmTrack.duration) {
+            bgmAudio.currentTime = offset;
+            if (!mainVideo.paused && bgmAudio.paused) {
+              bgmAudio.play().catch(() => {});
+            }
+          } else {
+            bgmAudio.pause();
+          }
+        }
+      });
+
+      mainVideo.addEventListener("seeking", () => {
+        if (bgmTrack && bgmTrack.src && bgmAudio) {
+          const offset = Math.max(0, mainVideo.currentTime - (bgmTrack.start || 0));
+          if (offset < bgmTrack.duration) {
+            bgmAudio.currentTime = offset;
+          }
+        }
       });
 
       const togglePlay = () => {
@@ -20845,10 +20699,21 @@
         const pauseIcon = document.getElementById("lottie-pause-icon");
         if (playIcon) playIcon.classList.add("hidden");
         if (pauseIcon) pauseIcon.classList.remove("hidden");
-        // Animate the pause lottie forward
         if (window._animPause) {
           window._animPause.setDirection(1);
           window._animPause.play();
+        }
+        // Immediate sync and start for BGM audio
+        if (bgmTrack && bgmTrack.src) {
+          if (!bgmAudio) {
+            bgmAudio = new Audio(bgmTrack.src);
+            bgmAudio.preload = "auto";
+          }
+          const offset = mainVideo.currentTime - (bgmTrack.start || 0);
+          if (offset >= 0 && offset < bgmTrack.duration) {
+            bgmAudio.currentTime = offset;
+            bgmAudio.play().catch((e) => console.log("BGM play error on video play:", e));
+          }
         }
       });
 
@@ -20866,16 +20731,24 @@
         if (window._animPause) {
           window._animPause.stop();
         }
-        // Animate the play lottie forward
         if (window._animPlay) {
           window._animPlay.setDirection(1);
           window._animPlay.play();
         }
+        // Immediate pause for BGM and active A1 audios
+        if (bgmAudio && !bgmAudio.paused) {
+          bgmAudio.pause();
+        }
+        Object.values(activeAudios).forEach((audio) => audio && !audio.paused && audio.pause());
       });
 
       mainVideo.addEventListener("ended", () => {
         isPlaying = false;
         window.dispatchEvent(new Event("overlay-play-stop"));
+        if (bgmAudio && !bgmAudio.paused) {
+          bgmAudio.pause();
+        }
+        Object.values(activeAudios).forEach((audio) => audio && !audio.paused && audio.pause());
       });
 
       // NEW: Subtitle Toggle Logic
@@ -21817,8 +21690,10 @@
       // --- ISOLATE BGM LOGIC ---
       // --- AUDIO WAVEFORM ENGINE ---
       let sharedAudioContext = null;
+      let _activeWaveformDrawId = 0;
 
       async function drawVocalWaveformOnA1(audioUrl) {
+        const thisDrawId = ++_activeWaveformDrawId;
         const canvas = document.getElementById("a1-waveform-canvas");
         if (!canvas) return;
         const ctx = canvas.getContext("2d");
@@ -21834,6 +21709,7 @@
         try {
           const response = await fetch(audioUrl);
           const arrayBuffer = await response.arrayBuffer();
+          if (thisDrawId !== _activeWaveformDrawId) return;
           const dataView = new DataView(arrayBuffer);
 
           const dataOffset = 44;
@@ -21852,6 +21728,7 @@
           let currentX = 0;
 
           function drawChunk() {
+            if (thisDrawId !== _activeWaveformDrawId) return;
             // Process in chunks to keep the app highly responsive
             const chunkEnd = Math.min(currentX + 250 * stepPx, canvas.width);
 
@@ -21903,6 +21780,7 @@
       }
 
       function clearVocalWaveform() {
+        _activeWaveformDrawId++;
         const canvas = document.getElementById("a1-waveform-canvas");
         if (canvas) {
           const ctx = canvas.getContext("2d");
@@ -22174,25 +22052,41 @@
 
         isIsolatingBgmAll = true;
         updateIsolateBgmButton();
-        showToast(`Starting BGM isolation for ${eligible.length} project tab(s)...`, "info");
+        showToast(`⚡ Isolating BGM for all ${eligible.length} project tab(s)...`, "success");
 
+        // Immediately mark all eligible projects as active
+        eligible.forEach((p) => {
+          p.isIsolatingBgm = true;
+        });
+        if (typeof renderProjectTabs === "function") renderProjectTabs();
+
+        // 🚀 Concurrency Worker Pool: 2 background isolation workers
+        const poolSize = 2;
+        let activeIdx = 0;
         let completed = 0;
-        for (let i = 0; i < eligible.length; i++) {
-          if (!isIsolatingBgmAll) break;
-          const p = eligible[i];
-          const tabLabel = p.file?.name || p.name || `Tab ${i + 1}`;
-          showToast(`[${i + 1}/${eligible.length}] Isolating BGM for ${tabLabel}...`, "info");
 
-          const res = await isolateBgmForProject(p, true);
-          if (res && res.success) completed++;
-        }
+        const runWorker = async () => {
+          while (activeIdx < eligible.length) {
+            if (!isIsolatingBgmAll) break;
+            const p = eligible[activeIdx++];
+            try {
+              const res = await isolateBgmForProject(p, true);
+              if (res && res.success) completed++;
+            } catch (e) {
+              console.error("BGM isolation error for tab:", e);
+            }
+          }
+        };
+
+        const workers = Array.from({ length: Math.min(eligible.length, poolSize) }, () => runWorker());
+        await Promise.all(workers);
 
         isIsolatingBgmAll = false;
         updateIsolateBgmButton();
         if (typeof renderProjectTabs === "function") renderProjectTabs();
 
         if (completed > 0) {
-          showToast(`✨ BGM isolation complete for ${completed}/${eligible.length} project(s)!`, "success");
+          showToast(`🎉 Completed BGM isolation for all ${completed} of ${eligible.length} project(s)!`, "success");
         }
       }
 
@@ -23908,7 +23802,7 @@
                 subtitlesContent = (await Promise.all(readPromises)).join("\n\n");
               }
 
-              const activeModel = localStorage.getItem("aiDubberModel") || "gemini-2.5-flash";
+              const activeModel = localStorage.getItem("aiDubberModel") || "gemini-3.7-flash";
               let suggestions = null;
               let lastErrorType = "";
 
