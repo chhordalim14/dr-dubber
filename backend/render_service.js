@@ -1,4 +1,6 @@
-const { spawn, execSync } = require('child_process');
+const { spawn, execSync, execFile } = require('child_process');
+const { promisify } = require('util');
+const execFileAsync = promisify(execFile);
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -43,11 +45,21 @@ function detectAvailableEncoders() {
     return _detectedEncoders;
 }
 
-function getVideoDuration(videoPath) {
+// Keyed by path+mtime so an edited/replaced file at the same path still gets a fresh probe.
+const _videoDurationCache = new Map();
+async function getVideoDuration(videoPath) {
+    let cacheKey = videoPath;
     try {
-        const out = execSync(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${videoPath}"`, { encoding: 'utf8', timeout: 5000 });
-        const dur = parseFloat(out.trim());
-        return (dur && !isNaN(dur) && dur > 0) ? dur : null;
+        cacheKey = `${videoPath}:${fs.statSync(videoPath).mtimeMs}`;
+        if (_videoDurationCache.has(cacheKey)) return _videoDurationCache.get(cacheKey);
+    } catch (e) {}
+
+    try {
+        const { stdout } = await execFileAsync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', videoPath], { timeout: 5000 });
+        const dur = parseFloat(stdout.trim());
+        const result = (dur && !isNaN(dur) && dur > 0) ? dur : null;
+        _videoDurationCache.set(cacheKey, result);
+        return result;
     } catch (e) {
         return null;
     }
@@ -239,7 +251,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         }
 
         // Determine real video duration for accurate progress & ETA
-        const videoDuration = providedDuration || getVideoDuration(videoPath) || 60;
+        const videoDuration = providedDuration || (await getVideoDuration(videoPath)) || 60;
         const renderStartTime = Date.now();
 
         // 2. Build FFmpeg command arguments
