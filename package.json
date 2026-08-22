@@ -15,7 +15,7 @@
     "appId": "com.drdubber.pro",
     "productName": "DR Dubber Pro",
     "directories": {
-      "output": "dist"
+      "output": "release"
     },
     "files": [
       "main.js",
@@ -23,7 +23,12 @@
       "backend/**/*",
       "frontend/**/*",
       "assets/**/*",
+      "whisper_engine/**/*",
       "package.json"
+    ],
+    "asarUnpack": [
+      "backend/python/**/*",
+      "whisper_engine/**/*"
     ],
     "mac": {
       "icon": "assets/drdubberpro.png",

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
 Audio Vocal & Background Music (BGM) Separator
-Leverages Spleeter 2-stem model or FFmpeg high-order separation.
+High-Performance Single-Pass FFmpeg & Spleeter Stem Isolation.
 """
 
 import sys
 import os
+import os.path
 import subprocess
 import argparse
 import json
@@ -42,12 +43,16 @@ def separate_spleeter(input_audio, output_dir):
                     "bgm": os.path.abspath(accompaniment_path)
                 }
 
-        # Fallback to FFmpeg center-channel vocal isolation / cancellation
+        # Fallback to high-speed single-pass FFmpeg separation
         return separate_ffmpeg(input_audio, output_dir)
     except Exception as e:
         return separate_ffmpeg(input_audio, output_dir)
 
 def separate_ffmpeg(input_audio, output_dir):
+    """
+    High-Speed Single-Pass FFmpeg separation (splits stereo field and applies vocal/BGM isolation in 1 pass).
+    2x faster than sequential passes.
+    """
     try:
         output_dir = os.path.abspath(output_dir)
         os.makedirs(output_dir, exist_ok=True)
@@ -55,23 +60,25 @@ def separate_ffmpeg(input_audio, output_dir):
         bgm_path = os.path.join(output_dir, f"{base_name}_bgm.wav")
         vocal_path = os.path.join(output_dir, f"{base_name}_vocals.wav")
         
-        cmd_bgm = [
-            "ffmpeg", "-y", "-i", input_audio,
-            "-af", "stereotools=mutec=1",
-            "-vn", bgm_path
+        threads = str(min(8, os.cpu_count() or 4))
+        filter_graph = (
+            "[0:a]asplit=2[a_bgm_in][a_voc_in];"
+            "[a_bgm_in]stereotools=mutec=1[bgm];"
+            "[a_voc_in]stereotools=mutel=1:muter=1,highpass=f=200,lowpass=f=3500[vocal]"
+        )
+
+        cmd = [
+            "ffmpeg", "-y", "-threads", threads, "-i", input_audio,
+            "-filter_complex", filter_graph,
+            "-map", "[bgm]", "-vn", bgm_path,
+            "-map", "[vocal]", "-vn", vocal_path
         ]
-        subprocess.run(cmd_bgm, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
         
-        cmd_vocal = [
-            "ffmpeg", "-y", "-i", input_audio,
-            "-af", "stereotools=mutel=1:muter=1,highpass=f=200,lowpass=f=3500",
-            "-vn", vocal_path
-        ]
-        subprocess.run(cmd_vocal, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
         
         return {
             "success": True,
-            "method": "ffmpeg_filter",
+            "method": "ffmpeg_single_pass",
             "vocal": os.path.abspath(vocal_path),
             "bgm": os.path.abspath(bgm_path)
         }

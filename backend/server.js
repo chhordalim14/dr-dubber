@@ -3,24 +3,58 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const crypto = require('crypto');
 const { spawn, exec } = require('child_process');
 const multer = require('multer');
-const { renderVideo, cancelRender, getRenderProgress } = require('./render_service');
+const { renderVideo, cancelRender, getRenderProgress, detectAvailableEncoders } = require('./render_service');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Directory layout
+// High-speed TTS Audio In-Memory & Disk Cache
+const ttsCache = new Map();
+function getTtsCacheKey(text, voice, rate, pitch, volume, speed, emotion) {
+    const raw = `${text || ''}|${voice || ''}|${rate || ''}|${pitch || ''}|${volume || ''}|${speed || 1.0}|${emotion || 'Neutral'}`;
+    return crypto.createHash('md5').update(raw).digest('hex');
+}
+
+// Directory layout (safe for dev & packaged Electron)
 const ROOT_DIR = path.resolve(__dirname, '..');
-const UPLOADS_DIR = path.join(ROOT_DIR, 'storage', 'uploads');
-const AUDIO_CACHE_DIR = path.join(ROOT_DIR, 'storage', 'audio_cache');
-const SEPARATED_DIR = path.join(ROOT_DIR, 'storage', 'separated');
-const EXPORTS_DIR = path.join(ROOT_DIR, 'storage', 'exports');
-const OUTPUTS_DIR = path.join(ROOT_DIR, 'storage', 'outputs');
-const CUSTOM_OUTPUTS_DIR = process.platform === 'win32' ? 'C:\\Export\\AIDubber\\outputs' : path.join(ROOT_DIR, 'storage', 'custom_outputs');
-const USER_DESKTOP_OUTPUTS = process.platform === 'win32' ? 'C:\\Users\\KOLDER\\OneDrive\\Desktop\\transcribe output' : path.join(os.homedir(), 'Desktop', 'transcribe output');
+const STORAGE_BASE = process.env.APP_STORAGE_DIR || path.join(ROOT_DIR, 'storage');
+const UPLOADS_DIR = path.join(STORAGE_BASE, 'uploads');
+const AUDIO_CACHE_DIR = path.join(STORAGE_BASE, 'audio_cache');
+const SEPARATED_DIR = path.join(STORAGE_BASE, 'separated');
+const EXPORTS_DIR = path.join(STORAGE_BASE, 'exports');
+const OUTPUTS_DIR = path.join(STORAGE_BASE, 'outputs');
+const CUSTOM_OUTPUTS_DIR = process.platform === 'win32' ? 'C:\\Export\\AIDubber\\outputs' : path.join(STORAGE_BASE, 'custom_outputs');
+const USER_DESKTOP_OUTPUTS = path.join(os.homedir(), 'Desktop', 'transcribe output');
+const ONEDRIVE_DESKTOP_OUTPUTS = path.join(os.homedir(), 'OneDrive', 'Desktop', 'transcribe output');
 const PYTHON_DIR = path.join(ROOT_DIR, 'backend', 'python');
-const LOGS_DIR = path.join(ROOT_DIR, 'storage', 'logs');
+const LOGS_DIR = path.join(STORAGE_BASE, 'logs');
+
+// Process tracking for clean memory & CPU shutdown
+const spawnedProcesses = new Set();
+function trackProcess(proc) {
+    if (!proc || !proc.pid) return;
+    spawnedProcesses.add(proc);
+    proc.on('close', () => spawnedProcesses.delete(proc));
+    proc.on('error', () => spawnedProcesses.delete(proc));
+}
+function killAllProcesses() {
+    for (const proc of spawnedProcesses) {
+        try {
+            if (process.platform === 'win32') {
+                exec(`taskkill /pid ${proc.pid} /T /F`, () => {});
+            } else {
+                proc.kill('SIGKILL');
+            }
+        } catch (e) {}
+    }
+    spawnedProcesses.clear();
+}
+process.on('exit', killAllProcesses);
+process.on('SIGINT', () => { killAllProcesses(); process.exit(0); });
+process.on('SIGTERM', () => { killAllProcesses(); process.exit(0); });
 
 function getPythonCmd() {
     if (process.env.PYTHON_PATH && fs.existsSync(process.env.PYTHON_PATH)) {
@@ -46,7 +80,32 @@ function getPythonExecutable() {
     return 'python3';
 }
 
-[UPLOADS_DIR, AUDIO_CACHE_DIR, SEPARATED_DIR, EXPORTS_DIR, OUTPUTS_DIR, LOGS_DIR, CUSTOM_OUTPUTS_DIR, USER_DESKTOP_OUTPUTS].forEach(dir => {
+function getPythonScriptPath(scriptName) {
+    const unpackedRootDir = ROOT_DIR.includes('app.asar') ? ROOT_DIR.replace('app.asar', 'app.asar.unpacked') : ROOT_DIR;
+    const unpackedScript = path.join(unpackedRootDir, 'backend', 'python', scriptName);
+    if (fs.existsSync(unpackedScript)) {
+        return unpackedScript;
+    }
+
+    const devScript = path.join(ROOT_DIR, 'backend', 'python', scriptName);
+    if (fs.existsSync(devScript) && !devScript.includes('app.asar')) {
+        return devScript;
+    }
+
+    // If running inside app.asar without unpacked file, extract script to writable STORAGE_BASE/python
+    try {
+        const storagePyDir = path.join(STORAGE_BASE, 'python');
+        if (!fs.existsSync(storagePyDir)) fs.mkdirSync(storagePyDir, { recursive: true });
+        const targetPath = path.join(storagePyDir, scriptName);
+        const sourceContent = fs.readFileSync(path.join(ROOT_DIR, 'backend', 'python', scriptName), 'utf8');
+        fs.writeFileSync(targetPath, sourceContent, 'utf8');
+        return targetPath;
+    } catch (e) {
+        return devScript;
+    }
+}
+
+[UPLOADS_DIR, AUDIO_CACHE_DIR, SEPARATED_DIR, EXPORTS_DIR, OUTPUTS_DIR, LOGS_DIR, CUSTOM_OUTPUTS_DIR, USER_DESKTOP_OUTPUTS, ONEDRIVE_DESKTOP_OUTPUTS].forEach(dir => {
     if (dir && !fs.existsSync(dir)) {
         try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { }
     }
@@ -63,20 +122,30 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 app.use(cors());
-app.use(express.json({ limit: '200mb' }));
-app.use(express.urlencoded({ extended: true, limit: '200mb' }));
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
 // Static files
 app.use(express.static(path.join(ROOT_DIR, 'frontend')));
 app.use('/fonts', express.static(path.join(ROOT_DIR, 'frontend', 'fonts')));
 app.use('/assets', express.static(path.join(ROOT_DIR, 'frontend', 'assets')));
 app.use('/lib', express.static(path.join(ROOT_DIR, 'frontend', 'lib')));
-app.use('/storage', express.static(path.join(ROOT_DIR, 'storage')));
+app.use('/storage', express.static(STORAGE_BASE));
 
-// Active jobs maps
+// Active jobs maps with TTL pruning
 const bgmJobs = new Map();
 const activeTranscribeRequests = new Map();
 let transcribePartCounter = 1;
+
+// Periodic memory cleanup for completed in-memory jobs (every 15 min)
+setInterval(() => {
+    const now = Date.now();
+    for (const [id, job] of bgmJobs.entries()) {
+        if (job && (job.status === 'done' || job.status === 'error') && job.timestamp && (now - job.timestamp > 15 * 60 * 1000)) {
+            bgmJobs.delete(id);
+        }
+    }
+}, 15 * 60 * 1000);
 
 // Helper to determine output audio file path
 function resolveAudioOutputFile(tempPath, index) {
@@ -128,7 +197,7 @@ const MIME_MAP = {
     '.webp': 'image/webp'
 };
 
-// 1. Audio / Media Streaming Endpoint (handles both standard and URL-encoded query strings)
+// 1. Audio / Media Streaming Endpoint (handles both standard and URL-encoded query strings with HTTP Caching)
 app.use('/api/audio', (req, res) => {
     let filePath = req.query.path;
 
@@ -148,8 +217,18 @@ app.use('/api/audio', (req, res) => {
         const stat = fs.statSync(filePath);
         const ext = path.extname(filePath).toLowerCase();
         const contentType = MIME_MAP[ext] || 'application/octet-stream';
-        const range = req.headers.range;
+        const etag = `W/"${stat.size.toString(16)}-${stat.mtimeMs.toString(16)}"`;
 
+        // HTTP client cache validation
+        if (req.headers['if-none-match'] === etag) {
+            return res.status(304).end();
+        }
+
+        res.setHeader('Accept-Ranges', 'bytes');
+        res.setHeader('ETag', etag);
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+
+        const range = req.headers.range;
         if (range) {
             const parts = range.replace(/bytes=/, "").split("-");
             const start = parseInt(parts[0], 10);
@@ -158,38 +237,101 @@ app.use('/api/audio', (req, res) => {
             const file = fs.createReadStream(filePath, { start, end });
             res.writeHead(206, {
                 'Content-Range': `bytes ${start}-${end}/${stat.size}`,
-                'Accept-Ranges': 'bytes',
                 'Content-Length': chunksize,
                 'Content-Type': contentType,
             });
             file.pipe(res);
+            res.on('close', () => {
+                if (file && !file.destroyed) file.destroy();
+            });
         } else {
             res.writeHead(200, {
                 'Content-Length': stat.size,
                 'Content-Type': contentType,
             });
-            fs.createReadStream(filePath).pipe(res);
+            const file = fs.createReadStream(filePath);
+            file.pipe(res);
+            res.on('close', () => {
+                if (file && !file.destroyed) file.destroy();
+            });
         }
     } catch (e) {
-        res.status(500).send(e.message);
+        if (!res.headersSent) res.status(500).send(e.message);
     }
 });
 
-// 2. Extract Audio from Video (returns static /storage path matching frontend download)
+// Transcribe Audio Destination Resolver & Saver
+function getTranscribeDestinations(customFolder, sourceFilePath) {
+    const destinations = [
+        USER_DESKTOP_OUTPUTS,
+        ONEDRIVE_DESKTOP_OUTPUTS,
+        CUSTOM_OUTPUTS_DIR,
+        OUTPUTS_DIR
+    ];
+    if (customFolder && typeof customFolder === 'string' && customFolder.trim()) {
+        destinations.unshift(customFolder.trim());
+    }
+    if (sourceFilePath && typeof sourceFilePath === 'string') {
+        try {
+            const srcDir = path.dirname(sourceFilePath);
+            if (srcDir && srcDir !== '.' && fs.existsSync(srcDir)) {
+                destinations.unshift(srcDir);
+            }
+        } catch (e) {}
+    }
+    return destinations;
+}
+
+function saveTranscribeAudio(audioBufferOrPath, videoName, partIndex, customFolder, sourceFilePath) {
+    const timestamp = Date.now();
+    const cleanBase = (videoName || 'video').replace(/[/\\?%*:|"<>]/g, '_').replace(/\.[^/.]+$/, '');
+    const pIdx = (partIndex !== undefined && partIndex !== null) ? partIndex : (transcribePartCounter++);
+    const partName = `transcribe_${timestamp}_${cleanBase}_part${pIdx}.mp3`;
+
+    const destinations = getTranscribeDestinations(customFolder, sourceFilePath);
+    let firstSavedPath = null;
+    const savedPaths = [];
+
+    destinations.forEach(targetDir => {
+        try {
+            if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+            const fullPath = path.join(targetDir, partName);
+            if (Buffer.isBuffer(audioBufferOrPath)) {
+                fs.writeFileSync(fullPath, audioBufferOrPath);
+            } else if (typeof audioBufferOrPath === 'string' && fs.existsSync(audioBufferOrPath)) {
+                fs.copyFileSync(audioBufferOrPath, fullPath);
+            }
+            if (!firstSavedPath) firstSavedPath = fullPath;
+            savedPaths.push(fullPath);
+        } catch (e) {
+            console.warn('[Outputs] Error saving transcribe chunk to', targetDir, e.message);
+        }
+    });
+
+    return { partName, filePath: firstSavedPath, savedPaths };
+}
+
+// 2. Extract Audio from Video (accepts FormData or direct JSON with videoPath)
 app.post('/api/extract-audio', upload.any(), (req, res) => {
     const uploadedFile = (req.files && req.files.length > 0) ? req.files[0].path : null;
-    let videoPath = uploadedFile || req.body.videoPath || req.body.filePath;
+    let videoPath = uploadedFile || req.body?.videoPath || req.body?.filePath;
+    const videoName = req.body?.videoName || (videoPath ? path.basename(videoPath) : 'video');
+    const partIndex = req.body?.partIndex;
+    const customFolder = req.body?.customFolder;
+    const sourceFilePath = req.body?.sourceFilePath || videoPath;
 
     if (!videoPath || !fs.existsSync(videoPath)) {
         return res.status(400).json({ success: false, error: 'Video file not found' });
     }
 
-    const baseName = path.basename(videoPath, path.extname(videoPath));
-    const fileName = `${baseName}_audio.mp3`;
+    const baseName = path.basename(videoPath, path.extname(videoPath)).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const uniqueId = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const fileName = `${baseName}_${uniqueId}_audio.mp3`;
     const audioOut = path.join(SEPARATED_DIR, fileName);
 
     const cmd = ['-y', '-i', videoPath, '-vn', '-acodec', 'libmp3lame', '-b:a', '128k', '-ar', '16000', '-ac', '1', audioOut];
     const ffmpeg = spawn('ffmpeg', cmd, { windowsHide: true });
+    trackProcess(ffmpeg);
 
     ffmpeg.on('error', (err) => {
         console.error('[FFmpeg Error]', err);
@@ -198,16 +340,72 @@ app.post('/api/extract-audio', upload.any(), (req, res) => {
 
     ffmpeg.on('close', (code) => {
         if (code === 0 && fs.existsSync(audioOut)) {
+            // Automatically save transcribe mp3 to transcribe output destinations
+            const saveRes = saveTranscribeAudio(audioOut, videoName, partIndex, customFolder, sourceFilePath);
             res.json({
                 success: true,
                 file: audioOut,
                 audioPath: audioOut,
+                savedTranscribePath: saveRes.filePath,
+                partName: saveRes.partName,
                 url: `/storage/separated/${fileName}`
             });
         } else {
             res.status(500).json({ success: false, error: 'FFmpeg extraction failed' });
         }
     });
+});
+
+// 2.05 Save Transcribe Audio directly
+app.post('/api/save-transcribe-audio', upload.any(), (req, res) => {
+    const { videoName, partIndex, customFolder, sourceFilePath, audioPath, audioBase64 } = req.body;
+    let audioData = audioPath;
+    if (audioBase64) {
+        audioData = Buffer.from(audioBase64, 'base64');
+    }
+    const uploadedFile = (req.files && req.files.length > 0) ? req.files[0].path : null;
+    if (uploadedFile) audioData = uploadedFile;
+
+    if (!audioData) {
+        return res.status(400).json({ success: false, error: 'No audio data provided' });
+    }
+
+    const saveRes = saveTranscribeAudio(audioData, videoName, partIndex, customFolder, sourceFilePath);
+    res.json({ success: true, ...saveRes });
+});
+
+// 2.1 Save Subtitle SRT directly to folders (transcribe output, custom folder, source folder)
+app.post('/api/save-srt', (req, res) => {
+    const { content, fileName, sourceFilePath, customFolder } = req.body;
+    if (!content) return res.status(400).json({ success: false, error: 'No SRT content provided.' });
+
+    const cleanBase = (fileName || 'subtitles').replace(/[/\\?%*:|"<>]/g, '_');
+    const srtFileName = cleanBase.endsWith('.srt') ? cleanBase : `${cleanBase}.srt`;
+
+    const destinations = [
+        USER_DESKTOP_OUTPUTS,
+        ONEDRIVE_DESKTOP_OUTPUTS,
+        CUSTOM_OUTPUTS_DIR,
+        OUTPUTS_DIR
+    ];
+    if (customFolder && fs.existsSync(customFolder)) {
+        destinations.unshift(customFolder);
+    }
+    if (sourceFilePath && fs.existsSync(path.dirname(sourceFilePath))) {
+        destinations.unshift(path.dirname(sourceFilePath));
+    }
+
+    let savedPath = null;
+    destinations.forEach(targetDir => {
+        try {
+            if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+            const fullPath = path.join(targetDir, srtFileName);
+            fs.writeFileSync(fullPath, content, 'utf8');
+            if (!savedPath) savedPath = fullPath;
+        } catch (e) {}
+    });
+
+    res.json({ success: true, filePath: savedPath });
 });
 
 // 3. Remove Vocals / BGM Isolation
@@ -220,11 +418,12 @@ app.post('/api/remove-vocals', upload.any(), (req, res) => {
         return res.status(400).json({ success: false, error: 'Audio/Video file not found' });
     }
 
-    bgmJobs.set(jobId, { status: 'processing', progress: 10, success: true });
+    bgmJobs.set(jobId, { status: 'processing', progress: 10, success: true, timestamp: Date.now() });
     res.json({ success: true, jobId: jobId, status: 'processing' });
 
-    const pyScript = path.join(PYTHON_DIR, 'vocal_separator.py');
+    const pyScript = getPythonScriptPath('vocal_separator.py');
     const child = spawn(PYTHON_CMD, [pyScript, '--input', audioPath, '--output', SEPARATED_DIR]);
+    trackProcess(child);
 
     let output = '';
     child.stdout.on('data', d => output += d.toString());
@@ -273,15 +472,18 @@ app.post('/api/cancel-remove-vocals', (req, res) => {
 
 // --- GEMINI MODEL RESOLUTION & FALLBACK ENGINE ---
 function resolveGeminiModel(modelName) {
-    if (!modelName) return 'gemini-2.0-flash';
+    if (!modelName) return 'gemini-3.7-flash';
     const m = String(modelName).toLowerCase().trim();
+    if (m === 'gemini-3.7-flash' || m.includes('3.7-flash') || m.includes('3.7')) {
+        return 'gemini-3.7-flash';
+    }
     if (m === 'gemini-3.1-pro-preview' || m === 'gemini-3.1-pro' || m.includes('3.1-pro')) {
         return 'gemini-3.1-pro-preview';
     }
     if (m.includes('3.1-flash') || m.includes('3.1-flash-lite')) return 'gemini-2.0-flash-lite';
     if (m.includes('3-flash')) return 'gemini-2.0-flash';
     if (m === 'gemini-2.5-pro' || m.includes('2.5-pro')) return 'gemini-2.5-pro';
-    if (m === 'gemini-2.5-flash' || m.includes('2.5-flash')) return 'gemini-2.0-flash';
+    if (m === 'gemini-2.5-flash' || m.includes('2.5-flash')) return 'gemini-2.5-flash';
     if (m.includes('2.0-flash-lite') || m.includes('2.0-lite')) return 'gemini-2.0-flash-lite';
     if (m === 'gemini-2.0-flash' || m.includes('2.0') || m.includes('flash')) return 'gemini-2.0-flash';
     if (m === 'gemini-1.5-pro' || m.includes('1.5-pro')) return 'gemini-1.5-pro';
@@ -293,7 +495,9 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal) {
     const primaryModel = resolveGeminiModel(requestedModel);
     const candidateModels = [
         primaryModel,
+        'gemini-3.7-flash',
         'gemini-2.0-flash',
+        'gemini-2.5-flash',
         'gemini-1.5-flash',
         'gemini-2.0-flash-lite',
         'gemini-1.5-pro',
@@ -304,41 +508,53 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal) {
     let lastError = null;
     let lastStatus = 500;
 
-    for (let idx = 0; idx < candidateModels.length; idx++) {
-        const m = candidateModels[idx];
-        if (signal && signal.aborted) break;
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${apiKey.trim()}`;
-        try {
-            const res = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-                signal
-            });
+    // Retry loop with backoff (up to 2 passes across models)
+    for (let pass = 0; pass < 2; pass++) {
+        for (let idx = 0; idx < candidateModels.length; idx++) {
+            const m = candidateModels[idx];
+            if (signal && signal.aborted) break;
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${apiKey.trim()}`;
+            try {
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                    signal
+                });
 
-            if (res.ok) {
-                const json = await res.json();
-                return { success: true, json, modelUsed: m };
-            }
+                if (res.ok) {
+                    const json = await res.json();
+                    return { success: true, json, modelUsed: m };
+                }
 
-            lastStatus = res.status;
-            const errData = await res.json().catch(() => ({}));
-            const errMsg = errData?.error?.message || `HTTP ${res.status}`;
-            console.warn(`[Gemini API Warning] Model ${m} returned ${res.status}: ${errMsg}`);
-            if (idx === 0) primaryErrorMessage = errMsg;
-            lastError = errMsg;
+                lastStatus = res.status;
+                const errData = await res.json().catch(() => ({}));
+                const errMsg = errData?.error?.message || `HTTP ${res.status}`;
+                console.warn(`[Gemini API Warning] Model ${m} returned ${res.status}: ${errMsg}`);
+                if (!primaryErrorMessage) primaryErrorMessage = errMsg;
+                lastError = errMsg;
 
-            if (res.status === 400 && (errMsg.includes('API_KEY_INVALID') || errMsg.includes('API key not valid'))) {
-                return { success: false, status: 400, error: 'INVALID_API_KEY', message: errMsg };
+                if (res.status === 400 && (errMsg.includes('API_KEY_INVALID') || errMsg.includes('API key not valid'))) {
+                    return { success: false, status: 400, error: 'INVALID_API_KEY', message: errMsg };
+                }
+                if (res.status === 403) {
+                    return { success: false, status: 403, error: 'INVALID_API_KEY', message: errMsg };
+                }
+
+                if (res.status === 429) {
+                    // Rate limit: back off before trying next model
+                    await new Promise(r => setTimeout(r, 1500));
+                }
+            } catch (fetchErr) {
+                if (fetchErr.name === 'AbortError') throw fetchErr;
+                if (!primaryErrorMessage) primaryErrorMessage = fetchErr.message;
+                lastError = fetchErr.message;
+                console.warn(`[Gemini API Fetch Error] Model ${m}:`, fetchErr.message);
             }
-            if (res.status === 403) {
-                return { success: false, status: 403, error: 'INVALID_API_KEY', message: errMsg };
-            }
-        } catch (fetchErr) {
-            if (fetchErr.name === 'AbortError') throw fetchErr;
-            if (idx === 0) primaryErrorMessage = fetchErr.message;
-            lastError = fetchErr.message;
-            console.warn(`[Gemini API Fetch Error] Model ${m}:`, fetchErr.message);
+        }
+        if (pass === 0 && lastStatus === 429 && (!signal || !signal.aborted)) {
+            // Wait 2.5s before second pass
+            await new Promise(r => setTimeout(r, 2500));
         }
     }
 
@@ -489,7 +705,9 @@ app.post('/api/transcribe', async (req, res) => {
         model = 'gemini-2.0-flash',
         requestId,
         videoName,
-        customFolder
+        partIndex,
+        customFolder,
+        sourceFilePath
     } = req.body;
 
     if (!audioBase64) {
@@ -498,26 +716,7 @@ app.post('/api/transcribe', async (req, res) => {
 
     try {
         const audioBuffer = Buffer.from(audioBase64, 'base64');
-        const timestamp = Date.now();
-        const baseClean = (videoName || 'video').replace(/\.[^/.]+$/, '');
-        const partName = `transcribe_${timestamp}_${baseClean}_part${transcribePartCounter++}.mp3`;
-
-        const destinations = [
-            OUTPUTS_DIR,
-            CUSTOM_OUTPUTS_DIR,
-            USER_DESKTOP_OUTPUTS
-        ];
-        if (customFolder && fs.existsSync(customFolder)) {
-            destinations.unshift(customFolder);
-        }
-
-        destinations.forEach(targetDir => {
-            try {
-                if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
-                const fullPath = path.join(targetDir, partName);
-                fs.writeFileSync(fullPath, audioBuffer);
-            } catch (e) { }
-        });
+        saveTranscribeAudio(audioBuffer, videoName, partIndex, customFolder, sourceFilePath);
     } catch (err) {
         console.warn('[Outputs] Error saving transcribe chunk:', err.message);
     }
@@ -963,6 +1162,7 @@ app.post('/api/transcribe-whisper', async (req, res) => {
             const pyScript = path.join(whisperFolder, 'transcribe.py');
             child = spawn(PYTHON_CMD, [pyScript, ...args], { cwd: whisperFolder, windowsHide: true });
         }
+        trackProcess(child);
     } catch (spawnErr) {
         return res.status(500).json({ success: false, error: 'Failed to start Whisper process: ' + spawnErr.message });
     }
@@ -1071,6 +1271,7 @@ app.post('/api/export-stems', async (req, res) => {
 
             await new Promise((resolve) => {
                 const ff = spawn('ffmpeg', args, { windowsHide: true });
+                trackProcess(ff);
                 ff.on('close', resolve);
                 ff.on('error', resolve);
             });
@@ -1134,7 +1335,7 @@ function getEmotionProsody(emotion, basePitch, baseVolume, baseSpeed) {
     return { pitch: finalPitch, volume: finalVolume, rate: rateStr };
 }
 
-// 5. Neural Speech Generation with Emotional Acting (Edge-TTS + Khmer)
+// 5. Neural Speech Generation with Emotional Acting & High-Speed Cache (Edge-TTS + Khmer)
 app.post('/api/generate-audio', (req, res) => {
     const {
         text,
@@ -1163,9 +1364,24 @@ app.post('/api/generate-audio', (req, res) => {
     }
 
     const prosody = getEmotionProsody(emotion, pitch, volume, speed);
+    const cacheKey = getTtsCacheKey(text, voice, prosody.rate, prosody.pitch, prosody.volume, speed, emotion);
+
+    // Instant 0ms cache return if identical audio was previously generated
+    if (ttsCache.has(cacheKey)) {
+        const cached = ttsCache.get(cacheKey);
+        if (cached && fs.existsSync(cached.file)) {
+            return res.json({
+                success: true,
+                file: cached.file,
+                duration: cached.duration,
+                url: cached.url,
+                cached: true
+            });
+        }
+    }
 
     const outFile = resolveAudioOutputFile(tempPath, index);
-    const pyScript = path.join(PYTHON_DIR, 'tts_generator.py');
+    const pyScript = getPythonScriptPath('tts_generator.py');
 
     const child = spawn(PYTHON_CMD, [
         pyScript,
@@ -1176,28 +1392,153 @@ app.post('/api/generate-audio', (req, res) => {
         '--volume', prosody.volume,
         '--output', outFile
     ]);
+    trackProcess(child);
 
     let output = '';
+    let stderr = '';
     child.stdout.on('data', d => output += d.toString());
+    child.stderr.on('data', d => stderr += d.toString());
     child.on('error', (err) => {
         console.error('[TTS Error]', err);
         if (!res.headersSent) res.status(500).json({ success: false, error: err.message });
     });
     child.on('close', (code) => {
         try {
+            if (!output.trim()) {
+                console.error(`[TTS Failed] Code ${code}, Stderr: ${stderr}`);
+                return res.status(500).json({ success: false, error: stderr.trim() || `TTS process exited with code ${code}` });
+            }
             const data = JSON.parse(output);
             if (data.success) {
+                const freshUrl = `/api/audio?path=${encodeURIComponent(outFile)}`;
+                ttsCache.set(cacheKey, {
+                    file: outFile,
+                    duration: data.duration || 0,
+                    size: data.size || 0,
+                    url: freshUrl
+                });
+
                 res.json({
                     success: true,
                     file: outFile,
                     duration: data.duration || 0,
-                    url: `/api/audio?path=${encodeURIComponent(outFile)}`
+                    url: freshUrl
                 });
             } else {
                 res.status(500).json({ success: false, error: data.error || 'TTS error' });
             }
         } catch (e) {
-            res.status(500).json({ success: false, error: output || e.message });
+            console.error('[TTS Parse Error]', e.message, 'Output:', output, 'Stderr:', stderr);
+            res.status(500).json({ success: false, error: output.trim() || stderr.trim() || e.message });
+        }
+    });
+});
+
+// 5b. High-Speed Batch Speech Generation (Processes all dialogue cues concurrently)
+app.post('/api/generate-batch-audio', async (req, res) => {
+    const { subtitles = [], defaultVoice = 'km-KH-PisethNeural', tempPath } = req.body;
+    if (!Array.isArray(subtitles) || subtitles.length === 0) {
+        return res.status(400).json({ success: false, error: 'Empty subtitles array' });
+    }
+
+    const uncachedTasks = [];
+    const updatedSubtitles = [...subtitles];
+
+    for (let i = 0; i < updatedSubtitles.length; i++) {
+        const sub = updatedSubtitles[i];
+        const text = (sub.dubbedText || sub.text || sub.originalText || '').trim();
+        if (!text) continue;
+
+        let voice = sub.voice || defaultVoice;
+        if (!sub.voice) {
+            if (sub.gender === 'Female' || sub.gender === 'female') voice = 'km-KH-SreymomNeural';
+        }
+        const prosody = getEmotionProsody(sub.emotion, sub.pitch, sub.volume, sub.speed);
+        const cacheKey = getTtsCacheKey(text, voice, prosody.rate, prosody.pitch, prosody.volume, sub.speed, sub.emotion);
+
+        if (ttsCache.has(cacheKey)) {
+            const cached = ttsCache.get(cacheKey);
+            if (cached && fs.existsSync(cached.file)) {
+                sub.audioPath = cached.file;
+                sub.file = cached.file;
+                sub.audioUrl = cached.url;
+                sub.generatedDuration = cached.duration;
+                sub.audioStatus = 'ready';
+                continue;
+            }
+        }
+
+        const outFile = resolveAudioOutputFile(tempPath, sub.id || i + 1);
+        uncachedTasks.push({
+            id: sub.id || `sub_${i}`,
+            subIndex: i,
+            text,
+            voice,
+            rate: prosody.rate,
+            pitch: prosody.pitch,
+            volume: prosody.volume,
+            output: outFile,
+            cacheKey
+        });
+    }
+
+    if (uncachedTasks.length === 0) {
+        return res.json({
+            success: true,
+            count: updatedSubtitles.length,
+            subtitles: updatedSubtitles
+        });
+    }
+
+    const batchJsonPath = path.join(AUDIO_CACHE_DIR, `batch_${Date.now()}_${Math.round(Math.random() * 1e6)}.json`);
+    fs.writeFileSync(batchJsonPath, JSON.stringify(uncachedTasks), 'utf8');
+
+    const pyScript = getPythonScriptPath('tts_generator.py');
+    const child = spawn(PYTHON_CMD, [pyScript, '--batch', batchJsonPath, '--concurrency', '6']);
+    trackProcess(child);
+
+    let output = '';
+    let stderr = '';
+    child.stdout.on('data', d => output += d.toString());
+    child.stderr.on('data', d => stderr += d.toString());
+
+    child.on('close', (code) => {
+        try { fs.unlinkSync(batchJsonPath); } catch (e) {}
+        try {
+            const parsed = JSON.parse(output);
+            if (parsed.success && Array.isArray(parsed.results)) {
+                for (const r of parsed.results) {
+                    if (r.success) {
+                        const task = uncachedTasks.find(t => t.id === r.id);
+                        if (task) {
+                            const sub = updatedSubtitles[task.subIndex];
+                            const freshUrl = `/api/audio?path=${encodeURIComponent(r.file)}`;
+                            sub.audioPath = r.file;
+                            sub.file = r.file;
+                            sub.audioUrl = freshUrl;
+                            sub.generatedDuration = r.duration;
+                            sub.audioStatus = 'ready';
+
+                            ttsCache.set(task.cacheKey, {
+                                file: r.file,
+                                duration: r.duration,
+                                size: r.size,
+                                url: freshUrl
+                            });
+                        }
+                    }
+                }
+                res.json({
+                    success: true,
+                    count: updatedSubtitles.length,
+                    subtitles: updatedSubtitles
+                });
+            } else {
+                res.status(500).json({ success: false, error: parsed.error || 'Batch generation failed' });
+            }
+        } catch (e) {
+            console.error('[Batch TTS Error]', e.message, output, stderr);
+            res.status(500).json({ success: false, error: output || stderr || e.message });
         }
     });
 });
@@ -1206,7 +1547,7 @@ app.post('/api/generate-voxcmp2', (req, res) => {
     const { text, gender = 'Male', tempPath, speed = 1.0, emotion = 'Neutral', index } = req.body;
     let voice = (gender === 'Female' || gender === 'female') ? 'km-KH-SreymomNeural' : 'km-KH-PisethNeural';
     const outFile = resolveAudioOutputFile(tempPath, index);
-    const pyScript = path.join(PYTHON_DIR, 'tts_generator.py');
+    const pyScript = getPythonScriptPath('tts_generator.py');
 
     const prosody = getEmotionProsody(emotion, '+0Hz', '+0%', speed);
 
@@ -1219,15 +1560,22 @@ app.post('/api/generate-voxcmp2', (req, res) => {
         '--volume', prosody.volume,
         '--output', outFile
     ]);
+    trackProcess(child);
 
     let output = '';
+    let stderr = '';
     child.stdout.on('data', d => output += d.toString());
+    child.stderr.on('data', d => stderr += d.toString());
     child.on('error', (err) => {
         console.error('[TTS Error]', err);
         if (!res.headersSent) res.status(500).json({ success: false, error: err.message });
     });
-    child.on('close', () => {
+    child.on('close', (code) => {
         try {
+            if (!output.trim()) {
+                console.error(`[VoxCPM2 TTS Failed] Code ${code}, Stderr: ${stderr}`);
+                return res.status(500).json({ success: false, error: stderr.trim() || `TTS process exited with code ${code}` });
+            }
             const data = JSON.parse(output);
             res.json({
                 success: true,
@@ -1236,9 +1584,20 @@ app.post('/api/generate-voxcmp2', (req, res) => {
                 url: `/api/audio?path=${encodeURIComponent(outFile)}`
             });
         } catch (e) {
-            res.status(500).json({ success: false, error: output || e.message });
+            console.error('[VoxCPM2 Parse Error]', e.message, 'Output:', output, 'Stderr:', stderr);
+            res.status(500).json({ success: false, error: output.trim() || stderr.trim() || e.message });
         }
     });
+});
+
+// 5c. Hardware Encoders Endpoint
+app.get('/api/hardware-encoders', (req, res) => {
+    try {
+        const encoders = detectAvailableEncoders();
+        res.json({ success: true, encoders });
+    } catch (e) {
+        res.json({ success: true, encoders: { libx264: true } });
+    }
 });
 
 // 6. Voice Presets Endpoint
@@ -1304,7 +1663,7 @@ app.post('/api/render', upload.any(), (req, res) => {
         subtitleOutlineColor = '&H00000000',
         subtitlePosition = 'bottom',
         resolution = '1080p',
-        encoder = 'libx264',
+        encoder = 'auto',
         exportPath,
         outputFileName,
         outputPath: explicitOutputPath,
