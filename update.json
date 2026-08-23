@@ -1,6 +1,6 @@
 {
-  "version": "1.0.2",
-  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.0.2/DR.Dubber.Pro.Setup.1.0.2.exe",
+  "version": "1.0.3",
+  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.0.3/DR.Dubber.Pro.Setup.1.0.3.exe",
   "mac_link": "https://github.com/chhordalim14/dr-dubber/releases",
-  "notes": "- Added a real crash-safety net: uncaught errors and unhandled promise rejections no longer silently kill the app or freeze the UI with zero indication anything went wrong\n- Fixed two backend routes that leaked a raw error page (with server file paths) on malformed input instead of a clean error message\n- Verified against the actual packaged app, not just source, after fuzz-testing every API route\n- Also includes 1.0.1's fixes: open CORS + unrestricted local file read, shell command injection in the open-folder action, crash-causing missing error handlers, a Whisper transcription hang, a TTS timeout, and hardware encoder detection that was breaking renders on non-NVIDIA machines"
+  "notes": "- Decluttered the sidebar tool strip: 11 icon-only buttons are now labeled in groups (Transform / Crop / Overlay / Look) instead of a cramped horizontal-scroll row\n- Decluttered the subtitle toolbar: Edit / Delete / Find & Replace are now grouped together, separate from Batch Dubber and voice-assignment controls\n- Minor: added group separators in the Timeline editor's action row\n- All changes are visual/layout only — every existing feature, id, and behavior is unchanged and was verified against the running app"
 }
