@@ -1103,7 +1103,8 @@
             </h2>
           </div>
 
-          <div class="flex items-center gap-1.5 bg-[var(--bg-panel)] rounded-lg px-2 py-1 border border-[var(--border-light)] shadow-sm overflow-x-auto scrollbar-none" style="scrollbar-width: none">
+          <div class="flex items-center gap-1.5 bg-[var(--bg-panel)] rounded-lg px-2 py-1 border border-[var(--border-light)] shadow-sm overflow-x-auto scrollbar-none flex-wrap" style="scrollbar-width: none">
+            <span class="text-[9px] font-bold uppercase tracking-wide text-[var(--text-muted)] leading-none shrink-0 select-none pl-0.5">Transform</span>
             <button id="btn-flip-h" class="p-1.5 hover:text-[var(--text-bright)] hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)]" title="Flip Horizontal">
               <div id="lottie-flip-h" class="w-4 h-4 lottie-icon"></div>
             </button>
@@ -1111,6 +1112,7 @@
               <div id="lottie-flip-v" class="w-4 h-4 lottie-icon"></div>
             </button>
             <div class="w-px h-3 bg-[var(--border-color)] mx-1"></div>
+            <span class="text-[9px] font-bold uppercase tracking-wide text-[var(--text-muted)] leading-none shrink-0 select-none">Crop</span>
             <button id="btn-crop-mode" class="p-1.5 hover:text-orange-500 hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)]" title="Crop Video">
               <div id="lottie-crop-mode" class="w-4 h-4 lottie-icon"></div>
             </button>
@@ -1121,6 +1123,7 @@
               <i data-lucide="aperture" class="w-[15px] h-[15px]"></i>
             </button>
             <div class="w-px h-3 bg-[var(--border-color)] mx-1"></div>
+            <span class="text-[9px] font-bold uppercase tracking-wide text-[var(--text-muted)] leading-none shrink-0 select-none">Overlay</span>
             <button id="btn-add-free-text" class="p-1.5 hover:text-blue-400 hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)]" title="Add Free Text">
               <div id="lottie-add-free-text" class="w-4 h-4 lottie-icon"></div>
             </button>
@@ -1134,6 +1137,7 @@
               <div id="lottie-video-overlay" class="w-4 h-4 lottie-icon"></div>
             </button>
             <div class="w-px h-3 bg-[var(--border-color)] mx-1"></div>
+            <span class="text-[9px] font-bold uppercase tracking-wide text-[var(--text-muted)] leading-none shrink-0 select-none">Look</span>
             <button id="btn-color-adjust" class="p-1.5 hover:text-purple-400 hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)]" title="Color Adjustment">
               <div id="lottie-color-adjust" class="w-4 h-4 lottie-icon"></div>
             </button>
@@ -1476,6 +1480,7 @@
                   Add Text
                 </button>
 
+                <div class="flex items-center gap-1 bg-[var(--bg-hover)]/60 border border-[var(--border-color)] rounded-lg p-0.5">
                 <button
                   id="btn-edit-selected"
                   class="group bg-[var(--bg-hover)] border border-[var(--border-light)] hover:bg-blue-500/20 hover:border-blue-500 hover:text-blue-500 text-[var(--text-primary)] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-md active:scale-[0.95]"
@@ -1502,7 +1507,9 @@
                   <i data-lucide="search-code" class="w-[14px] h-[14px] transition-transform duration-300 group-hover:scale-110 group-active:scale-90"></i>
                   Find &amp; Replace
                 </button>
+                </div>
 
+                <div class="flex items-center gap-3 ml-auto">
                 <button
                   id="btn-open-batch-dubber"
                   onclick="openBatchDubberModal()"
@@ -1543,6 +1550,7 @@
                   <button id="btn-bulk-vox-apply" class="hidden bounce-on-click bg-violet-500/15 border border-violet-500/30 text-violet-400 hover:bg-violet-500/25 px-2 py-1 rounded text-xs transition-all duration-300 ease-out shadow-sm flex items-center gap-1">
                     <i data-lucide="check" class="w-3 h-3"></i> Apply
                   </button>
+                </div>
                 </div>
               </div>
             </div>
@@ -1739,6 +1747,8 @@
                 </div>
               </div>
 
+              <div class="hidden sm:block h-5 w-px bg-[var(--border-light)] opacity-60"></div>
+
               <button id="btn-transcribe" disabled class="px-3 sm:px-4 py-1.5 rounded-lg text-xs font-medium flex items-center gap-2 transition-all duration-300 ease-out bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-muted)] opacity-60 cursor-not-allowed">
                 <i id="icon-transcribe" data-lucide="sparkles" class="w-[14px] h-[14px] shrink-0"></i>
                 <span id="text-transcribe" class="hidden sm:inline">Transcribe</span>
@@ -1770,6 +1780,8 @@
                 <i id="icon-match-audio-end" data-lucide="scissors" class="w-[14px] h-[14px] shrink-0 transition-colors duration-300"></i>
                 <span id="text-match-audio-end" class="hidden sm:inline">Sync End: OFF</span>
               </button>
+
+              <div class="hidden sm:block h-5 w-px bg-[var(--border-light)] opacity-60"></div>
 
               <button id="btn-generate-audio" disabled class="px-3 sm:px-4 py-1.5 rounded-lg text-xs font-medium flex items-center gap-2 transition-all duration-300 ease-out bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-muted)] opacity-60 cursor-not-allowed">
                 <i id="icon-generate" data-lucide="audio-lines" class="w-[14px] h-[14px] shrink-0"></i>
@@ -24099,7 +24111,7 @@
       // built. Read the real version from Electron (package.json) instead;
       // falls back to this literal only when running outside Electron (e.g.
       // a plain browser during development).
-      let CURRENT_APP_VERSION = "1.0.2";
+      let CURRENT_APP_VERSION = "1.0.3";
       const aboutAppVersionDisplay = document.getElementById("about-app-version");
       if (aboutAppVersionDisplay) aboutAppVersionDisplay.textContent = `Version ${CURRENT_APP_VERSION}`;
       if (window.electronAPI && window.electronAPI.getAppVersion) {
