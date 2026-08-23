@@ -4,8 +4,12 @@
   "description": "DR Dubber Pro - Khmer Edition AI Dubbing Studio",
   "main": "main.js",
   "scripts": {
+    "prestart": "npm run build:css",
     "start": "electron .",
     "server": "node backend/server.js",
+    "build:css": "tailwindcss -c tailwind.config.js -i frontend/css/tailwind-src.css -o frontend/css/tailwind-built.css --minify",
+    "watch:css": "tailwindcss -c tailwind.config.js -i frontend/css/tailwind-src.css -o frontend/css/tailwind-built.css --watch",
+    "predist": "npm run build:css",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
     "dist:mac": "electron-builder --mac",
@@ -68,7 +72,8 @@
   },
   "devDependencies": {
     "electron": "^28.2.0",
-    "electron-builder": "^24.9.1"
+    "electron-builder": "^24.9.1",
+    "tailwindcss": "^3.4.17"
   },
   "productName": "DR Dubber Pro"
 }

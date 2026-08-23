@@ -1,6 +1,6 @@
-const { spawn, execSync, exec } = require('child_process');
+const { spawn, execSync, execFile } = require('child_process');
 const { promisify } = require('util');
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -62,7 +62,7 @@ async function detectAvailableEncoders() {
     if (_detectedEncoders) return _detectedEncoders;
     let compiled = { nvenc: false, qsv: false, amf: false, mf: false, videotoolbox: false, libx264: true };
     try {
-        const { stdout: out } = await execAsync('ffmpeg -encoders', { encoding: 'utf8', timeout: 5000 });
+        const { stdout: out } = await execFileAsync('ffmpeg', ['-encoders'], { timeout: 5000 });
         compiled = {
             nvenc: out.includes('h264_nvenc'),
             qsv: out.includes('h264_qsv'),
@@ -86,15 +86,24 @@ async function detectAvailableEncoders() {
     return _detectedEncoders;
 }
 
-async function getVideoDurationAsync(videoPath) {
-    // execSync here blocked the entire Node event loop (audio streaming, TTS
-    // generation, progress polling for every other tab) for as long as ffprobe
-    // took, on every single render. This isn't memoized like the encoder/filter
-    // probes above since duration is per-video, so it ran unconditionally.
+// Keyed by path+mtime so an edited/replaced file at the same path still gets a fresh probe.
+// (execSync here used to block the entire Node event loop — audio streaming, TTS
+// generation, progress polling for every other tab — for as long as ffprobe took,
+// on every single render; execFileAsync also avoids shell-interpolating videoPath.)
+const _videoDurationCache = new Map();
+async function getVideoDuration(videoPath) {
+    let cacheKey = videoPath;
     try {
-        const { stdout } = await execAsync(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${videoPath}"`, { encoding: 'utf8', timeout: 5000 });
+        cacheKey = `${videoPath}:${fs.statSync(videoPath).mtimeMs}`;
+        if (_videoDurationCache.has(cacheKey)) return _videoDurationCache.get(cacheKey);
+    } catch (e) {}
+
+    try {
+        const { stdout } = await execFileAsync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', videoPath], { timeout: 5000 });
         const dur = parseFloat(stdout.trim());
-        return (dur && !isNaN(dur) && dur > 0) ? dur : null;
+        const result = (dur && !isNaN(dur) && dur > 0) ? dur : null;
+        _videoDurationCache.set(cacheKey, result);
+        return result;
     } catch (e) {
         return null;
     }
@@ -286,7 +295,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         }
 
         // Determine real video duration for accurate progress & ETA
-        const videoDuration = providedDuration || await getVideoDurationAsync(videoPath) || 60;
+        const videoDuration = providedDuration || (await getVideoDuration(videoPath)) || 60;
         const renderStartTime = Date.now();
 
         // 2. Build FFmpeg command arguments

@@ -55,7 +55,7 @@ function createWindow() {
             contextIsolation: true,
             webSecurity: false,
             spellcheck: false,
-            backgroundThrottling: true
+            backgroundThrottling: false
         }
     });
 
@@ -232,7 +232,7 @@ ipcMain.handle('app:saveSrt', async (event, { content, filePath, defaultPath }) 
             if (res.canceled) return { success: false };
             target = res.filePath;
         }
-        fs.writeFileSync(target, content, 'utf8');
+        await fs.promises.writeFile(target, content, 'utf8');
         return { success: true, filePath: target };
     } catch (e) {
         return { success: false, error: e.message };
@@ -241,7 +241,7 @@ ipcMain.handle('app:saveSrt', async (event, { content, filePath, defaultPath }) 
 
 ipcMain.handle('app:saveTextFile', async (event, { content, filePath }) => {
     try {
-        fs.writeFileSync(filePath, content, 'utf8');
+        await fs.promises.writeFile(filePath, content, 'utf8');
         return { success: true };
     } catch (e) {
         return { success: false, error: e.message };
@@ -258,20 +258,20 @@ ipcMain.handle('app:autoSaveSrt', async (event, { content, fileName, mode, sourc
             targetDir = path.dirname(sourceFilePath);
         }
         if (!targetDir) targetDir = EXPORTS_DIR;
-        if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+        if (!fs.existsSync(targetDir)) await fs.promises.mkdir(targetDir, { recursive: true });
 
         const targetFile = path.join(targetDir, srtFileName);
-        fs.writeFileSync(targetFile, content, 'utf8');
+        await fs.promises.writeFile(targetFile, content, 'utf8');
 
-        // Also save to Desktop / OneDrive "transcribe output" folder
+        // Also save to Desktop / OneDrive "transcribe output" folder (best-effort, in background)
         const desktopOut = path.join(os.homedir(), 'Desktop', 'transcribe output');
         const oneDriveDesktop = path.join(os.homedir(), 'OneDrive', 'Desktop', 'transcribe output');
-        [desktopOut, oneDriveDesktop, 'C:\\Export\\AIDubber\\outputs'].forEach(dir => {
+        Promise.all([desktopOut, oneDriveDesktop, 'C:\\Export\\AIDubber\\outputs'].map(async (dir) => {
             try {
-                if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-                fs.writeFileSync(path.join(dir, srtFileName), content, 'utf8');
+                if (!fs.existsSync(dir)) await fs.promises.mkdir(dir, { recursive: true });
+                await fs.promises.writeFile(path.join(dir, srtFileName), content, 'utf8');
             } catch (e) {}
-        });
+        })).catch(() => {});
 
         return { success: true, filePath: targetFile };
     } catch (e) {
@@ -281,7 +281,7 @@ ipcMain.handle('app:autoSaveSrt', async (event, { content, fileName, mode, sourc
 
 ipcMain.handle('app:readFileAsBase64', async (event, filePath) => {
     try {
-        const data = fs.readFileSync(filePath);
+        const data = await fs.promises.readFile(filePath);
         return data.toString('base64');
     } catch (e) {
         return null;
@@ -290,7 +290,7 @@ ipcMain.handle('app:readFileAsBase64', async (event, filePath) => {
 
 ipcMain.handle('app:readFileAsText', async (event, filePath) => {
     try {
-        return fs.readFileSync(filePath, 'utf8');
+        return await fs.promises.readFile(filePath, 'utf8');
     } catch (e) {
         return null;
     }
@@ -427,6 +427,20 @@ ipcMain.handle('app:confirmQuit', async () => {
 // Whisper Local Transcription Handlers
 const activeWhisperJobs = new Map();
 
+// Kills the whole process tree for a spawned job. On Windows, jobs are launched via
+// `cmd.exe /c run.bat`, so killing just the cmd.exe wrapper leaves the actual python/whisper
+// process running in the background (orphaned, still burning CPU/GPU).
+function killProcessTree(child) {
+    if (!child || !child.pid) return;
+    try {
+        if (process.platform === 'win32') {
+            exec(`taskkill /pid ${child.pid} /T /F`, () => {});
+        } else {
+            try { process.kill(-child.pid, 'SIGKILL'); } catch (e) { child.kill('SIGKILL'); }
+        }
+    } catch (e) {}
+}
+
 ipcMain.handle('whisper:checkFolder', async (event, folderPath) => {
     if (!folderPath || !fs.existsSync(folderPath)) {
         return { valid: false, missing: ['Folder does not exist'] };
@@ -489,29 +503,42 @@ ipcMain.handle('whisper:transcribe', async (event, { id, whisperFolder, audioPat
 
         if (id) activeWhisperJobs.set(id, { child, outSrt });
 
+        // Whisper CLIs (tqdm-style) can emit many small chunks per second; forwarding each
+        // one as its own IPC message forces a renderer re-render per chunk and visibly jank
+        // the UI. Buffer and flush on an interval instead.
+        let logBuffer = '';
+        const flushLog = () => {
+            if (!logBuffer) return;
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('whisper:log', logBuffer);
+            }
+            logBuffer = '';
+        };
+        const flushTimer = setInterval(flushLog, 150);
+
         child.stdout.on('data', (d) => {
             const str = d.toString();
             console.log('[Whisper]', str);
-            if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send('whisper:log', str);
-            }
+            logBuffer += str;
         });
 
         child.stderr.on('data', (d) => {
             const str = d.toString();
             stderrBuffer += str;
             console.warn('[Whisper Stderr]', str);
-            if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send('whisper:log', str);
-            }
+            logBuffer += str;
         });
 
         child.on('error', (err) => {
+            clearInterval(flushTimer);
+            flushLog();
             if (id) activeWhisperJobs.delete(id);
             resolve({ success: false, error: err.message });
         });
 
         child.on('close', (code) => {
+            clearInterval(flushTimer);
+            flushLog();
             if (id) activeWhisperJobs.delete(id);
             if (fs.existsSync(outSrt)) {
                 try {
@@ -539,9 +566,7 @@ ipcMain.handle('whisper:cancel', async (event, id) => {
         const job = activeWhisperJobs.get(id);
         const child = job.child || job;
         const outSrt = job.outSrt;
-        try {
-            child.kill();
-        } catch (e) {}
+        killProcessTree(child);
         activeWhisperJobs.delete(id);
 
         let partialSrt = '';
@@ -556,47 +581,100 @@ ipcMain.handle('whisper:cancel', async (event, id) => {
 });
 
 // VoxCPM2 Server handlers
-// "VoxCPM2" has no separate model/server of its own — backend's
-// /api/generate-voxcmp2 route just re-runs the same Edge-TTS script as normal
-// TTS. These handlers used to unconditionally report "running"/"ready" with
-// no process ever spawned, so a broken Python env silently looked healthy.
-// This at least performs a real readiness check against the engine that's
-// actually used, instead of a hardcoded true.
-function checkVoxTtsReady() {
-    return new Promise((resolve) => {
-        const pyCmd = process.platform === 'win32' ? 'python' : 'python3';
-        const child = spawn(pyCmd, ['-c', 'import edge_tts'], { windowsHide: true });
-        child.on('error', () => resolve(false));
-        child.on('close', (code) => resolve(code === 0));
-    });
-}
+let activeVoxServerJob = null;
+let activeVoxServerPort = 8808;
 
-function sendVoxLog(text) {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('voxcpm2:log', text);
+ipcMain.handle('voxcpm2:startServer', async (event, opts = {}) => {
+    let scriptPath = (opts && opts.pythonPath) ? opts.pythonPath.trim() : '';
+    if (!scriptPath) {
+        const defaultApp = path.join('D:', 'VoxCPM2', 'app.py');
+        if (fs.existsSync(defaultApp)) scriptPath = defaultApp;
     }
-}
 
-ipcMain.handle('voxcpm2:startServer', async () => {
-    sendVoxLog('Checking Python TTS engine (edge-tts) availability...\n');
-    const ready = await checkVoxTtsReady();
-    // The renderer's log box listened for a 'voxcpm2:log' event that main.js
-    // never sent, so it stayed empty forever with no indication anything was
-    // wrong. There's no separate long-running server to stream output from
-    // (see comment above), so this at least reports the real check's outcome.
-    sendVoxLog(ready ? 'Ready.\n' : 'edge-tts is not available in the Python environment.\n');
-    return ready
-        ? { success: true, status: 'running', message: 'Ready' }
-        : { success: false, status: 'stopped', message: 'Python TTS engine (edge-tts) not available' };
+    if (activeVoxServerJob && activeVoxServerJob.child && !activeVoxServerJob.child.killed) {
+        return { success: true, status: 'running', port: activeVoxServerPort, message: `Running on port ${activeVoxServerPort}` };
+    }
+
+    if (!scriptPath || !fs.existsSync(scriptPath)) {
+        return { success: false, error: `VoxCPM2 script not found at "${scriptPath}". Please configure the path in settings.` };
+    }
+
+    const scriptDir = path.dirname(scriptPath);
+    const venvPythonWin = path.join(scriptDir, 'venv', 'Scripts', 'python.exe');
+    const pythonExe = fs.existsSync(venvPythonWin) ? venvPythonWin : (process.platform === 'win32' ? 'python' : 'python3');
+    const port = opts.port || 8808;
+    activeVoxServerPort = port;
+
+    const env = Object.assign({}, process.env, {
+        HF_HOME: path.join(scriptDir, 'cache'),
+        MODELSCOPE_CACHE: path.join(scriptDir, 'cache'),
+        PIP_CACHE_DIR: path.join(scriptDir, 'cache', 'pip'),
+        PYTHONUNBUFFERED: '1'
+    });
+
+    try {
+        const child = spawn(pythonExe, [scriptPath, '--port', String(port)], {
+            cwd: scriptDir,
+            env,
+            windowsHide: true
+        });
+
+        activeVoxServerJob = { child, scriptPath, port };
+
+        child.stdout.on('data', (d) => {
+            const str = d.toString();
+            console.log('[VoxCPM2]', str);
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('voxcpm2:log', { type: 'stdout', text: str });
+            }
+        });
+
+        child.stderr.on('data', (d) => {
+            const str = d.toString();
+            console.warn('[VoxCPM2 Stderr]', str);
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('voxcpm2:log', { type: 'stderr', text: str });
+            }
+        });
+
+        child.on('close', (code) => {
+            console.log(`[VoxCPM2] Process exited with code ${code}`);
+            activeVoxServerJob = null;
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('voxcpm2:serverStopped', { code });
+            }
+        });
+
+        child.on('error', (err) => {
+            console.error('[VoxCPM2 Error]', err);
+            activeVoxServerJob = null;
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('voxcpm2:serverStopped', { error: err.message });
+            }
+        });
+
+        return { success: true, status: 'running', port, message: `Server starting on port ${port}...` };
+    } catch (err) {
+        return { success: false, error: err.message };
+    }
 });
 
 ipcMain.handle('voxcpm2:stopServer', async () => {
+    if (activeVoxServerJob && activeVoxServerJob.child) {
+        killProcessTree(activeVoxServerJob.child);
+        activeVoxServerJob = null;
+        return { success: true, status: 'stopped' };
+    }
     return { success: true, status: 'stopped' };
 });
 
 ipcMain.handle('voxcpm2:serverStatus', async () => {
-    const ready = await checkVoxTtsReady();
-    return { running: ready, ready };
+    const isRunning = !!(activeVoxServerJob && activeVoxServerJob.child && !activeVoxServerJob.child.killed);
+    return { running: isRunning, port: activeVoxServerPort, ready: isRunning };
+});
+
+ipcMain.on('voxcpm2:writeLog', (event, msg) => {
+    // Renderer log mirror
 });
 
 // Presets
@@ -674,18 +752,16 @@ function cleanupChildProcesses() {
                 // itself. Treating `job` as the process meant proc.pid/proc.killed
                 // were always undefined, so taskkill never actually targeted the
                 // Whisper subprocess and it kept running (CPU/RAM/GPU) after quit.
-                const child = job && job.child;
+                const child = job && (job.child || job);
                 if (child && !child.killed) {
-                    try {
-                        if (process.platform === 'win32') {
-                            exec(`taskkill /pid ${child.pid} /T /F`, () => {});
-                        } else {
-                            child.kill('SIGKILL');
-                        }
-                    } catch (e) {}
+                    killProcessTree(child);
                 }
             }
             activeWhisperJobs.clear();
+        }
+        if (activeVoxServerJob && activeVoxServerJob.child && !activeVoxServerJob.child.killed) {
+            killProcessTree(activeVoxServerJob.child);
+            activeVoxServerJob = null;
         }
     } catch (e) {}
 }
