@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const http = require('http');
+const crypto = require('crypto');
 const { spawn, exec } = require('child_process');
 
 // Fast startup, GPU video decoding & CPU/RAM optimization flags
@@ -288,30 +289,132 @@ ipcMain.handle('app:readFileAsText', async (event, filePath) => {
     }
 });
 
+// Real GPU name (previously hardcoded to "Intel(R) UHD Graphics 730" for every user/machine).
+function detectGpuName() {
+    return new Promise((resolve) => {
+        let cmd;
+        if (process.platform === 'win32') {
+            cmd = 'powershell -NoProfile -Command "(Get-CimInstance Win32_VideoController | Select-Object -First 1 -ExpandProperty Name)"';
+        } else if (process.platform === 'darwin') {
+            cmd = "system_profiler SPDisplaysDataType | grep 'Chipset Model' | head -1 | sed 's/.*: //'";
+        } else {
+            cmd = "lspci | grep -i 'vga\\|3d controller' | head -1 | sed 's/^.*: //'";
+        }
+        exec(cmd, { timeout: 5000 }, (err, stdout) => {
+            const name = (stdout || '').trim();
+            resolve(name || 'Unknown GPU');
+        });
+    });
+}
+
+// Real free/total space for the drive that hosts app storage (previously
+// hardcoded to {freeGB:110, totalGB:500} regardless of the actual disk).
+function getDriveSpaceInfo(targetPath) {
+    return new Promise((resolve) => {
+        if (process.platform === 'win32') {
+            const letter = path.parse(targetPath).root.replace(/[\\/:]/g, '') || 'C';
+            const cmd = `powershell -NoProfile -Command "Get-PSDrive -Name '${letter}' | Select-Object Free,Used | ConvertTo-Json"`;
+            exec(cmd, { timeout: 5000 }, (err, stdout) => {
+                if (err) return resolve(null);
+                try {
+                    const data = JSON.parse(stdout);
+                    resolve({
+                        freeGB: Math.round(data.Free / (1024 ** 3)),
+                        totalGB: Math.round((data.Free + data.Used) / (1024 ** 3))
+                    });
+                } catch (e) { resolve(null); }
+            });
+        } else {
+            exec(`df -k "${targetPath}"`, { timeout: 5000 }, (err, stdout) => {
+                if (err) return resolve(null);
+                try {
+                    const lines = stdout.trim().split('\n');
+                    const parts = lines[lines.length - 1].split(/\s+/);
+                    const totalKB = parseInt(parts[1], 10);
+                    const availKB = parseInt(parts[3], 10);
+                    resolve({ freeGB: Math.round(availKB / (1024 * 1024)), totalGB: Math.round(totalKB / (1024 * 1024)) });
+                } catch (e) { resolve(null); }
+            });
+        }
+    });
+}
+
+async function getDirSizeBytes(dir) {
+    let total = 0;
+    let entries;
+    try { entries = await fs.promises.readdir(dir, { withFileTypes: true }); } catch (e) { return 0; }
+    for (const entry of entries) {
+        const full = path.join(dir, entry.name);
+        try {
+            if (entry.isDirectory()) total += await getDirSizeBytes(full);
+            else total += (await fs.promises.stat(full)).size;
+        } catch (e) {}
+    }
+    return total;
+}
+
+async function clearDirContents(dir) {
+    let entries;
+    try { entries = await fs.promises.readdir(dir); } catch (e) { return; }
+    for (const name of entries) {
+        try { await fs.promises.rm(path.join(dir, name), { recursive: true, force: true }); } catch (e) {}
+    }
+}
+
+// These caches genuinely grow without bound (TTS output cache, extracted/separated
+// audio) since nothing else ever prunes them, so unlike the fake stubs before,
+// size/clear here are real operations against real disk usage.
+const CACHE_DIRS = [AUDIO_CACHE_DIR, path.join(STORAGE_BASE, 'separated'), path.join(STORAGE_BASE, 'uploads')];
+
 ipcMain.handle('app:getHardwareSpecs', async () => {
     return {
-        cpu: os.cpus()[0]?.model || 'Intel Processor',
+        cpu: os.cpus()[0]?.model || 'Unknown CPU',
         cores: os.cpus().length,
         ramGB: Math.round(os.totalmem() / (1024 ** 3)),
-        gpu: 'Intel(R) UHD Graphics 730'
+        gpu: await detectGpuName()
     };
 });
 
 ipcMain.handle('app:getDriveSpace', async () => {
-    return { freeGB: 110, totalGB: 500 };
+    return (await getDriveSpaceInfo(STORAGE_BASE)) || { freeGB: 0, totalGB: 0 };
 });
 
-ipcMain.handle('app:getCacheSize', async (event, cachePath) => {
-    return { sizeMB: 12, success: true };
+ipcMain.handle('app:getCacheSize', async () => {
+    let totalBytes = 0;
+    for (const dir of CACHE_DIRS) totalBytes += await getDirSizeBytes(dir);
+    return { sizeMB: Math.round(totalBytes / (1024 * 1024)), success: true };
 });
 
-ipcMain.handle('app:clearCache', async (event, cachePath) => {
+ipcMain.handle('app:clearCache', async () => {
+    for (const dir of CACHE_DIRS) await clearDirContents(dir);
     return { success: true, message: 'Cache cleared successfully' };
 });
 
 ipcMain.handle('app:openExternal', async (event, targetUrl) => {
     if (targetUrl) shell.openExternal(targetUrl);
     return true;
+});
+
+// preload.js exposes getDeviceFingerprint()/confirmQuit() but neither had a
+// matching handler here, so every call rejected at runtime with
+// "No handler registered for 'app:getDeviceFingerprint'" (etc).
+const DEVICE_ID_FILE = path.join(userDataDir, 'device_id.txt');
+ipcMain.handle('app:getDeviceFingerprint', async () => {
+    try {
+        if (fs.existsSync(DEVICE_ID_FILE)) {
+            const existing = fs.readFileSync(DEVICE_ID_FILE, 'utf8').trim();
+            if (existing) return existing;
+        }
+        const id = crypto.randomUUID();
+        fs.writeFileSync(DEVICE_ID_FILE, id, 'utf8');
+        return id;
+    } catch (e) {
+        return null;
+    }
+});
+
+ipcMain.handle('app:confirmQuit', async () => {
+    return { confirmed: true };
 });
 
 // Whisper Local Transcription Handlers
@@ -357,16 +460,21 @@ ipcMain.handle('whisper:transcribe', async (event, { id, whisperFolder, audioPat
         if (device) args.push('--device', device);
 
         try {
+            // Force UTF-8 I/O: transcribe.py prints non-ASCII transcript text
+            // (Khmer/Thai/Chinese/etc.) plus emoji log markers, and on Windows a
+            // piped stdout otherwise falls back to the system codepage, which can
+            // throw UnicodeEncodeError and crash mid-transcription.
+            const pyEnv = { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' };
             if (fs.existsSync(runnerPath)) {
                 if (isWin) {
-                    child = spawn('cmd.exe', ['/c', runnerPath, ...args], { cwd: whisperFolder, windowsHide: true });
+                    child = spawn('cmd.exe', ['/c', runnerPath, ...args], { cwd: whisperFolder, windowsHide: true, env: pyEnv });
                 } else {
-                    child = spawn('bash', [runnerPath, ...args], { cwd: whisperFolder });
+                    child = spawn('bash', [runnerPath, ...args], { cwd: whisperFolder, env: pyEnv });
                 }
             } else {
                 const pyScript = path.join(whisperFolder, 'transcribe.py');
                 const pyCmd = process.platform === 'win32' ? 'python' : 'python3';
-                child = spawn(pyCmd, [pyScript, ...args], { cwd: whisperFolder, windowsHide: true });
+                child = spawn(pyCmd, [pyScript, ...args], { cwd: whisperFolder, windowsHide: true, env: pyEnv });
             }
         } catch (spawnErr) {
             return resolve({ success: false, error: 'Failed to start Whisper process: ' + spawnErr.message });
@@ -441,8 +549,38 @@ ipcMain.handle('whisper:cancel', async (event, id) => {
 });
 
 // VoxCPM2 Server handlers
+// "VoxCPM2" has no separate model/server of its own — backend's
+// /api/generate-voxcmp2 route just re-runs the same Edge-TTS script as normal
+// TTS. These handlers used to unconditionally report "running"/"ready" with
+// no process ever spawned, so a broken Python env silently looked healthy.
+// This at least performs a real readiness check against the engine that's
+// actually used, instead of a hardcoded true.
+function checkVoxTtsReady() {
+    return new Promise((resolve) => {
+        const pyCmd = process.platform === 'win32' ? 'python' : 'python3';
+        const child = spawn(pyCmd, ['-c', 'import edge_tts'], { windowsHide: true });
+        child.on('error', () => resolve(false));
+        child.on('close', (code) => resolve(code === 0));
+    });
+}
+
+function sendVoxLog(text) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('voxcpm2:log', text);
+    }
+}
+
 ipcMain.handle('voxcpm2:startServer', async () => {
-    return { success: true, status: 'running', message: 'Ready' };
+    sendVoxLog('Checking Python TTS engine (edge-tts) availability...\n');
+    const ready = await checkVoxTtsReady();
+    // The renderer's log box listened for a 'voxcpm2:log' event that main.js
+    // never sent, so it stayed empty forever with no indication anything was
+    // wrong. There's no separate long-running server to stream output from
+    // (see comment above), so this at least reports the real check's outcome.
+    sendVoxLog(ready ? 'Ready.\n' : 'edge-tts is not available in the Python environment.\n');
+    return ready
+        ? { success: true, status: 'running', message: 'Ready' }
+        : { success: false, status: 'stopped', message: 'Python TTS engine (edge-tts) not available' };
 });
 
 ipcMain.handle('voxcpm2:stopServer', async () => {
@@ -450,18 +588,60 @@ ipcMain.handle('voxcpm2:stopServer', async () => {
 });
 
 ipcMain.handle('voxcpm2:serverStatus', async () => {
-    return { running: true, ready: true };
+    const ready = await checkVoxTtsReady();
+    return { running: ready, ready };
 });
 
 // Presets
+// Previously these three handlers didn't persist anything at all: save always
+// "succeeded" without writing, load always returned [], delete always
+// "succeeded" — any preset a user saved vanished immediately. Now backed by a
+// real JSON file in userData.
+const PRESETS_FILE = path.join(userDataDir, 'presets.json');
+
+function loadPresetsFromDisk() {
+    try {
+        if (!fs.existsSync(PRESETS_FILE)) return [];
+        const raw = fs.readFileSync(PRESETS_FILE, 'utf8');
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function savePresetsToDisk(presets) {
+    fs.writeFileSync(PRESETS_FILE, JSON.stringify(presets, null, 2), 'utf8');
+}
+
 ipcMain.handle('preset:save', async (event, preset) => {
-    return { success: true };
+    try {
+        if (!preset || typeof preset !== 'object') {
+            return { success: false, error: 'Invalid preset' };
+        }
+        const presets = loadPresetsFromDisk();
+        const id = preset.id || crypto.randomUUID();
+        const record = { ...preset, id, savedAt: Date.now() };
+        const idx = presets.findIndex(p => p.id === id);
+        if (idx >= 0) presets[idx] = record;
+        else presets.push(record);
+        savePresetsToDisk(presets);
+        return { success: true, preset: record };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
 });
 ipcMain.handle('preset:load', async () => {
-    return [];
+    return loadPresetsFromDisk();
 });
-ipcMain.handle('preset:delete', async () => {
-    return { success: true };
+ipcMain.handle('preset:delete', async (event, id) => {
+    try {
+        const presets = loadPresetsFromDisk().filter(p => p.id !== id);
+        savePresetsToDisk(presets);
+        return { success: true };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
 });
 
 // Window controls
@@ -482,13 +662,18 @@ ipcMain.on('window:close', () => {
 function cleanupChildProcesses() {
     try {
         if (typeof activeWhisperJobs !== 'undefined') {
-            for (const [id, proc] of activeWhisperJobs.entries()) {
-                if (proc && !proc.killed) {
+            for (const [id, job] of activeWhisperJobs.entries()) {
+                // Map values here are { child, outSrt }, not the child process
+                // itself. Treating `job` as the process meant proc.pid/proc.killed
+                // were always undefined, so taskkill never actually targeted the
+                // Whisper subprocess and it kept running (CPU/RAM/GPU) after quit.
+                const child = job && job.child;
+                if (child && !child.killed) {
                     try {
                         if (process.platform === 'win32') {
-                            exec(`taskkill /pid ${proc.pid} /T /F`, () => {});
+                            exec(`taskkill /pid ${child.pid} /T /F`, () => {});
                         } else {
-                            proc.kill('SIGKILL');
+                            child.kill('SIGKILL');
                         }
                     } catch (e) {}
                 }

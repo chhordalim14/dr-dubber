@@ -10,6 +10,18 @@ import argparse
 import time
 import gc
 
+# This script prints emoji log markers and the raw transcribed text in
+# whatever language Whisper detects (Khmer/Thai/Chinese/Vietnamese are all
+# first-class in this app). When stdout/stderr are piped rather than attached
+# to a real console (always true when spawned from Node), Python falls back
+# to the system codepage (often cp1252/cp874/cp936 on Windows, not UTF-8),
+# and printing this text can raise UnicodeEncodeError and crash mid-run.
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 def format_timestamp(seconds: float) -> str:
     """Format seconds into standard SRT timestamp: HH:MM:SS,mmm"""
     if seconds < 0:

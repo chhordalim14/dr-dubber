@@ -162,6 +162,8 @@ async def generate_single_item(text: str, voice: str, rate: str, pitch: str, vol
     else:
         return await _generate_speech_core(text, voice, rate, pitch, volume, output_path)
 
+TTS_TIMEOUT_SECONDS = 30
+
 async def _generate_speech_core(text: str, voice: str, rate: str, pitch: str, volume: str, output_path: str):
     try:
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
@@ -179,9 +181,16 @@ async def _generate_speech_core(text: str, voice: str, rate: str, pitch: str, vo
             pitch=pitch_str,
             volume=vol_str
         )
-        
-        await communicate.save(output_path)
-        
+
+        # Without a timeout, a network stall or throttling from Microsoft's
+        # endpoint hangs this coroutine forever; the Node caller's
+        # child.on('close') would never fire and the HTTP request (or, in a
+        # batch, every other item queued behind it) would hang indefinitely.
+        try:
+            await asyncio.wait_for(communicate.save(output_path), timeout=TTS_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            return {"success": False, "error": f"TTS request timed out after {TTS_TIMEOUT_SECONDS}s"}
+
         if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
             duration = get_audio_duration(output_path)
             return {
@@ -192,7 +201,7 @@ async def _generate_speech_core(text: str, voice: str, rate: str, pitch: str, vo
             }
         else:
             return {"success": False, "error": "Generated audio file is empty"}
-            
+
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -229,10 +238,22 @@ async def generate_batch(batch_items, max_concurrency=6):
         res["id"] = item_id
         return res
 
+    item_ids = [item.get("id") or item.get("index") for item in batch_items]
     for item in batch_items:
         tasks.append(worker(item))
 
-    results = await asyncio.gather(*tasks, return_exceptions=False)
+    # return_exceptions=True: previously one worker raising unhandled turned
+    # the whole batch into a single failure via asyncio.gather, discarding
+    # every other subtitle line's already-completed (or independently
+    # failing) result instead of returning partial success per item.
+    raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+    results = []
+    for item_id, r in zip(item_ids, raw_results):
+        if isinstance(r, Exception):
+            results.append({"id": item_id, "success": False, "error": str(r)})
+        else:
+            results.append(r)
+
     print(json.dumps({
         "success": True,
         "count": len(results),
@@ -255,6 +276,11 @@ async def list_voices():
         print(json.dumps({"error": str(e)}))
 
 def main():
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
     parser = argparse.ArgumentParser(description="High-Speed Neural TTS Engine")
     parser.add_argument("--text", type=str, help="Text to speak")
     parser.add_argument("--voice", type=str, default="km-KH-PisethNeural", help="Voice ShortName")
