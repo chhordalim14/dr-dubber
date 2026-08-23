@@ -1,15 +1,19 @@
 const express = require('express');
-const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
-const { spawn, exec } = require('child_process');
+const { spawn, exec, execFile } = require('child_process');
 const multer = require('multer');
 const { renderVideo, cancelRender, getRenderProgress, detectAvailableEncoders } = require('./render_service');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// Force UTF-8 I/O on every spawned Python child so non-ASCII text (Khmer, Thai,
+// Chinese, emoji log markers) can't crash the process with UnicodeEncodeError
+// when stdio is piped instead of attached to a real console (common on Windows).
+const PYTHON_ENV = { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' };
 
 // High-speed TTS Audio In-Memory & Disk Cache
 const ttsCache = new Map();
@@ -121,7 +125,13 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-app.use(cors());
+// No cross-origin access: this server only needs to answer the app's own
+// renderer (same-origin, since it's loaded from http://localhost:PORT).
+// Previously `app.use(cors())` reflected every origin, which combined with
+// the unauthenticated /api/audio (arbitrary local file read) and
+// /api/open-folder (shell exec) routes let any webpage open in a normal
+// browser read local files or run commands on the user's machine while
+// this app was running. Do not re-add a permissive cors() call here.
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
@@ -339,6 +349,7 @@ app.post('/api/extract-audio', upload.any(), (req, res) => {
     });
 
     ffmpeg.on('close', (code) => {
+        if (res.headersSent) return;
         if (code === 0 && fs.existsSync(audioOut)) {
             // Automatically save transcribe mp3 to transcribe output destinations
             const saveRes = saveTranscribeAudio(audioOut, videoName, partIndex, customFolder, sourceFilePath);
@@ -422,7 +433,7 @@ app.post('/api/remove-vocals', upload.any(), (req, res) => {
     res.json({ success: true, jobId: jobId, status: 'processing' });
 
     const pyScript = getPythonScriptPath('vocal_separator.py');
-    const child = spawn(PYTHON_CMD, [pyScript, '--input', audioPath, '--output', SEPARATED_DIR]);
+    const child = spawn(PYTHON_CMD, [pyScript, '--input', audioPath, '--output', SEPARATED_DIR], { env: PYTHON_ENV });
     trackProcess(child);
 
     let output = '';
@@ -1153,29 +1164,38 @@ app.post('/api/transcribe-whisper', async (req, res) => {
 
     let child;
     let stderrBuffer = '';
+    let stdoutBuffer = '';
     try {
         if (fs.existsSync(runnerPath)) {
             child = isWin
-                ? spawn('cmd.exe', ['/c', runnerPath, ...args], { cwd: whisperFolder, windowsHide: true })
-                : spawn('bash', [runnerPath, ...args], { cwd: whisperFolder });
+                ? spawn('cmd.exe', ['/c', runnerPath, ...args], { cwd: whisperFolder, windowsHide: true, env: PYTHON_ENV })
+                : spawn('bash', [runnerPath, ...args], { cwd: whisperFolder, env: PYTHON_ENV });
         } else {
             const pyScript = path.join(whisperFolder, 'transcribe.py');
-            child = spawn(PYTHON_CMD, [pyScript, ...args], { cwd: whisperFolder, windowsHide: true });
+            child = spawn(PYTHON_CMD, [pyScript, ...args], { cwd: whisperFolder, windowsHide: true, env: PYTHON_ENV });
         }
         trackProcess(child);
     } catch (spawnErr) {
         return res.status(500).json({ success: false, error: 'Failed to start Whisper process: ' + spawnErr.message });
     }
 
+    // transcribe.py prints a progress line per subtitle cue. If nothing reads
+    // stdout, the OS pipe buffer fills up on long videos, Python blocks on
+    // write(), and this request would hang forever waiting for 'close'.
+    child.stdout.on('data', (d) => {
+        stdoutBuffer += d.toString();
+    });
+
     child.stderr.on('data', (d) => {
         stderrBuffer += d.toString();
     });
 
     child.on('error', (err) => {
-        res.status(500).json({ success: false, error: err.message });
+        if (!res.headersSent) res.status(500).json({ success: false, error: err.message });
     });
 
     child.on('close', (code) => {
+        if (res.headersSent) return;
         if (code === 0 && fs.existsSync(outSrt)) {
             try {
                 const srtText = fs.readFileSync(outSrt, 'utf8');
@@ -1269,12 +1289,24 @@ app.post('/api/export-stems', async (req, res) => {
                 args.push('-filter_complex', filterParts.join(';'), '-map', '[aout]', '-ac', '2', '-ar', '44100', exportedVoicePath);
             }
 
-            await new Promise((resolve) => {
-                const ff = spawn('ffmpeg', args, { windowsHide: true });
-                trackProcess(ff);
-                ff.on('close', resolve);
-                ff.on('error', resolve);
-            });
+            try {
+                await new Promise((resolve, reject) => {
+                    const ff = spawn('ffmpeg', args, { windowsHide: true });
+                    trackProcess(ff);
+                    ff.on('close', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg exited with code ${code}`)));
+                    ff.on('error', reject);
+                });
+                // Belt-and-suspenders: a zero exit code doesn't guarantee the
+                // file actually landed on disk (e.g. filter graph produced no
+                // output). Previously this wasn't checked, so a failed mix
+                // still reported success with a voicePath that was never written.
+                if (!fs.existsSync(exportedVoicePath)) {
+                    exportedVoicePath = null;
+                }
+            } catch (mixErr) {
+                console.error('[Export Stems] Dialogue stem mix failed:', mixErr.message);
+                exportedVoicePath = null;
+            }
         }
 
         res.json({
@@ -1286,6 +1318,7 @@ app.post('/api/export-stems', async (req, res) => {
             bgmFile: exportedBgmPath,
             voicePath: exportedVoicePath,
             voiceFile: exportedVoicePath,
+            voiceExportFailed: validSubs.length > 0 && !exportedVoicePath,
             files: [srtPath, exportedBgmPath, exportedVoicePath].filter(Boolean)
         });
     } catch (e) {
@@ -1391,7 +1424,7 @@ app.post('/api/generate-audio', (req, res) => {
         '--pitch', prosody.pitch,
         '--volume', prosody.volume,
         '--output', outFile
-    ]);
+    ], { env: PYTHON_ENV });
     trackProcess(child);
 
     let output = '';
@@ -1403,6 +1436,10 @@ app.post('/api/generate-audio', (req, res) => {
         if (!res.headersSent) res.status(500).json({ success: false, error: err.message });
     });
     child.on('close', (code) => {
+        // Node can emit both 'error' and 'close' for the same spawn failure
+        // (e.g. ENOENT); without this guard the second handler tries to send
+        // a second response and crashes the whole backend with ERR_HTTP_HEADERS_SENT.
+        if (res.headersSent) return;
         try {
             if (!output.trim()) {
                 console.error(`[TTS Failed] Code ${code}, Stderr: ${stderr}`);
@@ -1494,7 +1531,7 @@ app.post('/api/generate-batch-audio', async (req, res) => {
     fs.writeFileSync(batchJsonPath, JSON.stringify(uncachedTasks), 'utf8');
 
     const pyScript = getPythonScriptPath('tts_generator.py');
-    const child = spawn(PYTHON_CMD, [pyScript, '--batch', batchJsonPath, '--concurrency', '6']);
+    const child = spawn(PYTHON_CMD, [pyScript, '--batch', batchJsonPath, '--concurrency', '6'], { env: PYTHON_ENV });
     trackProcess(child);
 
     let output = '';
@@ -1502,7 +1539,17 @@ app.post('/api/generate-batch-audio', async (req, res) => {
     child.stdout.on('data', d => output += d.toString());
     child.stderr.on('data', d => stderr += d.toString());
 
+    // A child with zero 'error' listeners that emits 'error' (e.g. PYTHON_CMD
+    // missing/ENOENT) is an uncaught exception in Node and crashes the whole
+    // backend process, not just this request. This was previously unguarded.
+    child.on('error', (err) => {
+        console.error('[Batch TTS Error]', err);
+        try { fs.unlinkSync(batchJsonPath); } catch (e) {}
+        if (!res.headersSent) res.status(500).json({ success: false, error: err.message });
+    });
+
     child.on('close', (code) => {
+        if (res.headersSent) return;
         try { fs.unlinkSync(batchJsonPath); } catch (e) {}
         try {
             const parsed = JSON.parse(output);
@@ -1559,7 +1606,7 @@ app.post('/api/generate-voxcmp2', (req, res) => {
         '--pitch', prosody.pitch,
         '--volume', prosody.volume,
         '--output', outFile
-    ]);
+    ], { env: PYTHON_ENV });
     trackProcess(child);
 
     let output = '';
@@ -1571,6 +1618,7 @@ app.post('/api/generate-voxcmp2', (req, res) => {
         if (!res.headersSent) res.status(500).json({ success: false, error: err.message });
     });
     child.on('close', (code) => {
+        if (res.headersSent) return;
         try {
             if (!output.trim()) {
                 console.error(`[VoxCPM2 TTS Failed] Code ${code}, Stderr: ${stderr}`);
@@ -1591,9 +1639,9 @@ app.post('/api/generate-voxcmp2', (req, res) => {
 });
 
 // 5c. Hardware Encoders Endpoint
-app.get('/api/hardware-encoders', (req, res) => {
+app.get('/api/hardware-encoders', async (req, res) => {
     try {
-        const encoders = detectAvailableEncoders();
+        const encoders = await detectAvailableEncoders();
         res.json({ success: true, encoders });
     } catch (e) {
         res.json({ success: true, encoders: { libx264: true } });
@@ -1676,6 +1724,15 @@ app.post('/api/render', upload.any(), (req, res) => {
 
     if (!videoPath || !fs.existsSync(videoPath)) {
         return res.status(400).json({ success: false, error: 'Source video not found' });
+    }
+
+    // Guard against a second render starting before the first finishes (e.g. a
+    // double-click, or the Render Queue racing a manual render). Without this,
+    // the second call overwrote the module-level activeRenderProcess/currentRenderJob
+    // state, permanently orphaning the first ffmpeg process (uncancellable) while
+    // both fought for the same GPU/CPU encoder.
+    if (getRenderProgress().status === 'rendering') {
+        return res.status(409).json({ success: false, error: 'A render is already in progress. Wait for it to finish or cancel it first.' });
     }
 
     const baseName = path.basename(videoPath, path.extname(videoPath));
@@ -1787,17 +1844,32 @@ app.get('/api/select-folder', (req, res) => {
     res.json({ success: true, path: EXPORTS_DIR });
 });
 
+function openFolderSafely(folder, res) {
+    if (!folder || typeof folder !== 'string' || !fs.existsSync(folder)) {
+        return res.status(400).json({ success: false, error: 'Folder not found' });
+    }
+    // Previously: exec(`${openCmd} "${folder}"`), which built a shell command
+    // string out of user-supplied input — a caller could inject shell
+    // metacharacters via the folder path and run arbitrary commands.
+    // execFile with an argument array never goes through a shell, so the
+    // folder path is passed as a single literal argument and can't break out
+    // into a second command, regardless of what characters it contains. This
+    // also works whether server.js is run standalone (`node backend/server.js`)
+    // or loaded inside Electron's main process, unlike electron's `shell.openPath`.
+    const cmd = process.platform === 'darwin' ? 'open' : (process.platform === 'win32' ? 'explorer' : 'xdg-open');
+    execFile(cmd, [folder], () => {
+        // Windows' explorer.exe can return a non-zero exit code even when it
+        // successfully opened the folder, so don't treat that as failure.
+        res.json({ success: true });
+    });
+}
+
 app.post('/api/open-folder', (req, res) => {
-    const folder = req.body.exportPath || EXPORTS_DIR;
-    const openCmd = process.platform === 'darwin' ? 'open' : (process.platform === 'win32' ? 'explorer' : 'xdg-open');
-    exec(`${openCmd} "${folder}"`);
-    res.json({ success: true });
+    openFolderSafely(req.body.exportPath || EXPORTS_DIR, res);
 });
 
 app.post('/api/open-logs-folder', (req, res) => {
-    const openCmd = process.platform === 'darwin' ? 'open' : (process.platform === 'win32' ? 'explorer' : 'xdg-open');
-    exec(`${openCmd} "${LOGS_DIR}"`);
-    res.json({ success: true });
+    openFolderSafely(LOGS_DIR, res);
 });
 
 // 11. Logging endpoints

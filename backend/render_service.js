@@ -1,4 +1,6 @@
-const { spawn, execSync } = require('child_process');
+const { spawn, execSync, exec } = require('child_process');
+const { promisify } = require('util');
+const execAsync = promisify(exec);
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -24,12 +26,44 @@ function hasSubtitlesFilter() {
     return _subtitlesFilterSupported;
 }
 
+// Tries a throwaway 1-frame encode to confirm a hardware encoder actually
+// works, not just that ffmpeg was compiled with it. Verified with a real
+// render: a build with NVENC compiled in reports h264_nvenc as present even
+// on a machine with only an integrated Intel/AMD GPU and no NVIDIA hardware;
+// "auto" then picked h264_nvenc and every render failed at runtime with
+// "Terminating thread with return code -1 (Operation not permitted)" /
+// "Nothing was written into output file".
+function canEncodeWith(codec) {
+    return new Promise((resolve) => {
+        let settled = false;
+        const finish = (ok) => {
+            if (settled) return;
+            settled = true;
+            resolve(ok);
+        };
+        let p;
+        try {
+            p = spawn('ffmpeg', [
+                '-hide_banner', '-loglevel', 'error',
+                '-f', 'lavfi', '-i', 'color=black:s=64x64',
+                '-frames:v', '1', '-c:v', codec, '-f', 'null', '-'
+            ], { windowsHide: true });
+        } catch (e) {
+            return finish(false);
+        }
+        p.on('error', () => finish(false));
+        p.on('close', (code) => finish(code === 0));
+        setTimeout(() => { try { p.kill(); } catch (e) {} finish(false); }, 4000);
+    });
+}
+
 let _detectedEncoders = null;
-function detectAvailableEncoders() {
+async function detectAvailableEncoders() {
     if (_detectedEncoders) return _detectedEncoders;
+    let compiled = { nvenc: false, qsv: false, amf: false, mf: false, videotoolbox: false, libx264: true };
     try {
-        const out = execSync('ffmpeg -encoders', { encoding: 'utf8', timeout: 5000 });
-        _detectedEncoders = {
+        const { stdout: out } = await execAsync('ffmpeg -encoders', { encoding: 'utf8', timeout: 5000 });
+        compiled = {
             nvenc: out.includes('h264_nvenc'),
             qsv: out.includes('h264_qsv'),
             amf: out.includes('h264_amf'),
@@ -39,14 +73,27 @@ function detectAvailableEncoders() {
         };
     } catch (e) {
         _detectedEncoders = { libx264: true };
+        return _detectedEncoders;
     }
+
+    const codecByKey = { nvenc: 'h264_nvenc', qsv: 'h264_qsv', amf: 'h264_amf', mf: 'h264_mf', videotoolbox: 'h264_videotoolbox' };
+    const verified = { ...compiled };
+    for (const [key, codec] of Object.entries(codecByKey)) {
+        if (compiled[key]) verified[key] = await canEncodeWith(codec);
+    }
+
+    _detectedEncoders = verified;
     return _detectedEncoders;
 }
 
-function getVideoDuration(videoPath) {
+async function getVideoDurationAsync(videoPath) {
+    // execSync here blocked the entire Node event loop (audio streaming, TTS
+    // generation, progress polling for every other tab) for as long as ffprobe
+    // took, on every single render. This isn't memoized like the encoder/filter
+    // probes above since duration is per-video, so it ran unconditionally.
     try {
-        const out = execSync(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${videoPath}"`, { encoding: 'utf8', timeout: 5000 });
-        const dur = parseFloat(out.trim());
+        const { stdout } = await execAsync(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${videoPath}"`, { encoding: 'utf8', timeout: 5000 });
+        const dur = parseFloat(stdout.trim());
         return (dur && !isNaN(dur) && dur > 0) ? dur : null;
     } catch (e) {
         return null;
@@ -149,8 +196,8 @@ async function assembleDialogueStem(validSubs, tempDir, voiceVolume = 1.0) {
     return fs.existsSync(stemPath) ? stemPath : null;
 }
 
-function applyEncoderSettings(args, encoderPreference, resolution) {
-    const encoders = detectAvailableEncoders();
+async function applyEncoderSettings(args, encoderPreference, resolution) {
+    const encoders = await detectAvailableEncoders();
     let chosen = encoderPreference || 'auto';
 
     if (chosen === 'auto') {
@@ -239,7 +286,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         }
 
         // Determine real video duration for accurate progress & ETA
-        const videoDuration = providedDuration || getVideoDuration(videoPath) || 60;
+        const videoDuration = providedDuration || await getVideoDurationAsync(videoPath) || 60;
         const renderStartTime = Date.now();
 
         // 2. Build FFmpeg command arguments
@@ -384,7 +431,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         }
 
         // Hardware-Accelerated Video Encoder Configuration
-        applyEncoderSettings(args, encoder, resolution);
+        await applyEncoderSettings(args, encoder, resolution);
 
         args.push('-c:a', 'aac');
         args.push('-b:a', '192k');

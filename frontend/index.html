@@ -13063,8 +13063,8 @@
         });
       }
 
-      if (window.electronAPI && window.electronAPI.onVoxLog) {
-        window.electronAPI.onVoxLog((data) => voxCmp2LogAppend(data));
+      if (window.electronAPI && window.electronAPI.onVoxServerLog) {
+        window.electronAPI.onVoxServerLog((data) => voxCmp2LogAppend(data));
       }
 
       async function voxCmp2SyncServerButtonState() {
@@ -17546,9 +17546,26 @@
               isRowOpen() ? closeRowDropdown() : openRowDropdown();
             });
 
-            document.addEventListener("click", (e) => {
-              if (!voxRowWrap.contains(e.target)) closeRowDropdown();
-            });
+            // Previously a new `document.addEventListener("click", ...)` was
+            // registered here on every renderSubtitles() call (i.e. on nearly
+            // every interaction), once per subtitle row, and never removed.
+            // Each closure also captured this row's now-discarded voxRowWrap/
+            // voxRowPanel, keeping the old <tr> alive too. Over a session with
+            // many subtitles and re-renders this grew unbounded. Bind a single
+            // delegated listener once instead, which closes whichever panel is
+            // actually open by querying the live DOM at click time.
+            if (!window.__voxRowOutsideClickBound) {
+              window.__voxRowOutsideClickBound = true;
+              document.addEventListener("click", (e) => {
+                document.querySelectorAll(".vox-row-wrap").forEach((wrap) => {
+                  if (wrap.contains(e.target)) return;
+                  const panel = wrap.querySelector(".vox-row-panel");
+                  const chevron = wrap.querySelector(".vox-row-chevron");
+                  if (panel) panel.style.gridTemplateRows = "0fr";
+                  if (chevron) chevron.classList.remove("rotate-180");
+                });
+              });
+            }
 
             const buildVoxRowList = (options) => {
               voxRowList.innerHTML = "";
@@ -24080,6 +24097,7 @@
               renderQueueList();
               showQueueCard(i);
 
+              let pollInterval = null;
               try {
                 // Rehydrate video blob from the frozen blobUrl
                 const videoFetchRes = await fetch(item.blobUrl);
@@ -24151,7 +24169,7 @@
                 item._abortCtrl = abortCtrl;
 
                 // Poll progress every 1.2s
-                let pollInterval = setInterval(async () => {
+                pollInterval = setInterval(async () => {
                   try {
                     const progRes = await fetch("http://localhost:3001/api/render-progress");
                     const progData = await progRes.json();
@@ -24176,8 +24194,6 @@
                   signal: abortCtrl.signal,
                 });
 
-                clearInterval(pollInterval);
-
                 if (!res.ok) throw new Error(`Server error ${res.status}`);
                 const result = await res.json();
                 if (!result.success) throw new Error(result.error || "Render failed");
@@ -24195,6 +24211,14 @@
                   console.error("Queue render error:", err);
                   showToast(`Queue: "${item.config.outputFileName}" failed — ${err.message}`, "error");
                 }
+              } finally {
+                // Previously this only ran on the success path (right after the
+                // fetch resolved). If the fetch threw — e.g. "Stop Queue" aborts
+                // it, or a network error — execution jumped straight to catch and
+                // this 500ms progress poller leaked for the rest of the app
+                // session, since it wasn't tracked anywhere cleanup sweeps could
+                // reach.
+                if (pollInterval) clearInterval(pollInterval);
               }
 
               renderQueueList();
