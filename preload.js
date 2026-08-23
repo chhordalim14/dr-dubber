@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Platform info
     platform: process.platform,
     getBackendPort: () => ipcRenderer.invoke('app:getBackendPort'),
+    getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
     getHardwareSpecs: () => ipcRenderer.invoke('app:getHardwareSpecs'),
     getDriveSpace: () => ipcRenderer.invoke('app:getDriveSpace'),
     getDeviceFingerprint: () => ipcRenderer.invoke('app:getDeviceFingerprint'),

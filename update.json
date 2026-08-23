@@ -1,0 +1,6 @@
+{
+  "version": "1.0.1",
+  "link": "https://github.com/chhordalim14/dr-dubber/releases",
+  "mac_link": "https://github.com/chhordalim14/dr-dubber/releases",
+  "notes": "- Fixed security issues: open CORS + unrestricted local file read, and a shell command injection in the open-folder action\n- Fixed crashes: missing error handlers and double-response bugs that could take down the whole backend\n- Fixed a hang in local Whisper transcription and added a timeout to text-to-speech generation\n- Fixed rendering: hardware encoder detection now verifies the encoder actually works instead of trusting what ffmpeg was compiled with, which was breaking every render on non-NVIDIA machines\n- Fixed hardware specs, drive space, cache size, presets, and VoxCPM2 status, which were previously fake/hardcoded\n- Fixed several memory/resource leaks in the UI and render queue"
+}
