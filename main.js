@@ -119,6 +119,13 @@ if (!gotTheLock) {
 // IPC Handlers
 ipcMain.handle('app:getBackendPort', () => PORT);
 
+// The renderer previously had its own hardcoded `CURRENT_APP_VERSION = "1.0.0"`
+// string that never got updated when a new version was released, so the
+// About panel and update check always compared against a stale version
+// number regardless of what was actually built. app.getVersion() reads the
+// real version from package.json, so this can never drift out of sync again.
+ipcMain.handle('app:getVersion', () => app.getVersion());
+
 ipcMain.handle('app:checkPathExists', (event, targetPath) => {
     if (!targetPath) return { exists: true, path: AUDIO_CACHE_DIR };
     try {

@@ -4701,7 +4701,7 @@
             <button id="btn-skip-update" class="update-btn-secondary flex-1 px-4 py-2.5 rounded-xl text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--text-bright)] hover:bg-[var(--bg-hover)] border border-[var(--border-light)] hover:border-amber-500/30">Maybe Later</button>
             <button id="btn-start-update" class="update-btn-primary flex-1 flex items-center justify-center gap-2.5 bg-gradient-to-r from-amber-500 to-yellow-400 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-amber-500/25">
               <i data-lucide="download-cloud" class="w-4 h-4"></i>
-              Download & Install
+              Download Update
             </button>
           </div>
         </div>
@@ -24309,11 +24309,31 @@
         resizeObserver.observe(videoContainerNode);
       }
 
-      const CURRENT_APP_VERSION = "1.0.0";
+      // Previously a hardcoded literal that never got bumped when a new
+      // version shipped, so the About panel and "Check for Updates" always
+      // compared against a stale version number no matter what was actually
+      // built. Read the real version from Electron (package.json) instead;
+      // falls back to this literal only when running outside Electron (e.g.
+      // a plain browser during development).
+      let CURRENT_APP_VERSION = "1.0.1";
       const aboutAppVersionDisplay = document.getElementById("about-app-version");
       if (aboutAppVersionDisplay) aboutAppVersionDisplay.textContent = `Version ${CURRENT_APP_VERSION}`;
+      if (window.electronAPI && window.electronAPI.getAppVersion) {
+        window.electronAPI.getAppVersion().then((v) => {
+          if (!v) return;
+          CURRENT_APP_VERSION = v;
+          if (aboutAppVersionDisplay) aboutAppVersionDisplay.textContent = `Version ${CURRENT_APP_VERSION}`;
+        }).catch(() => {});
+      }
 
-      const UPDATE_JSON_URL = "https://delicate-cake-b9ec-updater-diadubber-proxy.seansovandara.workers.dev/";
+      // Previously pointed at a third party's Cloudflare Worker that serves
+      // update info for their own unrelated "DAI Dubber Pro" v9.0.0 product
+      // (different developer, different licensing domain) — this fork's
+      // "Check for Updates" was permanently telling users to go download
+      // someone else's commercial app. Now points at a JSON file this repo
+      // controls; bump its "version" field on each release you want to
+      // announce, and update its "link"/"mac_link" to that release's asset.
+      const UPDATE_JSON_URL = "https://raw.githubusercontent.com/chhordalim14/dr-dubber/main/update.json";
 
       let pendingUpdateZipUrl = null;
       let updateProgressInterval = null;
@@ -24336,19 +24356,10 @@
         return false;
       };
 
-      const closeUpdateModal = async () => {
-        try {
-          const res = await fetch("http://localhost:3001/api/cancel-update", {
-            method: "POST",
-          });
-          const data = await res.json();
-          if (data.success) {
-            showToast("Update download cancelled.", "success");
-          }
-        } catch (e) {
-          console.error("Failed to send cancel signal:", e);
-        }
-
+      const closeUpdateModal = () => {
+        // This used to POST to /api/cancel-update first, but that route never
+        // existed either (see the Start Update handler below) — there is no
+        // in-app download to cancel, so this just hides the modal.
         if (updateActionButtons && updateProgressContainer) {
           updateActionButtons.classList.remove("hidden");
           updateProgressContainer.classList.add("hidden");
@@ -24445,10 +24456,13 @@
       if (btnCloseUpdateTop) btnCloseUpdateTop.addEventListener("click", closeUpdateModal);
 
       if (btnStartUpdate) {
-        btnStartUpdate.addEventListener("click", async () => {
-          // ==========================================
-          // 1. MACOS SAFETY INTERCEPTOR
-          // ==========================================
+        // This used to POST to /api/auto-update and poll /api/update-progress
+        // to drive an in-app download+extract progress bar, but neither route
+        // ever existed in backend/server.js or main.js — clicking this always
+        // failed with "Update failed to start." regardless of the version
+        // feed. There is no in-app installer, so this opens the download link
+        // in the user's default browser instead, which is what actually works.
+        btnStartUpdate.addEventListener("click", () => {
           const isMac = navigator.platform.toUpperCase().includes("MAC") || navigator.userAgent.includes("Mac");
 
           if (!pendingUpdateZipUrl || pendingUpdateZipUrl.trim() === "") {
@@ -24460,58 +24474,12 @@
             return;
           }
 
-          // ==========================================
-          // 2. ORIGINAL UPDATE LOGIC (UNTOUCHED)
-          // ==========================================
-          updateActionButtons.classList.add("hidden");
-          updateProgressContainer.classList.remove("hidden");
-          updateProgressContainer.classList.add("flex");
-
-          try {
-            const res = await fetch("http://localhost:3001/api/auto-update", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ zipUrl: pendingUpdateZipUrl }),
-            });
-
-            if (!res.ok) throw new Error("Failed to trigger update on the backend.");
-
-            updateProgressInterval = setInterval(async () => {
-              try {
-                const progRes = await fetch("http://localhost:3001/api/update-progress");
-                const progData = await progRes.json();
-
-                // Update our split stats
-                document.getElementById("update-status-text").textContent = progData.message || "Downloading...";
-                document.getElementById("update-percent-text").textContent = `${progData.percent || 0}%`;
-                document.getElementById("update-progress-bar").style.width = `${progData.percent || 0}%`;
-                document.getElementById("update-downloaded-text").textContent = `Downloaded: ${progData.downloadedMB || "0.00"} MB`;
-                document.getElementById("update-total-text").textContent = progData.totalMB > 0 ? `Total Size: ${progData.totalMB} MB` : "Calculating...";
-
-                if (progData.status === "extracting" || progData.status === "error") {
-                  clearInterval(updateProgressInterval);
-
-                  if (progData.status === "error") {
-                    showToast(progData.message, "error");
-                    updateActionButtons.classList.remove("hidden");
-                    updateProgressContainer.classList.add("hidden");
-                    updateProgressContainer.classList.remove("flex");
-                  } else {
-                    document.getElementById("update-progress-bar").classList.add("animate-pulse");
-                    document.getElementById("update-percent-text").textContent = "100%";
-                  }
-                }
-              } catch (e) {
-                console.error("Progress polling error", e);
-              }
-            }, 500);
-          } catch (err) {
-            console.error(err);
-            showToast("Update failed to start.", "error");
-            updateActionButtons.classList.remove("hidden");
-            updateProgressContainer.classList.add("hidden");
-            updateProgressContainer.classList.remove("flex");
+          if (window.electronAPI && window.electronAPI.openExternal) {
+            window.electronAPI.openExternal(pendingUpdateZipUrl);
+          } else {
+            window.open(pendingUpdateZipUrl, "_blank");
           }
+          closeUpdateModal();
         });
       }
 
