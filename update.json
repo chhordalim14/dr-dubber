@@ -1,6 +1,6 @@
 {
-  "version": "1.0.1",
-  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.0.1/DR.Dubber.Pro.Setup.1.0.1.exe",
+  "version": "1.0.2",
+  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.0.2/DR.Dubber.Pro.Setup.1.0.2.exe",
   "mac_link": "https://github.com/chhordalim14/dr-dubber/releases",
-  "notes": "- Fixed security issues: open CORS + unrestricted local file read, and a shell command injection in the open-folder action\n- Fixed crashes: missing error handlers and double-response bugs that could take down the whole backend\n- Fixed a hang in local Whisper transcription and added a timeout to text-to-speech generation\n- Fixed rendering: hardware encoder detection now verifies the encoder actually works instead of trusting what ffmpeg was compiled with, which was breaking every render on non-NVIDIA machines\n- Fixed hardware specs, drive space, cache size, presets, and VoxCPM2 status, which were previously fake/hardcoded\n- Fixed several memory/resource leaks in the UI and render queue"
+  "notes": "- Added a real crash-safety net: uncaught errors and unhandled promise rejections no longer silently kill the app or freeze the UI with zero indication anything went wrong\n- Fixed two backend routes that leaked a raw error page (with server file paths) on malformed input instead of a clean error message\n- Verified against the actual packaged app, not just source, after fuzz-testing every API route\n- Also includes 1.0.1's fixes: open CORS + unrestricted local file read, shell command injection in the open-folder action, crash-causing missing error handlers, a Whisper transcription hang, a TTS timeout, and hardware encoder detection that was breaking renders on non-NVIDIA machines"
 }

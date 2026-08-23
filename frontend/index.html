@@ -24099,7 +24099,7 @@
       // built. Read the real version from Electron (package.json) instead;
       // falls back to this literal only when running outside Electron (e.g.
       // a plain browser during development).
-      let CURRENT_APP_VERSION = "1.0.1";
+      let CURRENT_APP_VERSION = "1.0.2";
       const aboutAppVersionDisplay = document.getElementById("about-app-version");
       if (aboutAppVersionDisplay) aboutAppVersionDisplay.textContent = `Version ${CURRENT_APP_VERSION}`;
       if (window.electronAPI && window.electronAPI.getAppVersion) {
