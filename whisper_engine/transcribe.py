@@ -101,7 +101,7 @@ def transcribe_faster_whisper(audio_path, output_srt, model_size="medium", devic
             cues.append(cue_str)
             f.write(cue_str)
             f.flush()
-            print(f"[{start_str} ➔ {end_str}] {text}", flush=True)
+            print(f"[{start_str} ➔ {end_str}] {text}")
 
     elapsed = time.time() - t_start_transcribe
     print(f"[Whisper ✨] Complete! Generated {len(cues)} subtitle cues in {elapsed:.2f}s", flush=True)
@@ -140,7 +140,7 @@ def transcribe_openai_whisper(audio_path, output_srt, model_size="medium", devic
             cues.append(cue_str)
             f.write(cue_str)
             f.flush()
-            print(f"[{start_str} ➔ {end_str}] {text}", flush=True)
+            print(f"[{start_str} ➔ {end_str}] {text}")
 
     elapsed = time.time() - t_start
     print(f"[Whisper ✨] Complete! Generated {len(cues)} subtitle cues in {elapsed:.2f}s", flush=True)

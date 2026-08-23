@@ -15,11 +15,21 @@ const PORT = process.env.PORT || 3001;
 // when stdio is piped instead of attached to a real console (common on Windows).
 const PYTHON_ENV = { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' };
 
-// High-speed TTS Audio In-Memory & Disk Cache
+// High-speed TTS Audio In-Memory & Disk Cache. Unbounded across a long dubbing session
+// (hundreds of unique lines) would leak memory forever, so cap size and add TTL eviction.
 const ttsCache = new Map();
+const TTS_CACHE_MAX_ENTRIES = 2000;
+const TTS_CACHE_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
 function getTtsCacheKey(text, voice, rate, pitch, volume, speed, emotion) {
     const raw = `${text || ''}|${voice || ''}|${rate || ''}|${pitch || ''}|${volume || ''}|${speed || 1.0}|${emotion || 'Neutral'}`;
     return crypto.createHash('md5').update(raw).digest('hex');
+}
+function setTtsCache(key, value) {
+    if (ttsCache.size >= TTS_CACHE_MAX_ENTRIES) {
+        const oldestKey = ttsCache.keys().next().value;
+        if (oldestKey !== undefined) ttsCache.delete(oldestKey);
+    }
+    ttsCache.set(key, { ...value, timestamp: Date.now() });
 }
 
 // Directory layout (safe for dev & packaged Electron)
@@ -84,29 +94,39 @@ function getPythonExecutable() {
     return 'python3';
 }
 
+// Script location never changes at runtime, so resolving it involves 2-3 fs.existsSync
+// calls that would otherwise repeat on every single TTS/vocal-separation spawn.
+const _pythonScriptPathCache = new Map();
 function getPythonScriptPath(scriptName) {
+    if (_pythonScriptPathCache.has(scriptName)) {
+        return _pythonScriptPathCache.get(scriptName);
+    }
+
+    let resolved;
     const unpackedRootDir = ROOT_DIR.includes('app.asar') ? ROOT_DIR.replace('app.asar', 'app.asar.unpacked') : ROOT_DIR;
     const unpackedScript = path.join(unpackedRootDir, 'backend', 'python', scriptName);
-    if (fs.existsSync(unpackedScript)) {
-        return unpackedScript;
-    }
-
     const devScript = path.join(ROOT_DIR, 'backend', 'python', scriptName);
-    if (fs.existsSync(devScript) && !devScript.includes('app.asar')) {
-        return devScript;
+
+    if (fs.existsSync(unpackedScript)) {
+        resolved = unpackedScript;
+    } else if (fs.existsSync(devScript) && !devScript.includes('app.asar')) {
+        resolved = devScript;
+    } else {
+        // If running inside app.asar without unpacked file, extract script to writable STORAGE_BASE/python
+        try {
+            const storagePyDir = path.join(STORAGE_BASE, 'python');
+            if (!fs.existsSync(storagePyDir)) fs.mkdirSync(storagePyDir, { recursive: true });
+            const targetPath = path.join(storagePyDir, scriptName);
+            const sourceContent = fs.readFileSync(path.join(ROOT_DIR, 'backend', 'python', scriptName), 'utf8');
+            fs.writeFileSync(targetPath, sourceContent, 'utf8');
+            resolved = targetPath;
+        } catch (e) {
+            resolved = devScript;
+        }
     }
 
-    // If running inside app.asar without unpacked file, extract script to writable STORAGE_BASE/python
-    try {
-        const storagePyDir = path.join(STORAGE_BASE, 'python');
-        if (!fs.existsSync(storagePyDir)) fs.mkdirSync(storagePyDir, { recursive: true });
-        const targetPath = path.join(storagePyDir, scriptName);
-        const sourceContent = fs.readFileSync(path.join(ROOT_DIR, 'backend', 'python', scriptName), 'utf8');
-        fs.writeFileSync(targetPath, sourceContent, 'utf8');
-        return targetPath;
-    } catch (e) {
-        return devScript;
-    }
+    _pythonScriptPathCache.set(scriptName, resolved);
+    return resolved;
 }
 
 [UPLOADS_DIR, AUDIO_CACHE_DIR, SEPARATED_DIR, EXPORTS_DIR, OUTPUTS_DIR, LOGS_DIR, CUSTOM_OUTPUTS_DIR, USER_DESKTOP_OUTPUTS, ONEDRIVE_DESKTOP_OUTPUTS].forEach(dir => {
@@ -153,6 +173,11 @@ setInterval(() => {
     for (const [id, job] of bgmJobs.entries()) {
         if (job && (job.status === 'done' || job.status === 'error') && job.timestamp && (now - job.timestamp > 15 * 60 * 1000)) {
             bgmJobs.delete(id);
+        }
+    }
+    for (const [key, entry] of ttsCache.entries()) {
+        if (entry && entry.timestamp && (now - entry.timestamp > TTS_CACHE_TTL_MS)) {
+            ttsCache.delete(key);
         }
     }
 }, 15 * 60 * 1000);
@@ -1078,44 +1103,6 @@ RULES:
     }
 });
 
-// 4d. Smart Lip-Sync Speech Rate Auto-Fit Helper
-app.post('/api/autofit-speech-rate', (req, res) => {
-    const { subtitles = [] } = req.body;
-    const updated = subtitles.map(sub => {
-        const text = (sub.text || '').trim();
-        const start = parseFloat(sub.textStart || sub.start || 0);
-        const end = parseFloat(sub.textEnd || sub.end || 0);
-        const availableSec = Math.max(0.5, end - start);
-        
-        // Count approximate Khmer syllables/words and character clusters (~11-13 chars/sec)
-        const words = text.split(/\s+/).filter(Boolean);
-        const rawLen = text.replace(/[\s\p{P}]/gu, '').length;
-        const estimatedCharsDuration = rawLen > 0 ? (rawLen / 12.0) + 0.25 : 0.5;
-        const estimatedWordsDuration = words.length * 0.38 + 0.3;
-        const estimatedNaturalDuration = Math.max(estimatedCharsDuration, estimatedWordsDuration);
-        
-        let recommendedSpeed = 1.0;
-        if (estimatedNaturalDuration > availableSec) {
-            const ratio = estimatedNaturalDuration / availableSec;
-            // Cap between 1.0 and 1.45 (100% to 145%)
-            recommendedSpeed = Math.min(1.45, Math.max(1.0, Math.round(ratio * 100) / 100));
-        } else if (estimatedNaturalDuration < availableSec * 0.5 && availableSec > 3.0) {
-            recommendedSpeed = 0.95;
-        }
-
-        const ratePct = Math.round((recommendedSpeed - 1.0) * 100);
-        const rateStr = ratePct >= 0 ? `+${ratePct}%` : `${ratePct}%`;
-
-        return {
-            ...sub,
-            speed: recommendedSpeed,
-            rate: rateStr
-        };
-    });
-
-    res.json({ success: true, subtitles: updated });
-});
-
 app.post('/api/cancel-transcribe', (req, res) => {
     const { requestId } = req.body;
     if (requestId && activeTranscribeRequests.has(requestId)) {
@@ -1448,7 +1435,7 @@ app.post('/api/generate-audio', (req, res) => {
             const data = JSON.parse(output);
             if (data.success) {
                 const freshUrl = `/api/audio?path=${encodeURIComponent(outFile)}`;
-                ttsCache.set(cacheKey, {
+                setTtsCache(cacheKey, {
                     file: outFile,
                     duration: data.duration || 0,
                     size: data.size || 0,
@@ -1554,9 +1541,10 @@ app.post('/api/generate-batch-audio', async (req, res) => {
         try {
             const parsed = JSON.parse(output);
             if (parsed.success && Array.isArray(parsed.results)) {
+                const taskById = new Map(uncachedTasks.map(t => [t.id, t]));
                 for (const r of parsed.results) {
                     if (r.success) {
-                        const task = uncachedTasks.find(t => t.id === r.id);
+                        const task = taskById.get(r.id);
                         if (task) {
                             const sub = updatedSubtitles[task.subIndex];
                             const freshUrl = `/api/audio?path=${encodeURIComponent(r.file)}`;
@@ -1566,7 +1554,7 @@ app.post('/api/generate-batch-audio', async (req, res) => {
                             sub.generatedDuration = r.duration;
                             sub.audioStatus = 'ready';
 
-                            ttsCache.set(task.cacheKey, {
+                            setTtsCache(task.cacheKey, {
                                 file: r.file,
                                 duration: r.duration,
                                 size: r.size,
@@ -1590,52 +1578,59 @@ app.post('/api/generate-batch-audio', async (req, res) => {
     });
 });
 
-app.post('/api/generate-voxcmp2', (req, res) => {
-    const { text, gender = 'Male', tempPath, speed = 1.0, emotion = 'Neutral', index } = req.body;
-    let voice = (gender === 'Female' || gender === 'female') ? 'km-KH-SreymomNeural' : 'km-KH-PisethNeural';
+app.post('/api/generate-voxcmp2', async (req, res) => {
+    const { text, serverUrl = 'http://localhost:8808', tempPath, profile, index, speed = 1.0, emotion = 'Neutral' } = req.body;
     const outFile = resolveAudioOutputFile(tempPath, index);
-    const pyScript = getPythonScriptPath('tts_generator.py');
 
-    const prosody = getEmotionProsody(emotion, '+0Hz', '+0%', speed);
+    const baseUrl = (serverUrl || 'http://localhost:8808').replace(/\/+$/, '');
+    const targetEndpoint = `${baseUrl}/api/generate`;
 
-    const child = spawn(PYTHON_CMD, [
-        pyScript,
-        '--text', text,
-        '--voice', voice,
-        '--rate', prosody.rate,
-        '--pitch', prosody.pitch,
-        '--volume', prosody.volume,
-        '--output', outFile
-    ], { env: PYTHON_ENV });
-    trackProcess(child);
+    try {
+        const payload = {
+            text,
+            instruction: (profile && profile.instruction) || '',
+            reference_audio: (profile && profile.audioPath) || '',
+            speed: parseFloat(speed) || 1.0,
+            emotion: emotion || 'Neutral',
+            output_path: outFile,
+            profile: profile || null
+        };
 
-    let output = '';
-    let stderr = '';
-    child.stdout.on('data', d => output += d.toString());
-    child.stderr.on('data', d => stderr += d.toString());
-    child.on('error', (err) => {
-        console.error('[TTS Error]', err);
-        if (!res.headersSent) res.status(500).json({ success: false, error: err.message });
-    });
-    child.on('close', (code) => {
-        if (res.headersSent) return;
-        try {
-            if (!output.trim()) {
-                console.error(`[VoxCPM2 TTS Failed] Code ${code}, Stderr: ${stderr}`);
-                return res.status(500).json({ success: false, error: stderr.trim() || `TTS process exited with code ${code}` });
-            }
-            const data = JSON.parse(output);
-            res.json({
-                success: true,
-                file: outFile,
-                duration: data.duration || 0,
-                url: `/api/audio?path=${encodeURIComponent(outFile)}`
-            });
-        } catch (e) {
-            console.error('[VoxCPM2 Parse Error]', e.message, 'Output:', output, 'Stderr:', stderr);
-            res.status(500).json({ success: false, error: output.trim() || stderr.trim() || e.message });
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 120000); // 2 minute timeout for neural synthesis
+
+        const response = await fetch(targetEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal: controller.signal
+        });
+        clearTimeout(timeout);
+
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`VoxCPM2 server returned HTTP ${response.status}: ${errText}`);
         }
-    });
+
+        const data = await response.json();
+        if (data.success === false) {
+            throw new Error(data.error || 'VoxCPM2 generation failed.');
+        }
+
+        const duration = data.duration || 0;
+        return res.json({
+            success: true,
+            file: outFile,
+            duration: duration,
+            url: `/api/audio?path=${encodeURIComponent(outFile)}`
+        });
+    } catch (err) {
+        console.error('[VoxCPM2 Request Failed]', err.message);
+        return res.status(500).json({
+            success: false,
+            error: `VoxCPM2 synthesis failed: ${err.message}. Please ensure the VoxCPM2 server is started in Settings -> VoxCPM2 AI.`
+        });
+    }
 });
 
 // 5c. Hardware Encoders Endpoint

@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>DR Dubber Pro</title>
-    <script src="lib/tailwind.min.js"></script>
+    <link rel="stylesheet" href="css/tailwind-built.css" />
     <script src="lib/lucide.min.js"></script>
     <script src="lib/lottie.min.js"></script>
 
@@ -1504,15 +1504,6 @@
                 </button>
 
                 <button
-                  id="btn-shift-time"
-                  class="group bg-[var(--bg-hover)] border border-[var(--border-light)] hover:bg-emerald-500/20 hover:border-emerald-500 hover:text-emerald-400 text-[var(--text-primary)] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-md active:scale-[0.95]"
-                  title="Shift / Offset Subtitle Timestamps (e.g. ±1.5s)"
-                >
-                  <i data-lucide="clock-arrow-up" class="w-[14px] h-[14px] transition-transform duration-300 group-hover:scale-110 group-active:scale-90"></i>
-                  Shift Time
-                </button>
-
-                <button
                   id="btn-open-batch-dubber"
                   onclick="openBatchDubberModal()"
                   class="group bg-[var(--bg-hover)] border border-[var(--border-light)] hover:bg-amber-500/20 hover:border-amber-500 hover:text-amber-400 text-[var(--text-primary)] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-md active:scale-[0.95]"
@@ -1769,16 +1760,6 @@
               >
                 <i id="icon-auto-fit" data-lucide="zap" class="w-[14px] h-[14px] shrink-0 transition-colors duration-300"></i>
                 <span id="text-auto-fit" class="hidden sm:inline">Auto-Fit: OFF</span>
-              </button>
-
-              <button
-                id="btn-smart-lipsync"
-                onclick="autoFitLipSyncRates()"
-                class="group px-3 sm:px-4 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ease-out bg-[var(--bg-base)] border border-[var(--border-light)] hover:border-pink-400 text-[var(--text-secondary)] hover:text-pink-400 shadow-sm active:scale-[0.95]"
-                title="⚡ Smart Lip-Sync: Calculate and auto-adjust speech speed rates to fit actor window"
-              >
-                <i data-lucide="sparkles" class="w-[14px] h-[14px] text-pink-400 shrink-0 transition-transform duration-300 group-hover:scale-110"></i>
-                <span class="hidden sm:inline">Smart Lip-Sync</span>
               </button>
 
               <button
@@ -2313,82 +2294,6 @@
               Replace All
             </button>
           </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- SHIFT TIMESTAMPS MODAL -->
-    <div id="shift-time-modal" class="hidden fixed inset-0 z-[10000] flex items-center justify-center">
-      <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="shift-time-backdrop"></div>
-      <div class="relative bg-[var(--bg-panel)] border border-[var(--border-light)] rounded-xl shadow-2xl w-full max-w-md mx-4 animate-modal-center overflow-hidden">
-        <div class="flex items-center justify-between p-4 border-b border-[var(--border-color)] bg-[var(--bg-base)]">
-          <div class="flex items-center gap-2.5">
-            <h3 class="text-[var(--text-bright)] font-semibold flex items-center gap-2">
-              <i data-lucide="clock-arrow-up" class="w-[18px] h-[18px] text-emerald-400"></i>
-              Shift Subtitle Timestamps
-            </h3>
-          </div>
-          <button id="shift-time-close" class="text-[var(--text-secondary)] hover:text-red-400 transition-all duration-300 hover:rotate-90 hover:scale-110 active:scale-90">
-            <i data-lucide="x" class="w-5 h-5"></i>
-          </button>
-        </div>
-        <div class="px-5 py-4 flex flex-col gap-4">
-          <p class="text-xs text-[var(--text-secondary)] leading-relaxed">
-            Quickly adjust timestamps forward or backward to fix delay or synchronize dialogue with video.
-          </p>
-
-          <div class="flex flex-col gap-1.5">
-            <label class="text-xs font-medium text-[var(--text-secondary)]">Apply To</label>
-            <div class="grid grid-cols-2 gap-2">
-              <label class="flex items-center gap-2 p-2.5 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)] hover:bg-[var(--bg-hover)] cursor-pointer transition-colors text-xs text-[var(--text-primary)]">
-                <input type="radio" name="shift-scope" value="all" checked class="text-[var(--accent-primary)] focus:ring-0" />
-                <span>All Subtitles</span>
-              </label>
-              <label class="flex items-center gap-2 p-2.5 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)] hover:bg-[var(--bg-hover)] cursor-pointer transition-colors text-xs text-[var(--text-primary)]">
-                <input type="radio" name="shift-scope" value="selected" class="text-[var(--accent-primary)] focus:ring-0" />
-                <span id="shift-scope-selected-label">Selected Only (0)</span>
-              </label>
-            </div>
-          </div>
-
-          <div class="flex flex-col gap-1.5">
-            <label class="text-xs font-medium text-[var(--text-secondary)]">Time Offset (Seconds)</label>
-            <div class="flex items-center gap-2">
-              <input
-                id="shift-time-input"
-                type="number"
-                step="0.1"
-                placeholder="e.g. -1.5 or +2.0"
-                value="-0.5"
-                class="flex-1 bg-[var(--bg-base)] border border-[var(--border-light)] rounded-lg px-3 py-2 text-sm text-[var(--text-primary)] font-mono outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 placeholder-[var(--text-muted)] transition-all"
-              />
-              <span class="text-xs text-[var(--text-muted)] font-mono">seconds</span>
-            </div>
-            <div class="flex flex-wrap gap-1.5 mt-1">
-              <button type="button" class="shift-preset-btn px-2 py-1 rounded text-[11px] font-mono bg-[var(--bg-base)] hover:bg-emerald-500/20 hover:text-emerald-400 border border-[var(--border-light)] text-[var(--text-secondary)] transition-all" data-val="-2.0">-2.0s</button>
-              <button type="button" class="shift-preset-btn px-2 py-1 rounded text-[11px] font-mono bg-[var(--bg-base)] hover:bg-emerald-500/20 hover:text-emerald-400 border border-[var(--border-light)] text-[var(--text-secondary)] transition-all" data-val="-1.0">-1.0s</button>
-              <button type="button" class="shift-preset-btn px-2 py-1 rounded text-[11px] font-mono bg-[var(--bg-base)] hover:bg-emerald-500/20 hover:text-emerald-400 border border-[var(--border-light)] text-[var(--text-secondary)] transition-all" data-val="-0.5">-0.5s</button>
-              <button type="button" class="shift-preset-btn px-2 py-1 rounded text-[11px] font-mono bg-[var(--bg-base)] hover:bg-emerald-500/20 hover:text-emerald-400 border border-[var(--border-light)] text-[var(--text-secondary)] transition-all" data-val="+0.5">+0.5s</button>
-              <button type="button" class="shift-preset-btn px-2 py-1 rounded text-[11px] font-mono bg-[var(--bg-base)] hover:bg-emerald-500/20 hover:text-emerald-400 border border-[var(--border-light)] text-[var(--text-secondary)] transition-all" data-val="+1.0">+1.0s</button>
-              <button type="button" class="shift-preset-btn px-2 py-1 rounded text-[11px] font-mono bg-[var(--bg-base)] hover:bg-emerald-500/20 hover:text-emerald-400 border border-[var(--border-light)] text-[var(--text-secondary)] transition-all" data-val="+2.0">+2.0s</button>
-            </div>
-          </div>
-
-          <div class="flex items-center gap-2">
-            <input type="checkbox" id="shift-include-audio" checked class="rounded border-[var(--border-light)] bg-[var(--bg-base)] text-emerald-500 focus:ring-0 cursor-pointer" />
-            <label for="shift-include-audio" class="text-xs text-[var(--text-secondary)] cursor-pointer select-none">
-              Also shift synthesized audio timing (A1 track)
-            </label>
-          </div>
-        </div>
-        <div class="px-5 py-3.5 border-t border-[var(--border-color)] flex items-center justify-end gap-2 bg-[var(--bg-base)]">
-          <button id="shift-time-cancel" class="px-3.5 py-1.5 rounded-lg text-xs font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] transition-colors">
-            Cancel
-          </button>
-          <button id="shift-time-apply" class="px-4 py-1.5 rounded-lg text-xs font-medium bg-emerald-600 hover:bg-emerald-500 text-white shadow-md transition-all active:scale-[0.96] flex items-center gap-1.5">
-            <i data-lucide="check" class="w-3.5 h-3.5"></i>
-            Apply Shift
-          </button>
         </div>
       </div>
     </div>
@@ -5336,6 +5241,16 @@
       const timelineRuler = document.getElementById("timeline-ruler");
       const timelinePlayhead = document.getElementById("timeline-playhead");
       let isOriginalAudioMuted = false;
+
+      // Cached timeline width — avoids forcing a layout reflow by reading offsetWidth on
+      // every animation frame during playback (it was previously read twice per frame,
+      // sandwiched between style writes to progressBarFill/timelinePlayhead).
+      let _timelineContentWidthCache = timelineContent ? timelineContent.offsetWidth : 0;
+      if (timelineContent && typeof ResizeObserver !== "undefined") {
+        new ResizeObserver(() => {
+          _timelineContentWidthCache = timelineContent.offsetWidth;
+        }).observe(timelineContent);
+      }
 
       // --- TOAST NOTIFICATION LOGIC (stacked, max 3 at once) ---
       const toastStack = document.getElementById("toast-stack");
@@ -12249,14 +12164,15 @@
           enabled: false,
           autoStart: false,
           acceptedDisclaimer: false,
-          pythonPath: "",
-          outputPath: "",
+          serverUrl: "http://localhost:8808/",
+          pythonPath: "D:\\VoxCPM2\\app.py",
+          outputPath: "D:\\VoxCPM2\\cache\\outputs",
           profiles: [
             {
               id: "male-default",
               label: "Male",
               gender: "Male",
-              instruction: "",
+              instruction: "A clear, natural young male voice, warm tone",
               audioPath: "",
               audioName: "",
             },
@@ -12264,7 +12180,7 @@
               id: "female-default",
               label: "Female",
               gender: "Female",
-              instruction: "",
+              instruction: "A clear, natural young female voice, soft and sweet tone",
               audioPath: "",
               audioName: "",
             },
@@ -12354,40 +12270,6 @@
         } catch (err) {
           console.error("AI Rewrite error:", err);
           showToast("Network error while rewriting dialogue.", "error");
-        }
-      };
-
-      // ══════════════════════════════════════════════════════════════════════
-      // CREATOR FEATURE 2: SMART LIP-SYNC SPEECH RATE AUTO-FIT
-      // ══════════════════════════════════════════════════════════════════════
-      window.autoFitLipSyncRates = async () => {
-        if (!subtitles || subtitles.length === 0) {
-          showToast("No subtitles loaded to auto-fit.", "info");
-          return;
-        }
-
-        try {
-          const res = await fetch("http://localhost:3001/api/autofit-speech-rate", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ subtitles }),
-          });
-          const data = await res.json();
-          if (data.success && Array.isArray(data.subtitles)) {
-            let adjustedCount = 0;
-            data.subtitles.forEach((updatedSub, i) => {
-              if (subtitles[i]) {
-                if (subtitles[i].speed !== updatedSub.speed) adjustedCount++;
-                subtitles[i].speed = updatedSub.speed;
-                subtitles[i].rate = updatedSub.rate;
-              }
-            });
-            if (typeof renderSubtitles === "function") renderSubtitles();
-            showToast(`⚡ Smart Lip-Sync: Adjusted speech rates for ${data.subtitles.length} lines (${adjustedCount} adapted).`, "success");
-          }
-        } catch (e) {
-          console.error("Auto-fit error:", e);
-          showToast("Failed to calculate speech rates.", "error");
         }
       };
 
@@ -12543,14 +12425,6 @@
           const projIndex = projects.indexOf(p);
           if (projIndex > -1 && typeof switchProject === "function") {
             switchProject(projIndex);
-          }
-
-          // Auto-Fit Lip Sync speech rate if subtitles exist
-          if (p.subtitles && p.subtitles.length > 0 && typeof autoFitLipSyncRates === "function") {
-            try {
-              if (statusLabel) statusLabel.textContent = `[${i + 1}/${validProjects.length}] Auto-fitting speech rates...`;
-              await autoFitLipSyncRates();
-            } catch (e) {}
           }
 
           // Trigger audio generation for pending subtitles
@@ -15036,126 +14910,6 @@
         findInput.addEventListener("input", runSearch);
       })();
 
-      // ── SHIFT TIMESTAMPS MODAL ──────────────────────────────────────
-      (() => {
-        const modal = document.getElementById("shift-time-modal");
-        const backdrop = document.getElementById("shift-time-backdrop");
-        const btnOpen = document.getElementById("btn-shift-time");
-        const btnClose = document.getElementById("shift-time-close");
-        const btnCancel = document.getElementById("shift-time-cancel");
-        const btnApply = document.getElementById("shift-time-apply");
-        const shiftInput = document.getElementById("shift-time-input");
-        const includeAudioCheck = document.getElementById("shift-include-audio");
-        const selectedScopeLabel = document.getElementById("shift-scope-selected-label");
-        const presetBtns = document.querySelectorAll(".shift-preset-btn");
-
-        if (!modal || !btnOpen) return;
-
-        const openModal = () => {
-          if (!subtitles || subtitles.length === 0) {
-            return showToast("No subtitles available to shift.", "warning");
-          }
-          const selectedSubIds = new Set(
-            selectedItems
-              .filter((id) => id.startsWith("text-") || id.startsWith("audio-"))
-              .map((id) => id.replace(/^(text-|audio-)/, ""))
-          );
-          if (selectedScopeLabel) {
-            selectedScopeLabel.textContent = `Selected Only (${selectedSubIds.size})`;
-          }
-          modal.classList.remove("hidden");
-          if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: modal });
-          if (shiftInput) {
-            shiftInput.focus();
-            shiftInput.select();
-          }
-        };
-
-        const closeModal = () => {
-          modal.classList.add("hidden");
-        };
-
-        btnOpen.addEventListener("click", openModal);
-        if (btnClose) btnClose.addEventListener("click", closeModal);
-        if (btnCancel) btnCancel.addEventListener("click", closeModal);
-        if (backdrop) backdrop.addEventListener("click", closeModal);
-
-        presetBtns.forEach((btn) => {
-          btn.addEventListener("click", () => {
-            const val = btn.getAttribute("data-val");
-            if (shiftInput && val) {
-              shiftInput.value = val;
-              shiftInput.focus();
-            }
-          });
-        });
-
-        if (btnApply) {
-          btnApply.addEventListener("click", () => {
-            const offset = parseFloat(shiftInput?.value);
-            if (isNaN(offset) || offset === 0) {
-              return showToast("Please enter a valid non-zero time offset.", "warning");
-            }
-
-            const targetProject = activeProjectIndex >= 0 ? projects[activeProjectIndex] : null;
-            if (!targetProject || !targetProject.subtitles || targetProject.subtitles.length === 0) {
-              return showToast("No active project subtitles to shift.", "error");
-            }
-
-            const scopeRadio = document.querySelector('input[name="shift-scope"]:checked');
-            const scope = scopeRadio ? scopeRadio.value : "all";
-
-            const selectedSubIds = new Set(
-              selectedItems
-                .filter((id) => id.startsWith("text-") || id.startsWith("audio-"))
-                .map((id) => id.replace(/^(text-|audio-)/, ""))
-            );
-
-            if (scope === "selected" && selectedSubIds.size === 0) {
-              return showToast("No subtitles selected to shift.", "warning");
-            }
-
-            saveStateToPast();
-
-            const shiftAudio = includeAudioCheck ? includeAudioCheck.checked : true;
-            let count = 0;
-
-            targetProject.subtitles.forEach((sub) => {
-              if (scope === "all" || selectedSubIds.has(sub.id)) {
-                count++;
-                const oldStart = parseFloat(sub.textStart) || 0;
-                const oldEnd = parseFloat(sub.textEnd) || (oldStart + 2);
-
-                const newStart = Math.max(0, oldStart + offset);
-                const newEnd = Math.max(newStart + 0.1, oldEnd + offset);
-
-                sub.textStart = newStart.toFixed(2);
-                sub.textEnd = newEnd.toFixed(2);
-
-                if (shiftAudio) {
-                  const oldAudioStart = parseFloat(sub.audioStart) || oldStart;
-                  const oldAudioEnd = parseFloat(sub.audioEnd) || oldEnd;
-                  const newAudioStart = Math.max(0, oldAudioStart + offset);
-                  const newAudioEnd = Math.max(newAudioStart + 0.1, oldAudioEnd + offset);
-                  sub.audioStart = newAudioStart.toFixed(2);
-                  sub.audioEnd = newAudioEnd.toFixed(2);
-                }
-              }
-            });
-
-            if (projects[activeProjectIndex] === targetProject) {
-              subtitles = targetProject.subtitles;
-              renderSubtitles();
-              if (typeof renderTimeline === "function") renderTimeline();
-            }
-
-            maybeAutoSaveSubtitles(targetProject, targetProject.subtitles);
-            showToast(`Shifted ${count} subtitle${count > 1 ? "s" : ""} by ${offset > 0 ? "+" : ""}${offset.toFixed(2)}s`, "success");
-            closeModal();
-          });
-        }
-      })();
-
       function autoAssignVoxProfiles(subs) {
         const voxData =
           typeof voxCmp2Load === "function"
@@ -15471,7 +15225,7 @@
 
       // 3. Auto-Scroll helper function (Upgraded to Smooth Panning!)
       const scrollToPlayhead = () => {
-        const playheadLeft = (mainVideo.currentTime / duration) * timelineContent.offsetWidth;
+        const playheadLeft = (mainVideo.currentTime / duration) * _timelineContentWidthCache;
         const containerWidth = timelineScrollContainer.offsetWidth;
         const scrollLeft = timelineScrollContainer.scrollLeft;
 
@@ -20385,7 +20139,7 @@
 
           // 1. Visual Sync — GPU-composited playhead
           progressBarFill.style.width = `${progressPercent}%`;
-          const playheadPx = (progressPercent / 100) * timelineContent.offsetWidth;
+          const playheadPx = (progressPercent / 100) * _timelineContentWidthCache;
           timelinePlayhead.style.transform = `translateX(${playheadPx}px)`;
           timelinePlayhead.style.left = "0";
 
