@@ -25,11 +25,46 @@ process.env.APP_STORAGE_DIR = STORAGE_BASE;
 
 const EXPORTS_DIR = path.join(STORAGE_BASE, 'exports');
 const AUDIO_CACHE_DIR = path.join(STORAGE_BASE, 'audio_cache');
+const LOGS_DIR = path.join(STORAGE_BASE, 'logs');
 
-[EXPORTS_DIR, AUDIO_CACHE_DIR].forEach(dir => {
+[EXPORTS_DIR, AUDIO_CACHE_DIR, LOGS_DIR].forEach(dir => {
     if (!fs.existsSync(dir)) {
         try { fs.mkdirSync(dir, { recursive: true }); } catch (e) {}
     }
+});
+
+// Previously there was no process-level safety net at all: any uncaught
+// exception or unhandled promise rejection anywhere in the main process
+// (main.js, or backend/server.js since it's require()'d into this same
+// process) would either crash the entire app instantly with zero
+// diagnostics, or - for unhandled rejections - just be silently ignored.
+// Neither is acceptable for a production user who can't attach a debugger.
+function logCrash(label, err) {
+    try {
+        const line = `[${new Date().toISOString()}] ${label}: ${err && err.stack ? err.stack : String(err)}\n`;
+        fs.appendFileSync(path.join(LOGS_DIR, 'crash.log'), line, 'utf8');
+    } catch (e) {}
+}
+
+process.on('uncaughtException', (err) => {
+    console.error('[Uncaught Exception]', err);
+    logCrash('uncaughtException', err);
+    try {
+        dialog.showErrorBox(
+            'DR Dubber Pro — Unexpected Error',
+            `Something went wrong and has been logged.\n\n${err && err.message ? err.message : err}\n\nThe app will keep running, but if you see this repeatedly, please report it along with the log at:\n${path.join(LOGS_DIR, 'crash.log')}`
+        );
+    } catch (e) {}
+    // Intentionally not calling app.quit()/app.exit(): most uncaught
+    // exceptions here happen inside an IPC handler or async callback and
+    // leave the rest of the app (window, backend server) perfectly usable.
+    // Forcibly killing the whole app over one bad handler is worse UX than
+    // logging it and letting the user keep working.
+});
+
+process.on('unhandledRejection', (reason) => {
+    console.error('[Unhandled Rejection]', reason);
+    logCrash('unhandledRejection', reason);
 });
 
 let mainWindow = null;

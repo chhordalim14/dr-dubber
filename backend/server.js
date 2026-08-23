@@ -1204,11 +1204,12 @@ app.post('/api/transcribe-whisper', async (req, res) => {
 // 4c. Export Audio Stems (Clean Voice Stem + Isolated BGM + SRT Package)
 app.post('/api/export-stems', async (req, res) => {
     const {
-        subtitles = [],
+        subtitles: rawSubtitles = [],
         bgmPath,
         videoName = 'dubbing_project',
         customFolder
     } = req.body;
+    const subtitles = Array.isArray(rawSubtitles) ? rawSubtitles : [];
 
     try {
         const timestamp = Date.now();
@@ -1371,7 +1372,7 @@ app.post('/api/generate-audio', (req, res) => {
         index
     } = req.body;
 
-    if (!text || !text.trim()) {
+    if (typeof text !== 'string' || !text.trim()) {
         return res.status(400).json({ success: false, error: 'Empty text' });
     }
 

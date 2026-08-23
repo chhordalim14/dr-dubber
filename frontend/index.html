@@ -4614,6 +4614,36 @@
     </div>
 
     <script>
+      // Previously there was no top-level error handling in the renderer at
+      // all: an uncaught exception or unhandled promise rejection anywhere
+      // in this file just vanished into the (invisible, in a packaged app)
+      // devtools console, leaving the user staring at a UI that silently
+      // stopped responding with zero indication anything went wrong. This
+      // doesn't fix the underlying bug, but it stops failures from being
+      // completely invisible, and throttles itself so a repeating error
+      // can't spam the user with toasts forever.
+      (function () {
+        let errorToastCount = 0;
+        const MAX_ERROR_TOASTS = 3;
+        function reportRendererError(kind, err) {
+          console.error(`[Unhandled ${kind}]`, err);
+          if (errorToastCount >= MAX_ERROR_TOASTS) return;
+          errorToastCount++;
+          try {
+            if (typeof showToast === "function") {
+              const msg = (err && (err.message || err.reason)) || String(err) || "An unexpected error occurred.";
+              showToast(`Something went wrong: ${msg}`, "error");
+            }
+          } catch (e) {}
+        }
+        window.addEventListener("error", (event) => {
+          reportRendererError("Error", event.error || event.message);
+        });
+        window.addEventListener("unhandledrejection", (event) => {
+          reportRendererError("Promise Rejection", event.reason);
+        });
+      })();
+
       var VOXCMP2_KEY = "voxcmp2_settings";
       function _lucideCreateIcons(opts) {
         try {
