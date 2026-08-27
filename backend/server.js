@@ -5,6 +5,7 @@ const os = require('os');
 const crypto = require('crypto');
 const { spawn, exec, execFile } = require('child_process');
 const multer = require('multer');
+const { ensureFFmpegInPath, getFFmpegBinary } = require('./ffmpeg_env');
 const { renderVideo, cancelRender, getRenderProgress, detectAvailableEncoders } = require('./render_service');
 
 const app = express();
@@ -365,7 +366,7 @@ app.post('/api/extract-audio', upload.any(), (req, res) => {
     const audioOut = path.join(SEPARATED_DIR, fileName);
 
     const cmd = ['-y', '-i', videoPath, '-vn', '-acodec', 'libmp3lame', '-b:a', '128k', '-ar', '16000', '-ac', '1', audioOut];
-    const ffmpeg = spawn('ffmpeg', cmd, { windowsHide: true });
+    const ffmpeg = spawn(getFFmpegBinary(), cmd, { windowsHide: true });
     trackProcess(ffmpeg);
 
     ffmpeg.on('error', (err) => {
@@ -1279,7 +1280,7 @@ app.post('/api/export-stems', async (req, res) => {
 
             try {
                 await new Promise((resolve, reject) => {
-                    const ff = spawn('ffmpeg', args, { windowsHide: true });
+                    const ff = spawn(getFFmpegBinary(), args, { windowsHide: true });
                     trackProcess(ff);
                     ff.on('close', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg exited with code ${code}`)));
                     ff.on('error', reject);
@@ -1580,11 +1581,14 @@ app.post('/api/generate-batch-audio', async (req, res) => {
 });
 
 app.post('/api/generate-voxcmp2', async (req, res) => {
-    const { text, serverUrl = 'http://localhost:8808', tempPath, profile, index, speed = 1.0, emotion = 'Neutral' } = req.body;
+    const { text, serverUrl = 'http://127.0.0.1:8808', tempPath, profile, index, speed = 1.0, emotion = 'Neutral' } = req.body;
     const outFile = resolveAudioOutputFile(tempPath, index);
 
-    const baseUrl = (serverUrl || 'http://localhost:8808').replace(/\/+$/, '');
-    const targetEndpoint = `${baseUrl}/api/generate`;
+    // Normalize localhost to 127.0.0.1 to prevent Node.js 18+ IPv6 (::1) ECONNREFUSED on Windows
+    let baseUrl = (serverUrl || 'http://127.0.0.1:8808').replace(/\/+$/, '');
+    if (baseUrl.includes('localhost')) {
+        baseUrl = baseUrl.replace('localhost', '127.0.0.1');
+    }
 
     try {
         const payload = {
@@ -1600,12 +1604,42 @@ app.post('/api/generate-voxcmp2', async (req, res) => {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 120000); // 2 minute timeout for neural synthesis
 
-        const response = await fetch(targetEndpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-            signal: controller.signal
-        });
+        let targetEndpoint = `${baseUrl}/api/generate`;
+        console.log(`[VoxCPM2] Sending synthesis request to: ${targetEndpoint}`);
+
+        let response;
+        try {
+            response = await fetch(targetEndpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                signal: controller.signal
+            });
+        } catch (fetchErr) {
+            // Fallback: if 127.0.0.1 failed, try original URL or localhost
+            const altBaseUrl = baseUrl.includes('127.0.0.1') ? baseUrl.replace('127.0.0.1', 'localhost') : baseUrl;
+            targetEndpoint = `${altBaseUrl}/api/generate`;
+            console.warn(`[VoxCPM2] Primary connect failed (${fetchErr.message}), trying alternative: ${targetEndpoint}`);
+            response = await fetch(targetEndpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                signal: controller.signal
+            });
+        }
+
+        // If /api/generate returned 404, fallback to /generate
+        if (response.status === 404) {
+            const fallbackEndpoint = `${baseUrl}/generate`;
+            console.log(`[VoxCPM2] /api/generate returned 404, trying fallback: ${fallbackEndpoint}`);
+            response = await fetch(fallbackEndpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                signal: controller.signal
+            });
+        }
+
         clearTimeout(timeout);
 
         if (!response.ok) {

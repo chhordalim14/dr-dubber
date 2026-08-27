@@ -1396,22 +1396,13 @@
               <span class="text-xs font-medium">Load A1 Audio</span>
             </button>
 
-            <div class="relative group/isolate-wrap">
-              <button
-                id="btn-isolate-bgm"
-                class="w-full group flex flex-col items-center justify-center gap-2 bg-[var(--bg-hover)] hover:brightness-110 border border-[var(--border-light)] p-3 rounded-xl transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.92] cursor-pointer"
-              >
-                <i id="icon-isolate" data-lucide="wand-2" class="w-5 h-5 text-pink-500 workspace-icon-glow transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
-                <span id="text-isolate" class="text-xs font-medium">Isolate BGM</span>
-              </button>
-              <button
-                id="btn-isolate-bgm-all"
-                title="Isolate BGM for ALL open project tabs"
-                class="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider bg-pink-500/20 text-pink-400 border border-pink-500/30 hover:bg-pink-500 hover:text-white transition-all shadow-sm z-10 active:scale-95"
-              >
-                ALL
-              </button>
-            </div>
+            <button
+              id="btn-isolate-bgm"
+              class="group flex flex-col items-center justify-center gap-2 bg-[var(--bg-hover)] hover:brightness-110 border border-[var(--border-light)] p-3 rounded-xl transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.92] cursor-pointer"
+            >
+              <i id="icon-isolate" data-lucide="wand-2" class="w-5 h-5 text-pink-500 workspace-icon-glow transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
+              <span id="text-isolate" class="text-xs font-medium">Isolate BGM</span>
+            </button>
 
             <button
               id="btn-mute-audio"
@@ -1787,16 +1778,6 @@
                 <i id="icon-generate" data-lucide="audio-lines" class="w-[14px] h-[14px] shrink-0"></i>
                 <span class="hidden sm:inline" id="text-generate">Generate Selected Audio</span>
                 <span class="sm:hidden" id="text-generate-mobile">Generate</span>
-              </button>
-
-              <button
-                id="btn-generate-audio-all"
-                title="Generate selected (or pending) audio for ALL project tabs"
-                class="group px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ease-out bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-secondary)] hover:text-[var(--text-bright)] hover:border-amber-400/50 shadow-sm active:scale-[0.95]"
-              >
-                <i id="icon-generate-all" data-lucide="layers" class="w-[14px] h-[14px] text-amber-400 shrink-0 transition-transform duration-300 group-hover:scale-110"></i>
-                <span class="hidden md:inline" id="text-generate-all">Generate All Tabs</span>
-                <span class="md:hidden">All Tabs</span>
               </button>
             </div>
           </div>
@@ -13068,14 +13049,35 @@
 
         try {
           // Read local file via Electron IPC — works for any native OS path
-          const result = await window.electronAPI.readFileAsBase64(profile.audioPath);
-          if (!result?.success) throw new Error(result?.error || "Failed to read file");
+          const result = await window.electronAPI?.readFileAsBase64(profile.audioPath);
+          let base64Data = null;
+          let mimeType = "audio/wav";
+
+          const ext = (profile.audioPath.split(".").pop() || "").toLowerCase();
+          if (ext === "mp3") mimeType = "audio/mpeg";
+          else if (ext === "ogg") mimeType = "audio/ogg";
+          else if (ext === "flac") mimeType = "audio/flac";
+          else if (ext === "m4a" || ext === "aac") mimeType = "audio/mp4";
+
+          if (typeof result === "string") {
+            base64Data = result;
+          } else if (result && typeof result === "object") {
+            if (result.success === false) {
+              throw new Error(result.error || "Failed to read file");
+            }
+            base64Data = result.base64 || result.data;
+            if (result.mime) mimeType = result.mime;
+          }
+
+          if (!base64Data) {
+            throw new Error("No audio data returned from disk");
+          }
 
           // base64 → Blob → Object URL so Audio can play it without any server
-          const byteChars = atob(result.base64);
+          const byteChars = atob(base64Data);
           const byteArr = new Uint8Array(byteChars.length);
           for (let i = 0; i < byteChars.length; i++) byteArr[i] = byteChars.charCodeAt(i);
-          const blob = new Blob([byteArr], { type: result.mime });
+          const blob = new Blob([byteArr], { type: mimeType });
           const blobUrl = URL.createObjectURL(blob);
           _voxPlayBlobUrl = blobUrl;
 
@@ -13112,7 +13114,7 @@
           };
         } catch (err) {
           console.error("[VoxCPM2] Read audio error:", err);
-          showToast("Could not read audio file from disk.", "error");
+          showToast(err.message ? `Could not read audio file: ${err.message}` : "Could not read audio file from disk.", "error");
           if (btn) {
             btn.disabled = false;
             if (icon) {
@@ -18479,44 +18481,7 @@
 
       let isGeneratingAudioAll = false;
 
-      const updateGenerateAllButtonState = () => {
-        const btnAll = document.getElementById("btn-generate-audio-all");
-        if (!btnAll) return;
-
-        const isAnyRunning = isGeneratingAudioAll || projects.some((p) => p.isGeneratingAudio || p._voxQueued);
-
-        btnAll.classList.remove(
-          "bg-red-600",
-          "border-red-500",
-          "text-white",
-          "shadow-md",
-          "shadow-red-900/30",
-          "hover:bg-red-700",
-          "bg-[var(--bg-base)]",
-          "border-[var(--border-light)]",
-          "text-[var(--text-secondary)]",
-        );
-
-        if (isAnyRunning) {
-          btnAll.classList.add("bg-red-600", "border-red-500", "text-white", "shadow-md", "shadow-red-900/30", "hover:bg-red-700");
-          btnAll.innerHTML = `
-            <i data-lucide="x-circle" class="w-[14px] h-[14px] shrink-0 animate-pulse text-white"></i>
-            <span class="hidden md:inline">Stop All Tabs</span>
-            <span class="md:hidden">Stop All</span>
-          `;
-        } else {
-          btnAll.classList.add("bg-[var(--bg-base)]", "border-[var(--border-light)]", "text-[var(--text-secondary)]");
-          btnAll.innerHTML = `
-            <i data-lucide="layers" class="w-[14px] h-[14px] text-amber-400 shrink-0 transition-transform duration-300 group-hover:scale-110"></i>
-            <span class="hidden md:inline">Generate All Tabs</span>
-            <span class="md:hidden">All Tabs</span>
-          `;
-        }
-
-        if (typeof lucide !== "undefined") {
-          _lucideCreateIcons({ root: btnAll });
-        }
-      };
+      const updateGenerateAllButtonState = () => {};
 
       // --- NATIVE PARTICLE BURST ENGINE ---
       const triggerParticleBurst = (buttonElement, colorClass) => {
@@ -19694,12 +19659,7 @@
         }
       }
 
-      const btnGenerateAudioAll = document.getElementById("btn-generate-audio-all");
-      if (btnGenerateAudioAll) {
-        btnGenerateAudioAll.addEventListener("click", () => {
-          generateSelectedAudioAllProjects();
-        });
-      }
+      // btn-generate-audio-all removed
 
       // --- 🟣 VOXCPM2 CROSS-PROJECT QUEUE ---
       let voxQueueRunning = false;
@@ -21607,24 +21567,10 @@
 
       const updateIsolateBgmButton = () => {
         const btnIsolateBgm = document.getElementById("btn-isolate-bgm");
-        const btnIsolateBgmAll = document.getElementById("btn-isolate-bgm-all");
-
-        if (btnIsolateBgmAll) {
-          if (isIsolatingBgmAll) {
-            btnIsolateBgmAll.className = "absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider bg-red-600 text-white border border-red-500 shadow-sm z-10 animate-pulse active:scale-95";
-            btnIsolateBgmAll.textContent = "STOP";
-            btnIsolateBgmAll.title = "Stop BGM isolation for all project tabs";
-          } else {
-            btnIsolateBgmAll.className = "absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider bg-pink-500/20 text-pink-400 border border-pink-500/30 hover:bg-pink-500 hover:text-white transition-all shadow-sm z-10 active:scale-95";
-            btnIsolateBgmAll.textContent = "ALL";
-            btnIsolateBgmAll.title = "Isolate BGM for ALL open project tabs";
-          }
-        }
-
         if (!btnIsolateBgm) return;
 
         // Reset base classes to strip out any stuck states
-        btnIsolateBgm.className = "w-full group flex flex-col items-center justify-center gap-2 border p-3 rounded-xl transition-all duration-300 ease-out active:scale-[0.92] cursor-pointer";
+        btnIsolateBgm.className = "group flex flex-col items-center justify-center gap-2 border p-3 rounded-xl transition-all duration-300 ease-out active:scale-[0.92] cursor-pointer";
 
         if (isIsolatingBgm) {
           // Active "Stop" State
@@ -21939,13 +21885,7 @@
         });
       }
 
-      const btnIsolateBgmAll = document.getElementById("btn-isolate-bgm-all");
-      if (btnIsolateBgmAll) {
-        btnIsolateBgmAll.addEventListener("click", (e) => {
-          e.stopPropagation();
-          isolateBgmAllProjects();
-        });
-      }
+      // btn-isolate-bgm-all removed
 
       // 3. Mute Audio Feature
       btnMuteAudio.addEventListener("click", () => {

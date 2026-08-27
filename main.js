@@ -6,6 +6,9 @@ const http = require('http');
 const crypto = require('crypto');
 const { spawn, exec } = require('child_process');
 
+// Auto-detect and add FFmpeg to PATH across the entire app
+try { require('./backend/ffmpeg_env'); } catch (e) {}
+
 // Fast startup, GPU video decoding & CPU/RAM optimization flags
 app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('enable-zero-copy');
@@ -316,10 +319,28 @@ ipcMain.handle('app:autoSaveSrt', async (event, { content, fileName, mode, sourc
 
 ipcMain.handle('app:readFileAsBase64', async (event, filePath) => {
     try {
+        if (!filePath || typeof filePath !== 'string') {
+            return { success: false, error: 'Invalid file path' };
+        }
+        if (!fs.existsSync(filePath)) {
+            return { success: false, error: `File does not exist: ${filePath}` };
+        }
         const data = await fs.promises.readFile(filePath);
-        return data.toString('base64');
+        const ext = path.extname(filePath).toLowerCase();
+        let mime = 'audio/wav';
+        if (ext === '.mp3') mime = 'audio/mpeg';
+        else if (ext === '.wav') mime = 'audio/wav';
+        else if (ext === '.ogg') mime = 'audio/ogg';
+        else if (ext === '.flac') mime = 'audio/flac';
+        else if (ext === '.m4a' || ext === '.aac') mime = 'audio/mp4';
+
+        return {
+            success: true,
+            base64: data.toString('base64'),
+            mime
+        };
     } catch (e) {
-        return null;
+        return { success: false, error: e.message };
     }
 });
 
