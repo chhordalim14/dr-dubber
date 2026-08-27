@@ -22,6 +22,49 @@ try:
 except Exception:
     pass
 
+def ensure_ffmpeg_in_path():
+    if os.name != "nt":
+        return
+    extra_paths = []
+    local_app_data = os.environ.get("LOCALAPPDATA", "")
+    if local_app_data:
+        extra_paths.append(os.path.join(local_app_data, "Microsoft", "WinGet", "Links"))
+        extra_paths.append(os.path.join(local_app_data, "Programs"))
+        winget_pkgs = os.path.join(local_app_data, "Microsoft", "WinGet", "Packages")
+        if os.path.isdir(winget_pkgs):
+            try:
+                for entry in os.listdir(winget_pkgs):
+                    if "ffmpeg" in entry.lower():
+                        base = os.path.join(winget_pkgs, entry)
+                        extra_paths.append(base)
+                        for sub in os.listdir(base):
+                            sub_path = os.path.join(base, sub)
+                            if os.path.isdir(sub_path):
+                                extra_paths.append(os.path.join(sub_path, "bin"))
+                                extra_paths.append(sub_path)
+            except Exception:
+                pass
+    prog_files = os.environ.get("ProgramFiles", "C:\\Program Files")
+    prog_files_x86 = os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")
+    extra_paths.extend([
+        "C:\\ffmpeg\\bin", "C:\\ffmpeg",
+        os.path.join(prog_files, "ffmpeg", "bin"), os.path.join(prog_files, "ffmpeg"),
+        os.path.join(prog_files_x86, "ffmpeg", "bin"),
+        "C:\\tools\\ffmpeg\\bin",
+        "C:\\ProgramData\\chocolatey\\bin"
+    ])
+    user_profile = os.environ.get("USERPROFILE", "")
+    if user_profile:
+        extra_paths.append(os.path.join(user_profile, "scoop", "shims"))
+
+    current_path = os.environ.get("PATH", "")
+    current_set = {os.path.abspath(p).lower() for p in current_path.split(os.pathsep) if p}
+    to_add = [p for p in extra_paths if os.path.isdir(p) and os.path.abspath(p).lower() not in current_set]
+    if to_add:
+        os.environ["PATH"] = os.pathsep.join(to_add + [current_path])
+
+ensure_ffmpeg_in_path()
+
 def format_timestamp(seconds: float) -> str:
     """Format seconds into standard SRT timestamp: HH:MM:SS,mmm"""
     if seconds < 0:

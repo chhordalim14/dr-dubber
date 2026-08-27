@@ -4,6 +4,7 @@ const execFileAsync = promisify(execFile);
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { getFFmpegBinary } = require('./ffmpeg_env');
 
 let activeRenderProcess = null;
 let currentRenderJob = {
@@ -18,7 +19,8 @@ let _subtitlesFilterSupported = null;
 function hasSubtitlesFilter() {
     if (_subtitlesFilterSupported !== null) return _subtitlesFilterSupported;
     try {
-        const filters = execSync('ffmpeg -filters', { encoding: 'utf8' });
+        const ffBin = getFFmpegBinary();
+        const filters = execSync(`"${ffBin}" -filters`, { encoding: 'utf8', windowsHide: true });
         _subtitlesFilterSupported = filters.includes(' subtitles ') || filters.includes('subtitles ');
     } catch (e) {
         _subtitlesFilterSupported = false;
@@ -43,7 +45,7 @@ function canEncodeWith(codec) {
         };
         let p;
         try {
-            p = spawn('ffmpeg', [
+            p = spawn(getFFmpegBinary(), [
                 '-hide_banner', '-loglevel', 'error',
                 '-f', 'lavfi', '-i', 'color=black:s=64x64',
                 '-frames:v', '1', '-c:v', codec, '-f', 'null', '-'
@@ -62,7 +64,7 @@ async function detectAvailableEncoders() {
     if (_detectedEncoders) return _detectedEncoders;
     let compiled = { nvenc: false, qsv: false, amf: false, mf: false, videotoolbox: false, libx264: true };
     try {
-        const { stdout: out } = await execFileAsync('ffmpeg', ['-encoders'], { timeout: 5000 });
+        const { stdout: out } = await execFileAsync(getFFmpegBinary(), ['-encoders'], { timeout: 5000 });
         compiled = {
             nvenc: out.includes('h264_nvenc'),
             qsv: out.includes('h264_qsv'),
@@ -166,7 +168,7 @@ async function assembleDialogueStem(validSubs, tempDir, voiceVolume = 1.0) {
             stemPath
         ];
         await new Promise((resolve, reject) => {
-            const p = spawn('ffmpeg', args, { windowsHide: true });
+            const p = spawn(getFFmpegBinary(), args, { windowsHide: true });
             p.on('close', code => (code === 0 && fs.existsSync(stemPath)) ? resolve() : reject(new Error(`Stem exit code ${code}`)));
             p.on('error', reject);
         });
@@ -197,7 +199,7 @@ async function assembleDialogueStem(validSubs, tempDir, voiceVolume = 1.0) {
     args.push('-map', '[aout]', '-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2', stemPath);
 
     await new Promise((resolve, reject) => {
-        const p = spawn('ffmpeg', args, { windowsHide: true });
+        const p = spawn(getFFmpegBinary(), args, { windowsHide: true });
         p.on('close', code => (code === 0 && fs.existsSync(stemPath)) ? resolve() : reject(new Error(`Stem exit code ${code}`)));
         p.on('error', reject);
     });
@@ -448,7 +450,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         args.push(outputPath);
 
         console.log(`[Render] Spawning FFmpeg to render: ${outputPath}`);
-        const ffmpeg = spawn('ffmpeg', args, { windowsHide: true });
+        const ffmpeg = spawn(getFFmpegBinary(), args, { windowsHide: true });
         activeRenderProcess = ffmpeg;
 
         function cleanupTempDir() {
