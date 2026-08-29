@@ -99,7 +99,32 @@ function getFFmpegBinary() {
     return _resolvedFFmpegBin;
 }
 
+let _resolvedFFprobeBin = null;
+function getFFprobeBinary() {
+    if (_resolvedFFprobeBin) return _resolvedFFprobeBin;
+    ensureFFmpegInPath();
+
+    const candidateExts = process.platform === 'win32' ? ['.exe', ''] : [''];
+    const pathDirs = (process.env.PATH || process.env.Path || '').split(path.delimiter);
+
+    for (const dir of pathDirs) {
+        for (const ext of candidateExts) {
+            const fullPath = path.join(dir, `ffprobe${ext}`);
+            try {
+                if (fs.existsSync(fullPath) && fs.statSync(fullPath).isFile()) {
+                    _resolvedFFprobeBin = fullPath;
+                    return _resolvedFFprobeBin;
+                }
+            } catch (e) {}
+        }
+    }
+    _resolvedFFprobeBin = 'ffprobe';
+    return _resolvedFFprobeBin;
+}
+
 module.exports = {
     ensureFFmpegInPath,
-    getFFmpegBinary
+    getFFmpegBinary,
+    getFFprobeBinary
 };
+

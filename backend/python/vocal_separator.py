@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Audio Vocal & Background Music (BGM) Separator
-High-Performance Single-Pass FFmpeg & Spleeter Stem Isolation.
+Demucs (ML-based) stem isolation, falling back to single-pass FFmpeg separation.
 """
 
 import sys
@@ -55,59 +55,99 @@ def ensure_ffmpeg_in_path():
 
 ensure_ffmpeg_in_path()
 
-# Previously hardcoded to a different machine/project's absolute path
-# ("DAI-Dubber-PRO", not this repo's "ai-dubber-pro"), so os.path.exists()
-# was always False on a real install and the "high-fidelity Spleeter" path
-# silently never ran -- every user got the crude ffmpeg fallback below with
-# no indication the real separator never executed. Now configurable via env
-# vars, with a couple of relative fallback locations, so a real install can
-# actually be picked up.
-SPLEETER_PYTHON = os.environ.get("SPLEETER_PYTHON") or os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "spleeter-env",
+# Demucs runs in its own venv (backend/demucs-env) rather than the main
+# backend env because it pulls in a specific torch/torchaudio pin that would
+# otherwise fight with the rest of the app's Python dependencies. A user can
+# instead point --demucs-folder at their own portable Demucs install (the
+# "Demucs Folder Path" setting in the UI); that folder's own python is used
+# in preference to the bundled venv when present.
+DEMUCS_PYTHON_DEFAULT = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "demucs-env",
     "Scripts" if os.name == "nt" else "bin", "python.exe" if os.name == "nt" else "python"
 )
-PRETRAINED_MODELS = os.environ.get("SPLEETER_MODELS_PATH") or os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "pretrained_models"
-)
+DEMUCS_MODEL = os.environ.get("DEMUCS_MODEL") or "htdemucs"
 
-def separate_spleeter(input_audio, output_dir):
+def find_python_in_folder(folder):
+    if not folder:
+        return None
+    candidates = [
+        os.path.join(folder, "python-embed", "python.exe"),
+        os.path.join(folder, "python-embed", "python"),
+        os.path.join(folder, "Scripts", "python.exe"),
+        os.path.join(folder, "bin", "python"),
+        os.path.join(folder, "python.exe"),
+        os.path.join(folder, "python"),
+    ]
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    return None
+
+def separate_demucs(input_audio, output_dir, demucs_folder=None, segment=None, device=None):
+    """
+    High-fidelity ML-based separation via Demucs (htdemucs model). Produces a
+    genuine isolated vocal stem and a clean instrumental/BGM stem, unlike the
+    ffmpeg fallback's crude center-channel-cancellation trick below, which
+    only cancels dead-center-panned content and leaves the BGM thin, hollow,
+    and missing anything (bass, kick, off-center vocal harmonies) that trick
+    can't touch.
+    """
+    demucs_python = find_python_in_folder(demucs_folder) or os.environ.get("DEMUCS_PYTHON") or DEMUCS_PYTHON_DEFAULT
+    if not os.path.exists(demucs_python):
+        return None
     try:
         output_dir = os.path.abspath(output_dir)
-        os.makedirs(output_dir, exist_ok=True)
-        if os.path.exists(SPLEETER_PYTHON):
-            # No "-d" duration cap: the previous hardcoded "-d 600" silently
-            # truncated any separation to the first 10 minutes with no error
-            # surfaced, which would have resurfaced the moment the path above
-            # was fixed. A full-length dubbing project needs the whole track.
-            cmd = [
-                SPLEETER_PYTHON, "-m", "spleeter", "separate",
-                "-p", "spleeter:2stems",
-                "-o", output_dir,
-                input_audio
-            ]
-            env = os.environ.copy()
-            env["MODEL_PATH"] = PRETRAINED_MODELS
+        # Job-specific output root avoids two concurrent separations of a
+        # same-named input colliding on demucs's fixed
+        # "<out>/<model>/<track_name>/" output layout.
+        job_suffix = f"{os.getpid()}_{int(time.time() * 1000)}"
+        job_dir = os.path.join(output_dir, f"demucs_{job_suffix}")
+        os.makedirs(job_dir, exist_ok=True)
 
-            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
-            base_name = os.path.splitext(os.path.basename(input_audio))[0]
-            stem_dir = os.path.join(output_dir, base_name)
-            vocal_path = os.path.join(stem_dir, "vocals.wav")
-            accompaniment_path = os.path.join(stem_dir, "accompaniment.wav")
+        cmd = [
+            demucs_python, "-m", "demucs",
+            "--two-stems=vocals",
+            "-n", DEMUCS_MODEL,
+            "-o", job_dir,
+        ]
+        # Only force a device when the caller explicitly wants CPU (Safe Mode).
+        # Otherwise let demucs auto-detect (its own default: cuda if available,
+        # else cpu) -- forcing "cuda" here would hard-fail on a torch build/
+        # machine without working CUDA instead of gracefully using the CPU.
+        if device == "cpu":
+            cmd += ["-d", "cpu"]
+        if segment:
+            cmd += ["--segment", str(segment)]
+        cmd.append(input_audio)
 
-            if os.path.exists(accompaniment_path):
-                return {
-                    "success": True,
-                    "method": "spleeter",
-                    "vocal": os.path.abspath(vocal_path),
-                    "bgm": os.path.abspath(accompaniment_path)
-                }
-            elif res.returncode != 0:
-                sys.stderr.write(f"[Spleeter] exit code {res.returncode}: {res.stderr}\n")
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
 
-        # Fallback to high-speed single-pass FFmpeg separation
-        return separate_ffmpeg(input_audio, output_dir)
+        base_name = os.path.splitext(os.path.basename(input_audio))[0]
+        stem_dir = os.path.join(job_dir, DEMUCS_MODEL, base_name)
+        vocal_path = os.path.join(stem_dir, "vocals.wav")
+        bgm_path = os.path.join(stem_dir, "no_vocals.wav")
+
+        if os.path.exists(bgm_path) and os.path.exists(vocal_path):
+            return {
+                "success": True,
+                "method": "demucs",
+                "vocal": os.path.abspath(vocal_path),
+                "bgm": os.path.abspath(bgm_path)
+            }
+        if res.returncode != 0:
+            sys.stderr.write(f"[Demucs] exit code {res.returncode}: {res.stderr}\n")
+        return None
     except Exception as e:
-        return separate_ffmpeg(input_audio, output_dir)
+        sys.stderr.write(f"[Demucs] exception: {e}\n")
+        return None
+
+def separate(input_audio, output_dir, engine="ffmpeg", demucs_folder=None, segment=None, device=None):
+    if engine == "demucs":
+        result = separate_demucs(input_audio, output_dir, demucs_folder, segment, device)
+        if result:
+            return result
+        sys.stderr.write("[Demucs] unavailable or failed, falling back to ffmpeg separation\n")
+    return separate_ffmpeg(input_audio, output_dir)
 
 def separate_ffmpeg(input_audio, output_dir):
     """
@@ -128,9 +168,9 @@ def separate_ffmpeg(input_audio, output_dir):
 
         threads = str(min(8, os.cpu_count() or 4))
         filter_graph = (
-            "[0:a]asplit=2[a_bgm_in][a_voc_in];"
-            "[a_bgm_in]stereotools=mutec=1[bgm];"
-            "[a_voc_in]stereotools=mutel=1:muter=1,highpass=f=200,lowpass=f=3500[vocal]"
+            "[0:a]aformat=channel_layouts=stereo,asplit=2[a_bgm_in][a_voc_in];"
+            "[a_bgm_in]stereotools=mode=lr>l-r[bgm];"
+            "[a_voc_in]stereotools=mode=lr>l+r,highpass=f=200,lowpass=f=3500[vocal]"
         )
 
         cmd = [
@@ -140,7 +180,7 @@ def separate_ffmpeg(input_audio, output_dir):
             "-map", "[vocal]", "-vn", vocal_path
         ]
 
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
         if res.returncode != 0:
             # check=True previously discarded ffmpeg's actual stderr (the
             # useful diagnostic) and surfaced only "returned non-zero exit
@@ -166,9 +206,13 @@ def main():
     parser = argparse.ArgumentParser(description="Stem & Vocal Separator")
     parser.add_argument("--input", required=True, help="Input audio or video file")
     parser.add_argument("--output", required=True, help="Output directory")
+    parser.add_argument("--engine", default="ffmpeg", choices=["ffmpeg", "demucs"], help="Separation engine")
+    parser.add_argument("--demucs-folder", default=None, help="Optional portable Demucs install to use instead of the bundled one")
+    parser.add_argument("--segment", default=None, help="Demucs chunk size (lower = less RAM)")
+    parser.add_argument("--device", default=None, help="Demucs device override; omit to let demucs auto-detect")
 
     args = parser.parse_args()
-    result = separate_spleeter(args.input, args.output)
+    result = separate(args.input, args.output, engine=args.engine, demucs_folder=args.demucs_folder, segment=args.segment, device=args.device)
     print(json.dumps(result))
 
 if __name__ == "__main__":

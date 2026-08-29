@@ -1,6 +1,6 @@
 {
   "name": "dr-dubber-pro",
-  "version": "1.0.3",
+  "version": "1.1.1",
   "description": "DR Dubber Pro - Khmer Edition AI Dubbing Studio",
   "main": "main.js",
   "scripts": {
@@ -32,6 +32,7 @@
     ],
     "asarUnpack": [
       "backend/python/**/*",
+      "backend/demucs-env/**/*",
       "whisper_engine/**/*"
     ],
     "mac": {
@@ -61,7 +62,7 @@
     "ai-dubber",
     "khmer-tts",
     "video-dubbing",
-    "spleeter",
+    "demucs",
     "ffmpeg"
   ],
   "author": "AI Studio",

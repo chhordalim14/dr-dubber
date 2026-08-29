@@ -4,6 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
 const { spawn, exec, execFile } = require('child_process');
+const { StringDecoder } = require('string_decoder');
 const multer = require('multer');
 const { ensureFFmpegInPath, getFFmpegBinary } = require('./ffmpeg_env');
 const { renderVideo, cancelRender, getRenderProgress, detectAvailableEncoders } = require('./render_service');
@@ -71,6 +72,28 @@ process.on('exit', killAllProcesses);
 process.on('SIGINT', () => { killAllProcesses(); process.exit(0); });
 process.on('SIGTERM', () => { killAllProcesses(); process.exit(0); });
 
+// Clean stale temporary cache files (> 7 days old) asynchronously to prevent disk bloat
+function cleanStaleTempFiles() {
+    const maxAgeMs = 7 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    [AUDIO_CACHE_DIR, UPLOADS_DIR, SEPARATED_DIR].forEach((dir) => {
+        if (!fs.existsSync(dir)) return;
+        fs.readdir(dir, (err, files) => {
+            if (err || !files) return;
+            files.forEach((file) => {
+                const fp = path.join(dir, file);
+                fs.stat(fp, (err, stats) => {
+                    if (!err && stats && stats.isFile() && (now - stats.mtimeMs > maxAgeMs)) {
+                        fs.unlink(fp, () => {});
+                    }
+                });
+            });
+        });
+    });
+}
+setTimeout(cleanStaleTempFiles, 5000);
+setInterval(cleanStaleTempFiles, 60 * 60 * 1000);
+
 function getPythonCmd() {
     if (process.env.PYTHON_PATH && fs.existsSync(process.env.PYTHON_PATH)) {
         return process.env.PYTHON_PATH;
@@ -84,6 +107,22 @@ function getPythonCmd() {
     return process.platform === 'win32' ? 'python' : 'python3';
 }
 const PYTHON_CMD = getPythonCmd();
+
+function ensureTtsDependencies() {
+    exec(`"${PYTHON_CMD}" -c "import edge_tts"`, { env: PYTHON_ENV }, (err) => {
+        if (err) {
+            console.warn('[Python TTS] edge-tts not found in python environment. Auto-installing...');
+            exec(`"${PYTHON_CMD}" -m pip install edge-tts`, { env: PYTHON_ENV }, (pipErr, stdout, stderr) => {
+                if (pipErr) {
+                    console.error('[Python TTS] Failed to auto-install edge-tts:', stderr || pipErr.message);
+                } else {
+                    console.log('[Python TTS] edge-tts installed successfully.');
+                }
+            });
+        }
+    });
+}
+ensureTtsDependencies();
 
 function getPythonExecutable() {
     const venvPython = path.join(ROOT_DIR, '.venv', 'bin', 'python');
@@ -233,17 +272,94 @@ const MIME_MAP = {
     '.webp': 'image/webp'
 };
 
+// Universal local file path resolver (handles file://, /api/audio?path=, /storage/..., and percent-encoded Unicode/Khmer characters)
+function resolveLocalFilePath(inputPath) {
+    if (!inputPath || typeof inputPath !== 'string') return null;
+    let p = inputPath.trim();
+    if (!p) return null;
+
+    // 1. Direct match on disk
+    try {
+        if (fs.existsSync(p) && fs.statSync(p).isFile()) return p;
+    } catch (e) {}
+
+    // 2. Handle file:// protocol
+    if (p.startsWith('file://')) {
+        try {
+            const fileUrl = new URL(p);
+            p = decodeURIComponent(fileUrl.pathname.replace(/^\/([a-zA-Z]:)/, '$1'));
+        } catch (e) {
+            p = p.replace(/^file:\/\/\/?/, '');
+            try { p = decodeURIComponent(p); } catch (e) {}
+        }
+    }
+
+    // 3. Handle http:// or relative /api/audio?path=...
+    if (p.includes('/api/audio') && p.includes('path=')) {
+        try {
+            const u = p.startsWith('http') ? new URL(p) : new URL(p, 'http://localhost:3001');
+            const searchPath = u.searchParams.get('path');
+            if (searchPath) {
+                p = searchPath;
+            }
+        } catch (e) {
+            const match = p.match(/[?&]path=([^&]+)/);
+            if (match) {
+                try { p = decodeURIComponent(match[1]); } catch (e) { p = match[1]; }
+            }
+        }
+    }
+
+    // 4. Handle storage paths
+    if (p.includes('/storage/tts/') || p.startsWith('storage/tts/')) {
+        const sub = p.replace(/^.*\/storage\/tts\//, '').replace(/^storage\/tts\//, '');
+        p = path.join(AUDIO_CACHE_DIR, sub);
+    } else if (p.includes('/storage/separated/') || p.startsWith('storage/separated/')) {
+        const sub = p.replace(/^.*\/storage\/separated\//, '').replace(/^storage\/separated\//, '');
+        p = path.join(SEPARATED_DIR, sub);
+    } else if (p.includes('/storage/uploads/') || p.startsWith('storage/uploads/')) {
+        const sub = p.replace(/^.*\/storage\/uploads\//, '').replace(/^storage\/uploads\//, '');
+        p = path.join(UPLOADS_DIR, sub);
+    } else if (p.includes('/storage/exports/') || p.startsWith('storage/exports/')) {
+        const sub = p.replace(/^.*\/storage\/exports\//, '').replace(/^storage\/exports\//, '');
+        p = path.join(EXPORTS_DIR, sub);
+    }
+
+    // 5. Try decodeURIComponent if still percent-encoded (e.g. %20, %C2%AB, %C2%BB, %3A)
+    if (p.includes('%')) {
+        try {
+            const decoded = decodeURIComponent(p);
+            if (fs.existsSync(decoded)) return decoded;
+            p = decoded;
+        } catch (e) {}
+    }
+
+    // 6. Windows drive letter cleanup: /D:/... -> D:/...
+    if (process.platform === 'win32') {
+        p = p.replace(/^\/([a-zA-Z]:)/, '$1');
+    }
+
+    // 7. Final check
+    try {
+        if (fs.existsSync(p)) return p;
+    } catch (e) {}
+
+    return p;
+}
+
 // 1. Audio / Media Streaming Endpoint (handles both standard and URL-encoded query strings with HTTP Caching)
 app.use('/api/audio', (req, res) => {
-    let filePath = req.query.path;
+    let rawPath = req.query.path;
 
-    if (!filePath && req.originalUrl.includes('path=')) {
+    if (!rawPath && req.originalUrl.includes('path=')) {
         try {
             const decoded = decodeURIComponent(req.originalUrl);
             const match = decoded.match(/path=([^&]+)/);
-            if (match) filePath = match[1];
+            if (match) rawPath = match[1];
         } catch (e) { }
     }
+
+    const filePath = resolveLocalFilePath(rawPath);
 
     if (!filePath || !fs.existsSync(filePath)) {
         return res.status(404).send('File not found');
@@ -251,6 +367,7 @@ app.use('/api/audio', (req, res) => {
 
     try {
         const stat = fs.statSync(filePath);
+        const now = Date.now();
         const ext = path.extname(filePath).toLowerCase();
         const contentType = MIME_MAP[ext] || 'application/octet-stream';
         const etag = `W/"${stat.size.toString(16)}-${stat.mtimeMs.toString(16)}"`;
@@ -263,6 +380,17 @@ app.use('/api/audio', (req, res) => {
         res.setHeader('Accept-Ranges', 'bytes');
         res.setHeader('ETag', etag);
         res.setHeader('Cache-Control', 'public, max-age=86400');
+
+        // The 7-day stale-file sweep (cleanStaleTempFiles) keys off mtime, so a
+        // file belonging to a project that's simply been open-but-idle for a
+        // week would otherwise get deleted out from under the user. Refresh
+        // mtime on actual playback/use (throttled to once/day so it doesn't
+        // spam disk I/O or defeat the ETag cache above on every request).
+        if ((now - stat.mtimeMs > 24 * 60 * 60 * 1000) &&
+            (filePath.startsWith(AUDIO_CACHE_DIR) || filePath.startsWith(SEPARATED_DIR) || filePath.startsWith(UPLOADS_DIR))) {
+            const nowSec = now / 1000;
+            fs.promises.utimes(filePath, nowSec, nowSec).catch(() => {});
+        }
 
         const range = req.headers.range;
         if (range) {
@@ -298,31 +426,54 @@ app.use('/api/audio', (req, res) => {
 
 // Transcribe Audio Destination Resolver & Saver
 function getTranscribeDestinations(customFolder, sourceFilePath) {
-    const destinations = [
-        USER_DESKTOP_OUTPUTS,
-        ONEDRIVE_DESKTOP_OUTPUTS,
-        CUSTOM_OUTPUTS_DIR,
-        OUTPUTS_DIR
-    ];
+    const destinations = [];
     if (customFolder && typeof customFolder === 'string' && customFolder.trim()) {
-        destinations.unshift(customFolder.trim());
-    }
-    if (sourceFilePath && typeof sourceFilePath === 'string') {
+        try {
+            const trimmed = customFolder.trim();
+            if (fs.existsSync(trimmed)) {
+                destinations.push(trimmed);
+            }
+        } catch (e) {}
+    } else if (sourceFilePath && typeof sourceFilePath === 'string') {
         try {
             const srcDir = path.dirname(sourceFilePath);
             if (srcDir && srcDir !== '.' && fs.existsSync(srcDir)) {
-                destinations.unshift(srcDir);
+                destinations.push(srcDir);
             }
         } catch (e) {}
+    }
+    
+    // If no user destination resolved, fallback to internal app storage
+    if (destinations.length === 0) {
+        destinations.push(OUTPUTS_DIR);
     }
     return destinations;
 }
 
 function saveTranscribeAudio(audioBufferOrPath, videoName, partIndex, customFolder, sourceFilePath) {
     const timestamp = Date.now();
-    const cleanBase = (videoName || 'video').replace(/[/\\?%*:|"<>]/g, '_').replace(/\.[^/.]+$/, '');
-    const pIdx = (partIndex !== undefined && partIndex !== null) ? partIndex : (transcribePartCounter++);
-    const partName = `transcribe_${timestamp}_${cleanBase}_part${pIdx}.mp3`;
+    let cleanBase = (videoName || 'video')
+        .replace(/[/\\?%*:|"<>]/g, '_')
+        .replace(/\.[^/.]+$/, '') // strip file extension
+        .replace(/^transcribe_\d+_/i, '') // strip redundant previous timestamp prefixes
+        .replace(/^transcribe_/i, '');
+
+    // Collapse any repeated part suffixes (e.g. name_part1_part1 -> name_part1)
+    cleanBase = cleanBase.replace(/([_.\- ](?:part|pt|chunk)\s*\d+)(?:[_.\- ](?:part|pt|chunk)\s*\d+)+$/i, '$1');
+
+    // Check if filename already ends with a part/chunk designation (e.g. _part1, -part2, .part3, Part 1, pt1)
+    const hasPartSuffix = /(?:[_.\- ](?:part|pt|chunk)\s*\d+|\bpart\s*\d+)$/i.test(cleanBase);
+
+    let partName;
+    if (hasPartSuffix) {
+        // Base name already has part information, do not append an additional part suffix
+        partName = `transcribe_${timestamp}_${cleanBase}.mp3`;
+    } else if (partIndex !== undefined && partIndex !== null && String(partIndex).trim() !== '') {
+        const pIdx = String(partIndex).trim();
+        partName = `transcribe_${timestamp}_${cleanBase}_part${pIdx}.mp3`;
+    } else {
+        partName = `transcribe_${timestamp}_${cleanBase}.mp3`;
+    }
 
     const destinations = getTranscribeDestinations(customFolder, sourceFilePath);
     let firstSavedPath = null;
@@ -416,21 +567,13 @@ app.post('/api/save-srt', (req, res) => {
     const { content, fileName, sourceFilePath, customFolder } = req.body;
     if (!content) return res.status(400).json({ success: false, error: 'No SRT content provided.' });
 
-    const cleanBase = (fileName || 'subtitles').replace(/[/\\?%*:|"<>]/g, '_');
-    const srtFileName = cleanBase.endsWith('.srt') ? cleanBase : `${cleanBase}.srt`;
+    let cleanBase = (fileName || 'subtitles')
+        .replace(/[/\\?%*:|"<>]/g, '_')
+        .replace(/\.srt$/i, '');
+    cleanBase = cleanBase.replace(/([_.\- ](?:part|pt|chunk)\s*\d+)(?:[_.\- ](?:part|pt|chunk)\s*\d+)+$/i, '$1');
+    const srtFileName = `${cleanBase}.srt`;
 
-    const destinations = [
-        USER_DESKTOP_OUTPUTS,
-        ONEDRIVE_DESKTOP_OUTPUTS,
-        CUSTOM_OUTPUTS_DIR,
-        OUTPUTS_DIR
-    ];
-    if (customFolder && fs.existsSync(customFolder)) {
-        destinations.unshift(customFolder);
-    }
-    if (sourceFilePath && fs.existsSync(path.dirname(sourceFilePath))) {
-        destinations.unshift(path.dirname(sourceFilePath));
-    }
+    const destinations = getTranscribeDestinations(customFolder, sourceFilePath);
 
     let savedPath = null;
     destinations.forEach(targetDir => {
@@ -448,7 +591,7 @@ app.post('/api/save-srt', (req, res) => {
 // 3. Remove Vocals / BGM Isolation
 app.post('/api/remove-vocals', upload.any(), (req, res) => {
     const uploadedFile = (req.files && req.files.length > 0) ? req.files[0].path : null;
-    let audioPath = uploadedFile || req.body.audioPath || req.body.filePath || req.body.videoPath;
+    let audioPath = resolveLocalFilePath(uploadedFile || req.body.audioPath || req.body.filePath || req.body.videoPath);
     const jobId = req.body.jobId || `bgm_${Date.now()}`;
 
     if (!audioPath || !fs.existsSync(audioPath)) {
@@ -458,12 +601,27 @@ app.post('/api/remove-vocals', upload.any(), (req, res) => {
     bgmJobs.set(jobId, { status: 'processing', progress: 10, success: true, timestamp: Date.now() });
     res.json({ success: true, jobId: jobId, status: 'processing' });
 
+    const engine = req.body.engine === 'demucs' ? 'demucs' : 'ffmpeg';
+    // Only force CPU when the user explicitly disabled GPU (Safe Mode); otherwise
+    // leave --device unset so Demucs auto-detects, rather than requesting "cuda"
+    // outright and hard-failing on a machine/torch build without working CUDA.
+    const useGPU = req.body.useGPU === true || req.body.useGPU === 'true';
+    const pyArgs = ['--input', audioPath, '--output', SEPARATED_DIR, '--engine', engine];
+    if (engine === 'demucs') {
+        if (!useGPU) pyArgs.push('--device', 'cpu');
+        const demucsFolder = (req.body.demucsFolder || '').trim();
+        const demucsSegment = (req.body.demucsSegment || '').trim();
+        if (demucsFolder) pyArgs.push('--demucs-folder', demucsFolder);
+        if (demucsSegment) pyArgs.push('--segment', demucsSegment);
+    }
+
     const pyScript = getPythonScriptPath('vocal_separator.py');
-    const child = spawn(PYTHON_CMD, [pyScript, '--input', audioPath, '--output', SEPARATED_DIR], { env: PYTHON_ENV });
+    const child = spawn(PYTHON_CMD, [pyScript, ...pyArgs], { env: PYTHON_ENV });
     trackProcess(child);
 
     let output = '';
-    child.stdout.on('data', d => output += d.toString());
+    const stdoutDecoder = new StringDecoder('utf8');
+    child.stdout.on('data', d => output += stdoutDecoder.write(d));
     child.on('error', (err) => {
         console.error('[Python Vocal Separator Error]', err);
         bgmJobs.set(jobId, { status: 'error', success: false, error: err.message });
@@ -1135,7 +1293,7 @@ app.get('/api/check-whisper-folder', (req, res) => {
 });
 
 app.post('/api/transcribe-whisper', async (req, res) => {
-    const { whisperFolder, audioPath, videoPath, model = 'medium', device = 'auto' } = req.body;
+    const { whisperFolder, audioPath, videoPath, model = 'medium', device = 'auto', language } = req.body;
     if (!whisperFolder || !fs.existsSync(whisperFolder)) {
         return res.status(400).json({ success: false, error: 'Whisper folder not found' });
     }
@@ -1149,6 +1307,7 @@ app.post('/api/transcribe-whisper', async (req, res) => {
     const runnerFile = isWin ? 'run.bat' : 'run.sh';
     const runnerPath = path.join(whisperFolder, runnerFile);
     const args = ['--audio', inputAudio, '--output_srt', outSrt, '--model', model, '--device', device];
+    if (language && String(language).toLowerCase() !== 'auto') args.push('--language', language);
 
     let child;
     let stderrBuffer = '';
@@ -1170,12 +1329,14 @@ app.post('/api/transcribe-whisper', async (req, res) => {
     // transcribe.py prints a progress line per subtitle cue. If nothing reads
     // stdout, the OS pipe buffer fills up on long videos, Python blocks on
     // write(), and this request would hang forever waiting for 'close'.
+    const stdoutDecoder = new StringDecoder('utf8');
+    const stderrDecoder = new StringDecoder('utf8');
     child.stdout.on('data', (d) => {
-        stdoutBuffer += d.toString();
+        stdoutBuffer += stdoutDecoder.write(d);
     });
 
     child.stderr.on('data', (d) => {
-        stderrBuffer += d.toString();
+        stderrBuffer += stderrDecoder.write(d);
     });
 
     child.on('error', (err) => {
@@ -1378,11 +1539,25 @@ app.post('/api/generate-audio', (req, res) => {
     }
 
     let voice = 'km-KH-PisethNeural';
-    if (gender === 'Female' || gender === 'female') {
-        voice = 'km-KH-SreymomNeural';
-    }
+    const isFemale = String(gender).toLowerCase() === 'female';
+    const langStr = String(language || 'khmer').toLowerCase();
+
     if (customVoice) {
         voice = customVoice;
+    } else if (langStr.includes('en') || langStr.includes('english')) {
+        voice = isFemale ? 'en-US-JennyNeural' : 'en-US-GuyNeural';
+    } else if (langStr.includes('zh') || langStr.includes('chinese')) {
+        voice = isFemale ? 'zh-CN-XiaoxiaoNeural' : 'zh-CN-YunxiNeural';
+    } else if (langStr.includes('th') || langStr.includes('thai')) {
+        voice = isFemale ? 'th-TH-PremwadeeNeural' : 'th-TH-NiwatNeural';
+    } else if (langStr.includes('vi') || langStr.includes('viet')) {
+        voice = isFemale ? 'vi-VN-HoaiMyNeural' : 'vi-VN-NamMinhNeural';
+    } else if (langStr.includes('ja') || langStr.includes('japan')) {
+        voice = isFemale ? 'ja-JP-NanamiNeural' : 'ja-JP-KeitaNeural';
+    } else if (langStr.includes('ko') || langStr.includes('korean')) {
+        voice = isFemale ? 'ko-KR-SunHiNeural' : 'ko-KR-InJoonNeural';
+    } else {
+        voice = isFemale ? 'km-KH-SreymomNeural' : 'km-KH-PisethNeural';
     }
 
     const prosody = getEmotionProsody(emotion, pitch, volume, speed);
@@ -1418,8 +1593,10 @@ app.post('/api/generate-audio', (req, res) => {
 
     let output = '';
     let stderr = '';
-    child.stdout.on('data', d => output += d.toString());
-    child.stderr.on('data', d => stderr += d.toString());
+    const stdoutDecoder = new StringDecoder('utf8');
+    const stderrDecoder = new StringDecoder('utf8');
+    child.stdout.on('data', d => output += stdoutDecoder.write(d));
+    child.stderr.on('data', d => stderr += stderrDecoder.write(d));
     child.on('error', (err) => {
         console.error('[TTS Error]', err);
         if (!res.headersSent) res.status(500).json({ success: false, error: err.message });
@@ -1525,8 +1702,10 @@ app.post('/api/generate-batch-audio', async (req, res) => {
 
     let output = '';
     let stderr = '';
-    child.stdout.on('data', d => output += d.toString());
-    child.stderr.on('data', d => stderr += d.toString());
+    const stdoutDecoder = new StringDecoder('utf8');
+    const stderrDecoder = new StringDecoder('utf8');
+    child.stdout.on('data', d => output += stdoutDecoder.write(d));
+    child.stderr.on('data', d => stderr += stderrDecoder.write(d));
 
     // A child with zero 'error' listeners that emits 'error' (e.g. PYTHON_CMD
     // missing/ENOENT) is an uncaught exception in Node and crashes the whole
@@ -1716,8 +1895,12 @@ app.post('/api/check-video-preview', (req, res) => {
     }
 });
 
-// 8. Video Rendering Pipeline (with color adjustments, flips & vignette)
+// 8. Video Rendering Pipeline (with color adjustments, flips, audio tracks & vignette)
 app.post('/api/render', upload.any(), (req, res) => {
+    // Disable HTTP timeout for long render operations
+    req.setTimeout(0);
+    res.setTimeout(0);
+
     let renderOpts = { ...req.body };
     if (req.body.data) {
         try {
@@ -1726,78 +1909,104 @@ app.post('/api/render', upload.any(), (req, res) => {
         } catch (e) { }
     }
 
-    const {
-        videoPath,
-        subtitles = [],
-        bgmPath,
-        bgmVolume = 0.5,
-        voiceVolume = 1.0,
-        duckingEnabled = true,
-        muteOriginal = true,
-        burnSubtitles = true,
-        subtitleFont = 'KantumruyPro-Bold',
-        subtitleFontSize = 24,
-        subtitleFontColor = '&H00FFFFFF',
-        subtitleOutlineColor = '&H00000000',
-        subtitlePosition = 'bottom',
-        resolution = '1080p',
-        encoder = 'auto',
-        exportPath,
-        outputFileName,
-        outputPath: explicitOutputPath,
-        videoColorAdj,
-        colorAdjustments,
-        videoVignette,
-        isFlippedH,
-        isFlippedV
-    } = renderOpts;
+    // 1. Resolve uploaded video file or explicit path
+    const uploadedVideo = (req.files || []).find(f => f.fieldname === 'videoFile' || f.fieldname === 'video');
+    let videoPath = resolveLocalFilePath(renderOpts.videoPath || renderOpts.filePath || renderOpts.videoFilePath || renderOpts.sourceFilePath || (uploadedVideo ? uploadedVideo.path : null));
 
-    if (!videoPath || !fs.existsSync(videoPath)) {
-        return res.status(400).json({ success: false, error: 'Source video not found' });
+    const isAudioOnly = renderOpts.audioOnly === true || renderOpts.audioOnly === 'true';
+
+    // If video export, require a valid source video
+    if (!isAudioOnly) {
+        if (!videoPath || !fs.existsSync(videoPath)) {
+            return res.status(400).json({ success: false, error: 'Source video not found' });
+        }
     }
 
-    // Guard against a second render starting before the first finishes (e.g. a
-    // double-click, or the Render Queue racing a manual render). Without this,
-    // the second call overwrote the module-level activeRenderProcess/currentRenderJob
-    // state, permanently orphaning the first ffmpeg process (uncancellable) while
-    // both fought for the same GPU/CPU encoder.
+    // Guard against simultaneous renders
     if (getRenderProgress().status === 'rendering') {
         return res.status(409).json({ success: false, error: 'A render is already in progress. Wait for it to finish or cancel it first.' });
     }
 
-    const baseName = path.basename(videoPath, path.extname(videoPath));
-    const finalName = outputFileName || `${baseName}_DR_Dubbed.mp4`;
-    const targetFolder = exportPath || EXPORTS_DIR;
-    const outputPath = explicitOutputPath || path.join(targetFolder, finalName);
+    // 2. Resolve BGM file or explicit path
+    const uploadedBgm = (req.files || []).find(f => f.fieldname === 'bgmFile' || f.fieldname === 'bgm');
+    let bgmPath = resolveLocalFilePath(renderOpts.bgmPath || renderOpts.bgmTrack?.serverPath || (uploadedBgm ? uploadedBgm.path : null));
+    const bgmVolume = renderOpts.bgmVolume !== undefined ? parseFloat(renderOpts.bgmVolume) : (renderOpts.bgmTrack?.volume !== undefined ? parseFloat(renderOpts.bgmTrack.volume) : 0.5);
 
+    // 3. Resolve imported audio files and audioTracks / subtitles
+    const importedAudioFiles = (req.files || []).filter(f => f.fieldname === 'importedAudioFiles');
+    const rawAudioTracks = renderOpts.audioTracks || renderOpts.subtitles || [];
+    const resolvedAudioTracks = rawAudioTracks.map(track => {
+        let filePath = track.file || track.audioPath || track.url;
+        if (typeof filePath === 'string') {
+            const importMatch = filePath.match(/^__imported__:(\d+)$/);
+            if (importMatch) {
+                const idx = parseInt(importMatch[1], 10);
+                if (importedAudioFiles[idx]) {
+                    filePath = importedAudioFiles[idx].path;
+                }
+            } else {
+                filePath = resolveLocalFilePath(filePath);
+            }
+        }
+        return {
+            ...track,
+            file: filePath,
+            audioPath: filePath,
+            start: track.start !== undefined ? parseFloat(track.start) : (track.audioStart !== undefined ? parseFloat(track.audioStart) : (track.textStart !== undefined ? parseFloat(track.textStart) : (track.startTime !== undefined ? parseFloat(track.startTime) : 0))),
+            duration: track.duration ? parseFloat(track.duration) : undefined,
+            volume: track.volume !== undefined ? parseFloat(track.volume) : 1.0,
+            speed: track.speed !== undefined ? parseFloat(track.speed) : 1.0,
+            pitch: track.pitch !== undefined ? parseFloat(track.pitch) : 0,
+            sourceOffset: track.sourceOffset ? parseFloat(track.sourceOffset) : 0
+        };
+    });
+
+    // 4. Resolve output folder and file name
+    const ext = isAudioOnly ? (renderOpts.audioFormat || 'mp3') : 'mp4';
+    const baseName = videoPath ? path.basename(videoPath, path.extname(videoPath)) : `audio_${Date.now()}`;
+    const defaultOutputName = isAudioOnly ? `${baseName}_Dubbed.${ext}` : `${baseName}_DR_Dubbed.mp4`;
+    const finalName = renderOpts.outputFileName || defaultOutputName;
+    const targetFolder = renderOpts.exportPath || EXPORTS_DIR;
+
+    try {
+        if (!fs.existsSync(targetFolder)) {
+            fs.mkdirSync(targetFolder, { recursive: true });
+        }
+    } catch (e) {
+        console.error('[Render] Could not create export folder:', targetFolder, e);
+    }
+    const outputPath = renderOpts.outputPath || path.join(targetFolder, finalName);
+
+    const shouldShowSubs = renderOpts.showSubtitles !== undefined 
+        ? (renderOpts.showSubtitles === true || renderOpts.showSubtitles === 'true')
+        : (renderOpts.burnSubtitles === true || renderOpts.burnSubtitles === 'true');
+
+    // 5. Run render and wait for completion
     renderVideo({
+        ...renderOpts,
         videoPath,
-        subtitles,
+        audioOnly: isAudioOnly,
+        audioFormat: renderOpts.audioFormat || 'mp3',
+        audioTracks: resolvedAudioTracks,
+        subtitles: Array.isArray(renderOpts.subtitles) ? renderOpts.subtitles : (Array.isArray(renderOpts.audioTracks) ? renderOpts.audioTracks : resolvedAudioTracks),
+        srtContent: renderOpts.srtContent,
+        showSubtitles: shouldShowSubs,
+        burnSubtitles: shouldShowSubs,
         bgmPath,
         bgmVolume,
-        voiceVolume,
-        duckingEnabled,
-        muteOriginal,
-        burnSubtitles,
-        subtitleFont,
-        subtitleFontSize,
-        subtitleFontColor,
-        subtitleOutlineColor,
-        subtitlePosition,
-        resolution,
-        encoder,
-        outputPath,
-        videoColorAdj,
-        colorAdjustments,
-        videoVignette,
-        isFlippedH,
-        isFlippedV
+        outputPath
     },
-        (progress, eta) => { },
-        (outputFile) => { },
-        (err) => { });
-
-    res.json({ success: true, message: 'Render started', outputPath });
+    (progress, eta) => { },
+    (outputFile) => {
+        if (!res.headersSent) {
+            res.json({ success: true, message: 'Render completed successfully', outputPath: outputFile });
+        }
+    },
+    (err) => {
+        if (!res.headersSent) {
+            res.status(500).json({ success: false, error: err.message || 'Render failed' });
+        }
+    });
 });
 
 app.get('/api/render-progress', (req, res) => {
@@ -1806,7 +2015,8 @@ app.get('/api/render-progress', (req, res) => {
         status: progress.status === 'rendering' ? 'processing' : progress.status,
         percent: progress.progress,
         eta: progress.eta,
-        error: progress.error
+        error: progress.error,
+        outputFile: progress.outputFile
     });
 });
 

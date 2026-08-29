@@ -12,6 +12,7 @@ __pycache__/
 *.py[cod]
 whisper_engine/venv/
 whisper_engine/__pycache__/
+backend/demucs-env/
 
 # Build & Distributables
 dist/
