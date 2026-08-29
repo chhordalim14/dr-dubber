@@ -16,7 +16,6 @@ app.commandLine.appendSwitch('ignore-gpu-blocklist');
 app.commandLine.appendSwitch('enable-accelerated-video-decode');
 app.commandLine.appendSwitch('enable-accelerated-mjpeg-decode');
 app.commandLine.appendSwitch('enable-features', 'VaapiVideoDecoder,CanvasOopRasterization');
-app.commandLine.appendSwitch('js-flags', '--max-old-space-size=4096');
 
 const PORT = 3001;
 
@@ -352,8 +351,10 @@ ipcMain.handle('app:readFileAsText', async (event, filePath) => {
     }
 });
 
-// Real GPU name (previously hardcoded to "Intel(R) UHD Graphics 730" for every user/machine).
+// Real GPU name with lifetime cache
+let _cachedGpuName = null;
 function detectGpuName() {
+    if (_cachedGpuName) return Promise.resolve(_cachedGpuName);
     return new Promise((resolve) => {
         let cmd;
         if (process.platform === 'win32') {
@@ -365,62 +366,77 @@ function detectGpuName() {
         }
         exec(cmd, { timeout: 5000 }, (err, stdout) => {
             const name = (stdout || '').trim();
-            resolve(name || 'Unknown GPU');
+            _cachedGpuName = name || 'Unknown GPU';
+            resolve(_cachedGpuName);
         });
     });
 }
 
-// Real free/total space for the drive that hosts app storage (previously
-// hardcoded to {freeGB:110, totalGB:500} regardless of the actual disk).
+// Drive space info with 30s TTL cache to avoid spawning subshells on every check
+let _driveSpaceCache = { data: null, timestamp: 0 };
 function getDriveSpaceInfo(targetPath) {
+    if (_driveSpaceCache.data && (Date.now() - _driveSpaceCache.timestamp < 30000)) {
+        return Promise.resolve(_driveSpaceCache.data);
+    }
     return new Promise((resolve) => {
         if (process.platform === 'win32') {
             const letter = path.parse(targetPath).root.replace(/[\\/:]/g, '') || 'C';
             const cmd = `powershell -NoProfile -Command "Get-PSDrive -Name '${letter}' | Select-Object Free,Used | ConvertTo-Json"`;
             exec(cmd, { timeout: 5000 }, (err, stdout) => {
-                if (err) return resolve(null);
+                if (err) return resolve(_driveSpaceCache.data || null);
                 try {
                     const data = JSON.parse(stdout);
-                    resolve({
+                    const res = {
                         freeGB: Math.round(data.Free / (1024 ** 3)),
                         totalGB: Math.round((data.Free + data.Used) / (1024 ** 3))
-                    });
-                } catch (e) { resolve(null); }
+                    };
+                    _driveSpaceCache = { data: res, timestamp: Date.now() };
+                    resolve(res);
+                } catch (e) { resolve(_driveSpaceCache.data || null); }
             });
         } else {
             exec(`df -k "${targetPath}"`, { timeout: 5000 }, (err, stdout) => {
-                if (err) return resolve(null);
+                if (err) return resolve(_driveSpaceCache.data || null);
                 try {
                     const lines = stdout.trim().split('\n');
                     const parts = lines[lines.length - 1].split(/\s+/);
                     const totalKB = parseInt(parts[1], 10);
                     const availKB = parseInt(parts[3], 10);
-                    resolve({ freeGB: Math.round(availKB / (1024 * 1024)), totalGB: Math.round(totalKB / (1024 * 1024)) });
-                } catch (e) { resolve(null); }
+                    const res = { freeGB: Math.round(availKB / (1024 * 1024)), totalGB: Math.round(totalKB / (1024 * 1024)) };
+                    _driveSpaceCache = { data: res, timestamp: Date.now() };
+                    resolve(res);
+                } catch (e) { resolve(_driveSpaceCache.data || null); }
             });
         }
     });
 }
 
-async function getDirSizeBytes(dir) {
+async function getDirSizeBytes(dir, protectedPaths = new Set()) {
     let total = 0;
     let entries;
     try { entries = await fs.promises.readdir(dir, { withFileTypes: true }); } catch (e) { return 0; }
     for (const entry of entries) {
         const full = path.join(dir, entry.name);
+        if (protectedPaths.has(normalizePathForCompare(full))) continue;
         try {
-            if (entry.isDirectory()) total += await getDirSizeBytes(full);
+            if (entry.isDirectory()) total += await getDirSizeBytes(full, protectedPaths);
             else total += (await fs.promises.stat(full)).size;
         } catch (e) {}
     }
     return total;
 }
 
-async function clearDirContents(dir) {
+function normalizePathForCompare(p) {
+    try { return path.resolve(p).toLowerCase(); } catch (e) { return String(p).toLowerCase(); }
+}
+
+async function clearDirContents(dir, protectedPaths = new Set()) {
     let entries;
     try { entries = await fs.promises.readdir(dir); } catch (e) { return; }
     for (const name of entries) {
-        try { await fs.promises.rm(path.join(dir, name), { recursive: true, force: true }); } catch (e) {}
+        const full = path.join(dir, name);
+        if (protectedPaths.has(normalizePathForCompare(full))) continue;
+        try { await fs.promises.rm(full, { recursive: true, force: true }); } catch (e) {}
     }
 }
 
@@ -442,14 +458,16 @@ ipcMain.handle('app:getDriveSpace', async () => {
     return (await getDriveSpaceInfo(STORAGE_BASE)) || { freeGB: 0, totalGB: 0 };
 });
 
-ipcMain.handle('app:getCacheSize', async () => {
+ipcMain.handle('app:getCacheSize', async (event, payload) => {
+    const protectedPaths = new Set((payload?.protectedFiles || []).map(normalizePathForCompare));
     let totalBytes = 0;
-    for (const dir of CACHE_DIRS) totalBytes += await getDirSizeBytes(dir);
+    for (const dir of CACHE_DIRS) totalBytes += await getDirSizeBytes(dir, protectedPaths);
     return { sizeMB: Math.round(totalBytes / (1024 * 1024)), success: true };
 });
 
-ipcMain.handle('app:clearCache', async () => {
-    for (const dir of CACHE_DIRS) await clearDirContents(dir);
+ipcMain.handle('app:clearCache', async (event, payload) => {
+    const protectedPaths = new Set((payload?.protectedFiles || []).map(normalizePathForCompare));
+    for (const dir of CACHE_DIRS) await clearDirContents(dir, protectedPaths);
     return { success: true, message: 'Cache cleared successfully' };
 });
 
@@ -515,7 +533,7 @@ ipcMain.handle('whisper:checkFolder', async (event, folderPath) => {
     };
 });
 
-ipcMain.handle('whisper:transcribe', async (event, { id, whisperFolder, audioPath, videoPath, model, device }) => {
+ipcMain.handle('whisper:transcribe', async (event, { id, whisperFolder, audioPath, videoPath, model, device, language }) => {
     if (!whisperFolder || !fs.existsSync(whisperFolder)) {
         return { success: false, error: 'Whisper folder not found' };
     }
@@ -535,6 +553,7 @@ ipcMain.handle('whisper:transcribe', async (event, { id, whisperFolder, audioPat
         const args = ['--audio', inputAudio, '--output_srt', outSrt];
         if (model) args.push('--model', model);
         if (device) args.push('--device', device);
+        if (language && String(language).toLowerCase() !== 'auto') args.push('--language', language);
 
         try {
             // Force UTF-8 I/O: transcribe.py prints non-ASCII transcript text

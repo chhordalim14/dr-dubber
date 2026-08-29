@@ -123,7 +123,7 @@ def transcribe_faster_whisper(audio_path, output_srt, model_size="medium", devic
     transcribe_kwargs = {
         "beam_size": max(1, int(beam_size)),
         "vad_filter": True,
-        "vad_parameters": dict(min_silence_duration_ms=400)
+        "vad_parameters": dict(min_silence_duration_ms=250, speech_pad_ms=150)
     }
     if language and language.lower() != "auto":
         transcribe_kwargs["language"] = language

@@ -4,9 +4,18 @@ const execFileAsync = promisify(execFile);
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { getFFmpegBinary } = require('./ffmpeg_env');
+const { getFFmpegBinary, getFFprobeBinary } = require('./ffmpeg_env');
 
 let activeRenderProcess = null;
+
+function escapeFfmpegFilterPath(p) {
+    if (!p || typeof p !== 'string') return '';
+    // Normalize to forward slashes, escape colons for FFmpeg filter parser, and escape single quotes.
+    // Inside a filter arg already wrapped in '...', a literal quote must become '\'' (close, escaped
+    // quote, reopen) — NOT '\\'' (extra backslash), which breaks filtergraph parsing for any path
+    // containing an apostrophe (e.g. a Windows user folder like C:\Users\O'Brien).
+    return p.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''");
+}
 let currentRenderJob = {
     status: 'idle',
     progress: 0,
@@ -101,7 +110,7 @@ async function getVideoDuration(videoPath) {
     } catch (e) {}
 
     try {
-        const { stdout } = await execFileAsync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', videoPath], { timeout: 5000 });
+        const { stdout } = await execFileAsync(getFFprobeBinary(), ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', videoPath], { timeout: 5000 });
         const dur = parseFloat(stdout.trim());
         const result = (dur && !isNaN(dur) && dur > 0) ? dur : null;
         _videoDurationCache.set(cacheKey, result);
@@ -112,37 +121,82 @@ async function getVideoDuration(videoPath) {
 }
 
 function parseTimeToSeconds(timeStr) {
-    if (typeof timeStr === 'number') return timeStr;
+    if (typeof timeStr === 'number') return isNaN(timeStr) ? 0 : timeStr;
     if (!timeStr) return 0;
     const parts = String(timeStr).replace(',', '.').split(':');
     if (parts.length === 3) {
-        return parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
+        const val = parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
+        return isNaN(val) ? 0 : val;
     } else if (parts.length === 2) {
-        return parseFloat(parts[0]) * 60 + parseFloat(parts[1]);
+        const val = parseFloat(parts[0]) * 60 + parseFloat(parts[1]);
+        return isNaN(val) ? 0 : val;
     }
-    return parseFloat(timeStr) || 0;
+    const val = parseFloat(timeStr);
+    return isNaN(val) ? 0 : val;
 }
 
 function formatSrtTimestamp(seconds) {
     const secNum = Math.max(0, parseFloat(seconds) || 0);
+    if (isNaN(secNum) || !isFinite(secNum)) return '00:00:00,000';
     const hrs = Math.floor(secNum / 3600);
     const mins = Math.floor((secNum % 3600) / 60);
     const secs = Math.floor(secNum % 60);
-    const ms = Math.floor((secNum % 1) * 1000);
+    const ms = Math.min(999, Math.floor((secNum % 1) * 1000));
     return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
+}
+
+function sanitizeSrtContent(rawSrt) {
+    if (!rawSrt || typeof rawSrt !== 'string') return '';
+    // Strip HTML/font tags
+    const cleaned = rawSrt.replace(/<\/?font[^>]*>/gi, '').replace(/<[^>]+>/g, '').trim();
+    if (!cleaned) return '';
+
+    const blocks = cleaned.split(/\r?\n\r?\n+/);
+    const validBlocks = [];
+    let cueIndex = 1;
+
+    for (const block of blocks) {
+        const lines = block.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        if (lines.length < 2) continue;
+
+        const timeLineIdx = lines.findIndex(l => l.includes('-->'));
+        if (timeLineIdx === -1) continue;
+
+        const timeLine = lines[timeLineIdx];
+        const timeParts = timeLine.split('-->').map(t => t.trim());
+        if (timeParts.length !== 2) continue;
+
+        const startSec = parseTimeToSeconds(timeParts[0]);
+        const endSec = parseTimeToSeconds(timeParts[1]);
+        if (isNaN(startSec) || isNaN(endSec) || endSec <= startSec) continue;
+
+        const textLines = lines.slice(timeLineIdx + 1).join('\n').trim();
+        if (!textLines) continue;
+
+        validBlocks.push(`${cueIndex++}\n${formatSrtTimestamp(startSec)} --> ${formatSrtTimestamp(endSec)}\n${textLines}`);
+    }
+
+    return validBlocks.join('\n\n');
 }
 
 function createSrtFile(subtitles, outputPath) {
     let srtContent = '';
-    subtitles.forEach((sub, idx) => {
-        const startSec = parseTimeToSeconds(sub.startTime || sub.textStart || sub.start || 0);
-        const endSec = parseTimeToSeconds(sub.endTime || sub.textEnd || sub.end || (startSec + 2));
+    let cueIndex = 1;
+    (subtitles || []).forEach((sub) => {
         const text = (sub.text || '').trim();
-        if (text) {
-            srtContent += `${idx + 1}\n${formatSrtTimestamp(startSec)} --> ${formatSrtTimestamp(endSec)}\n${text}\n\n`;
-        }
+        if (!text) return;
+        const rawStart = sub.startTime !== undefined ? sub.startTime : (sub.textStart !== undefined ? sub.textStart : (sub.start !== undefined ? sub.start : (sub.audioStart !== undefined ? sub.audioStart : 0)));
+        const startSec = Math.max(0, parseTimeToSeconds(rawStart));
+        const rawEnd = sub.endTime !== undefined ? sub.endTime : (sub.textEnd !== undefined ? sub.textEnd : (sub.end !== undefined ? sub.end : (sub.audioEnd !== undefined ? sub.audioEnd : (startSec + 2))));
+        const endSec = Math.max(startSec + 0.1, parseTimeToSeconds(rawEnd));
+        if (isNaN(startSec) || isNaN(endSec) || endSec <= startSec) return;
+        srtContent += `${cueIndex++}\n${formatSrtTimestamp(startSec)} --> ${formatSrtTimestamp(endSec)}\n${text}\n\n`;
     });
-    fs.writeFileSync(outputPath, srtContent, 'utf8');
+    if (srtContent.trim().length > 0) {
+        fs.writeFileSync(outputPath, srtContent.trim() + '\n', 'utf8');
+        return true;
+    }
+    return false;
 }
 
 /**
@@ -154,16 +208,39 @@ async function assembleDialogueStem(validSubs, tempDir, voiceVolume = 1.0) {
     if (!validSubs || validSubs.length === 0) return null;
     const stemPath = path.join(tempDir, 'dialogue_stem.wav');
 
-    if (validSubs.length === 1) {
-        const item = validSubs[0];
+    // Filter to only items where file exists on disk and is non-empty
+    const existing = validSubs.filter(sub => {
+        const aPath = sub.file || sub.audioPath;
+        if (!aPath) return false;
+        try {
+            return fs.existsSync(aPath) && fs.statSync(aPath).size > 0;
+        } catch (e) {
+            return false;
+        }
+    });
+    if (existing.length === 0) return null;
+
+    if (existing.length === 1) {
+        const item = existing[0];
         const aPath = item.file || item.audioPath;
-        const startSec = parseTimeToSeconds(item.audioStart || item.textStart || item.startTime || 0);
-        const delayMs = Math.max(0, Math.round(startSec * 1000));
+        const rawStart = item.start !== undefined ? item.start : (item.audioStart !== undefined ? item.audioStart : (item.textStart !== undefined ? item.textStart : (item.startTime || 0)));
+        const startSec = Math.max(0, parseTimeToSeconds(rawStart));
+        const delayMs = Math.round(startSec * 1000);
         const subVol = parseFloat(item.volume || '1.0') || 1.0;
         const totalVol = (voiceVolume * subVol).toFixed(2);
+
+        const afParts = [];
+        if (item.sourceOffset && parseFloat(item.sourceOffset) > 0) {
+            afParts.push(`atrim=start=${parseFloat(item.sourceOffset)}`);
+        }
+        if (item.speed && parseFloat(item.speed) !== 1.0) {
+            afParts.push(`atempo=${parseFloat(item.speed)}`);
+        }
+        afParts.push(`adelay=${delayMs}|${delayMs}`, `volume=${totalVol}`);
+
         const args = [
             '-y', '-i', aPath,
-            '-af', `adelay=${delayMs}|${delayMs},volume=${totalVol}`,
+            '-af', afParts.join(','),
             '-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2',
             stemPath
         ];
@@ -179,18 +256,29 @@ async function assembleDialogueStem(validSubs, tempDir, voiceVolume = 1.0) {
     const filterParts = [];
     const streamNames = [];
 
-    validSubs.forEach((sub, i) => {
+    existing.forEach((sub, i) => {
         const aPath = sub.file || sub.audioPath;
         args.push('-i', aPath);
-        const startSec = parseTimeToSeconds(sub.audioStart || sub.textStart || sub.startTime || 0);
-        const delayMs = Math.max(0, Math.round(startSec * 1000));
+        const rawStart = sub.start !== undefined ? sub.start : (sub.audioStart !== undefined ? sub.audioStart : (sub.textStart !== undefined ? sub.textStart : (sub.startTime || 0)));
+        const startSec = Math.max(0, parseTimeToSeconds(rawStart));
+        const delayMs = Math.round(startSec * 1000);
         const subVol = parseFloat(sub.volume || '1.0') || 1.0;
         const totalVol = (voiceVolume * subVol).toFixed(2);
-        filterParts.push(`[${i}:a]adelay=${delayMs}|${delayMs},volume=${totalVol}[a${i}]`);
+
+        const afParts = [];
+        if (sub.sourceOffset && parseFloat(sub.sourceOffset) > 0) {
+            afParts.push(`atrim=start=${parseFloat(sub.sourceOffset)}`);
+        }
+        if (sub.speed && parseFloat(sub.speed) !== 1.0) {
+            afParts.push(`atempo=${parseFloat(sub.speed)}`);
+        }
+        afParts.push(`adelay=${delayMs}|${delayMs}`, `volume=${totalVol}`);
+
+        filterParts.push(`[${i}:a]${afParts.join(',')}[a${i}]`);
         streamNames.push(`[a${i}]`);
     });
 
-    filterParts.push(`${streamNames.join('')}amix=inputs=${validSubs.length}:normalize=0[aout]`);
+    filterParts.push(`${streamNames.join('')}amix=inputs=${existing.length}:normalize=0:duration=longest[aout]`);
 
     const filterScriptPath = path.join(tempDir, 'audio_stem_filter.txt');
     fs.writeFileSync(filterScriptPath, filterParts.join(';\n'), 'utf8');
@@ -242,16 +330,22 @@ async function applyEncoderSettings(args, encoderPreference, resolution) {
 async function renderVideo(options, onProgress, onComplete, onError) {
     const {
         videoPath,
+        audioOnly = false,
+        audioFormat = 'mp3',
+        audioTracks = [],
         subtitles = [],
+        srtContent,
+        showSubtitles,
         bgmPath,
         bgmVolume = 0.5,
         voiceVolume = 1.0,
         duckingEnabled = true,
         duckingDepth = 'standard', // 'light' | 'standard' | 'deep'
         muteOriginal = true,
+        isOriginalAudioMuted,
         burnSubtitles = true,
         subtitlePreset = 'classic', // 'classic' | 'tiktok_pop' | 'neon_cyan' | 'royal_gold'
-        subtitleFont = 'KantumruyPro-Bold',
+        subtitleFont = 'Kantumruy Pro',
         subtitleFontSize = 24,
         subtitleFontColor = '&H00FFFFFF',
         subtitleOutlineColor = '&H00000000',
@@ -279,28 +373,109 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         const tempDir = path.join(os.tmpdir(), 'dr_dubber_render_' + Date.now());
         fs.mkdirSync(tempDir, { recursive: true });
 
-        // Filter valid subtitles with generated audio
-        const validSubs = (subtitles || []).filter(s => {
+        // Ensure output parent directory exists
+        const outDir = path.dirname(outputPath);
+        if (!fs.existsSync(outDir)) {
+            try { fs.mkdirSync(outDir, { recursive: true }); } catch (e) {}
+        }
+
+        // Gather all audio items (from audioTracks or subtitles)
+        const allAudioItems = (audioTracks && audioTracks.length > 0) ? audioTracks : subtitles;
+        const validSubs = (allAudioItems || []).filter(s => {
             const aPath = s.file || s.audioPath;
             return aPath && fs.existsSync(aPath);
         });
 
-        // 1. Pre-assemble dialogue stem in background (eliminates hundreds of stream inputs)
+        // 1. Pre-assemble dialogue stem
         let dialogueStemPath = null;
         if (validSubs.length > 0) {
             try {
                 dialogueStemPath = await assembleDialogueStem(validSubs, tempDir, voiceVolume);
             } catch (stemErr) {
-                console.warn('[Render Warning] Fast dialogue stem pre-assembly failed, falling back to direct inputs:', stemErr.message);
+                console.warn('[Render Warning] Fast dialogue stem pre-assembly failed:', stemErr.message);
                 dialogueStemPath = null;
             }
         }
 
-        // Determine real video duration for accurate progress & ETA
-        const videoDuration = providedDuration || (await getVideoDuration(videoPath)) || 60;
         const renderStartTime = Date.now();
 
-        // 2. Build FFmpeg command arguments
+        // ─────────────────────────────────────────────────────────────
+        // AUDIO ONLY EXPORT
+        // ─────────────────────────────────────────────────────────────
+        if (audioOnly) {
+            console.log(`[Render] Audio Only export to: ${outputPath}`);
+            const args = ['-y'];
+            let currentIn = 0;
+            let dIndex = -1;
+            let bIndex = -1;
+
+            if (dialogueStemPath && fs.existsSync(dialogueStemPath)) {
+                args.push('-i', dialogueStemPath);
+                dIndex = currentIn++;
+            }
+            if (bgmPath && fs.existsSync(bgmPath)) {
+                args.push('-i', bgmPath);
+                bIndex = currentIn++;
+            }
+
+            if (dIndex >= 0 && bIndex >= 0) {
+                const fComplex = [
+                    `[${bIndex}:a]volume=${bgmVolume}[bgm_vol]`,
+                    `[bgm_vol][${dIndex}:a]sidechaincompress=threshold=0.08:ratio=7:attack=15:release=350[bgm_ducked]`,
+                    `[bgm_ducked]equalizer=f=1100:t=q:w=1.5:g=-6[bgm_clean]`,
+                    `[bgm_clean][${dIndex}:a]amix=inputs=2:normalize=0:duration=longest[final_audio]`
+                ];
+                args.push('-filter_complex', fComplex.join(';'));
+                args.push('-map', '[final_audio]');
+            } else if (dIndex >= 0) {
+                args.push('-map', `${dIndex}:a`);
+            } else if (bIndex >= 0) {
+                args.push('-af', `volume=${bgmVolume}`);
+                args.push('-map', `${bIndex}:a`);
+            } else {
+                throw new Error('No audio track or BGM found to export.');
+            }
+
+            if (audioFormat === 'wav') {
+                args.push('-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2', outputPath);
+            } else {
+                args.push('-c:a', 'libmp3lame', '-b:a', '192k', '-ar', '44100', '-ac', '2', outputPath);
+            }
+
+            const ffmpeg = spawn(getFFmpegBinary(), args, { windowsHide: true });
+            activeRenderProcess = ffmpeg;
+
+            ffmpeg.on('close', (code) => {
+                activeRenderProcess = null;
+                try { if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true }); } catch (e) {}
+                if (code === 0 && fs.existsSync(outputPath)) {
+                    currentRenderJob.status = 'done';
+                    currentRenderJob.progress = 100;
+                    currentRenderJob.eta = '0s';
+                    if (onComplete) onComplete(outputPath);
+                } else {
+                    currentRenderJob.status = 'error';
+                    currentRenderJob.error = `Audio export exited with code ${code}`;
+                    if (onError) onError(new Error(currentRenderJob.error));
+                }
+            });
+
+            ffmpeg.on('error', (err) => {
+                activeRenderProcess = null;
+                try { if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true }); } catch (e) {}
+                currentRenderJob.status = 'error';
+                currentRenderJob.error = err.message;
+                if (onError) onError(err);
+            });
+
+            return;
+        }
+
+        // ─────────────────────────────────────────────────────────────
+        // VIDEO EXPORT
+        // ─────────────────────────────────────────────────────────────
+        const videoDuration = providedDuration || (await getVideoDuration(videoPath)) || 60;
+
         const args = ['-y'];
 
         // Main video input (input 0)
@@ -325,6 +500,8 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         const filterComplex = [];
 
         // Audio mixing & Studio Auto-Ducking
+        const isMuted = isOriginalAudioMuted !== undefined ? isOriginalAudioMuted : muteOriginal;
+
         if (dialogueInputIndex >= 0) {
             if (bgmInputIndex >= 0) {
                 const bgmVol = bgmVolume;
@@ -338,18 +515,43 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                     filterComplex.push(`[${bgmInputIndex}:a]volume=${bgmVol}[bgm_vol]`);
                     filterComplex.push(`[bgm_vol][${dialogueInputIndex}:a]sidechaincompress=${sidechainParams}[bgm_ducked]`);
                     filterComplex.push(`[bgm_ducked]equalizer=f=1100:t=q:w=1.5:g=-6[bgm_clean]`);
-                    filterComplex.push(`[bgm_clean][${dialogueInputIndex}:a]amix=inputs=2:normalize=0[final_audio]`);
+                    if (!isMuted) {
+                        filterComplex.push(`[0:a]volume=1.0[orig_a]`);
+                        filterComplex.push(`[bgm_clean][${dialogueInputIndex}:a][orig_a]amix=inputs=3:normalize=0:duration=longest[final_audio]`);
+                    } else {
+                        filterComplex.push(`[bgm_clean][${dialogueInputIndex}:a]amix=inputs=2:normalize=0:duration=longest[final_audio]`);
+                    }
                 } else {
                     filterComplex.push(`[${bgmInputIndex}:a]volume=${bgmVol}[bgm_vol]`);
-                    filterComplex.push(`[bgm_vol][${dialogueInputIndex}:a]amix=inputs=2:normalize=0[final_audio]`);
+                    if (!isMuted) {
+                        filterComplex.push(`[0:a]volume=1.0[orig_a]`);
+                        filterComplex.push(`[bgm_vol][${dialogueInputIndex}:a][orig_a]amix=inputs=3:normalize=0:duration=longest[final_audio]`);
+                    } else {
+                        filterComplex.push(`[bgm_vol][${dialogueInputIndex}:a]amix=inputs=2:normalize=0:duration=longest[final_audio]`);
+                    }
                 }
             } else {
-                filterComplex.push(`[${dialogueInputIndex}:a]anull[final_audio]`);
+                if (!isMuted) {
+                    filterComplex.push(`[0:a]volume=1.0[orig_a]`);
+                    filterComplex.push(`[${dialogueInputIndex}:a][orig_a]amix=inputs=2:normalize=0:duration=longest[final_audio]`);
+                } else {
+                    filterComplex.push(`[${dialogueInputIndex}:a]anull[final_audio]`);
+                }
             }
         } else if (bgmInputIndex >= 0) {
-            filterComplex.push(`[${bgmInputIndex}:a]volume=${bgmVolume}[final_audio]`);
+            if (!isMuted) {
+                filterComplex.push(`[${bgmInputIndex}:a]volume=${bgmVolume}[bgm_vol]`);
+                filterComplex.push(`[0:a]volume=1.0[orig_a]`);
+                filterComplex.push(`[bgm_vol][orig_a]amix=inputs=2:normalize=0:duration=longest[final_audio]`);
+            } else {
+                filterComplex.push(`[${bgmInputIndex}:a]volume=${bgmVolume}[final_audio]`);
+            }
         } else {
-            filterComplex.push(`[0:a]volume=1.0[final_audio]`);
+            if (!isMuted) {
+                filterComplex.push(`[0:a]volume=1.0[final_audio]`);
+            } else {
+                filterComplex.push(`aevalsrc=0:d=1[final_audio]`);
+            }
         }
 
         // Video Filters: Color Filters, Presets, Flips, Scaling & Subtitle Burning
@@ -403,11 +605,40 @@ async function renderVideo(options, onProgress, onComplete, onError) {
 
         // Subtitles burning or soft muxing
         let softSrtInputIndex = -1;
-        if (burnSubtitles && subtitles.length > 0) {
+        const shouldBurnSubs = (burnSubtitles === true || burnSubtitles === 'true' || showSubtitles === true || showSubtitles === 'true') && burnSubtitles !== false && showSubtitles !== false;
+
+        let validSrtPath = null;
+        if (shouldBurnSubs) {
             const srtPath = path.join(tempDir, 'subtitles_burn.srt');
-            createSrtFile(subtitles, srtPath);
-            const escapedSrtPath = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:');
-            const fontsDir = path.join(__dirname, '..', 'frontend', 'fonts').replace(/\\/g, '/').replace(/:/g, '\\:');
+            let srtReady = false;
+
+            if (typeof srtContent === 'string' && srtContent.trim().length > 0) {
+                const cleanedSrt = sanitizeSrtContent(srtContent);
+                if (cleanedSrt && cleanedSrt.trim().length > 0) {
+                    fs.writeFileSync(srtPath, cleanedSrt, 'utf8');
+                    srtReady = true;
+                }
+            }
+
+            if (!srtReady && Array.isArray(subtitles) && subtitles.length > 0) {
+                srtReady = createSrtFile(subtitles, srtPath);
+            }
+
+            if (srtReady && fs.existsSync(srtPath)) {
+                try {
+                    const stats = fs.statSync(srtPath);
+                    if (stats.size > 0) {
+                        validSrtPath = srtPath;
+                    }
+                } catch (e) {
+                    validSrtPath = null;
+                }
+            }
+        }
+
+        if (validSrtPath) {
+            const escapedSrtPath = escapeFfmpegFilterPath(validSrtPath);
+            const fontsDir = escapeFfmpegFilterPath(path.join(__dirname, '..', 'frontend', 'fonts'));
 
             if (hasSubtitlesFilter()) {
                 let subStyle = `Fontname=${subtitleFont},Fontsize=${subtitleFontSize},PrimaryColour=${subtitleFontColor},OutlineColour=${subtitleOutlineColor},BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV=30`;
@@ -423,7 +654,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             } else {
                 filterComplex.push(`${videoFilterStr}null[final_video]`);
                 softSrtInputIndex = nextInputIndex++;
-                args.push('-i', srtPath);
+                args.push('-i', validSrtPath);
             }
         } else {
             filterComplex.push(`${videoFilterStr}null[final_video]`);
