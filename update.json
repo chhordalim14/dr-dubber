@@ -1,6 +1,6 @@
 {
-  "version": "1.1.0",
-  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.1.0/DR.Dubber.Pro.Setup.1.1.0.exe",
+  "version": "1.1.2",
+  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.1.2/DR.Dubber.Pro.Setup.1.1.2.exe",
   "mac_link": "https://github.com/chhordalim14/dr-dubber/releases",
-  "notes": "- Fixed multi-project subtitle and audio track glitch across tabs\n- Implemented dynamic active-tab verification for background TTS and VoxCPM2 queue\n- Isolated Auto-Fit and Sync-End timeline processing per project tab\n- Added deep-cloned immutable subtitle state handling on tab switch\n- Fixed project tab switching and closure state persistence"
+  "notes": "- Fixed BGM/vocal isolation quality: real AI-based (Demucs) separation is now actually wired up and used when selected in Settings -> Vocal Removal Engine -- previously it silently fell back to a low-quality stereo-channel-cancellation trick even when \"Demucs\" was selected, with no error shown\n- Added automatic FFmpeg detection across common Windows install locations (winget, Chocolatey, Scoop, Program Files) for both rendering and Whisper transcription\n- Fixed hardware video encoder selection to verify the encoder actually works with a real test encode instead of trusting what FFmpeg reports as compiled in, fixing render failures on non-NVIDIA machines\n- Fixed several VoxCPM2 voice-generation integration issues\n- Reduced Whisper transcription minimum silence gap and added speech padding to cut down on clipped words at subtitle boundaries\n- Cached GPU name and drive space lookups instead of re-spawning a subprocess on every settings check\n- Various render pipeline reliability fixes (concurrent job file collisions, non-blocking video duration probing, subtitle path handling for filenames with special characters)"
 }
