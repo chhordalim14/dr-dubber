@@ -1261,43 +1261,43 @@
         </div>
 
         <div
-          class="flex items-center gap-1.5 bg-[var(--bg-panel)] rounded-lg px-2 py-1 border border-[var(--border-light)] shadow-sm overflow-x-auto scrollbar-none flex-wrap"
-          style="scrollbar-width: none">
+          class="flex items-center gap-1.5 bg-[var(--bg-panel)] rounded-lg px-2 py-1 border border-[var(--border-light)] shadow-sm overflow-x-auto custom-scrollbar flex-nowrap shrink-0 whitespace-nowrap"
+          style="scrollbar-width: thin">
           <span
             class="text-[9px] font-bold uppercase tracking-wide text-[var(--text-muted)] leading-none shrink-0 select-none pl-0.5">Transform</span>
           <button id="btn-flip-h"
-            class="p-1.5 hover:text-[var(--text-bright)] hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)]"
+            class="p-1.5 hover:text-[var(--text-bright)] hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)] shrink-0"
             title="Flip Horizontal">
             <div id="lottie-flip-h" class="w-4 h-4 lottie-icon"></div>
           </button>
           <button id="btn-flip-v"
-            class="p-1.5 hover:text-[var(--text-bright)] hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)]"
+            class="p-1.5 hover:text-[var(--text-bright)] hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)] shrink-0"
             title="Flip Vertical">
             <div id="lottie-flip-v" class="w-4 h-4 lottie-icon"></div>
           </button>
-          <div class="w-px h-3 bg-[var(--border-color)] mx-1"></div>
+          <div class="w-px h-3 bg-[var(--border-color)] mx-1 shrink-0"></div>
           <span
             class="text-[9px] font-bold uppercase tracking-wide text-[var(--text-muted)] leading-none shrink-0 select-none">Crop</span>
           <button id="btn-crop-mode"
-            class="p-1.5 hover:text-orange-500 hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)]"
+            class="p-1.5 hover:text-orange-500 hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)] shrink-0"
             title="Crop Video">
             <div id="lottie-crop-mode" class="w-4 h-4 lottie-icon"></div>
           </button>
           <button id="btn-reset-crop"
-            class="p-1.5 hover:text-[var(--text-bright)] hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)]"
+            class="p-1.5 hover:text-[var(--text-bright)] hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)] shrink-0"
             title="Reset Crop,Zoom,Stretch">
             <div id="lottie-reset-crop" class="w-4 h-4 lottie-icon"></div>
           </button>
           <button id="btn-vignette"
-            class="p-1.5 hover:text-[var(--text-bright)] hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)]"
+            class="p-1.5 hover:text-[var(--text-bright)] hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)] shrink-0"
             title="Vignette">
             <i data-lucide="aperture" class="w-[15px] h-[15px]"></i>
           </button>
-          <div class="w-px h-3 bg-[var(--border-color)] mx-1"></div>
+          <div class="w-px h-3 bg-[var(--border-color)] mx-1 shrink-0"></div>
           <span
             class="text-[9px] font-bold uppercase tracking-wide text-[var(--text-muted)] leading-none shrink-0 select-none">Overlay</span>
           <button id="btn-add-free-text"
-            class="p-1.5 hover:text-blue-400 hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)]"
+            class="p-1.5 hover:text-blue-400 hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)] shrink-0"
             title="Add Free Text">
             <div id="lottie-add-free-text" class="w-4 h-4 lottie-icon"></div>
           </button>
@@ -1305,32 +1305,32 @@
           <input type="file" id="image-upload-input" accept="image/png, image/jpeg, image/webp, image/gif"
             class="hidden" multiple />
           <button id="btn-add-image"
-            class="p-1.5 hover:text-emerald-500 hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)]"
+            class="p-1.5 hover:text-emerald-500 hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)] shrink-0"
             title="Add Image Overlay">
             <div id="lottie-add-image" class="w-4 h-4 lottie-icon"></div>
           </button>
           <input type="file" id="video-overlay-input" accept="video/mp4,video/webm,video/mov,video/mp2t" class="hidden"
             multiple />
           <button id="btn-add-video-overlay"
-            class="p-1.5 hover:text-sky-400 hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)]"
+            class="p-1.5 hover:text-sky-400 hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)] shrink-0"
             title="Add Video Overlay">
             <div id="lottie-video-overlay" class="w-4 h-4 lottie-icon"></div>
           </button>
-          <div class="w-px h-3 bg-[var(--border-color)] mx-1"></div>
+          <div class="w-px h-3 bg-[var(--border-color)] mx-1 shrink-0"></div>
           <span
             class="text-[9px] font-bold uppercase tracking-wide text-[var(--text-muted)] leading-none shrink-0 select-none">Look</span>
           <button id="btn-color-adjust"
-            class="p-1.5 hover:text-purple-400 hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)]"
+            class="p-1.5 hover:text-purple-400 hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)] shrink-0"
             title="Color Adjustment">
             <div id="lottie-color-adjust" class="w-4 h-4 lottie-icon"></div>
           </button>
           <button id="btn-aspect-ratio"
-            class="p-1.5 hover:text-sky-400 hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)]"
+            class="p-1.5 hover:text-sky-400 hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)] shrink-0"
             title="Aspect Ratio">
             <i data-lucide="ratio" class="w-[15px] h-[15px]"></i>
           </button>
           <button id="btn-video-preset"
-            class="p-1.5 hover:text-purple-400 hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)]"
+            class="p-1.5 hover:text-purple-400 hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)] shrink-0"
             title="Video Presets">
             <div id="lottie-video-preset" class="w-4 h-4 lottie-icon"></div>
           </button>
@@ -1714,24 +1714,24 @@
     <div class="flex-1 flex flex-col min-w-0 bg-[var(--bg-base)] h-full">
       <!-- Subtitle Data Panel -->
       <div class="flex-1 p-4 min-h-0 overflow-hidden flex flex-col">
-        <div class="flex items-center justify-between mb-2 px-1">
-          <div class="flex items-center gap-4">
-            <div class="text-sm font-semibold text-[var(--text-bright)] flex items-center gap-2">
+        <div class="flex items-center justify-between mb-2 px-1 overflow-x-auto custom-scrollbar flex-nowrap shrink-0" style="scrollbar-width: thin">
+          <div class="flex items-center gap-4 shrink-0 flex-nowrap">
+            <div class="text-sm font-semibold text-[var(--text-bright)] flex items-center gap-2 shrink-0">
               <i id="lottie-subtitle-data" class="w-4 h-4 lottie-icon text-[var(--text-bright)] shrink-0"></i>
               Subtitle Data
             </div>
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 shrink-0 flex-nowrap">
               <button id="btn-add-text"
-                class="group bg-[var(--bg-hover)] border border-[var(--border-light)] hover:bg-[var(--accent-primary)] hover:border-[var(--accent-primary)] hover:text-white text-[var(--text-primary)] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-md active:scale-[0.95]">
+                class="group bg-[var(--bg-hover)] border border-[var(--border-light)] hover:bg-[var(--accent-primary)] hover:border-[var(--accent-primary)] hover:text-white text-[var(--text-primary)] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-md active:scale-[0.95] shrink-0">
                 <i data-lucide="plus"
                   class="w-[14px] h-[14px] transition-transform duration-300 group-hover:scale-110 group-active:scale-90"></i>
                 Add Text
               </button>
 
               <div
-                class="flex items-center gap-1 bg-[var(--bg-hover)]/60 border border-[var(--border-color)] rounded-lg p-0.5">
+                class="flex items-center gap-1 bg-[var(--bg-hover)]/60 border border-[var(--border-color)] rounded-lg p-0.5 shrink-0 flex-nowrap">
                 <button id="btn-edit-selected"
-                  class="group bg-[var(--bg-hover)] border border-[var(--border-light)] hover:bg-blue-500/20 hover:border-blue-500 hover:text-blue-500 text-[var(--text-primary)] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-md active:scale-[0.95]"
+                  class="group bg-[var(--bg-hover)] border border-[var(--border-light)] hover:bg-blue-500/20 hover:border-blue-500 hover:text-blue-500 text-[var(--text-primary)] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-md active:scale-[0.95] shrink-0"
                   title="Edit checked items">
                   <i data-lucide="type-outline"
                     class="w-[14px] h-[14px] transition-transform duration-300 group-hover:scale-110 group-active:scale-90"></i>
@@ -1739,7 +1739,7 @@
                 </button>
 
                 <button id="btn-delete-selected"
-                  class="group bg-[var(--bg-hover)] border border-[var(--border-light)] hover:bg-red-500/20 hover:border-red-500 hover:text-red-500 text-[var(--text-primary)] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-md active:scale-[0.95]"
+                  class="group bg-[var(--bg-hover)] border border-[var(--border-light)] hover:bg-red-500/20 hover:border-red-500 hover:text-red-500 text-[var(--text-primary)] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-md active:scale-[0.95] shrink-0"
                   title="Delete checked items">
                   <i data-lucide="trash-2"
                     class="w-[14px] h-[14px] transition-transform duration-300 group-hover:scale-110 group-active:scale-90"></i>
@@ -1747,7 +1747,7 @@
                 </button>
 
                 <button id="btn-find-replace"
-                  class="group bg-[var(--bg-hover)] border border-[var(--border-light)] hover:bg-amber-500/20 hover:border-amber-500 hover:text-amber-400 text-[var(--text-primary)] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-md active:scale-[0.95]"
+                  class="group bg-[var(--bg-hover)] border border-[var(--border-light)] hover:bg-amber-500/20 hover:border-amber-500 hover:text-amber-400 text-[var(--text-primary)] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-md active:scale-[0.95] shrink-0"
                   title="Find & Replace (Ctrl+H)">
                   <i data-lucide="search-code"
                     class="w-[14px] h-[14px] transition-transform duration-300 group-hover:scale-110 group-active:scale-90"></i>
@@ -1755,7 +1755,7 @@
                 </button>
               </div>
 
-              <div class="flex items-center gap-3 ml-auto">
+              <div class="flex items-center gap-3 ml-auto shrink-0 flex-nowrap">
                 <button id="btn-open-batch-dubber" onclick="openBatchDubberModal()"
                   class="group bg-[var(--bg-hover)] border border-[var(--border-light)] hover:bg-amber-500/20 hover:border-amber-500 hover:text-amber-400 text-[var(--text-primary)] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-md active:scale-[0.95]"
                   title="🚀 Batch Multi-Episode Dubbing Queue">
@@ -1850,91 +1850,92 @@
         </div>
 
         <div
-          class="flex flex-col lg:flex-row lg:flex-wrap lg:items-center lg:justify-between gap-2 lg:gap-x-4 lg:gap-y-3 px-3 sm:px-5 py-2 sm:py-3 border-b border-[var(--border-color)] bg-[var(--bg-base)] shrink-0">
+          class="flex flex-row items-center justify-between gap-3 px-3 sm:px-5 py-2 border-b border-[var(--border-color)] bg-[var(--bg-base)] shrink-0 overflow-x-auto custom-scrollbar flex-nowrap"
+          style="scrollbar-width: thin">
           <div
-            class="flex items-center gap-4 flex-1 min-w-0 overflow-x-auto custom-scrollbar pt-1.5 pb-1 lg:pb-0 lg:flex-wrap">
+            class="flex items-center gap-3 sm:gap-4 shrink-0 flex-nowrap">
             <h3
-              class="flex items-center gap-2 text-base font-semibold text-[var(--text-bright)] tracking-wide whitespace-nowrap">
+              class="flex items-center gap-2 text-base font-semibold text-[var(--text-bright)] tracking-wide whitespace-nowrap shrink-0">
               <i id="lottie-timeline-editor" class="w-4 h-4 lottie-icon text-[var(--text-bright)] shrink-0"></i>
               <span>Timeline Editor</span>
             </h3>
 
-            <div class="hidden sm:block h-5 w-px bg-[var(--border-light)] opacity-60"></div>
+            <div class="h-5 w-px bg-[var(--border-light)] opacity-60 shrink-0"></div>
 
             <div class="flex items-center gap-2 shrink-0">
-              <span class="text-[11px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Zoom:</span>
+              <span class="text-[11px] font-bold text-[var(--text-secondary)] uppercase tracking-wider shrink-0">Zoom:</span>
               <input id="timeline-zoom" type="range" min="100" max="5000" value="100"
-                class="w-20 sm:w-28 h-1.5 bg-[var(--border-light)] rounded-lg appearance-none cursor-pointer"
+                class="w-20 sm:w-28 h-1.5 bg-[var(--border-light)] rounded-lg appearance-none cursor-pointer shrink-0"
                 style="accent-color: var(--accent-primary)" />
-              <span class="flex items-center">
+              <span class="flex items-center shrink-0">
                 <input id="timeline-zoom-display" type="number" min="100" max="5000" step="10" value="100"
                   class="w-11 text-[10px] font-mono text-[var(--text-muted)] text-right bg-transparent border-none outline-none focus:text-[var(--accent-primary)] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
                 <span class="text-[10px] text-[var(--text-muted)] font-mono">%</span>
               </span>
             </div>
 
-            <div class="hidden sm:block h-5 w-px bg-[var(--border-light)] opacity-60"></div>
+            <div class="h-5 w-px bg-[var(--border-light)] opacity-60 shrink-0"></div>
 
             <!-- Split button — always visible, independent of selection -->
-            <div id="split-control-group" class="flex items-center">
+            <div id="split-control-group" class="flex items-center shrink-0">
               <button id="btn-split-audio" title="Toggle split mode — click an audio clip to cut it at that point"
                 disabled
-                class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-all duration-300 ease-out shadow-sm border-emerald-500/40 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 opacity-40 cursor-not-allowed hover:shadow-lg hover:shadow-emerald-500/30 hover:brightness-110 hover:bg-emerald-500/25 hover:border-emerald-400 active:scale-[0.95] active:translate-y-0">
-                <i data-lucide="scissors" class="w-3.5 h-3.5"></i>
+                class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-all duration-300 ease-out shadow-sm border-emerald-500/40 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 opacity-40 cursor-not-allowed hover:shadow-lg hover:shadow-emerald-500/30 hover:brightness-110 hover:bg-emerald-500/25 hover:border-emerald-400 active:scale-[0.95] active:translate-y-0 shrink-0">
+                <i data-lucide="scissors" class="w-3.5 h-3.5 shrink-0"></i>
                 <span id="btn-split-label">Split</span>
               </button>
             </div>
 
-            <div id="context-controls" class="hidden flex-wrap items-center gap-4 animate-slide-in-right shrink-0">
-              <div class="hidden sm:block h-5 w-px bg-[var(--border-light)] opacity-60"></div>
+            <div id="context-controls" class="hidden flex-nowrap items-center gap-3 animate-slide-in-right shrink-0">
+              <div class="h-5 w-px bg-[var(--border-light)] opacity-60 shrink-0"></div>
 
-              <div id="speed-control-group" class="flex items-center gap-2">
-                <span class="text-[11px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Speed:</span>
+              <div id="speed-control-group" class="flex items-center gap-2 shrink-0">
+                <span class="text-[11px] font-bold text-[var(--text-secondary)] uppercase tracking-wider shrink-0">Speed:</span>
                 <input id="input-speed" type="range" step="0.1" min="0.5" max="2.5" value="1.0"
-                  class="w-16 h-1.5 bg-[var(--border-light)] rounded-lg appearance-none cursor-pointer"
+                  class="w-16 h-1.5 bg-[var(--border-light)] rounded-lg appearance-none cursor-pointer shrink-0"
                   style="accent-color: var(--accent-primary)" />
-                <span class="flex items-center">
+                <span class="flex items-center shrink-0">
                   <input id="display-speed" type="number" step="0.1" min="0.5" max="2.5" value="1.0"
                     class="w-9 text-[10px] font-mono text-[var(--text-muted)] text-right bg-transparent border-none outline-none focus:text-[var(--accent-primary)] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
                   <span class="text-[10px] text-[var(--text-muted)] font-mono">x</span>
                 </span>
               </div>
 
-              <div class="flex items-center gap-2">
-                <span class="text-[11px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Vol:</span>
+              <div class="flex items-center gap-2 shrink-0">
+                <span class="text-[11px] font-bold text-[var(--text-secondary)] uppercase tracking-wider shrink-0">Vol:</span>
                 <input id="input-volume" type="range" step="0.1" min="0" max="5.0" value="1.0"
-                  class="w-16 h-1.5 bg-[var(--border-light)] rounded-lg appearance-none cursor-pointer"
+                  class="w-16 h-1.5 bg-[var(--border-light)] rounded-lg appearance-none cursor-pointer shrink-0"
                   style="accent-color: var(--accent-primary)" />
                 <input id="display-volume" type="number" step="0.1" min="0" max="5.0" value="1.0"
-                  class="w-9 text-[10px] font-mono text-[var(--text-muted)] text-right bg-transparent border-none outline-none focus:text-[var(--accent-primary)] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+                  class="w-9 text-[10px] font-mono text-[var(--text-muted)] text-right bg-transparent border-none outline-none focus:text-[var(--accent-primary)] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none shrink-0" />
               </div>
 
-              <div id="pitch-control-group" class="flex items-center gap-2">
-                <span class="text-[11px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Pitch:</span>
+              <div id="pitch-control-group" class="flex items-center gap-2 shrink-0">
+                <span class="text-[11px] font-bold text-[var(--text-secondary)] uppercase tracking-wider shrink-0">Pitch:</span>
                 <input id="input-pitch" type="range" step="1" min="-12" max="12" value="0"
-                  class="w-16 h-1.5 bg-[var(--border-light)] rounded-lg appearance-none cursor-pointer"
+                  class="w-16 h-1.5 bg-[var(--border-light)] rounded-lg appearance-none cursor-pointer shrink-0"
                   style="accent-color: var(--accent-primary)" />
                 <input id="display-pitch" type="number" step="1" min="-12" max="12" value="0"
-                  class="w-9 text-[10px] font-mono text-[var(--text-muted)] text-right bg-transparent border-none outline-none focus:text-[var(--accent-primary)] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+                  class="w-9 text-[10px] font-mono text-[var(--text-muted)] text-right bg-transparent border-none outline-none focus:text-[var(--accent-primary)] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none shrink-0" />
               </div>
 
               <!-- Reverb button — only visible when audio is selected -->
-              <div id="reverb-control-group" class="hidden items-center">
+              <div id="reverb-control-group" class="hidden items-center shrink-0">
                 <button id="btn-reverb"
-                  class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-all duration-300 ease-out shadow-sm border-purple-500/40 text-purple-400 bg-purple-500/10 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-purple-500/30 hover:brightness-110 hover:bg-purple-500/25 hover:border-purple-400 active:scale-[0.95] active:translate-y-0">
-                  <i data-lucide="waves" class="w-3.5 h-3.5"></i>
+                  class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-all duration-300 ease-out shadow-sm border-purple-500/40 text-purple-400 bg-purple-500/10 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-purple-500/30 hover:brightness-110 hover:bg-purple-500/25 hover:border-purple-400 active:scale-[0.95] active:translate-y-0 shrink-0">
+                  <i data-lucide="waves" class="w-3.5 h-3.5 shrink-0"></i>
                   <span id="btn-reverb-label">Reverb</span>
                 </button>
               </div>
 
               <span id="display-selection-count"
-                class="text-[11px] font-bold text-[var(--accent-text)] hidden whitespace-nowrap ml-1 tracking-wide"> (2
+                class="text-[11px] font-bold text-[var(--accent-text)] hidden whitespace-nowrap ml-1 tracking-wide shrink-0"> (2
                 items) </span>
             </div>
           </div>
 
           <div
-            class="flex items-center gap-2 shrink-0 overflow-x-auto custom-scrollbar pb-1 lg:pb-0 lg:overflow-visible">
+            class="flex items-center gap-2 shrink-0 flex-nowrap">
             <div class="relative" id="lang-dropdown-container">
               <button id="btn-language-select"
                 class="flex items-center justify-between gap-2 bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] font-medium text-xs rounded-lg px-3 py-1.5 outline-none focus:border-[var(--accent-primary)] focus:ring-1 focus:ring-[var(--accent-primary)] transition-all duration-200 shadow-sm w-[110px] sm:w-[130px] active:scale-95">
@@ -3264,33 +3265,7 @@
               <div class="grid grid-cols-2 gap-3 mt-1">
                 <label
                   class="group relative flex flex-col p-3 cursor-pointer rounded-xl border border-[var(--border-light)] bg-[var(--bg-base)] hover:bg-[var(--bg-hover)] hover:shadow-md transition-all duration-300 ease-out hover:-translate-y-1 active:scale-[0.96]">
-                  <input type="radio" name="vocal-engine" value="spleeter" class="peer sr-only" checked />
-                  <div
-                    class="absolute inset-0 rounded-xl border-2 border-transparent peer-checked:border-blue-500 transition-colors pointer-events-none">
-                  </div>
-                  <div class="flex items-center justify-between mb-1">
-                    <span
-                      class="text-sm font-bold text-[var(--text-bright)] flex items-center gap-2 w-full overflow-hidden pr-2">
-                      <i data-lucide="cpu"
-                        class="w-4 h-4 text-blue-400 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 shrink-0"></i>
-                      Fast (FFmpeg)
-                    </span>
-                    <div
-                      class="w-5 h-5 rounded-full border border-[var(--border-light)] peer-checked:border-blue-500 peer-checked:bg-blue-500 flex items-center justify-center transition-all shadow-sm">
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                        stroke-width="3" stroke-linecap="round" stroke-linejoin="round"
-                        class="w-3 h-3 text-white opacity-0 peer-checked:opacity-100 transition-all transform scale-50 peer-checked:scale-100 duration-200">
-                        <polyline points="20 6 9 17 4 12"></polyline>
-                      </svg>
-                    </div>
-                  </div>
-                  <span class="text-[10px] text-[var(--text-secondary)] leading-tight mt-1">Default engine. Fast, but
-                    lower quality (simple stereo-channel trick, not AI).</span>
-                </label>
-
-                <label
-                  class="group relative flex flex-col p-3 cursor-pointer rounded-xl border border-[var(--border-light)] bg-[var(--bg-base)] hover:bg-[var(--bg-hover)] hover:shadow-md transition-all duration-300 ease-out hover:-translate-y-1 active:scale-[0.96]">
-                  <input type="radio" name="vocal-engine" value="demucs" class="peer sr-only" />
+                  <input type="radio" name="vocal-engine" value="demucs" class="peer sr-only" checked />
                   <div
                     class="absolute inset-0 rounded-xl border-2 border-transparent peer-checked:border-purple-500 transition-colors pointer-events-none peer-checked:shadow-[0_0_15px_-3px_rgba(168,85,247,0.3)]">
                   </div>
@@ -3310,9 +3285,54 @@
                       </svg>
                     </div>
                   </div>
-                  <span class="text-[10px] text-[var(--text-secondary)] leading-tight mt-1">Higher quality AI
-                    separation. Portable bundle.</span>
+                  <span class="text-[10px] text-[var(--text-secondary)] leading-tight mt-1">High quality AI stem separation. Portable bundle.</span>
                 </label>
+
+                <label
+                  class="group relative flex flex-col p-3 cursor-pointer rounded-xl border border-[var(--border-light)] bg-[var(--bg-base)] hover:bg-[var(--bg-hover)] hover:shadow-md transition-all duration-300 ease-out hover:-translate-y-1 active:scale-[0.96]">
+                  <input type="radio" name="vocal-engine" value="spleeter" class="peer sr-only" />
+                  <div
+                    class="absolute inset-0 rounded-xl border-2 border-transparent peer-checked:border-teal-500 transition-colors pointer-events-none peer-checked:shadow-[0_0_15px_-3px_rgba(20,184,166,0.3)]">
+                  </div>
+                  <div class="flex items-center justify-between mb-1">
+                    <span
+                      class="text-sm font-bold text-[var(--text-bright)] flex items-center gap-2 w-full overflow-hidden pr-2">
+                      <i data-lucide="music"
+                        class="w-4 h-4 text-teal-400 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 shrink-0"></i>
+                      Spleeter
+                    </span>
+                    <div
+                      class="w-5 h-5 rounded-full border border-[var(--border-light)] peer-checked:border-teal-500 peer-checked:bg-teal-500 flex items-center justify-center transition-all shadow-sm">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="3" stroke-linecap="round" stroke-linejoin="round"
+                        class="w-3 h-3 text-white opacity-0 peer-checked:opacity-100 transition-all transform scale-50 peer-checked:scale-100 duration-200">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                      </svg>
+                    </div>
+                  </div>
+                  <span class="text-[10px] text-[var(--text-secondary)] leading-tight mt-1">Fast AI vocal separation (2-stems). Portable bundle.</span>
+                </label>
+              </div>
+
+              <!-- Spleeter options — shown only when Spleeter is selected -->
+              <div id="spleeter-options"
+                class="flex flex-col gap-3 mt-1 p-3 rounded-xl bg-[var(--bg-base)] border border-[var(--border-light)] overflow-hidden transition-all duration-300 ease-in-out max-h-0 opacity-0 pointer-events-none border-opacity-0">
+                <div class="flex flex-col gap-1.5">
+                  <label class="text-xs text-[var(--text-secondary)] font-medium">Spleeter Folder Path</label>
+                  <div class="flex gap-2">
+                    <input id="setting-spleeter-folder" type="text"
+                      placeholder="Optional — leave blank to use the built-in Spleeter install"
+                      class="flex-1 text-xs bg-[var(--bg-hover)] border border-[var(--border-light)] rounded-lg px-3 py-2 text-[var(--text-primary)] placeholder-[var(--text-muted)] transition-colors focus:outline-none focus:border-[var(--accent-primary)]" />
+                    <button id="btn-browse-spleeter"
+                      class="px-3 py-2 rounded-lg text-xs font-medium bg-[var(--bg-hover)] border border-[var(--border-light)] text-[var(--text-primary)] hover:brightness-110 transition-all active:scale-95">Browse</button>
+                  </div>
+                  <p class="text-[10px] text-[var(--text-muted)]">
+                    Leave blank to use the app's bundled Spleeter install, or point this at a portable
+                    install's folder containing
+                    <span class="text-[var(--text-secondary)] font-medium">python-embed\</span>
+                    inside.
+                  </p>
+                </div>
               </div>
 
               <!-- Demucs options — shown only when Demucs is selected -->
@@ -12324,6 +12344,18 @@
             demucsOptions.style.pointerEvents = "none";
           }
         }
+        const spleeterOptions = document.getElementById("spleeter-options");
+        if (spleeterOptions) {
+          if (e.target.value === "spleeter") {
+            spleeterOptions.style.maxHeight = spleeterOptions.scrollHeight + "px";
+            spleeterOptions.style.opacity = "1";
+            spleeterOptions.style.pointerEvents = "auto";
+          } else {
+            spleeterOptions.style.maxHeight = "0";
+            spleeterOptions.style.opacity = "0";
+            spleeterOptions.style.pointerEvents = "none";
+          }
+        }
       });
     });
 
@@ -12389,6 +12421,49 @@
         console.error("Failed to open folder browser:", error);
         showToast("Make sure the app is running in Electron or the backend server is on!", "error");
       }
+    });
+
+    // Spleeter folder browse
+    document.getElementById("btn-browse-spleeter")?.addEventListener("click", async () => {
+      try {
+        let selectedPath = null;
+
+        if (window.electronAPI && window.electronAPI.selectFolder) {
+          const lastSpleeterPath = localStorage.getItem("lastPath:browseSpleeter") || "";
+          const result = await window.electronAPI.selectFolder(lastSpleeterPath);
+          if (!result.canceled && result.filePaths.length > 0) {
+            selectedPath = result.filePaths[0];
+          }
+        } else {
+          const res = await fetch("http://localhost:3001/api/select-folder");
+          if (!res.ok) throw new Error("Backend not responding");
+          const data = await res.json();
+          if (data.success && data.path) {
+            selectedPath = data.path;
+          }
+        }
+
+        if (selectedPath) {
+          const folder = normalizeFolderPath(selectedPath);
+          document.getElementById("setting-spleeter-folder").value = folder;
+          localStorage.setItem("aiDubberSpleeterFolder", folder);
+          localStorage.setItem("lastPath:browseSpleeter", folder);
+        }
+      } catch (error) {
+        console.error("Failed to open folder browser:", error);
+        showToast("Make sure the app is running in Electron or the backend server is on!", "error");
+      }
+    });
+
+    document.getElementById("setting-spleeter-folder")?.addEventListener("input", (e) => {
+      const normalized = normalizeFolderPath(e.target.value);
+      localStorage.setItem("aiDubberSpleeterFolder", normalized);
+    });
+
+    document.getElementById("setting-spleeter-folder")?.addEventListener("blur", (e) => {
+      const normalized = normalizeFolderPath(e.target.value);
+      e.target.value = normalized;
+      localStorage.setItem("aiDubberSpleeterFolder", normalized);
     });
 
     // Allow direct typing/pasting — normalize and save on change
@@ -12743,6 +12818,7 @@
 
     // Open / Close Modal
     let demucsOptionsMeasured = false;
+    let spleeterOptionsMeasured = false;
     let whisperOptionsMeasured = false;
     btnOpenSettings.addEventListener("click", () => {
       loadSettings();
@@ -12758,7 +12834,7 @@
       if (!demucsOptionsMeasured) {
         requestAnimationFrame(() => {
           const demucsOptions = document.getElementById("demucs-options");
-          const savedVocalEngine = localStorage.getItem("aiDubberVocalEngine") || "spleeter";
+          const savedVocalEngine = localStorage.getItem("aiDubberVocalEngine") || "demucs";
           if (demucsOptions && savedVocalEngine === "demucs") {
             demucsOptions.style.transition = "none";
             demucsOptions.style.maxHeight = "none";
@@ -12772,6 +12848,25 @@
             });
           }
           demucsOptionsMeasured = true;
+        });
+      }
+      if (!spleeterOptionsMeasured) {
+        requestAnimationFrame(() => {
+          const spleeterOptions = document.getElementById("spleeter-options");
+          const savedVocalEngine = localStorage.getItem("aiDubberVocalEngine") || "demucs";
+          if (spleeterOptions && savedVocalEngine === "spleeter") {
+            spleeterOptions.style.transition = "none";
+            spleeterOptions.style.maxHeight = "none";
+            const realHeight = spleeterOptions.scrollHeight;
+            spleeterOptions.style.maxHeight = "0";
+            requestAnimationFrame(() => {
+              spleeterOptions.style.transition = "";
+              spleeterOptions.style.maxHeight = realHeight + "px";
+              spleeterOptions.style.opacity = "1";
+              spleeterOptions.style.pointerEvents = "auto";
+            });
+          }
+          spleeterOptionsMeasured = true;
         });
       }
       if (!whisperOptionsMeasured) {
@@ -12813,7 +12908,11 @@
     });
 
     // Load vocal engine setting
-    const savedVocalEngine = localStorage.getItem("aiDubberVocalEngine") || "spleeter";
+    let savedVocalEngine = localStorage.getItem("aiDubberVocalEngine") || "demucs";
+    if (savedVocalEngine === "ffmpeg") {
+      savedVocalEngine = "spleeter";
+      localStorage.setItem("aiDubberVocalEngine", "spleeter");
+    }
     const vocalEngineRadio = document.querySelector(`input[name="vocal-engine"][value="${savedVocalEngine}"]`);
     if (vocalEngineRadio) vocalEngineRadio.checked = true;
     const demucsOptions = document.getElementById("demucs-options");
@@ -12841,6 +12940,29 @@
       }
     }
 
+    const spleeterOptions = document.getElementById("spleeter-options");
+    if (spleeterOptions) {
+      if (savedVocalEngine === "spleeter") {
+        spleeterOptions.style.transition = "none";
+        spleeterOptions.style.maxHeight = "none";
+        spleeterOptions.style.opacity = "0";
+        const realHeight = spleeterOptions.scrollHeight;
+        spleeterOptions.style.maxHeight = "0";
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            spleeterOptions.style.transition = "";
+            spleeterOptions.style.maxHeight = realHeight + "px";
+            spleeterOptions.style.opacity = "1";
+            spleeterOptions.style.pointerEvents = "auto";
+          });
+        });
+      } else {
+        spleeterOptions.style.maxHeight = "0";
+        spleeterOptions.style.opacity = "0";
+        spleeterOptions.style.pointerEvents = "none";
+      }
+    }
+
     // Load Demucs folder & segment
     const savedDemucsFolder = localStorage.getItem("aiDubberDemucsFolder") || "";
     const demucsInput = document.getElementById("setting-demucs-folder");
@@ -12851,6 +12973,11 @@
       updateDemucsSegmentFill(parseInt(savedDemucsSegment));
     }
     if (demucsSegmentDisplay) demucsSegmentDisplay.textContent = savedDemucsSegment;
+
+    // Load Spleeter folder
+    const savedSpleeterFolder = localStorage.getItem("aiDubberSpleeterFolder") || "";
+    const spleeterInput = document.getElementById("setting-spleeter-folder");
+    if (spleeterInput) spleeterInput.value = savedSpleeterFolder;
 
     // Load transcription engine setting
     const savedTranscriptionEngine = localStorage.getItem("aiDubberTranscriptionEngine") || "direct";
@@ -22348,7 +22475,11 @@
         const isMacForGpu = navigator.platform.toUpperCase().includes("MAC") || navigator.userAgent.includes("Mac");
         const savedGpuPref = localStorage.getItem("aiDubberUseGPU");
         const useGPU = savedGpuPref !== null ? savedGpuPref !== "false" : !isMacForGpu;
-        const vocalEngine = localStorage.getItem("aiDubberVocalEngine") || "spleeter";
+        let vocalEngine = localStorage.getItem("aiDubberVocalEngine") || "demucs";
+        if (vocalEngine === "ffmpeg") {
+          vocalEngine = "spleeter";
+          localStorage.setItem("aiDubberVocalEngine", "spleeter");
+        }
 
         let demucsFolder = "";
         let demucsSegment = "7";
@@ -22357,6 +22488,13 @@
           // Demucs install, or point it at a portable Demucs install instead.
           demucsFolder = localStorage.getItem("aiDubberDemucsFolder") || "";
           demucsSegment = localStorage.getItem("aiDubberDemucsSegment") || "7";
+        }
+
+        let spleeterFolder = "";
+        if (vocalEngine === "spleeter") {
+          // Same convention as Demucs: leave blank to use the app's built-in
+          // Spleeter install, or point it at a portable Spleeter install instead.
+          spleeterFolder = localStorage.getItem("aiDubberSpleeterFolder") || "";
         }
 
         let response;
@@ -22374,6 +22512,7 @@
               engine: vocalEngine,
               demucsFolder,
               demucsSegment,
+              spleeterFolder,
             }),
             signal: targetProject.isolateAbortController.signal,
           });
@@ -22399,6 +22538,9 @@
             formData.append("demucsFolder", demucsFolder);
             formData.append("demucsSegment", demucsSegment);
           }
+          if (vocalEngine === "spleeter") {
+            formData.append("spleeterFolder", spleeterFolder);
+          }
 
           response = await fetch("http://localhost:3001/api/remove-vocals", {
             method: "POST",
@@ -22421,6 +22563,10 @@
             }
             try {
               const statusRes = await fetch(`http://localhost:3001/api/bgm-job-status?jobId=${encodeURIComponent(uniqueJobId)}`, { signal: targetProject.isolateAbortController.signal });
+              if (!statusRes.ok) {
+                const errText = await statusRes.text().catch(() => "");
+                throw new Error(`Server returned HTTP ${statusRes.status}: ${errText || statusRes.statusText}`);
+              }
               const status = await statusRes.json();
               if (status.status === "done") {
                 clearInterval(poll);
@@ -23837,6 +23983,7 @@
           if (projBgmTrack?.src && !projBgmTrack.isMuted) {
             if (projBgmTrack.file instanceof File) bgmFileObj = projBgmTrack.file;
             else if (typeof projBgmTrack.file === "string") serverBgmPath = projBgmTrack.file;
+            else if (typeof projBgmTrack.src === "string") serverBgmPath = projBgmTrack.src;
           }
           const bgmTrackData =
             projBgmTrack?.src && !projBgmTrack.isMuted
@@ -23853,27 +24000,30 @@
           // Blur box correction — use stored video dimensions (per-project, safe for background tabs)
           const projVidW = proj.videoWidth || mainVideo.videoWidth || 1920,
             projVidH = proj.videoHeight || mainVideo.videoHeight || 1080;
-          const blurLayerBounds = document.getElementById("blur-layer").getBoundingClientRect();
+          const blurLayerEl = document.getElementById("blur-layer");
+          const blurLayerBounds = blurLayerEl ? blurLayerEl.getBoundingClientRect() : { width: 1920, height: 1080 };
+          const blurW = (blurLayerBounds && blurLayerBounds.width > 0) ? blurLayerBounds.width : 1920;
+          const blurH = (blurLayerBounds && blurLayerBounds.height > 0) ? blurLayerBounds.height : 1080;
           const vidRatio = projVidW / projVidH,
-            contRatio = blurLayerBounds.width / blurLayerBounds.height;
+            contRatio = blurW / blurH;
           let drawW, drawH, offsetX, offsetY;
           if (vidRatio > contRatio) {
-            drawW = blurLayerBounds.width;
-            drawH = blurLayerBounds.width / vidRatio;
+            drawW = blurW;
+            drawH = blurW / vidRatio;
             offsetX = 0;
-            offsetY = (blurLayerBounds.height - drawH) / 2;
+            offsetY = (blurH - drawH) / 2;
           } else {
-            drawH = blurLayerBounds.height;
-            drawW = blurLayerBounds.height * vidRatio;
-            offsetX = (blurLayerBounds.width - drawW) / 2;
+            drawH = blurH;
+            drawW = blurH * vidRatio;
+            offsetX = (blurW - drawW) / 2;
             offsetY = 0;
           }
           const correctedBlurBoxes = projBlurBoxes.map((box) => ({
             ...box,
-            x: (((box.x / 100) * blurLayerBounds.width - offsetX) / drawW) * 100,
-            y: (((box.y / 100) * blurLayerBounds.height - offsetY) / drawH) * 100,
-            w: (((box.w / 100) * blurLayerBounds.width) / drawW) * 100,
-            h: (((box.h / 100) * blurLayerBounds.height) / drawH) * 100,
+            x: (((box.x / 100) * blurW - offsetX) / (drawW || 1)) * 100,
+            y: (((box.y / 100) * blurH - offsetY) / (drawH || 1)) * 100,
+            w: (((box.w / 100) * blurW) / (drawW || 1)) * 100,
+            h: (((box.h / 100) * blurH) / (drawH || 1)) * 100,
           }));
 
           return {
@@ -23898,11 +24048,11 @@
               flipHorizontal: projIsFlippedH,
               flipVertical: projIsFlippedV,
               cropConfig: {
-                active: projCropConfig.w < 100 || projCropConfig.h < 100,
-                x: projCropConfig.x,
-                y: projCropConfig.y,
-                w: projCropConfig.w,
-                h: projCropConfig.h,
+                active: projCropConfig && ((projCropConfig.w !== undefined && projCropConfig.w < 100) || (projCropConfig.h !== undefined && projCropConfig.h < 100) || !!projCropConfig.active),
+                x: (projCropConfig && projCropConfig.x) || 0,
+                y: (projCropConfig && projCropConfig.y) || 0,
+                w: (projCropConfig && projCropConfig.w) || 100,
+                h: (projCropConfig && projCropConfig.h) || 100,
               },
               videoPan: projVideoPan,
               videoWidth: proj.videoWidth || projVidW,

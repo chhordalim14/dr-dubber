@@ -280,10 +280,7 @@ async function assembleDialogueStem(validSubs, tempDir, voiceVolume = 1.0) {
 
     filterParts.push(`${streamNames.join('')}amix=inputs=${existing.length}:normalize=0:duration=longest[aout]`);
 
-    const filterScriptPath = path.join(tempDir, 'audio_stem_filter.txt');
-    fs.writeFileSync(filterScriptPath, filterParts.join(';\n'), 'utf8');
-
-    args.push('-filter_complex_script', filterScriptPath);
+    args.push('-filter_complex', filterParts.join(';'));
     args.push('-map', '[aout]', '-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2', stemPath);
 
     await new Promise((resolve, reject) => {
@@ -660,11 +657,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             filterComplex.push(`${videoFilterStr}null[final_video]`);
         }
 
-        // Write complex filter to temp script file
-        const filterScriptPath = path.join(tempDir, 'filter_complex.txt');
-        fs.writeFileSync(filterScriptPath, filterComplex.join(';\n'), 'utf8');
-
-        args.push('-filter_complex_script', filterScriptPath);
+        args.push('-filter_complex', filterComplex.join(';'));
         args.push('-map', '[final_video]');
         args.push('-map', '[final_audio]');
         if (softSrtInputIndex >= 0) {
