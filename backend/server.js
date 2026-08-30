@@ -98,13 +98,47 @@ function getPythonCmd() {
     if (process.env.PYTHON_PATH && fs.existsSync(process.env.PYTHON_PATH)) {
         return process.env.PYTHON_PATH;
     }
-    const venvPython = process.platform === 'win32'
-        ? path.join(ROOT_DIR, 'backend', 'venv', 'Scripts', 'python.exe')
-        : path.join(ROOT_DIR, 'backend', 'venv', 'bin', 'python');
-    if (fs.existsSync(venvPython)) {
-        return venvPython;
+    if (process.env.PYTHON_BIN && fs.existsSync(process.env.PYTHON_BIN)) {
+        return process.env.PYTHON_BIN;
     }
-    return process.platform === 'win32' ? 'python' : 'python3';
+
+    const isWin = process.platform === 'win32';
+    const subPath = isWin ? path.join('Scripts', 'python.exe') : path.join('bin', 'python');
+    const unpackedRootDir = ROOT_DIR.includes('app.asar') ? ROOT_DIR.replace('app.asar', 'app.asar.unpacked') : ROOT_DIR;
+
+    const candidatePaths = [
+        path.join(unpackedRootDir, 'backend', 'demucs-env', subPath),
+        path.join(ROOT_DIR, 'backend', 'demucs-env', subPath),
+        path.join(unpackedRootDir, 'backend', 'spleeter-env', subPath),
+        path.join(ROOT_DIR, 'backend', 'spleeter-env', subPath),
+        path.join(unpackedRootDir, 'backend', 'venv', subPath),
+        path.join(ROOT_DIR, 'backend', 'venv', subPath),
+        path.join(unpackedRootDir, '.venv', subPath),
+        path.join(ROOT_DIR, '.venv', subPath),
+    ];
+
+    if (isWin) {
+        const localAppData = process.env.LOCALAPPDATA || (process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'AppData', 'Local') : '');
+        if (localAppData) {
+            ['Python311', 'Python310', 'Python312', 'Python39', 'Python313'].forEach(v => {
+                candidatePaths.push(path.join(localAppData, 'Programs', 'Python', v, 'python.exe'));
+            });
+        }
+        const pf = process.env.ProgramFiles || 'C:\\Program Files';
+        ['Python311', 'Python310', 'Python312', 'Python39', 'Python313'].forEach(v => {
+            candidatePaths.push(path.join(pf, v, 'python.exe'));
+        });
+    }
+
+    for (const cand of candidatePaths) {
+        try {
+            if (cand && fs.existsSync(cand) && fs.statSync(cand).isFile()) {
+                return cand;
+            }
+        } catch (e) {}
+    }
+
+    return isWin ? 'python' : 'python3';
 }
 const PYTHON_CMD = getPythonCmd();
 
@@ -125,13 +159,7 @@ function ensureTtsDependencies() {
 ensureTtsDependencies();
 
 function getPythonExecutable() {
-    const venvPython = path.join(ROOT_DIR, '.venv', 'bin', 'python');
-    const venvPythonWin = path.join(ROOT_DIR, '.venv', 'Scripts', 'python.exe');
-    if (fs.existsSync(venvPython)) return venvPython;
-    if (fs.existsSync(venvPythonWin)) return venvPythonWin;
-    if (process.env.PYTHON_BIN) return process.env.PYTHON_BIN;
-    if (process.platform === 'win32') return 'python';
-    return 'python3';
+    return PYTHON_CMD;
 }
 
 // Script location never changes at runtime, so resolving it involves 2-3 fs.existsSync
@@ -601,7 +629,9 @@ app.post('/api/remove-vocals', upload.any(), (req, res) => {
     bgmJobs.set(jobId, { status: 'processing', progress: 10, success: true, timestamp: Date.now() });
     res.json({ success: true, jobId: jobId, status: 'processing' });
 
-    const engine = req.body.engine === 'demucs' ? 'demucs' : 'ffmpeg';
+    let engine = req.body.engine;
+    if (engine === 'ffmpeg') engine = 'spleeter';
+    if (engine !== 'spleeter' && engine !== 'demucs') engine = 'demucs';
     // Only force CPU when the user explicitly disabled GPU (Safe Mode); otherwise
     // leave --device unset so Demucs auto-detects, rather than requesting "cuda"
     // outright and hard-failing on a machine/torch build without working CUDA.
@@ -613,22 +643,55 @@ app.post('/api/remove-vocals', upload.any(), (req, res) => {
         const demucsSegment = (req.body.demucsSegment || '').trim();
         if (demucsFolder) pyArgs.push('--demucs-folder', demucsFolder);
         if (demucsSegment) pyArgs.push('--segment', demucsSegment);
+    } else if (engine === 'spleeter') {
+        const spleeterFolder = (req.body.spleeterFolder || '').trim();
+        if (spleeterFolder) pyArgs.push('--spleeter-folder', spleeterFolder);
     }
 
     const pyScript = getPythonScriptPath('vocal_separator.py');
-    const child = spawn(PYTHON_CMD, [pyScript, ...pyArgs], { env: PYTHON_ENV });
-    trackProcess(child);
+    let child;
+    try {
+        child = spawn(PYTHON_CMD, [pyScript, ...pyArgs], { env: PYTHON_ENV });
+        trackProcess(child);
+    } catch (spawnErr) {
+        console.error('[Python Vocal Separator Spawn Error]', spawnErr);
+        bgmJobs.set(jobId, { status: 'error', success: false, error: `Failed to spawn Python process: ${spawnErr.message}` });
+        return;
+    }
 
     let output = '';
+    let stderr = '';
     const stdoutDecoder = new StringDecoder('utf8');
+    const stderrDecoder = new StringDecoder('utf8');
     child.stdout.on('data', d => output += stdoutDecoder.write(d));
+    child.stderr.on('data', d => stderr += stderrDecoder.write(d));
     child.on('error', (err) => {
         console.error('[Python Vocal Separator Error]', err);
-        bgmJobs.set(jobId, { status: 'error', success: false, error: err.message });
+        bgmJobs.set(jobId, { status: 'error', success: false, error: `Python execution error: ${err.message}` });
     });
     child.on('close', (code) => {
+        const trimmedOut = output.trim();
+        const trimmedErr = stderr.trim();
+
+        if (code !== 0 && !trimmedOut) {
+            console.error(`[Python Vocal Separator Failed] Code ${code}, Stderr: ${trimmedErr}`);
+            bgmJobs.set(jobId, {
+                status: 'error',
+                success: false,
+                error: trimmedErr || `Vocal separator process exited with code ${code}`
+            });
+            return;
+        }
+
         try {
-            const data = JSON.parse(output);
+            let jsonStr = trimmedOut;
+            if (!jsonStr.startsWith('{') || !jsonStr.endsWith('}')) {
+                const lines = trimmedOut.split('\n').map(l => l.trim()).filter(Boolean);
+                const lastJsonLine = [...lines].reverse().find(l => l.startsWith('{') && l.endsWith('}'));
+                if (lastJsonLine) jsonStr = lastJsonLine;
+            }
+
+            const data = JSON.parse(jsonStr);
             if (data.success) {
                 const bgmUri = `/api/audio?path=${encodeURIComponent(data.bgm)}`;
                 const vocalUri = `/api/audio?path=${encodeURIComponent(data.vocal)}`;
@@ -644,10 +707,19 @@ app.post('/api/remove-vocals', upload.any(), (req, res) => {
                     vocalUrl: vocalUri
                 });
             } else {
-                bgmJobs.set(jobId, { status: 'error', success: false, error: data.error || 'Separation failed' });
+                bgmJobs.set(jobId, {
+                    status: 'error',
+                    success: false,
+                    error: data.error || trimmedErr || 'Separation failed'
+                });
             }
         } catch (e) {
-            bgmJobs.set(jobId, { status: 'error', success: false, error: output || e.message });
+            console.error('[Python Vocal Separator Parse Error]', e, 'Stdout:', output, 'Stderr:', stderr);
+            bgmJobs.set(jobId, {
+                status: 'error',
+                success: false,
+                error: trimmedErr || trimmedOut || `Failed to parse separation result: ${e.message}`
+            });
         }
     });
 });
