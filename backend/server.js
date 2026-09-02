@@ -1115,6 +1115,8 @@ SCHEMA:
             return res.json({ success: false, error: 'CANCELLED' });
         }
         res.status(500).json({ success: false, error: e.message });
+    } finally {
+        if (requestId) activeTranscribeRequests.delete(requestId);
     }
 });
 
@@ -1201,8 +1203,6 @@ ${content}`;
 
         const geminiResult = await executeGeminiGenerate(apiKey, model, payload, abortCtrl.signal);
 
-        if (requestId) activeTranscribeRequests.delete(requestId);
-
         if (!geminiResult.success) {
             return res.status(geminiResult.status || 500).json({
                 success: false,
@@ -1240,6 +1240,8 @@ ${content}`;
     } catch (e) {
         if (e.name === 'AbortError') return res.json({ success: false, error: 'CANCELLED' });
         res.status(500).json({ success: false, error: e.message });
+    } finally {
+        if (requestId) activeTranscribeRequests.delete(requestId);
     }
 });
 
@@ -1306,7 +1308,6 @@ RULES:
 
     try {
         const geminiResult = await executeGeminiGenerate(apiKey, model, payload, abortCtrl.signal);
-        if (requestId) activeTranscribeRequests.delete(requestId);
 
         if (!geminiResult.success) {
             return res.status(geminiResult.status || 500).json({
@@ -1329,6 +1330,169 @@ RULES:
             mode
         });
     } catch (e) {
+        if (e.name === 'AbortError') return res.json({ success: false, error: 'CANCELLED' });
+        res.status(500).json({ success: false, error: e.message });
+    } finally {
+        if (requestId) activeTranscribeRequests.delete(requestId);
+    }
+});
+
+// 4d. Batch Dialogue Subtitles AI Refactor & Polish (Natural Spoken, Shorten, Dramatic, Royal, Comedy)
+app.post('/api/refactor-subtitles-batch', async (req, res) => {
+    const {
+        subtitles: rawSubtitles = [],
+        mode = 'natural', // 'natural' | 'shorten' | 'dramatic' | 'royal' | 'comedy'
+        genre = 'historical',
+        dramaRegister,
+        glossary,
+        apiKey,
+        model = 'gemini-2.0-flash',
+        requestId
+    } = req.body;
+
+    const subtitles = Array.isArray(rawSubtitles) ? rawSubtitles : [];
+    if (subtitles.length === 0) {
+        return res.status(400).json({ success: false, error: 'No subtitles provided for refactoring.' });
+    }
+
+    if (!apiKey || !apiKey.trim()) {
+        return res.status(400).json({ success: false, error: 'INVALID_API_KEY', message: 'Gemini API key is required in Settings.' });
+    }
+
+    let modeInstruction = '';
+    if (mode === 'shorten') {
+        modeInstruction = 'Make all Khmer dialogue ULTRA-SHORT (strictly 3 to 6 words / 3 to 7 syllables maximum per line), highly punchy, clear, and fast to read. Drop all unnecessary words, filler particles, and clauses while keeping the core meaning.';
+    } else if (mode === 'dramatic') {
+        modeInstruction = 'Refactor all Khmer dialogue into HIGHLY DRAMATIC, intense, emotional, and cinematic spoken lines. Use expressive spoken vocabulary (កាច កម្សត់ តានតឹង) suitable for professional drama voice dubbing.';
+    } else if (mode === 'royal') {
+        modeInstruction = 'Convert all Khmer dialogue into classical royal court / imperial palace language (រាជស័ព្ទ / បុរាណ / រាជវាំង) using authentic royal terms (ព្រះអង្គ, ក្រាបទូល, ទូលបង្គំ, ខ្ញុំម្ចាស់, ម្ចាស់បង, ព្រះរាជបញ្ជា, etc.) while keeping lines short and speakable.';
+    } else if (mode === 'comedy') {
+        modeInstruction = 'Rewrite all Khmer dialogue into humorous, witty, lively, and entertaining Cambodian spoken colloquialisms (កំប្លុកកំប្លែង ភាសានិយាយសាមញ្ញរស់រវើក). Keep lines punchy and funny.';
+    } else {
+        // Default 'natural' / conversational dubbing style
+        modeInstruction = 'Refactor and polish all Khmer subtitle dialogue from stiff, textbook, robotic, or overly literal translations into NATURAL, FLUID, and READABLE spoken Khmer dialogue for film & TV dubbing (សម្រួលពាក្យបែបសន្ទនាធម្មជាតិ ខ្លី ខ្លឹម ដូចរឿងភាគទូរទស្សន៍).';
+    }
+
+    const genreRegister = genre || dramaRegister || 'historical';
+    const genreGuidance = getKhmerDramaRegisterGuidance(genreRegister);
+    const glossaryHint = glossary ? `\n\nCUSTOM GLOSSARY DICTIONARY (STRICTLY APPLY):\n${typeof glossary === 'string' ? glossary : JSON.stringify(glossary, null, 2)}` : '';
+
+    // Chunk array into max 100 items per Gemini batch for reliable JSON parsing
+    const CHUNK_SIZE = 100;
+    const chunks = [];
+    for (let i = 0; i < subtitles.length; i += CHUNK_SIZE) {
+        chunks.push(subtitles.slice(i, i + CHUNK_SIZE));
+    }
+
+    const abortCtrl = new AbortController();
+    if (requestId) activeTranscribeRequests.set(requestId, abortCtrl);
+
+    try {
+        const resultMap = new Map();
+
+        for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
+            if (abortCtrl.signal.aborted) break;
+            const currentChunk = chunks[chunkIdx];
+            const startGlobalIdx = chunkIdx * CHUNK_SIZE;
+
+            const inputLines = currentChunk.map((s, i) => ({
+                index: startGlobalIdx + i,
+                id: String(s.id || (startGlobalIdx + i)),
+                text: s.text || '',
+                originalText: s.originalText || ''
+            }));
+
+            const prompt = `You are an elite Cambodian film dubbing adapter, dialogue refactorer, and script doctor.
+
+TASK:
+Refactor and polish the provided list of subtitle lines according to this style:
+${modeInstruction}
+
+${KHMER_DUBBING_RULES}
+${genreGuidance}
+${glossaryHint}
+
+SPECIFIC TRANSFORMATION EXAMPLES:
+- ❌ "ល្ងាចនេះអ្នកចង់ញ៉ាំអ្វី? ខ្ញុំនឹងធ្វើវាឱ្យមានរសជាតិឆ្ងាញ់" -> ✅ "ល្ងាចនេះចង់ញ៉ាំអី? ចាំខ្ញុំធ្វើឱ្យ"
+- ❌ "តើអ្នកកំពុងតែធ្វើអ្វីនៅទីនេះ?" -> ✅ "ឯងធ្វើអីហ្នឹង?" / "បងធ្វើអី?"
+- ❌ "តើមានរឿងអ្វីបានកើតឡើងចំពោះអ្នក?" -> ✅ "កើតអីហ្នឹង?" / "មានរឿងអី?"
+- ❌ "ខ្ញុំសូមអភ័យទោសដែលបានមកយឺត" -> ✅ "សុំទោស ខ្ញុំមកយឺត"
+- ❌ "កុំមានការព្រួយបារម្ភចំពោះខ្ញុំអី" -> ✅ "កុំបារម្ភពីខ្ញុំ" / "ទុកចិត្តចុះ"
+- ❌ "ខ្ញុំមិនអាចយល់ស្របនឹងរឿងនេះបានឡើយ" -> ✅ "ខ្ញុំមិនព្រមដាច់ខាត!"
+
+OUTPUT FORMAT:
+Output ONLY a valid JSON array of objects with the exact schema below. Match every input index and ID. No markdown, no commentary.
+[
+  {
+    "index": 0,
+    "id": "...",
+    "text": "Refactored natural spoken Khmer dialogue"
+  }
+]
+
+INPUT SUBTITLES TO REFACTOR:
+${JSON.stringify(inputLines, null, 2)}`;
+
+            const payload = {
+                contents: [
+                    {
+                        role: "user",
+                        parts: [{ text: prompt }]
+                    }
+                ],
+                generationConfig: {
+                    responseMimeType: "application/json"
+                }
+            };
+
+            const geminiResult = await executeGeminiGenerate(apiKey, model, payload, abortCtrl.signal);
+            if (!geminiResult.success) {
+                if (requestId) activeTranscribeRequests.delete(requestId);
+                return res.status(geminiResult.status || 500).json({
+                    success: false,
+                    error: geminiResult.error || 'REFACTOR_FAILED',
+                    message: geminiResult.message
+                });
+            }
+
+            const json = geminiResult.json;
+            let rawContent = json?.candidates?.[0]?.content?.parts?.[0]?.text || '[]';
+            let parsedData = [];
+            try {
+                const cleanJson = rawContent.replace(/^```json/m, '').replace(/^```/m, '').trim();
+                parsedData = JSON.parse(cleanJson);
+            } catch (e) {
+                console.error('Failed to parse Gemini batch refactor output chunk:', rawContent);
+            }
+
+            if (Array.isArray(parsedData)) {
+                parsedData.forEach(item => {
+                    let clean = sanitizeKhmerDialogue(item.text || item.dialogue || '');
+                    if (glossary) clean = applyGlossary(clean, glossary);
+                    if (item.id !== undefined) resultMap.set(String(item.id), clean);
+                    if (item.index !== undefined) resultMap.set(`idx_${item.index}`, clean);
+                });
+            }
+        }
+
+        if (requestId) activeTranscribeRequests.delete(requestId);
+
+        const updatedSubtitles = subtitles.map((sub, i) => {
+            const newText = resultMap.get(String(sub.id)) || resultMap.get(`idx_${i}`) || sub.text;
+            return {
+                id: sub.id,
+                text: newText
+            };
+        });
+
+        res.json({
+            success: true,
+            refactoredSubtitles: updatedSubtitles,
+            count: updatedSubtitles.length,
+            mode
+        });
+    } catch (e) {
+        if (requestId) activeTranscribeRequests.delete(requestId);
         if (e.name === 'AbortError') return res.json({ success: false, error: 'CANCELLED' });
         res.status(500).json({ success: false, error: e.message });
     }
@@ -1432,120 +1596,6 @@ app.post('/api/transcribe-whisper', async (req, res) => {
             });
         }
     });
-});
-
-
-// 4c. Export Audio Stems (Clean Voice Stem + Isolated BGM + SRT Package)
-app.post('/api/export-stems', async (req, res) => {
-    const {
-        subtitles: rawSubtitles = [],
-        bgmPath,
-        videoName = 'dubbing_project',
-        customFolder
-    } = req.body;
-    const subtitles = Array.isArray(rawSubtitles) ? rawSubtitles : [];
-
-    try {
-        const timestamp = Date.now();
-        const baseClean = (videoName || 'project').replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '_');
-        const folderName = `Stems_${baseClean}_${timestamp}`;
-
-        let targetDir = customFolder && fs.existsSync(customFolder) ? path.join(customFolder, folderName) : path.join(EXPORTS_DIR, folderName);
-        fs.mkdirSync(targetDir, { recursive: true });
-
-        // Helper for seconds to SRT time
-        function formatSecToSrt(seconds) {
-            const secNum = Math.max(0, parseFloat(seconds) || 0);
-            const hrs = Math.floor(secNum / 3600);
-            const mins = Math.floor((secNum % 3600) / 60);
-            const secs = Math.floor(secNum % 60);
-            const ms = Math.floor((secNum % 1) * 1000);
-            return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
-        }
-
-        // 1. Export Subtitles (SRT)
-        const srtPath = path.join(targetDir, `${baseClean}_subtitles.srt`);
-        let srtContent = '';
-        subtitles.forEach((sub, idx) => {
-            const sStart = sub.startTime || formatSecToSrt(parseFloat(sub.textStart || 0));
-            const sEnd = sub.endTime || formatSecToSrt(parseFloat(sub.textEnd || 0));
-            const txt = (sub.text || '').trim();
-            srtContent += `${idx + 1}\n${sStart} --> ${sEnd}\n${txt}\n\n`;
-        });
-        fs.writeFileSync(srtPath, srtContent, 'utf8');
-
-        // 2. Copy or link Isolated BGM if available
-        let exportedBgmPath = null;
-        if (bgmPath && fs.existsSync(bgmPath)) {
-            exportedBgmPath = path.join(targetDir, `${baseClean}_isolated_bgm${path.extname(bgmPath) || '.wav'}`);
-            fs.copyFileSync(bgmPath, exportedBgmPath);
-        }
-
-        // 3. Export Clean Dubbed Dialogue Stem (combining valid subtitle audio files)
-        const validSubs = (subtitles || []).filter(s => {
-            const aPath = s.file || s.audioPath;
-            return aPath && fs.existsSync(aPath);
-        });
-
-        let exportedVoicePath = null;
-        if (validSubs.length > 0) {
-            exportedVoicePath = path.join(targetDir, `${baseClean}_dubbed_voice.wav`);
-            const args = ['-y'];
-            const filterParts = [];
-            const streamNames = [];
-
-            validSubs.forEach((sub, i) => {
-                const aPath = sub.file || sub.audioPath;
-                args.push('-i', aPath);
-                const startSec = parseFloat(sub.audioStart || sub.textStart || 0);
-                const delayMs = Math.max(0, Math.round(startSec * 1000));
-                filterParts.push(`[${i}:a]adelay=${delayMs}|${delayMs}[a${i}]`);
-                streamNames.push(`[a${i}]`);
-            });
-
-            if (validSubs.length > 1) {
-                filterParts.push(`${streamNames.join('')}amix=inputs=${validSubs.length}:normalize=0[aout]`);
-                args.push('-filter_complex', filterParts.join(';'), '-map', '[aout]', '-ac', '2', '-ar', '44100', exportedVoicePath);
-            } else {
-                filterParts.push(`${streamNames[0]}anull[aout]`);
-                args.push('-filter_complex', filterParts.join(';'), '-map', '[aout]', '-ac', '2', '-ar', '44100', exportedVoicePath);
-            }
-
-            try {
-                await new Promise((resolve, reject) => {
-                    const ff = spawn(getFFmpegBinary(), args, { windowsHide: true });
-                    trackProcess(ff);
-                    ff.on('close', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg exited with code ${code}`)));
-                    ff.on('error', reject);
-                });
-                // Belt-and-suspenders: a zero exit code doesn't guarantee the
-                // file actually landed on disk (e.g. filter graph produced no
-                // output). Previously this wasn't checked, so a failed mix
-                // still reported success with a voicePath that was never written.
-                if (!fs.existsSync(exportedVoicePath)) {
-                    exportedVoicePath = null;
-                }
-            } catch (mixErr) {
-                console.error('[Export Stems] Dialogue stem mix failed:', mixErr.message);
-                exportedVoicePath = null;
-            }
-        }
-
-        res.json({
-            success: true,
-            folder: targetDir,
-            srtPath: srtPath,
-            srtFile: srtPath,
-            bgmPath: exportedBgmPath,
-            bgmFile: exportedBgmPath,
-            voicePath: exportedVoicePath,
-            voiceFile: exportedVoicePath,
-            voiceExportFailed: validSubs.length > 0 && !exportedVoicePath,
-            files: [srtPath, exportedBgmPath, exportedVoicePath].filter(Boolean)
-        });
-    } catch (e) {
-        res.status(500).json({ success: false, error: e.message });
-    }
 });
 
 // Helper: Calculate emotional prosody modifiers (Pitch, Rate, Volume)

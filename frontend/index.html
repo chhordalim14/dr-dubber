@@ -1674,23 +1674,16 @@
 
           <input type="file" id="srt-upload" accept=".srt" class="hidden" multiple />
           <button id="btn-import-srt"
-            class="group flex flex-col items-center justify-center gap-2 bg-[var(--bg-hover)] hover:brightness-110 border border-[var(--border-light)] p-3 rounded-xl transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.92] col-span-2 sm:col-span-1">
+            class="group flex flex-col items-center justify-center gap-2 bg-[var(--bg-hover)] hover:brightness-110 border border-[var(--border-light)] p-3 rounded-xl transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.92]">
             <i data-lucide="file-json"
               class="workspace-icon-glow w-5 h-5 text-amber-500 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
             <span class="text-xs font-medium">Import (SRT)</span>
           </button>
           <button id="btn-add-blur"
-            class="group flex flex-col items-center justify-center gap-2 bg-[var(--bg-hover)] hover:brightness-110 border border-[var(--border-light)] p-3 rounded-xl transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.92] col-span-2">
+            class="group flex flex-col items-center justify-center gap-2 bg-[var(--bg-hover)] hover:brightness-110 border border-[var(--border-light)] p-3 rounded-xl transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.92]">
             <i data-lucide="square-dashed"
               class="workspace-icon-glow w-5 h-5 text-indigo-500 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
             <span class="text-xs font-medium">Add Blur Box (Censor)</span>
-          </button>
-          <button id="btn-export-stems"
-            class="group flex flex-col items-center justify-center gap-2 bg-[var(--bg-hover)] hover:brightness-110 border border-[var(--border-light)] p-3 rounded-xl transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.92] col-span-2"
-            title="Export Clean Voice WAV + Isolated BGM WAV + SRT Subtitles">
-            <i data-lucide="layers"
-              class="workspace-icon-glow w-5 h-5 text-violet-400 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
-            <span class="text-xs font-medium">Export Audio Stems</span>
           </button>
         </div>
         <div class="mt-auto pt-4 flex flex-col gap-2">
@@ -1753,6 +1746,60 @@
                     class="w-[14px] h-[14px] transition-transform duration-300 group-hover:scale-110 group-active:scale-90"></i>
                   Find &amp; Replace
                 </button>
+
+                <!-- ⚡ AI Refactor & Polish Dropdown -->
+                <div class="relative">
+                  <button id="btn-refactor-menu-toggle"
+                    class="group bg-[var(--bg-hover)] border border-[var(--border-light)] hover:bg-emerald-500/20 hover:border-emerald-500 hover:text-emerald-400 text-[var(--text-primary)] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-md active:scale-[0.95] shrink-0"
+                    title="⚡ AI Refactor & Polish Subtitles (Natural Spoken & Short Dubbing Tone)">
+                    <i data-lucide="wand-2"
+                      class="w-[14px] h-[14px] text-emerald-400 transition-transform duration-300 group-hover:scale-110"></i>
+                    <span>AI Refactor</span>
+                    <i data-lucide="chevron-down" class="w-3 h-3 text-[var(--text-muted)] shrink-0"></i>
+                  </button>
+
+                  <div id="refactor-dropdown-menu"
+                    class="hidden absolute top-full mt-1.5 left-0 w-[260px] bg-[var(--bg-panel)] border border-[var(--border-color)] shadow-2xl rounded-xl p-2 z-[999] animate-dropdown origin-top-left font-sans">
+                    <div class="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider px-2 py-1">
+                      Action
+                    </div>
+                    <button id="btn-refactor-current"
+                      class="w-full text-left px-2.5 py-1.5 text-xs flex items-center gap-2 rounded-lg hover:bg-[var(--bg-hover)] text-[var(--text-primary)] hover:text-emerald-400 cursor-pointer transition-colors">
+                      <i data-lucide="sparkles" class="w-3.5 h-3.5 text-emerald-400"></i>
+                      <span>Refactor Current Tab</span>
+                    </button>
+                    <button id="btn-refactor-all"
+                      class="w-full text-left px-2.5 py-1.5 text-xs flex items-center gap-2 rounded-lg hover:bg-[var(--bg-hover)] text-[var(--text-primary)] hover:text-emerald-400 cursor-pointer transition-colors">
+                      <i data-lucide="layers" class="w-3.5 h-3.5 text-emerald-400"></i>
+                      <span class="font-semibold text-emerald-400">🌟 1-Click All 9 Tabs (In Order)</span>
+                    </button>
+
+                    <div class="my-1.5 border-t border-[var(--border-light)]"></div>
+                    <div class="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider px-2 py-1">
+                      Dubbing Tone / Style
+                    </div>
+                    <label class="flex items-center gap-2 px-2.5 py-1 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer rounded hover:bg-[var(--bg-hover)]">
+                      <input type="radio" name="refactor-style-choice" value="natural" checked class="accent-emerald-400" />
+                      <span>⚡ Natural &amp; Short (ខ្លី ខ្លឹម)</span>
+                    </label>
+                    <label class="flex items-center gap-2 px-2.5 py-1 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer rounded hover:bg-[var(--bg-hover)]">
+                      <input type="radio" name="refactor-style-choice" value="shorten" class="accent-emerald-400" />
+                      <span>✂️ Ultra-Short (កាត់ខ្លីបំផុត)</span>
+                    </label>
+                    <label class="flex items-center gap-2 px-2.5 py-1 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer rounded hover:bg-[var(--bg-hover)]">
+                      <input type="radio" name="refactor-style-choice" value="dramatic" class="accent-emerald-400" />
+                      <span>🎭 Dramatic Emotion (កាច / កម្សត់)</span>
+                    </label>
+                    <label class="flex items-center gap-2 px-2.5 py-1 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer rounded hover:bg-[var(--bg-hover)]">
+                      <input type="radio" name="refactor-style-choice" value="royal" class="accent-emerald-400" />
+                      <span>👑 Royal Register (រាជស័ព្ទ / បុរាណ)</span>
+                    </label>
+                    <label class="flex items-center gap-2 px-2.5 py-1 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer rounded hover:bg-[var(--bg-hover)]">
+                      <input type="radio" name="refactor-style-choice" value="comedy" class="accent-emerald-400" />
+                      <span>😆 Comedy (កំប្លែង)</span>
+                    </label>
+                  </div>
+                </div>
               </div>
 
               <div class="flex items-center gap-3 ml-auto shrink-0 flex-nowrap">
@@ -9230,37 +9277,27 @@
 
       isTranscribingAll = true;
       updateTranscribeAllButtonState();
-      showToast(`⚡ Processing all ${eligibleProjects.length} project tab(s)...`, "success");
+      showToast(`⚡ Transcribing all ${eligibleProjects.length} project tab(s) in sequential order (1 to ${eligibleProjects.length})...`, "info");
 
-      // Immediately mark all eligible projects as active
-      eligibleProjects.forEach((p) => {
-        p.isTranscribing = true;
-      });
-      renderProjectTabs();
-
-      // 🚀 Worker Pool: Processes projects concurrently in managed batches (prevents rate limit drops)
-      const poolSize = engineMode === "whisper" ? 2 : Math.min(3, Math.max(2, (apiKeys.length || 1) * 2));
-      let activeIdx = 0;
       let completedCount = 0;
 
-      const runWorker = async () => {
-        while (activeIdx < eligibleProjects.length) {
-          if (!isTranscribingAll) break;
-          const index = activeIdx++;
-          const proj = eligibleProjects[index];
-          try {
-            const res = await transcribeSingleProject(proj, true, index);
-            if (res && res.success) {
-              completedCount++;
-            }
-          } catch (e) {
-            console.error(`Project ${index + 1} transcribe error:`, e);
-          }
-        }
-      };
+      // Process projects sequentially one by one in exact order (1, 2, 3... N)
+      for (let i = 0; i < eligibleProjects.length; i++) {
+        if (!isTranscribingAll) break;
+        const proj = eligibleProjects[i];
+        const tabNum = i + 1;
+        const vidName = proj.file?.name || proj.name || `Video ${tabNum}`;
 
-      const workers = Array.from({ length: Math.min(eligibleProjects.length, poolSize) }, () => runWorker());
-      await Promise.all(workers);
+        try {
+          showToast(`Transcribing Tab ${tabNum}/${eligibleProjects.length}: "${vidName}"...`, "info");
+          const res = await transcribeSingleProject(proj, true, i);
+          if (res && res.success) {
+            completedCount++;
+          }
+        } catch (e) {
+          console.error(`Project ${tabNum} transcribe error:`, e);
+        }
+      }
 
       isTranscribingAll = false;
       updateTranscribeAllButtonState();
@@ -9268,7 +9305,7 @@
       renderProjectTabs();
 
       if (completedCount > 0) {
-        showToast(`🎉 Completed and saved all ${completedCount} of ${eligibleProjects.length} project tab(s)!`, "success");
+        showToast(`🎉 Completed and saved all ${completedCount} of ${eligibleProjects.length} project tab(s) in order!`, "success");
       }
     }
 
@@ -13091,12 +13128,18 @@
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    // CREATOR FEATURE 1: ONE-CLICK AI DIALOGUE REWRITER (⚡ SHORTEN, 🎭 DRAMATIC, 👑 ROYAL, 😆 COMEDY)
+    // CREATOR FEATURE 1: 1-CLICK AI SUBTITLE REFACTORER & NATURAL DUBBING POLISH
     // ══════════════════════════════════════════════════════════════════════
+    function getSelectedRefactorMode() {
+      return document.querySelector('input[name="refactor-style-choice"]:checked')?.value || "natural";
+    }
+
     window.triggerAiRewrite = async (subId, mode) => {
       const subIndex = subtitles.findIndex((s) => String(s.id) === String(subId));
       if (subIndex === -1) return;
       const sub = subtitles[subIndex];
+
+      const refactorMode = mode || getSelectedRefactorMode();
 
       // Retrieve active Gemini API Key
       let activeKey = "";
@@ -13114,12 +13157,13 @@
       }
 
       const modeLabels = {
+        natural: "Polishing to Natural Spoken Khmer (សម្រួលពាក្យបែបសន្ទនា)",
         shorten: "Shortening dialogue (កាត់ឲ្យខ្លី)",
         dramatic: "Adding dramatic emotion (បន្ថែមអារម្មណ៍)",
         royal: "Applying royal register (រាជស័ព្ទ)",
         comedy: "Applying comedy style (កំប្លែង)",
       };
-      showToast(`${modeLabels[mode] || "Rewriting"}...`, "info");
+      showToast(`${modeLabels[refactorMode] || "Refactoring"}...`, "info");
 
       // Save state to undo history before making the change
       if (pastStates.length > 50) pastStates.shift();
@@ -13138,7 +13182,7 @@
           body: JSON.stringify({
             text: sub.text,
             originalText: sub.originalText || "",
-            mode: mode,
+            mode: refactorMode,
             genre: activeDramaGenre || "historical",
             glossary: glossary,
             apiKey: activeKey,
@@ -13155,15 +13199,158 @@
           subtitles[subIndex].file = null;
 
           if (typeof renderSubtitles === "function") renderSubtitles();
-          showToast(`✓ Rewritten: "${data.rewrittenText}"`, "success");
+          showToast(`✓ Refactored: "${data.rewrittenText}"`, "success");
         } else {
-          showToast(data.error || data.message || "Rewrite failed.", "error");
+          showToast(data.error || data.message || "Refactor failed.", "error");
         }
       } catch (err) {
-        console.error("AI Rewrite error:", err);
-        showToast("Network error while rewriting dialogue.", "error");
+        console.error("AI Refactor error:", err);
+        showToast("Network error while refactoring dialogue.", "error");
       }
     };
+
+    async function refactorSingleProject(targetProject, mode = "natural", isBatch = false) {
+      if (!targetProject || !targetProject.subtitles || targetProject.subtitles.length === 0) {
+        if (!isBatch) showToast("No subtitles available to refactor.", "error");
+        return { success: false, error: "No subtitles" };
+      }
+
+      let activeKey = "";
+      try {
+        const keys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]");
+        if (Array.isArray(keys) && keys.length > 0) activeKey = keys[0];
+      } catch (e) { }
+
+      if (!activeKey) {
+        if (!isBatch) {
+          showToast("Please add at least one Gemini API Key in Settings.", "error");
+          document.getElementById("btn-open-settings")?.click();
+        }
+        return { success: false, error: "Missing API Key" };
+      }
+
+      // Check if user selected specific rows in active project
+      let subsToRefactor = targetProject.subtitles;
+      let targetIndices = null;
+      if (targetProject === projects[activeProjectIndex] && selectedItems.length > 0) {
+        const selectedSubIds = new Set(
+          selectedItems.filter((id) => id.startsWith("text-") || id.startsWith("audio-")).map((id) => id.split("-").slice(1).join("-"))
+        );
+        if (selectedSubIds.size > 0) {
+          targetIndices = [];
+          subsToRefactor = targetProject.subtitles.filter((s, idx) => {
+            if (selectedSubIds.has(String(s.id))) {
+              targetIndices.push(idx);
+              return true;
+            }
+            return false;
+          });
+        }
+      }
+
+      if (subsToRefactor.length === 0) return { success: false, error: "No subtitles to refactor" };
+
+      // Save to undo history if active project
+      if (targetProject === projects[activeProjectIndex]) {
+        if (pastStates.length > 50) pastStates.shift();
+        pastStates.push({
+          subs: JSON.parse(JSON.stringify(subtitles)),
+          bgm: JSON.parse(JSON.stringify(bgmTrack)),
+        });
+      }
+
+      const glossary = typeof getDramaGlossaryDict === "function" ? getDramaGlossaryDict() : null;
+      const activeModel = localStorage.getItem("aiDubberModel") || "gemini-3.7-flash";
+
+      try {
+        const res = await fetch("http://localhost:3001/api/refactor-subtitles-batch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            subtitles: subsToRefactor,
+            mode: mode,
+            genre: activeDramaGenre || "historical",
+            glossary: glossary,
+            apiKey: activeKey,
+            model: activeModel,
+          }),
+        });
+
+        const data = await res.json();
+        if (data.success && Array.isArray(data.refactoredSubtitles)) {
+          const newMap = new Map();
+          data.refactoredSubtitles.forEach((s) => newMap.set(String(s.id), s.text));
+
+          targetProject.subtitles.forEach((sub, i) => {
+            const updated = newMap.get(String(sub.id));
+            if (updated && updated !== sub.text) {
+              sub.text = updated;
+              sub.audioStatus = "idle";
+              sub.audioUrl = null;
+              sub.file = null;
+            }
+          });
+
+          // Sync if active project
+          if (targetProject === projects[activeProjectIndex]) {
+            subtitles = targetProject.subtitles.map((s) => ({ ...s }));
+            if (typeof renderSubtitles === "function") renderSubtitles();
+          }
+
+          // Auto-save refactored SRT
+          maybeAutoSaveSubtitles(targetProject, targetProject.subtitles, true);
+          return { success: true, count: data.refactoredSubtitles.length };
+        } else {
+          return { success: false, error: data.error || data.message || "Failed to refactor" };
+        }
+      } catch (err) {
+        console.error("Batch refactor error:", err);
+        return { success: false, error: err.message };
+      }
+    }
+
+    async function refactorAllProjects() {
+      const eligibleProjects = projects.filter((p) => p.subtitles && p.subtitles.length > 0);
+      if (eligibleProjects.length === 0) {
+        showToast("No subtitles found in any open project tab.", "info");
+        return;
+      }
+
+      const mode = getSelectedRefactorMode();
+      showToast(`⚡ 1-Click AI Refactor started for all ${eligibleProjects.length} project tab(s)...`, "info");
+
+      let completedCount = 0;
+
+      // Sequential 1-Click processing across all tabs in exact order (1, 2, 3... N)
+      for (let i = 0; i < eligibleProjects.length; i++) {
+        const proj = eligibleProjects[i];
+        const tabNum = i + 1;
+        const vidTitle = proj.file?.name || proj.name || `Video ${tabNum}`;
+
+        proj.isTranscribing = true;
+        renderProjectTabs();
+
+        try {
+          showToast(`⚡ Refactoring Tab ${tabNum}/${eligibleProjects.length}: "${vidTitle}"...`, "info");
+          const res = await refactorSingleProject(proj, mode, true);
+          if (res && res.success) {
+            completedCount++;
+          }
+        } catch (e) {
+          console.error(`Project ${tabNum} refactor error:`, e);
+        } finally {
+          proj.isTranscribing = false;
+          renderProjectTabs();
+        }
+      }
+
+      renderProjectTabs();
+      if (typeof renderSubtitles === "function") renderSubtitles();
+
+      if (completedCount > 0) {
+        showToast(`🎉 1-Click Refactored and saved all ${completedCount} of ${eligibleProjects.length} project tab(s) in order!`, "success");
+      }
+    }
 
     // ══════════════════════════════════════════════════════════════════════
     // CREATOR FEATURE 3 & 6: STUDIO AUTO-DUCKING & SUBTITLE VISUAL PRESETS
@@ -15822,6 +16009,50 @@
       findInput.addEventListener("input", runSearch);
     })();
 
+    // ── AI Refactor Menu Dropdown & Actions ──────────────────────────
+    (() => {
+      const toggleBtn = document.getElementById("btn-refactor-menu-toggle");
+      const dropdown = document.getElementById("refactor-dropdown-menu");
+      const btnRefactorCur = document.getElementById("btn-refactor-current");
+      const btnRefactorAllTabs = document.getElementById("btn-refactor-all");
+
+      if (toggleBtn && dropdown) {
+        toggleBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          dropdown.classList.toggle("hidden");
+        });
+
+        document.addEventListener("click", (e) => {
+          if (!dropdown.contains(e.target) && !toggleBtn.contains(e.target)) {
+            dropdown.classList.add("hidden");
+          }
+        });
+      }
+
+      if (btnRefactorCur) {
+        btnRefactorCur.addEventListener("click", async () => {
+          if (dropdown) dropdown.classList.add("hidden");
+          const mode = getSelectedRefactorMode();
+          const targetProj = projects[activeProjectIndex];
+          if (!targetProj || !targetProj.subtitles || targetProj.subtitles.length === 0) {
+            return showToast("No subtitles in current tab to refactor.", "error");
+          }
+          showToast(`⚡ Refactoring current tab ("${targetProj.file?.name || 'project'}")...`, "info");
+          const res = await refactorSingleProject(targetProj, mode, false);
+          if (res && res.success) {
+            showToast(`✓ Successfully refactored ${res.count} subtitle lines in current tab!`, "success");
+          }
+        });
+      }
+
+      if (btnRefactorAllTabs) {
+        btnRefactorAllTabs.addEventListener("click", async () => {
+          if (dropdown) dropdown.classList.add("hidden");
+          await refactorAllProjects();
+        });
+      }
+    })();
+
     function autoAssignVoxProfiles(subs) {
       const voxData =
         typeof voxCmp2Load === "function"
@@ -15967,44 +16198,6 @@
         showToast("Communication with system failed.", "error");
       }
     });
-
-    // --- EXPORT AUDIO STEMS (CLEAN VOICE WAV + ISOLATED BGM + SRT PACKAGE) ---
-    const btnExportStems = document.getElementById("btn-export-stems");
-    if (btnExportStems) {
-      btnExportStems.addEventListener("click", async () => {
-        if (!mainVideo.src) return showToast("Please load a video first.", "error");
-        if (activeProjectIndex === -1) return;
-
-        const targetProject = projects[activeProjectIndex];
-        if (!targetProject.subtitles || targetProject.subtitles.length === 0) {
-          return showToast("No subtitles available to export stems.", "error");
-        }
-
-        showToast("Packaging audio stems (Voice WAV + BGM + SRT)...", "info");
-
-        try {
-          const res = await fetch("http://localhost:3001/api/export-stems", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              subtitles: targetProject.subtitles,
-              bgmPath: targetProject.bgmTrack?.file || null,
-              videoName: targetProject.file?.name || "project",
-              customFolder: localStorage.getItem("aiDubberCustomOutputsFolder") || null
-            })
-          });
-
-          const data = await res.json();
-          if (data.success) {
-            showToast(`Audio Stems exported! (${data.files?.length || 0} files created)`, "success");
-          } else {
-            showToast(data.error || "Failed to export audio stems.", "error");
-          }
-        } catch (err) {
-          showToast("Error exporting audio stems: " + err.message, "error");
-        }
-      });
-    }
 
     // 1. Zoom Logic
     // 1. Smart Zoom Logic (Adaptive GPU/CPU Performance)
@@ -18019,7 +18212,12 @@
                   ${sub.speaker ? `<span class="text-[9px] px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-sans font-semibold shrink-0">${sub.speaker}</span>` : ''}
                   <span class="truncate">${sub.originalText.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</span>
                 </div>` : ''}
-                <input type="text" value="${sub.text.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&#39;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}" class="subtitle-text-input w-full bg-transparent border-none outline-none font-khmer text-[13px] ${textInputColor} group-hover:text-[var(--text-bright)] focus:ring-2 focus:ring-[var(--accent-primary)] focus:bg-[var(--bg-base)] rounded px-2 py-1 -ml-2 transition-all">
+                <div class="flex items-center gap-1">
+                  <input type="text" value="${sub.text.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&#39;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}" class="subtitle-text-input flex-1 bg-transparent border-none outline-none font-khmer text-[13px] ${textInputColor} group-hover:text-[var(--text-bright)] focus:ring-2 focus:ring-[var(--accent-primary)] focus:bg-[var(--bg-base)] rounded px-2 py-1 -ml-2 transition-all">
+                  <button type="button" onclick="triggerAiRewrite('${sub.id}')" title="⚡ AI Polish / Refactor this line" class="opacity-0 group-hover:opacity-60 hover:!opacity-100 p-1 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/15 rounded transition-all shrink-0 cursor-pointer">
+                    <i data-lucide="wand-2" class="w-3.5 h-3.5"></i>
+                  </button>
+                </div>
             </td>
             <td class="px-4 py-2 overflow-visible relative z-[1]" onclick="event.stopPropagation()">
               <!-- Voice Select Wrap -->
@@ -23526,8 +23724,9 @@
               videoHeight: targetProject.videoHeight || mainVideo.videoHeight,
               videoZoom: projVideoZoom || 1,
               videoScaleX: targetProject.videoScaleX || projVideoZoom,
-              videoScaleY: targetProject.videoScaleY || projVideoZoom,
               customAspectRatio: targetProject.customAspectRatio || null,
+              aspectRatio: targetProject.customAspectRatio ? `${targetProject.customAspectRatio.w}:${targetProject.customAspectRatio.h}` : null,
+              resolution: targetProject.customAspectRatio ? `${targetProject.customAspectRatio.w}x${targetProject.customAspectRatio.h}` : null,
               bgBlur: document.getElementById("toggle-bg-blur")?.checked || false,
               blurStrength: parseInt(document.getElementById("setting-blur-strength")?.value || "20"),
               freeTexts: projFreeTexts.map((t) => ({
@@ -24103,6 +24302,8 @@
               subtitleShadowDepth: proj.subtitleShadowDepth,
               subtitleMarginV: proj.subtitleMarginV,
               customAspectRatio: proj.customAspectRatio || null,
+              aspectRatio: proj.customAspectRatio ? `${proj.customAspectRatio.w}:${proj.customAspectRatio.h}` : null,
+              resolution: proj.customAspectRatio ? `${proj.customAspectRatio.w}x${proj.customAspectRatio.h}` : null,
               bgBlur: !isAudioOnly && (document.getElementById("toggle-bg-blur")?.checked || false),
               blurStrength: !isAudioOnly ? parseInt(document.getElementById("setting-blur-strength")?.value || "20") : 0,
               colorAdj: proj.videoColorAdj || {
