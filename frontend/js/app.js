@@ -570,8 +570,9 @@ async function startRenderProcess() {
                 muteOriginal: chkMuteOriginal.checked,
                 burnSubtitles: burnSubs,
                 subtitleFont: selectFont.value,
-                subtitleFontSize: parseInt(sliderFontSize.value, 10),
                 resolution: resolution,
+                aspectRatio: resolution,
+                customAspectRatio: resolution === '9:16' ? { w: 1080, h: 1920, fit: 'crop' } : (resolution === '16:9' ? { w: 1920, h: 1080, fit: 'crop' } : (resolution === '720p' ? { w: 1280, h: 720, fit: 'crop' } : null)),
                 encoder: encoder,
                 outputFileName: outputName
             })

@@ -292,7 +292,125 @@ async function assembleDialogueStem(validSubs, tempDir, voiceVolume = 1.0) {
     return fs.existsSync(stemPath) ? stemPath : null;
 }
 
-async function applyEncoderSettings(args, encoderPreference, resolution) {
+const ASPECT_PRESETS = {
+    '9:16': { w: 1080, h: 1920 },
+    '16:9': { w: 1920, h: 1080 },
+    '1:1': { w: 1080, h: 1080 },
+    '4:5': { w: 1080, h: 1350 },
+    '4:3': { w: 1440, h: 1080 },
+    '21:9': { w: 2560, h: 1080 },
+    '2:3': { w: 1080, h: 1620 },
+    '1080p': { w: 1920, h: 1080 },
+    '720p': { w: 1280, h: 720 },
+};
+
+function hexToAssColor(hex, defaultVal = '&H00FFFFFF') {
+    if (!hex || typeof hex !== 'string') return defaultVal;
+    if (hex.startsWith('&H') || hex.startsWith('&h')) return hex;
+    const clean = hex.replace('#', '').trim();
+    if (clean.length === 3) {
+        const r = clean[0] + clean[0];
+        const g = clean[1] + clean[1];
+        const b = clean[2] + clean[2];
+        return `&H00${b}${g}${r}`.toUpperCase();
+    }
+    if (clean.length === 6) {
+        const r = clean.slice(0, 2);
+        const g = clean.slice(2, 4);
+        const b = clean.slice(4, 6);
+        return `&H00${b}${g}${r}`.toUpperCase();
+    }
+    if (clean.length === 8) {
+        const r = clean.slice(0, 2);
+        const g = clean.slice(2, 4);
+        const b = clean.slice(4, 6);
+        const a = clean.slice(6, 8);
+        return `&H${a}${b}${g}${r}`.toUpperCase();
+    }
+    return defaultVal;
+}
+
+function resolveTargetDimensions(options) {
+    const { customAspectRatio, aspectRatio, resolution, bgBlur, blurStrength } = options;
+
+    let targetW = null;
+    let targetH = null;
+    let fit = 'crop'; // default fit in UI
+
+    if (customAspectRatio) {
+        if (typeof customAspectRatio === 'object') {
+            const w = parseInt(customAspectRatio.w, 10);
+            const h = parseInt(customAspectRatio.h, 10);
+            if (w > 0 && h > 0) {
+                targetW = w;
+                targetH = h;
+            }
+            if (customAspectRatio.fit) {
+                fit = customAspectRatio.fit;
+            }
+        } else if (typeof customAspectRatio === 'string') {
+            const arStr = customAspectRatio.trim();
+            if (ASPECT_PRESETS[arStr]) {
+                targetW = ASPECT_PRESETS[arStr].w;
+                targetH = ASPECT_PRESETS[arStr].h;
+            } else if (arStr.includes(':')) {
+                const [rw, rh] = arStr.split(':').map(Number);
+                if (rw > 0 && rh > 0) {
+                    if (rw < rh) {
+                        targetW = 1080;
+                        targetH = Math.round((1080 * rh) / rw);
+                    } else {
+                        targetH = 1080;
+                        targetW = Math.round((1080 * rw) / rh);
+                    }
+                }
+            }
+        }
+    }
+
+    if (!targetW && aspectRatio) {
+        const arStr = String(aspectRatio).trim();
+        if (ASPECT_PRESETS[arStr]) {
+            targetW = ASPECT_PRESETS[arStr].w;
+            targetH = ASPECT_PRESETS[arStr].h;
+        } else if (arStr.includes(':')) {
+            const [rw, rh] = arStr.split(':').map(Number);
+            if (rw > 0 && rh > 0) {
+                if (rw < rh) {
+                    targetW = 1080;
+                    targetH = Math.round((1080 * rh) / rw);
+                } else {
+                    targetH = 1080;
+                    targetW = Math.round((1080 * rw) / rh);
+                }
+            }
+        }
+    }
+
+    if (!targetW && resolution && resolution !== 'original') {
+        const resStr = String(resolution).trim();
+        if (ASPECT_PRESETS[resStr]) {
+            targetW = ASPECT_PRESETS[resStr].w;
+            targetH = ASPECT_PRESETS[resStr].h;
+        } else if (resStr.includes('x')) {
+            const [rw, rh] = resStr.split('x').map(Number);
+            if (rw > 0 && rh > 0) {
+                targetW = rw;
+                targetH = rh;
+            }
+        }
+    }
+
+    if (targetW) targetW = Math.round(targetW / 2) * 2;
+    if (targetH) targetH = Math.round(targetH / 2) * 2;
+
+    const useBgBlur = (bgBlur === true || bgBlur === 'true');
+    const bgBlurRadius = Math.max(5, Math.min(50, parseInt(blurStrength, 10) || 20));
+
+    return { targetW, targetH, fit, useBgBlur, bgBlurRadius };
+}
+
+async function applyEncoderSettings(args, encoderPreference, targetW, targetH) {
     const encoders = await detectAvailableEncoders();
     let chosen = encoderPreference || 'auto';
 
@@ -309,16 +427,19 @@ async function applyEncoderSettings(args, encoderPreference, resolution) {
     const renderThreads = Math.max(2, Math.min(cpuCores - 1, 8));
     args.push('-threads', String(renderThreads));
 
+    const isHighRes = (!targetW || !targetH || (targetW * targetH >= 1280 * 720));
+    const bitrate = isHighRes ? '6500k' : '4500k';
+
     if (chosen === 'h264_nvenc' && encoders.nvenc) {
-        args.push('-c:v', 'h264_nvenc', '-preset', 'p4', '-tune', 'hq', '-b:v', resolution === '1080p' ? '6500k' : '4500k');
+        args.push('-c:v', 'h264_nvenc', '-preset', 'p4', '-tune', 'hq', '-b:v', bitrate);
     } else if (chosen === 'h264_qsv' && encoders.qsv) {
-        args.push('-c:v', 'h264_qsv', '-preset', 'veryfast', '-b:v', resolution === '1080p' ? '6500k' : '4500k');
+        args.push('-c:v', 'h264_qsv', '-preset', 'veryfast', '-b:v', bitrate);
     } else if (chosen === 'h264_amf' && encoders.amf) {
-        args.push('-c:v', 'h264_amf', '-usage', 'transcoding', '-quality', 'speed', '-b:v', resolution === '1080p' ? '6500k' : '4500k');
+        args.push('-c:v', 'h264_amf', '-usage', 'transcoding', '-quality', 'speed', '-b:v', bitrate);
     } else if (chosen === 'h264_mf' && encoders.mf) {
-        args.push('-c:v', 'h264_mf', '-b:v', resolution === '1080p' ? '6500k' : '4500k');
+        args.push('-c:v', 'h264_mf', '-b:v', bitrate);
     } else if (chosen === 'h264_videotoolbox' && encoders.videotoolbox) {
-        args.push('-c:v', 'h264_videotoolbox', '-b:v', resolution === '1080p' ? '6500k' : '4500k');
+        args.push('-c:v', 'h264_videotoolbox', '-b:v', bitrate);
     } else {
         args.push('-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'fastdecode', '-crf', '20');
     }
@@ -343,18 +464,33 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         burnSubtitles = true,
         subtitlePreset = 'classic', // 'classic' | 'tiktok_pop' | 'neon_cyan' | 'royal_gold'
         subtitleFont = 'Kantumruy Pro',
-        subtitleFontSize = 24,
+        subtitleFontSize = 28,
+        subtitleSize,
+        subtitleColor,
         subtitleFontColor = '&H00FFFFFF',
         subtitleOutlineColor = '&H00000000',
+        subtitleOutlineWidth = 2,
+        subtitleShadowColor = '&H00000000',
+        subtitleShadowDepth = 1,
         subtitlePosition = 'bottom',
-        resolution = '1080p',
+        subtitleMarginV = 30,
+        resolution,
+        aspectRatio,
+        customAspectRatio,
+        bgBlur = false,
+        blurStrength = 20,
         encoder = 'auto',
         outputPath,
         videoColorAdj,
         colorAdjustments,
+        colorAdj,
         videoVignette,
+        vignette,
         isFlippedH,
+        flipHorizontal,
         isFlippedV,
+        flipVertical,
+        cropConfig,
         duration: providedDuration
     } = options;
 
@@ -551,17 +687,18 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             }
         }
 
-        // Video Filters: Color Filters, Presets, Flips, Scaling & Subtitle Burning
-        let videoFilterStr = '[0:v]';
-        let currentVTag = 'v_proc';
+        // Video Filters: Color Filters, Presets, Flips, User Crop, Scaling & Subtitle Burning
+        let videoInTag = '0:v';
         const vFilters = [];
 
         // Flips
-        if (isFlippedH) vFilters.push('hflip');
-        if (isFlippedV) vFilters.push('vflip');
+        const flippedH = isFlippedH || flipHorizontal;
+        const flippedV = isFlippedV || flipVertical;
+        if (flippedH) vFilters.push('hflip');
+        if (flippedV) vFilters.push('vflip');
 
         // Color Adjustments & Filters
-        const ca = colorAdjustments || videoColorAdj || {};
+        const ca = colorAdjustments || videoColorAdj || colorAdj || {};
         const brightness = ca.brightness !== undefined ? (parseFloat(ca.brightness) - 100) / 100 : 0;
         const contrast = ca.contrast !== undefined ? parseFloat(ca.contrast) / 100 : 1.0;
         const saturation = ca.saturation !== undefined ? parseFloat(ca.saturation) / 100 : 1.0;
@@ -579,25 +716,59 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         }
 
         // Vignette
-        if (videoVignette && videoVignette.enabled) {
-            const rad = videoVignette.radius || 0.5;
-            vFilters.push(`vignette=angle=${(rad * Math.PI / 2).toFixed(2)}`);
+        const vig = videoVignette || vignette;
+        if (vig && (vig.enabled || parseFloat(vig.strength) > 0 || parseFloat(vig.radius) > 0)) {
+            const rad = vig.radius !== undefined ? parseFloat(vig.radius) : (parseFloat(vig.strength) / 100 || 0.5);
+            if (rad > 0) {
+                vFilters.push(`vignette=angle=${(rad * Math.PI / 2).toFixed(2)}`);
+            }
         }
 
-        // Resolution scaling
-        let scaleFilter = '';
-        if (resolution === '1080p') {
-            scaleFilter = 'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2';
-        } else if (resolution === '720p') {
-            scaleFilter = 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2';
-        } else if (resolution === '9:16') {
-            scaleFilter = 'scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2';
+        // User Crop Box (cropConfig)
+        if (cropConfig && (cropConfig.active || (cropConfig.w !== undefined && (cropConfig.w < 100 || cropConfig.h < 100)))) {
+            const cx = Math.max(0, parseFloat(cropConfig.x) || 0);
+            const cy = Math.max(0, parseFloat(cropConfig.y) || 0);
+            const cw = Math.max(1, Math.min(100 - cx, parseFloat(cropConfig.w) || 100));
+            const ch = Math.max(1, Math.min(100 - cy, parseFloat(cropConfig.h) || 100));
+            if (cw < 100 || ch < 100 || cx > 0 || cy > 0) {
+                vFilters.push(`crop=w=trunc(iw*${(cw / 100).toFixed(4)}/2)*2:h=trunc(ih*${(ch / 100).toFixed(4)}/2)*2:x=trunc(iw*${(cx / 100).toFixed(4)}/2)*2:y=trunc(ih*${(cy / 100).toFixed(4)}/2)*2`);
+            }
         }
-        if (scaleFilter) vFilters.push(scaleFilter);
 
         if (vFilters.length > 0) {
-            filterComplex.push(`${videoFilterStr}${vFilters.join(',')}[${currentVTag}]`);
-            videoFilterStr = `[${currentVTag}]`;
+            filterComplex.push(`[${videoInTag}]${vFilters.join(',')}[v_proc]`);
+            videoInTag = 'v_proc';
+        }
+
+        // Aspect ratio / Resolution scaling
+        const { targetW, targetH, fit, useBgBlur, bgBlurRadius } = resolveTargetDimensions({
+            customAspectRatio,
+            aspectRatio,
+            resolution,
+            bgBlur,
+            blurStrength
+        });
+
+        const scaledTag = 'v_scaled';
+        if (targetW && targetH) {
+            if (fit === 'crop' || fit === 'cover') {
+                filterComplex.push(`[${videoInTag}]scale=${targetW}:${targetH}:force_original_aspect_ratio=increase,crop=${targetW}:${targetH},setsar=1[${scaledTag}]`);
+            } else if (fit === 'contain' || fit === 'pad') {
+                if (useBgBlur) {
+                    filterComplex.push(`[${videoInTag}]split=2[v_for_bg][v_for_fg]`);
+                    filterComplex.push(`[v_for_bg]scale=${targetW}:${targetH}:force_original_aspect_ratio=increase,crop=${targetW}:${targetH},boxblur=${bgBlurRadius}:5,setsar=1[v_bg]`);
+                    filterComplex.push(`[v_for_fg]scale=${targetW}:${targetH}:force_original_aspect_ratio=decrease,setsar=1[v_fg]`);
+                    filterComplex.push(`[v_bg][v_fg]overlay=(W-w)/2:(H-h)/2[${scaledTag}]`);
+                } else {
+                    filterComplex.push(`[${videoInTag}]scale=${targetW}:${targetH}:force_original_aspect_ratio=decrease,pad=${targetW}:${targetH}:(ow-iw)/2:(oh-ih)/2:black,setsar=1[${scaledTag}]`);
+                }
+            } else if (fit === 'stretch' || fit === 'fill') {
+                filterComplex.push(`[${videoInTag}]scale=${targetW}:${targetH},setsar=1[${scaledTag}]`);
+            } else {
+                filterComplex.push(`[${videoInTag}]scale=${targetW}:${targetH}:force_original_aspect_ratio=increase,crop=${targetW}:${targetH},setsar=1[${scaledTag}]`);
+            }
+        } else {
+            filterComplex.push(`[${videoInTag}]scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1[${scaledTag}]`);
         }
 
         // Subtitles burning or soft muxing
@@ -638,23 +809,33 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             const fontsDir = escapeFfmpegFilterPath(path.join(__dirname, '..', 'frontend', 'fonts'));
 
             if (hasSubtitlesFilter()) {
-                let subStyle = `Fontname=${subtitleFont},Fontsize=${subtitleFontSize},PrimaryColour=${subtitleFontColor},OutlineColour=${subtitleOutlineColor},BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV=30`;
+                const finalFont = subtitleFont || 'Kantumruy Pro';
+                const rawFontSize = parseInt(subtitleFontSize || subtitleSize, 10) || 28;
+                const effectiveFontSize = targetH && targetH > 1200 ? Math.round(rawFontSize * (targetH / 1080)) : rawFontSize;
+                const fontCol = hexToAssColor(subtitleFontColor || subtitleColor, '&H00FFFFFF');
+                const outlineCol = hexToAssColor(subtitleOutlineColor, '&H00000000');
+                const outlineW = subtitleOutlineWidth !== undefined ? subtitleOutlineWidth : 2;
+                const shadowDepth = subtitleShadowDepth !== undefined ? subtitleShadowDepth : 1;
+                const marginV = subtitleMarginV !== undefined ? subtitleMarginV : 30;
+
+                let subStyle = `Fontname=${finalFont},Fontsize=${effectiveFontSize},PrimaryColour=${fontCol},OutlineColour=${outlineCol},BorderStyle=1,Outline=${outlineW},Shadow=${shadowDepth},Alignment=2,MarginV=${marginV}`;
+
                 if (subtitlePreset === 'tiktok_pop') {
-                    subStyle = `Fontname=${subtitleFont},Fontsize=${Math.round(subtitleFontSize * 1.15)},PrimaryColour=&H0000E5FF,OutlineColour=&H00000000,BorderStyle=1,Outline=4,Shadow=2,Alignment=2,MarginV=45,Bold=1`;
+                    subStyle = `Fontname=${finalFont},Fontsize=${Math.round(effectiveFontSize * 1.15)},PrimaryColour=&H0000E5FF,OutlineColour=&H00000000,BorderStyle=1,Outline=4,Shadow=2,Alignment=2,MarginV=${Math.round(marginV * 1.5)},Bold=1`;
                 } else if (subtitlePreset === 'neon_cyan') {
-                    subStyle = `Fontname=${subtitleFont},Fontsize=${subtitleFontSize},PrimaryColour=&H00FFFF00,OutlineColour=&H00111111,BorderStyle=1,Outline=3,Shadow=2,Alignment=2,MarginV=35,Bold=1`;
+                    subStyle = `Fontname=${finalFont},Fontsize=${effectiveFontSize},PrimaryColour=&H00FFFF00,OutlineColour=&H00111111,BorderStyle=1,Outline=3,Shadow=2,Alignment=2,MarginV=${marginV},Bold=1`;
                 } else if (subtitlePreset === 'royal_gold') {
-                    subStyle = `Fontname=${subtitleFont},Fontsize=${subtitleFontSize},PrimaryColour=&H003AD3F5,OutlineColour=&H00151535,BorderStyle=1,Outline=3,Shadow=2,Alignment=2,MarginV=35,Bold=1`;
+                    subStyle = `Fontname=${finalFont},Fontsize=${effectiveFontSize},PrimaryColour=&H003AD3F5,OutlineColour=&H00151535,BorderStyle=1,Outline=3,Shadow=2,Alignment=2,MarginV=${marginV},Bold=1`;
                 }
 
-                filterComplex.push(`${videoFilterStr}subtitles=filename='${escapedSrtPath}':fontsdir='${fontsDir}':force_style='${subStyle}'[final_video]`);
+                filterComplex.push(`[${scaledTag}]subtitles=filename='${escapedSrtPath}':fontsdir='${fontsDir}':force_style='${subStyle}'[final_video]`);
             } else {
-                filterComplex.push(`${videoFilterStr}null[final_video]`);
+                filterComplex.push(`[${scaledTag}]null[final_video]`);
                 softSrtInputIndex = nextInputIndex++;
                 args.push('-i', validSrtPath);
             }
         } else {
-            filterComplex.push(`${videoFilterStr}null[final_video]`);
+            filterComplex.push(`[${scaledTag}]null[final_video]`);
         }
 
         args.push('-filter_complex', filterComplex.join(';'));
@@ -666,7 +847,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         }
 
         // Hardware-Accelerated Video Encoder Configuration
-        await applyEncoderSettings(args, encoder, resolution);
+        await applyEncoderSettings(args, encoder, targetW, targetH);
 
         args.push('-c:a', 'aac');
         args.push('-b:a', '192k');
