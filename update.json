@@ -1,6 +1,6 @@
 {
-  "version": "1.1.4",
-  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.1.4/DR.Dubber.Pro.Setup.1.1.4.exe",
+  "version": "1.1.5",
+  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.1.5/DR.Dubber.Pro.Setup.1.1.5.exe",
   "mac_link": "https://github.com/chhordalim14/dr-dubber/releases",
-  "notes": "- Removed FFmpeg vocal isolation and migrated to Spleeter & Demucs ML stem separation\n- Added fast AI vocal separation with Spleeter (2-stems: vocals / accompaniment)\n- Updated Vocal Removal Engine settings with improved UI\n- Enhanced Python runtime detection for spleeter-env and demucs-env"
+  "notes": "- Added Apply to All feature for Vignette across all project tabs\n- Performance and UI improvements"
 }
