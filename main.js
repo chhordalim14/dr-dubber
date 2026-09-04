@@ -660,23 +660,67 @@ let activeVoxServerJob = null;
 let activeVoxServerPort = 8808;
 
 ipcMain.handle('voxcpm2:startServer', async (event, opts = {}) => {
-    let scriptPath = (opts && opts.pythonPath) ? opts.pythonPath.trim() : '';
-    if (!scriptPath) {
-        const defaultApp = path.join('D:', 'VoxCPM2', 'app.py');
-        if (fs.existsSync(defaultApp)) scriptPath = defaultApp;
-    }
+    let rawPath = (opts && opts.pythonPath) ? opts.pythonPath.trim().replace(/^["']|["']$/g, '').trim() : '';
 
     if (activeVoxServerJob && activeVoxServerJob.child && !activeVoxServerJob.child.killed) {
         return { success: true, status: 'running', port: activeVoxServerPort, message: `Running on port ${activeVoxServerPort}` };
     }
 
-    if (!scriptPath || !fs.existsSync(scriptPath)) {
-        return { success: false, error: `VoxCPM2 script not found at "${scriptPath}". Please configure the path in settings.` };
+    if (!rawPath) {
+        return { success: false, error: 'No VoxCPM2 path specified. Please install VoxCPM2 locally and paste the folder path or app.py path in Settings -> VoxCPM2 AI.' };
     }
 
-    const scriptDir = path.dirname(scriptPath);
-    const venvPythonWin = path.join(scriptDir, 'venv', 'Scripts', 'python.exe');
-    const pythonExe = fs.existsSync(venvPythonWin) ? venvPythonWin : (process.platform === 'win32' ? 'python' : 'python3');
+    let scriptPath = rawPath;
+    let scriptDir = '';
+
+    if (!fs.existsSync(scriptPath)) {
+        return { success: false, error: `VoxCPM2 path not found at "${rawPath}". Please check the folder or file path in settings.` };
+    }
+
+    try {
+        const stat = fs.statSync(scriptPath);
+        if (stat.isDirectory()) {
+            scriptDir = scriptPath;
+            const candidates = ['app.py', 'main.py', 'server.py', 'run.py', 'webui.py'];
+            let found = null;
+            for (const c of candidates) {
+                const target = path.join(scriptDir, c);
+                if (fs.existsSync(target)) {
+                    found = target;
+                    break;
+                }
+            }
+            if (found) {
+                scriptPath = found;
+            } else {
+                return { success: false, error: `Could not find an entry script (e.g. app.py, main.py, server.py) inside folder "${rawPath}".` };
+            }
+        } else {
+            scriptDir = path.dirname(scriptPath);
+        }
+    } catch (e) {
+        return { success: false, error: `Error accessing VoxCPM2 path: ${e.message}` };
+    }
+
+    // Detect virtualenv or embedded Python if available, else system python
+    const possiblePythons = [
+        path.join(scriptDir, 'venv', 'Scripts', 'python.exe'),
+        path.join(scriptDir, '.venv', 'Scripts', 'python.exe'),
+        path.join(scriptDir, 'env', 'Scripts', 'python.exe'),
+        path.join(scriptDir, 'venv', 'bin', 'python'),
+        path.join(scriptDir, '.venv', 'bin', 'python'),
+        path.join(scriptDir, 'env', 'bin', 'python'),
+        path.join(scriptDir, 'python', 'python.exe'),
+        path.join(scriptDir, 'python.exe')
+    ];
+    let pythonExe = process.platform === 'win32' ? 'python' : 'python3';
+    for (const p of possiblePythons) {
+        if (fs.existsSync(p)) {
+            pythonExe = p;
+            break;
+        }
+    }
+
     const port = opts.port || 8808;
     activeVoxServerPort = port;
 

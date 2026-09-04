@@ -4121,15 +4121,19 @@
 
             <!-- Python Server Path -->
             <div class="flex flex-col gap-2 voxcmp2-content">
-              <label class="text-xs font-semibold text-[var(--text-secondary)] uppercase tracking-wider">Python Server
-                Path</label>
+              <label class="text-xs font-semibold text-[var(--text-secondary)] uppercase tracking-wider">VoxCPM2 Local Path</label>
               <div class="flex gap-2">
-                <input id="voxcmp2-output-path" type="text" placeholder="e.g. /path/to/app.py or C:\VoxCPM2\app.py"
-                  readonly
-                  class="flex-1 bg-[var(--bg-base)] border border-[var(--border-light)] rounded-lg px-3 py-2 text-xs text-[var(--text-primary)] font-mono outline-none focus:border-[var(--accent-primary)] transition-colors cursor-default" />
-                <button onclick="voxCmp2BrowsePythonPath()"
+                <input id="voxcmp2-output-path" type="text" placeholder="Paste local folder path or app.py (e.g. C:\VoxCPM2 or C:\VoxCPM2\app.py)"
+                  oninput="voxCmp2SavePath(this.value)"
+                  onchange="voxCmp2SavePath(this.value)"
+                  class="flex-1 bg-[var(--bg-base)] border border-[var(--border-light)] rounded-lg px-3 py-2 text-xs text-[var(--text-primary)] font-mono outline-none focus:border-[var(--accent-primary)] transition-colors" />
+                <button onclick="voxCmp2BrowsePythonPath()" title="Browse for app.py or Python script"
                   class="px-3 py-2 rounded-lg text-xs font-semibold bg-[var(--bg-hover)] border border-[var(--border-light)] text-[var(--text-primary)] hover:brightness-110 transition-all active:scale-95 whitespace-nowrap flex items-center gap-1.5">
-                  <i data-lucide="file-code" class="w-3.5 h-3.5"></i> Browse
+                  <i data-lucide="file-code" class="w-3.5 h-3.5"></i> File
+                </button>
+                <button onclick="voxCmp2BrowseFolder()" title="Browse for VoxCPM2 folder"
+                  class="px-3 py-2 rounded-lg text-xs font-semibold bg-[var(--bg-hover)] border border-[var(--border-light)] text-[var(--text-primary)] hover:brightness-110 transition-all active:scale-95 whitespace-nowrap flex items-center gap-1.5">
+                  <i data-lucide="folder-open" class="w-3.5 h-3.5"></i> Folder
                 </button>
                 <button id="voxcpm2-server-toggle-btn" onclick="voxCmp2ToggleServer()"
                   class="px-3 py-2 rounded-lg text-xs font-semibold border transition-all active:scale-95 whitespace-nowrap flex items-center gap-1.5 bg-emerald-500/15 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/25">
@@ -4137,8 +4141,7 @@
                   <span id="voxcpm2-server-btn-label">Start Server</span>
                 </button>
               </div>
-              <p class="text-[11px] text-[var(--text-muted)]">Path to the <code class="font-mono">app.py</code> file
-                used by the VoxCPM2 Python server.</p>
+              <p class="text-[11px] text-[var(--text-muted)]">Install VoxCPM2 in your local environment and paste the installation folder path or <code class="font-mono">app.py</code> path here.</p>
             </div>
 
             <!-- Server Start/Stop + Log -->
@@ -13111,6 +13114,23 @@
         try {
           const data = JSON.parse(raw);
 
+          // Check and sanitize legacy hardcoded default "D:\VoxCPM2\app.py" if invalid
+          if (data.pythonPath && (data.pythonPath.includes("D:\\VoxCPM2") || data.pythonPath.includes("D:/VoxCPM2"))) {
+            if (window.electronAPI && window.electronAPI.checkPathExists) {
+              window.electronAPI.checkPathExists(data.pythonPath).then((exists) => {
+                if (!exists) {
+                  data.pythonPath = "";
+                  if (data.outputPath && (data.outputPath.includes("D:\\VoxCPM2") || data.outputPath.includes("D:/VoxCPM2"))) {
+                    data.outputPath = "";
+                  }
+                  voxCmp2Save(data);
+                  const pathInput = document.getElementById("voxcmp2-output-path");
+                  if (pathInput && pathInput.value.includes("VoxCPM2")) pathInput.value = "";
+                }
+              }).catch(() => {});
+            }
+          }
+
           // Force at least 1 default profile if the array is missing or empty
           if (!data.profiles || data.profiles.length === 0) {
             data.profiles = [
@@ -13140,8 +13160,8 @@
         autoStart: false,
         acceptedDisclaimer: false,
         serverUrl: "http://localhost:8808/",
-        pythonPath: "D:\\VoxCPM2\\app.py",
-        outputPath: "D:\\VoxCPM2\\cache\\outputs",
+        pythonPath: "",
+        outputPath: "",
         profiles: [
           {
             id: "male-default",
@@ -13171,6 +13191,12 @@
       if (typeof renderSubtitles === "function") {
         renderSubtitles();
       }
+    }
+
+    function voxCmp2SavePath(value) {
+      const data = voxCmp2Load();
+      data.pythonPath = (value || "").trim().replace(/^["']|["']$/g, "").trim();
+      voxCmp2Save(data);
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -13739,8 +13765,9 @@
     async function voxCmp2BrowsePythonPath() {
       if (window.electronAPI && window.electronAPI.openFile) {
         const result = await window.electronAPI.openFile({
+          title: "Select VoxCPM2 app.py or Python Script",
           filters: [
-            { name: "Python Script", extensions: ["py"] },
+            { name: "Python Script / App", extensions: ["py", "bat", "cmd", "exe"] },
             { name: "All Files", extensions: ["*"] },
           ],
         });
@@ -13752,6 +13779,24 @@
         if (input) input.value = result.filePath;
       } else {
         showToast("File picker only works in the desktop app.", "error");
+      }
+    }
+
+    async function voxCmp2BrowseFolder() {
+      if (window.electronAPI && window.electronAPI.selectFolder) {
+        const result = await window.electronAPI.selectFolder({
+          title: "Select VoxCPM2 Installation Folder",
+        });
+        if (!result || result.canceled) return;
+        const selected = result.path || (result.filePaths && result.filePaths[0]);
+        if (!selected) return;
+        const data = voxCmp2Load();
+        data.pythonPath = selected;
+        voxCmp2Save(data);
+        const input = document.getElementById("voxcmp2-output-path");
+        if (input) input.value = selected;
+      } else {
+        showToast("Folder picker only works in the desktop app.", "error");
       }
     }
 
@@ -13794,12 +13839,12 @@
           console.log("[VoxCPM2] User clicked Start. Booting server...");
 
           const data = typeof voxCmp2Load === "function" ? voxCmp2Load() : {};
-          const pyPath = data.pythonPath || "";
+          const pyPath = (data.pythonPath || "").trim();
           const serverUrl = (data.serverUrl || "").trim();
           const isValidUrl = serverUrl && /^https?:\/\/.+/.test(serverUrl);
 
           if (!pyPath) {
-            alert("Please configure the Python Path in settings first.");
+            showToast("Please paste or browse your local VoxCPM2 path in Settings first.", "warning");
             btn.disabled = false;
             return;
           }
@@ -13863,7 +13908,7 @@
               if (typeof voxCmp2SetServerUI === "function") {
                 voxCmp2SetServerUI(false, null, "Failed to start.");
               }
-              showToast("VoxCPM2 server failed to start.", "error");
+              showToast(res?.error || "VoxCPM2 server failed to start.", "error");
             }
           }
         }

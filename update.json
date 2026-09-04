@@ -1,6 +1,6 @@
 {
-  "version": "1.1.5",
-  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.1.5/DR.Dubber.Pro.Setup.1.1.5.exe",
+  "version": "1.1.6",
+  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.1.6/DR.Dubber.Pro.Setup.1.1.6.exe",
   "mac_link": "https://github.com/chhordalim14/dr-dubber/releases",
-  "notes": "- Added Apply to All feature for Vignette across all project tabs\n- Performance and UI improvements"
+  "notes": "- Decoupled VoxCPM2 to support custom local installation paths\n- Direct path pasting and folder selection for VoxCPM2\n- Performance and UI improvements"
 }
