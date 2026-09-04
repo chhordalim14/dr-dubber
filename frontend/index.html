@@ -2283,6 +2283,17 @@
           <input type="range" id="ctx-img-radius" min="0" max="100" value="0"
             class="w-full accent-emerald-500 h-1.5 bg-[var(--border-light)] rounded-lg appearance-none cursor-pointer hover:accent-emerald-400 transition-all" />
         </div>
+
+        <div class="pt-2 border-t border-[var(--border-light)] w-full">
+          <button id="btn-img-apply-all"
+            class="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 hover:text-amber-300 border border-amber-500/25 transition-all text-xs font-medium active:scale-95"
+            title="Apply current image overlays to all project tabs">
+            <span class="flex items-center gap-1.5">
+              <i data-lucide="layers" class="w-3.5 h-3.5"></i> Apply to All
+            </span>
+            <span class="text-[10px] text-amber-400/80 bg-amber-400/10 px-1 py-0.5 rounded font-mono">Tabs</span>
+          </button>
+        </div>
       </div>
 
       <!-- MOTION ANIMATION SECTION (shared by text + image) -->
@@ -26763,6 +26774,7 @@
       const delBtn = document.createElement("button");
       delBtn.innerHTML = `<i data-lucide="x" class="w-3.5 h-3.5 text-white"></i>`;
       delBtn.className = "absolute -top-4 -right-4 bg-red-500 rounded-full p-1 hidden delete-img-btn shadow-lg hover:scale-110 transition-transform z-50";
+      delBtn.title = "Delete Overlay";
       delBtn.onclick = (e) => {
         e.stopPropagation();
         wrapper.remove();
@@ -26771,6 +26783,16 @@
         document.getElementById("text-context-menu").classList.add("hidden");
       };
       wrapper.appendChild(delBtn);
+
+      const applyAllBtn = document.createElement("button");
+      applyAllBtn.innerHTML = `<i data-lucide="layers" class="w-3.5 h-3.5 text-white"></i>`;
+      applyAllBtn.className = "absolute -top-4 -left-4 bg-amber-500 hover:bg-amber-400 rounded-full p-1 hidden apply-all-img-btn shadow-lg hover:scale-110 active:scale-95 transition-transform z-50";
+      applyAllBtn.title = "Apply all overlays to all project tabs";
+      applyAllBtn.onclick = (e) => {
+        e.stopPropagation();
+        applyImageOverlaysToAllProjects(applyAllBtn);
+      };
+      wrapper.appendChild(applyAllBtn);
 
       wrapper.addEventListener("mousedown", (e) => {
         e.stopPropagation();
@@ -26847,12 +26869,12 @@
     function selectImageItem(targetWrapper) {
       document.querySelectorAll(".image-overlay-item").forEach((el) => {
         el.style.outline = "none";
-        el.querySelectorAll(".img-handle, .delete-img-btn").forEach((h) => (h.style.display = "none"));
+        el.querySelectorAll(".img-handle, .delete-img-btn, .apply-all-img-btn").forEach((h) => (h.style.display = "none"));
       });
       activeImageItem = targetWrapper;
       if (targetWrapper) {
         targetWrapper.style.outline = "2px dashed #10b981";
-        targetWrapper.querySelectorAll(".img-handle, .delete-img-btn").forEach((h) => (h.style.display = "block"));
+        targetWrapper.querySelectorAll(".img-handle, .delete-img-btn, .apply-all-img-btn").forEach((h) => (h.style.display = "block"));
       }
     }
 
@@ -26951,6 +26973,89 @@
 
         const imgState = window.imageOverlays.find((i) => i.id === activeImageItem.dataset.id);
         if (imgState) imgState.radius = parseInt(val, 10);
+      });
+    }
+
+    // --- APPLY ALL IMAGE OVERLAYS TO ALL PROJECTS ---
+    function applyImageOverlaysToAllProjects(triggerBtn = null) {
+      if (!projects || projects.length === 0) return showToast("No project tabs open.", "error");
+
+      // Sync active DOM geometry (x, y, w, h) into window.imageOverlays
+      document.querySelectorAll(".image-overlay-item").forEach((wrapper) => {
+        const id = wrapper.dataset.id;
+        if (id && typeof updateImageState === "function") updateImageState(id, wrapper);
+      });
+
+      if (!window.imageOverlays || window.imageOverlays.length === 0) {
+        return showToast("No image overlays to apply.", "error");
+      }
+
+      // Snapshot all current image overlays
+      const snapshot = window.imageOverlays.map((img) => {
+        let blobUrl = img.blobUrl;
+        if (!blobUrl && (img.file || img._file)) {
+          try {
+            blobUrl = URL.createObjectURL(img.file || img._file);
+          } catch (e) {
+            console.warn("Could not create object URL for overlay:", e);
+          }
+        }
+        return {
+          ...img,
+          blobUrl,
+          file: img.file || img._file || null,
+          _file: img.file || img._file || null,
+        };
+      });
+
+      // Stamp across every project tab
+      projects.forEach((proj, idx) => {
+        proj.imageOverlays = snapshot.map((img) => ({
+          ...img,
+          id: idx === activeProjectIndex ? img.id : crypto.randomUUID(),
+        }));
+      });
+
+      const count = projects.length;
+      showToast(`Image overlay${snapshot.length > 1 ? "s" : ""} applied to all ${count} tab${count !== 1 ? "s" : ""}!`, "success");
+
+      // Flash feedback on context menu button
+      const ctxBtn = document.getElementById("btn-img-apply-all");
+      if (ctxBtn) {
+        const originalHTML = ctxBtn.innerHTML;
+        ctxBtn.innerHTML = `
+          <span class="flex items-center gap-1.5 text-emerald-400 font-semibold">
+            <i data-lucide="check" class="w-3.5 h-3.5"></i> Applied!
+          </span>
+          <span class="text-[10px] text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded font-mono">Done</span>
+        `;
+        if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: ctxBtn });
+        setTimeout(() => {
+          ctxBtn.innerHTML = originalHTML;
+          if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: ctxBtn });
+        }, 1500);
+      }
+
+      // Flash feedback on trigger button (e.g. on overlay item)
+      if (triggerBtn) {
+        triggerBtn.innerHTML = `<i data-lucide="check" class="w-3.5 h-3.5 text-white"></i>`;
+        triggerBtn.classList.remove("bg-amber-500", "hover:bg-amber-400");
+        triggerBtn.classList.add("bg-emerald-500");
+        if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: triggerBtn });
+        setTimeout(() => {
+          triggerBtn.innerHTML = `<i data-lucide="layers" class="w-3.5 h-3.5 text-white"></i>`;
+          triggerBtn.classList.remove("bg-emerald-500");
+          triggerBtn.classList.add("bg-amber-500", "hover:bg-amber-400");
+          if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: triggerBtn });
+        }, 1500);
+      }
+    }
+
+    const btnImgApplyAll = document.getElementById("btn-img-apply-all");
+    if (btnImgApplyAll) {
+      btnImgApplyAll.addEventListener("click", (e) => {
+        e.stopPropagation();
+        applyImageOverlaysToAllProjects();
       });
     }
 
