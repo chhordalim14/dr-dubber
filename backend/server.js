@@ -108,20 +108,26 @@ function getPythonCmd() {
 
     const candidatePaths = [
         path.join(unpackedRootDir, 'backend', 'python_env', isWin ? 'python.exe' : 'python'),
-        path.join(ROOT_DIR, 'backend', 'python_env', isWin ? 'python.exe' : 'python'),
         path.join(unpackedRootDir, 'backend', 'demucs-env', subPath),
-        path.join(ROOT_DIR, 'backend', 'demucs-env', subPath),
         path.join(unpackedRootDir, 'backend', 'spleeter-env', subPath),
-        path.join(ROOT_DIR, 'backend', 'spleeter-env', subPath),
         path.join(unpackedRootDir, 'backend', 'venv', subPath),
-        path.join(ROOT_DIR, 'backend', 'venv', subPath),
         path.join(unpackedRootDir, '.venv', subPath),
-        path.join(ROOT_DIR, '.venv', subPath),
     ];
+
+    if (!ROOT_DIR.includes('app.asar')) {
+        candidatePaths.push(
+            path.join(ROOT_DIR, 'backend', 'python_env', isWin ? 'python.exe' : 'python'),
+            path.join(ROOT_DIR, 'backend', 'demucs-env', subPath),
+            path.join(ROOT_DIR, 'backend', 'spleeter-env', subPath),
+            path.join(ROOT_DIR, 'backend', 'venv', subPath),
+            path.join(ROOT_DIR, '.venv', subPath),
+        );
+    }
 
     if (isWin) {
         const localAppData = process.env.LOCALAPPDATA || (process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'AppData', 'Local') : '');
         if (localAppData) {
+            candidatePaths.push(path.join(localAppData, 'Programs', 'DR Dubber Pro', 'resources', 'app.asar.unpacked', 'backend', 'python_env', 'python.exe'));
             ['Python311', 'Python310', 'Python312', 'Python39', 'Python313'].forEach(v => {
                 candidatePaths.push(path.join(localAppData, 'Programs', 'Python', v, 'python.exe'));
             });
@@ -133,6 +139,7 @@ function getPythonCmd() {
     }
 
     for (const cand of candidatePaths) {
+        if (!cand || (cand.includes('app.asar') && !cand.includes('app.asar.unpacked'))) continue;
         try {
             if (cand && fs.existsSync(cand) && fs.statSync(cand).isFile()) {
                 return cand;

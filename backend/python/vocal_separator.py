@@ -15,11 +15,17 @@ import time
 def ensure_ffmpeg_in_path():
     if os.name != "nt":
         return
-    extra_paths = [
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "bin")
-    ]
+    extra_paths = []
+    py_dir = os.path.dirname(os.path.abspath(__file__))
+    bundled_bin = os.path.abspath(os.path.join(py_dir, "..", "bin"))
+    if "app.asar" in bundled_bin.lower() and "app.asar.unpacked" not in bundled_bin.lower():
+        bundled_bin = bundled_bin.replace("app.asar", "app.asar.unpacked")
+    if os.path.isdir(bundled_bin):
+        extra_paths.append(bundled_bin)
+
     local_app_data = os.environ.get("LOCALAPPDATA", "")
     if local_app_data:
+        extra_paths.append(os.path.join(local_app_data, "Programs", "DR Dubber Pro", "resources", "app.asar.unpacked", "backend", "bin"))
         extra_paths.append(os.path.join(local_app_data, "Microsoft", "WinGet", "Links"))
         extra_paths.append(os.path.join(local_app_data, "Programs"))
         winget_pkgs = os.path.join(local_app_data, "Microsoft", "WinGet", "Packages")
@@ -51,7 +57,12 @@ def ensure_ffmpeg_in_path():
 
     current_path = os.environ.get("PATH", "")
     current_set = {os.path.abspath(p).lower() for p in current_path.split(os.pathsep) if p}
-    to_add = [p for p in extra_paths if os.path.isdir(p) and os.path.abspath(p).lower() not in current_set]
+    to_add = [
+        p for p in extra_paths
+        if os.path.isdir(p)
+        and ("app.asar" not in p.lower() or "app.asar.unpacked" in p.lower())
+        and os.path.abspath(p).lower() not in current_set
+    ]
     if to_add:
         os.environ["PATH"] = os.pathsep.join(to_add + [current_path])
 
