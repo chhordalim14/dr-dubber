@@ -14,6 +14,8 @@ whisper_engine/venv/
 whisper_engine/__pycache__/
 backend/demucs-env/
 backend/spleeter-env/
+backend/bin/
+backend/python_env/
 pretrained_models/
 
 # Build & Distributables

@@ -15,7 +15,9 @@ import time
 def ensure_ffmpeg_in_path():
     if os.name != "nt":
         return
-    extra_paths = []
+    extra_paths = [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "bin")
+    ]
     local_app_data = os.environ.get("LOCALAPPDATA", "")
     if local_app_data:
         extra_paths.append(os.path.join(local_app_data, "Microsoft", "WinGet", "Links"))
@@ -190,7 +192,7 @@ def separate_spleeter(input_audio, output_dir, spleeter_folder=None):
         sys.stderr.write(f"[Spleeter] exception: {e}\n")
         return None
 
-def separate(input_audio, output_dir, engine="demucs", demucs_folder=None, segment=None, device=None, spleeter_folder=None):
+def separate(input_audio, output_dir, engine="spleeter", demucs_folder=None, segment=None, device=None, spleeter_folder=None):
     if engine == "spleeter":
         result = separate_spleeter(input_audio, output_dir, spleeter_folder)
         if result:
@@ -230,7 +232,7 @@ def main():
         parser = argparse.ArgumentParser(description="Stem & Vocal Separator")
         parser.add_argument("--input", required=True, help="Input audio or video file")
         parser.add_argument("--output", required=True, help="Output directory")
-        parser.add_argument("--engine", default="demucs", help="Separation engine (demucs or spleeter)")
+        parser.add_argument("--engine", default="spleeter", help="Separation engine (spleeter or demucs)")
         parser.add_argument("--demucs-folder", default=None, help="Optional portable Demucs install to use instead of the bundled one")
         parser.add_argument("--segment", default=None, help="Demucs chunk size (lower = less RAM)")
         parser.add_argument("--device", default=None, help="Demucs device override; omit to let demucs auto-detect")

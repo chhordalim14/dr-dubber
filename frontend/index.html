@@ -3331,7 +3331,7 @@
               <div class="grid grid-cols-2 gap-3 mt-1">
                 <label
                   class="group relative flex flex-col p-3 cursor-pointer rounded-xl border border-[var(--border-light)] bg-[var(--bg-base)] hover:bg-[var(--bg-hover)] hover:shadow-md transition-all duration-300 ease-out hover:-translate-y-1 active:scale-[0.96]">
-                  <input type="radio" name="vocal-engine" value="demucs" class="peer sr-only" checked />
+                  <input type="radio" name="vocal-engine" value="demucs" class="peer sr-only" />
                   <div
                     class="absolute inset-0 rounded-xl border-2 border-transparent peer-checked:border-purple-500 transition-colors pointer-events-none peer-checked:shadow-[0_0_15px_-3px_rgba(168,85,247,0.3)]">
                   </div>
@@ -3356,7 +3356,7 @@
 
                 <label
                   class="group relative flex flex-col p-3 cursor-pointer rounded-xl border border-[var(--border-light)] bg-[var(--bg-base)] hover:bg-[var(--bg-hover)] hover:shadow-md transition-all duration-300 ease-out hover:-translate-y-1 active:scale-[0.96]">
-                  <input type="radio" name="vocal-engine" value="spleeter" class="peer sr-only" />
+                  <input type="radio" name="vocal-engine" value="spleeter" class="peer sr-only" checked />
                   <div
                     class="absolute inset-0 rounded-xl border-2 border-transparent peer-checked:border-teal-500 transition-colors pointer-events-none peer-checked:shadow-[0_0_15px_-3px_rgba(20,184,166,0.3)]">
                   </div>
@@ -3408,18 +3408,17 @@
                   <label class="text-xs text-[var(--text-secondary)] font-medium">Demucs Folder Path</label>
                   <div class="flex gap-2">
                     <input id="setting-demucs-folder" type="text"
-                      placeholder="Optional — leave blank to use the built-in Demucs install"
+                      placeholder="Browse or paste path to your portable Demucs folder"
                       class="flex-1 text-xs bg-[var(--bg-hover)] border border-[var(--border-light)] rounded-lg px-3 py-2 text-[var(--text-primary)] placeholder-[var(--text-muted)] transition-colors focus:outline-none focus:border-[var(--accent-primary)]" />
                     <button id="btn-browse-demucs"
                       class="px-3 py-2 rounded-lg text-xs font-medium bg-[var(--bg-hover)] border border-[var(--border-light)] text-[var(--text-primary)] hover:brightness-110 transition-all active:scale-95">Browse</button>
                   </div>
                   <p class="text-[10px] text-[var(--text-muted)]">
-                    Leave blank to use the app's bundled Demucs install, or point this at a portable
-                    install's folder containing
+                    Point this at your portable Demucs folder containing
                     <span class="text-[var(--text-secondary)] font-medium">python-embed\</span>
                     and
                     <span class="text-[var(--text-secondary)] font-medium">htdemucs\</span>
-                    inside.
+                    inside (click Download below if you don't have it yet).
                   </p>
                   <div
                     class="flex items-center gap-2 mt-2 p-2.5 rounded-lg bg-[var(--bg-hover)] border border-[var(--border-light)]">
@@ -12932,7 +12931,7 @@
       if (!demucsOptionsMeasured) {
         requestAnimationFrame(() => {
           const demucsOptions = document.getElementById("demucs-options");
-          const savedVocalEngine = localStorage.getItem("aiDubberVocalEngine") || "demucs";
+          const savedVocalEngine = localStorage.getItem("aiDubberVocalEngine") || "spleeter";
           if (demucsOptions && savedVocalEngine === "demucs") {
             demucsOptions.style.transition = "none";
             demucsOptions.style.maxHeight = "none";
@@ -12951,7 +12950,7 @@
       if (!spleeterOptionsMeasured) {
         requestAnimationFrame(() => {
           const spleeterOptions = document.getElementById("spleeter-options");
-          const savedVocalEngine = localStorage.getItem("aiDubberVocalEngine") || "demucs";
+          const savedVocalEngine = localStorage.getItem("aiDubberVocalEngine") || "spleeter";
           if (spleeterOptions && savedVocalEngine === "spleeter") {
             spleeterOptions.style.transition = "none";
             spleeterOptions.style.maxHeight = "none";
@@ -13006,7 +13005,7 @@
     });
 
     // Load vocal engine setting
-    let savedVocalEngine = localStorage.getItem("aiDubberVocalEngine") || "demucs";
+    let savedVocalEngine = localStorage.getItem("aiDubberVocalEngine") || "spleeter";
     if (savedVocalEngine === "ffmpeg") {
       savedVocalEngine = "spleeter";
       localStorage.setItem("aiDubberVocalEngine", "spleeter");
@@ -22776,7 +22775,7 @@
         const isMacForGpu = navigator.platform.toUpperCase().includes("MAC") || navigator.userAgent.includes("Mac");
         const savedGpuPref = localStorage.getItem("aiDubberUseGPU");
         const useGPU = savedGpuPref !== null ? savedGpuPref !== "false" : !isMacForGpu;
-        let vocalEngine = localStorage.getItem("aiDubberVocalEngine") || "demucs";
+        let vocalEngine = localStorage.getItem("aiDubberVocalEngine") || "spleeter";
         if (vocalEngine === "ffmpeg") {
           vocalEngine = "spleeter";
           localStorage.setItem("aiDubberVocalEngine", "spleeter");
@@ -22785,10 +22784,20 @@
         let demucsFolder = "";
         let demucsSegment = "7";
         if (vocalEngine === "demucs") {
-          // A folder is optional: leave it blank to use the app's built-in
-          // Demucs install, or point it at a portable Demucs install instead.
           demucsFolder = localStorage.getItem("aiDubberDemucsFolder") || "";
           demucsSegment = localStorage.getItem("aiDubberDemucsSegment") || "7";
+          if (!demucsFolder || !demucsFolder.trim()) {
+            showToast("Please select your Demucs folder in Settings (or download it via Settings).", "warning");
+            isIsolatingBgm = false;
+            updateIsolateBgmButton();
+            const modalSettings = document.getElementById("modal-settings");
+            if (modalSettings) {
+              modalSettings.classList.remove("hidden");
+              setTimeout(() => modalSettings.classList.add("opacity-100"), 10);
+              _lucideCreateIcons();
+            }
+            return;
+          }
         }
 
         let spleeterFolder = "";

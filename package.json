@@ -25,15 +25,18 @@
       "main.js",
       "preload.js",
       "backend/**/*",
+      "!backend/demucs-env/**/*",
+      "!backend/spleeter-env/**/*",
       "frontend/**/*",
       "assets/**/*",
       "whisper_engine/**/*",
+      "!whisper_engine/venv/**/*",
       "package.json"
     ],
     "asarUnpack": [
+      "backend/bin/**/*",
+      "backend/python_env/**/*",
       "backend/python/**/*",
-      "backend/demucs-env/**/*",
-      "backend/spleeter-env/**/*",
       "whisper_engine/**/*"
     ],
     "mac": {

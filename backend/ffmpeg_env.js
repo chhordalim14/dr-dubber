@@ -5,6 +5,15 @@ let _resolvedFFmpegBin = null;
 
 function ensureFFmpegInPath() {
     const extraPaths = [];
+
+    // Bundled FFmpeg inside app (dev & packaged electron app)
+    const bundledBin = path.join(__dirname, 'bin');
+    extraPaths.push(bundledBin);
+    if (process.resourcesPath) {
+        extraPaths.push(path.join(process.resourcesPath, 'app.asar.unpacked', 'backend', 'bin'));
+        extraPaths.push(path.join(process.resourcesPath, 'bin'));
+    }
+
     const localAppData = process.env.LOCALAPPDATA || (process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'AppData', 'Local') : '');
     if (localAppData) {
         extraPaths.push(path.join(localAppData, 'Microsoft', 'WinGet', 'Links'));
