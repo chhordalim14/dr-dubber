@@ -6273,11 +6273,23 @@
       // project that is tens of thousands of objects cloned per click.
       p.pastStates = pastStates.slice();
       p.freeTexts = JSON.parse(JSON.stringify(freeTexts));
+      document.querySelectorAll(".image-overlay-item").forEach((wrapper) => {
+        const id = wrapper.dataset.id;
+        if (id && typeof updateImageState === "function") updateImageState(id, wrapper);
+      });
       p.imageOverlays = (window.imageOverlays || []).map((i) => {
-        const { file, ...rest } = i;
+        const { file, _file, ...rest } = i;
+        const actualFile = file || _file || null;
         // Ensure blobUrl is preserved; if missing but file exists, recreate it
-        if (!rest.blobUrl && file) rest.blobUrl = URL.createObjectURL(file);
-        return { ...rest, _file: file || null }; // keep a non-serialised ref for same-session renders
+        if (!rest.blobUrl && actualFile) {
+          try { rest.blobUrl = URL.createObjectURL(actualFile); } catch (e) {}
+        }
+        return {
+          ...rest,
+          file: actualFile,
+          _file: actualFile,
+          filePath: i.filePath || actualFile?.path || null,
+        };
       });
       // Pause all video overlays only when switching tabs, not during render save
       if (!window._isSavingForRender) {
@@ -23846,6 +23858,7 @@
                 motion: img.motion || "none",
                 speed: img.speed ?? 2,
                 idleStyle: img.idleStyle || "none",
+                filePath: img.filePath || (img.file && img.file.path ? img.file.path : (img._file && img._file.path ? img._file.path : null)),
               })),
 
               videoOverlays: (targetProject.videoOverlays || []).map((v) => ({
@@ -23922,7 +23935,8 @@
             // Re-fetch each overlay as a Blob from its blobUrl (file ref is lost after project switch)
             const overlayBlobs = await Promise.all(
               (targetProject.imageOverlays || []).map(async (img) => {
-                if (img.file instanceof File) return img.file;
+                const actualFile = (img.file instanceof File) ? img.file : ((img._file instanceof File) ? img._file : null);
+                if (actualFile) return actualFile;
                 const src = img.blobUrl || (img.dataUrl ? img.dataUrl : null);
                 if (!src) return null;
                 try {
@@ -24374,6 +24388,8 @@
                 radius: img.radius,
                 motion: img.motion || "none",
                 speed: img.speed ?? 2,
+                idleStyle: img.idleStyle || "none",
+                filePath: img.filePath || (img.file && img.file.path ? img.file.path : (img._file && img._file.path ? img._file.path : null)),
               })),
 
               videoOverlays: (proj.videoOverlays || []).map((v) => ({
@@ -25069,7 +25085,8 @@
               formData.append("data", JSON.stringify(queueConfig));
               const queueOverlayBlobs = await Promise.all(
                 (item.imageOverlays || []).map(async (img) => {
-                  if (img.file instanceof File) return img.file;
+                  const actualFile = (img.file instanceof File) ? img.file : ((img._file instanceof File) ? img._file : null);
+                  if (actualFile) return actualFile;
                   const src = img.blobUrl || (img.dataUrl ? img.dataUrl : null);
                   if (!src) return null;
                   try {
@@ -25253,7 +25270,7 @@
     // built. Read the real version from Electron (package.json) instead;
     // falls back to this literal only when running outside Electron (e.g.
     // a plain browser during development).
-    let CURRENT_APP_VERSION = "1.1.5";
+    let CURRENT_APP_VERSION = "1.1.7";
     const aboutAppVersionDisplay = document.getElementById("about-app-version");
     if (aboutAppVersionDisplay) aboutAppVersionDisplay.textContent = `Version ${CURRENT_APP_VERSION}`;
     if (window.electronAPI && window.electronAPI.getAppVersion) {
@@ -26228,6 +26245,7 @@
           window.imageOverlays.push({
             id,
             file,
+            filePath: file.path || null,
             blobUrl: url,
             x: 35,
             y: 35,

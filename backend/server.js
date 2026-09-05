@@ -2083,6 +2083,45 @@ app.post('/api/render', upload.any(), (req, res) => {
         };
     });
 
+    // 3.5 Resolve overlay images from multipart uploads and local paths
+    const uploadedOverlayFiles = (req.files || []).filter(f => f.fieldname === 'overlayImages');
+    const overlayFileByIndex = new Map();
+    uploadedOverlayFiles.forEach((f, idx) => {
+        const match = (f.originalname || '').match(/overlay_(\d+)/);
+        if (match) {
+            overlayFileByIndex.set(parseInt(match[1], 10), f.path);
+        } else {
+            overlayFileByIndex.set(idx, f.path);
+        }
+    });
+
+    const rawOverlayImages = Array.isArray(renderOpts.overlayImages) ? renderOpts.overlayImages : [];
+    const resolvedOverlayImages = rawOverlayImages.map((img, idx) => {
+        let imagePath = null;
+        if (img.filePath && fs.existsSync(img.filePath)) {
+            imagePath = img.filePath;
+        } else if (img.path && fs.existsSync(img.path)) {
+            imagePath = img.path;
+        } else if (overlayFileByIndex.has(idx)) {
+            imagePath = overlayFileByIndex.get(idx);
+        } else if (uploadedOverlayFiles[idx]) {
+            imagePath = uploadedOverlayFiles[idx].path;
+        }
+
+        return {
+            ...img,
+            path: imagePath,
+            x: img.x !== undefined ? parseFloat(img.x) : 0,
+            y: img.y !== undefined ? parseFloat(img.y) : 0,
+            w: img.w !== undefined ? parseFloat(img.w) : 30,
+            h: img.h !== undefined ? parseFloat(img.h) : 30,
+            opacity: img.opacity !== undefined ? (parseFloat(img.opacity) > 1 ? parseFloat(img.opacity) / 100 : parseFloat(img.opacity)) : 1.0,
+            radius: img.radius !== undefined ? parseFloat(img.radius) : 0,
+            motion: img.motion || 'none',
+            speed: img.speed !== undefined ? parseFloat(img.speed) : 1.0
+        };
+    }).filter(img => img.path && fs.existsSync(img.path));
+
     // 4. Resolve output folder and file name
     const ext = isAudioOnly ? (renderOpts.audioFormat || 'mp3') : 'mp4';
     const baseName = videoPath ? path.basename(videoPath, path.extname(videoPath)) : `audio_${Date.now()}`;
@@ -2116,6 +2155,7 @@ app.post('/api/render', upload.any(), (req, res) => {
         burnSubtitles: shouldShowSubs,
         bgmPath,
         bgmVolume,
+        overlayImages: resolvedOverlayImages,
         outputPath
     },
     (progress, eta) => { },
