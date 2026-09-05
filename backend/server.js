@@ -107,6 +107,8 @@ function getPythonCmd() {
     const unpackedRootDir = ROOT_DIR.includes('app.asar') ? ROOT_DIR.replace('app.asar', 'app.asar.unpacked') : ROOT_DIR;
 
     const candidatePaths = [
+        path.join(unpackedRootDir, 'backend', 'python_env', isWin ? 'python.exe' : 'python'),
+        path.join(ROOT_DIR, 'backend', 'python_env', isWin ? 'python.exe' : 'python'),
         path.join(unpackedRootDir, 'backend', 'demucs-env', subPath),
         path.join(ROOT_DIR, 'backend', 'demucs-env', subPath),
         path.join(unpackedRootDir, 'backend', 'spleeter-env', subPath),
@@ -631,7 +633,7 @@ app.post('/api/remove-vocals', upload.any(), (req, res) => {
 
     let engine = req.body.engine;
     if (engine === 'ffmpeg') engine = 'spleeter';
-    if (engine !== 'spleeter' && engine !== 'demucs') engine = 'demucs';
+    if (!engine || (engine !== 'spleeter' && engine !== 'demucs')) engine = 'spleeter';
     // Only force CPU when the user explicitly disabled GPU (Safe Mode); otherwise
     // leave --device unset so Demucs auto-detects, rather than requesting "cuda"
     // outright and hard-failing on a machine/torch build without working CUDA.
