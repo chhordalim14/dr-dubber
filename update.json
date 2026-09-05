@@ -1,6 +1,6 @@
 {
-  "version": "1.1.7",
-  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.1.7/DR.Dubber.Pro.Setup.1.1.7.exe",
+  "version": "1.1.8",
+  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.1.8/DR.Dubber.Pro.Setup.1.1.8.exe",
   "mac_link": "https://github.com/chhordalim14/dr-dubber/releases",
-  "notes": "- Fixed image overlays not appearing in rendered videos\n- Full support for image overlay scaling, opacity, rounded corners, and motion animations in export\n- Performance and UI improvements"
+  "notes": "- Fixed FFmpeg spawn ENOENT error during transcription\n- Ensured bundled FFmpeg, FFprobe, and Python run reliably across all Windows environments\n- Performance and UI improvements"
 }
