@@ -120,6 +120,31 @@ async function getVideoDuration(videoPath) {
     }
 }
 
+const _videoDimensionsCache = new Map();
+async function getVideoDimensions(videoPath) {
+    let cacheKey = videoPath;
+    try {
+        cacheKey = `${videoPath}:${fs.statSync(videoPath).mtimeMs}`;
+        if (_videoDimensionsCache.has(cacheKey)) return _videoDimensionsCache.get(cacheKey);
+    } catch (e) {}
+
+    try {
+        const { stdout } = await execFileAsync(getFFprobeBinary(), [
+            '-v', 'error',
+            '-select_streams', 'v:0',
+            '-show_entries', 'stream=width,height',
+            '-of', 'csv=s=x:p=0',
+            videoPath
+        ], { timeout: 5000 });
+        const [w, h] = stdout.trim().split('x').map(n => parseInt(n, 10));
+        const result = (w && h && !isNaN(w) && !isNaN(h) && w > 0 && h > 0) ? { width: w, height: h } : null;
+        _videoDimensionsCache.set(cacheKey, result);
+        return result;
+    } catch (e) {
+        return null;
+    }
+}
+
 function parseTimeToSeconds(timeStr) {
     if (typeof timeStr === 'number') return isNaN(timeStr) ? 0 : timeStr;
     if (!timeStr) return 0;
@@ -491,7 +516,8 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         isFlippedV,
         flipVertical,
         cropConfig,
-        duration: providedDuration
+        duration: providedDuration,
+        overlayImages = []
     } = options;
 
     try {
@@ -629,6 +655,21 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             dialogueInputIndex = nextInputIndex++;
         }
 
+        // Overlay image inputs
+        const validOverlays = (Array.isArray(overlayImages) ? overlayImages : []).filter(ov => {
+            const p = ov.path || ov.filePath;
+            return p && fs.existsSync(p);
+        }).map(ov => {
+            const p = ov.path || ov.filePath;
+            args.push('-i', p);
+            const inputIndex = nextInputIndex++;
+            return {
+                ...ov,
+                path: p,
+                inputIndex
+            };
+        });
+
         // 3. Build Filter Graph for Audio & Video
         const filterComplex = [];
 
@@ -749,6 +790,14 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             blurStrength
         });
 
+        let canvasW = targetW;
+        let canvasH = targetH;
+        if (!canvasW || !canvasH) {
+            const dims = await getVideoDimensions(videoPath);
+            canvasW = dims ? dims.width : 1280;
+            canvasH = dims ? dims.height : 720;
+        }
+
         const scaledTag = 'v_scaled';
         if (targetW && targetH) {
             if (fit === 'crop' || fit === 'cover') {
@@ -769,6 +818,69 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             }
         } else {
             filterComplex.push(`[${videoInTag}]scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1[${scaledTag}]`);
+        }
+
+        // Apply Image Overlays
+        let currentVideoTag = scaledTag;
+        if (validOverlays.length > 0) {
+            validOverlays.forEach((ov, ovIdx) => {
+                const ovW = Math.max(2, Math.round((canvasW * (parseFloat(ov.w) || 20)) / 100 / 2) * 2);
+                const ovH = Math.max(2, Math.round((canvasH * (parseFloat(ov.h) || 20)) / 100 / 2) * 2);
+
+                let radiusFilter = '';
+                const rPercent = parseFloat(ov.radius) || 0;
+                if (rPercent > 0) {
+                    const maxR = Math.min(ovW, ovH) / 2;
+                    const rPx = Math.min(maxR, (Math.min(ovW, ovH) * (rPercent / 100)));
+                    if (rPx >= 1) {
+                        const r = Math.round(rPx);
+                        radiusFilter = `,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(X,${r})*lt(Y,${r}),if(gt(hypot(${r}-X,${r}-Y),${r}),0,alpha(X,Y)),if(gt(X,${ovW}-${r})*lt(Y,${r}),if(gt(hypot(X-(${ovW}-${r}),${r}-Y),${r}),0,alpha(X,Y)),if(lt(X,${r})*gt(Y,${ovH}-${r}),if(gt(hypot(${r}-X,Y-(${ovH}-${r})),${r}),0,alpha(X,Y)),if(gt(X,${ovW}-${r})*gt(Y,${ovH}-${r}),if(gt(hypot(X-(${ovW}-${r}),Y-(${ovH}-${r})),${r}),0,alpha(X,Y)),alpha(X,Y)))))'`;
+                    }
+                }
+
+                let alphaFilter = '';
+                const rawOpacity = ov.opacity !== undefined ? parseFloat(ov.opacity) : 1.0;
+                const opacityVal = !isNaN(rawOpacity) ? (rawOpacity > 1 ? rawOpacity / 100 : rawOpacity) : 1.0;
+                if (!isNaN(opacityVal) && opacityVal >= 0 && opacityVal < 1.0) {
+                    alphaFilter = `,colorchannelmixer=aa=${opacityVal.toFixed(2)}`;
+                }
+
+                const ovProcTag = `ov_proc_${ovIdx}`;
+                filterComplex.push(`[${ov.inputIndex}:v]scale=${ovW}:${ovH}:force_original_aspect_ratio=increase,crop=${ovW}:${ovH},format=rgba${radiusFilter}${alphaFilter}[${ovProcTag}]`);
+
+                const baseX = Math.round((canvasW * (parseFloat(ov.x) || 0)) / 100);
+                const baseY = Math.round((canvasH * (parseFloat(ov.y) || 0)) / 100);
+                const motion = ov.motion || 'none';
+                const speed = parseFloat(ov.speed) || 1.0;
+
+                let xExpr = `${baseX}`;
+                let yExpr = `${baseY}`;
+                let evalParam = '';
+
+                if (motion === 'scroll_left') {
+                    const totalDist = canvasW + ovW;
+                    const speedPx = Math.round(50 * speed);
+                    xExpr = `mod(${baseX}+${ovW}-t*${speedPx}+100000*${totalDist},${totalDist})-${ovW}`;
+                    evalParam = ':eval=frame';
+                } else if (motion === 'scroll_right') {
+                    const totalDist = canvasW + ovW;
+                    const speedPx = Math.round(50 * speed);
+                    xExpr = `mod(${baseX}+t*${speedPx},${totalDist})-${ovW}`;
+                    evalParam = ':eval=frame';
+                } else if (motion === 'bounce') {
+                    xExpr = `${baseX}`;
+                    yExpr = `${baseY}+sin(t*${(2 * speed).toFixed(2)})*15`;
+                    evalParam = ':eval=frame';
+                } else if (motion === 'float') {
+                    xExpr = `${baseX}+cos(t*${(1.5 * speed).toFixed(2)})*15`;
+                    yExpr = `${baseY}+sin(t*${(1.5 * speed).toFixed(2)})*15`;
+                    evalParam = ':eval=frame';
+                }
+
+                const nextVideoTag = `ov_out_${ovIdx}`;
+                filterComplex.push(`[${currentVideoTag}][${ovProcTag}]overlay=x='${xExpr}':y='${yExpr}'${evalParam}:eof_action=repeat[${nextVideoTag}]`);
+                currentVideoTag = nextVideoTag;
+            });
         }
 
         // Subtitles burning or soft muxing
@@ -828,14 +940,14 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                     subStyle = `Fontname=${finalFont},Fontsize=${effectiveFontSize},PrimaryColour=&H003AD3F5,OutlineColour=&H00151535,BorderStyle=1,Outline=3,Shadow=2,Alignment=2,MarginV=${marginV},Bold=1`;
                 }
 
-                filterComplex.push(`[${scaledTag}]subtitles=filename='${escapedSrtPath}':fontsdir='${fontsDir}':force_style='${subStyle}'[final_video]`);
+                filterComplex.push(`[${currentVideoTag}]subtitles=filename='${escapedSrtPath}':fontsdir='${fontsDir}':force_style='${subStyle}'[final_video]`);
             } else {
-                filterComplex.push(`[${scaledTag}]null[final_video]`);
+                filterComplex.push(`[${currentVideoTag}]null[final_video]`);
                 softSrtInputIndex = nextInputIndex++;
                 args.push('-i', validSrtPath);
             }
         } else {
-            filterComplex.push(`[${scaledTag}]null[final_video]`);
+            filterComplex.push(`[${currentVideoTag}]null[final_video]`);
         }
 
         args.push('-filter_complex', filterComplex.join(';'));
