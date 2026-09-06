@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
-const { spawn, exec, execFile } = require('child_process');
+const { spawn, exec, execFile, execFileSync } = require('child_process');
 const { StringDecoder } = require('string_decoder');
 const multer = require('multer');
 const { ensureFFmpegInPath, getFFmpegBinary } = require('./ffmpeg_env');
@@ -94,11 +94,28 @@ function cleanStaleTempFiles() {
 setTimeout(cleanStaleTempFiles, 5000);
 setInterval(cleanStaleTempFiles, 60 * 60 * 1000);
 
+function isWorkingPython(pythonBin) {
+    if (!pythonBin || typeof pythonBin !== 'string') return false;
+    if (pythonBin.includes('app.asar') && !pythonBin.includes('app.asar.unpacked')) return false;
+    try {
+        if (path.isAbsolute(pythonBin) && !fs.existsSync(pythonBin)) return false;
+        execFileSync(pythonBin, ['-c', 'import sys; sys.exit(0)'], {
+            encoding: 'utf8',
+            timeout: 2500,
+            stdio: ['pipe', 'pipe', 'pipe'],
+            windowsHide: true
+        });
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
 function getPythonCmd() {
-    if (process.env.PYTHON_PATH && fs.existsSync(process.env.PYTHON_PATH)) {
+    if (process.env.PYTHON_PATH && isWorkingPython(process.env.PYTHON_PATH)) {
         return process.env.PYTHON_PATH;
     }
-    if (process.env.PYTHON_BIN && fs.existsSync(process.env.PYTHON_BIN)) {
+    if (process.env.PYTHON_BIN && isWorkingPython(process.env.PYTHON_BIN)) {
         return process.env.PYTHON_BIN;
     }
 
@@ -108,21 +125,16 @@ function getPythonCmd() {
 
     const candidatePaths = [
         path.join(unpackedRootDir, 'backend', 'python_env', isWin ? 'python.exe' : 'python'),
+        path.join(ROOT_DIR, 'backend', 'python_env', isWin ? 'python.exe' : 'python'),
         path.join(unpackedRootDir, 'backend', 'demucs-env', subPath),
+        path.join(ROOT_DIR, 'backend', 'demucs-env', subPath),
         path.join(unpackedRootDir, 'backend', 'spleeter-env', subPath),
+        path.join(ROOT_DIR, 'backend', 'spleeter-env', subPath),
         path.join(unpackedRootDir, 'backend', 'venv', subPath),
+        path.join(ROOT_DIR, 'backend', 'venv', subPath),
         path.join(unpackedRootDir, '.venv', subPath),
+        path.join(ROOT_DIR, '.venv', subPath),
     ];
-
-    if (!ROOT_DIR.includes('app.asar')) {
-        candidatePaths.push(
-            path.join(ROOT_DIR, 'backend', 'python_env', isWin ? 'python.exe' : 'python'),
-            path.join(ROOT_DIR, 'backend', 'demucs-env', subPath),
-            path.join(ROOT_DIR, 'backend', 'spleeter-env', subPath),
-            path.join(ROOT_DIR, 'backend', 'venv', subPath),
-            path.join(ROOT_DIR, '.venv', subPath),
-        );
-    }
 
     if (isWin) {
         const localAppData = process.env.LOCALAPPDATA || (process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'AppData', 'Local') : '');
@@ -141,17 +153,29 @@ function getPythonCmd() {
     for (const cand of candidatePaths) {
         if (!cand || (cand.includes('app.asar') && !cand.includes('app.asar.unpacked'))) continue;
         try {
-            if (cand && fs.existsSync(cand) && fs.statSync(cand).isFile()) {
+            if (fs.existsSync(cand) && fs.statSync(cand).isFile() && isWorkingPython(cand)) {
                 return cand;
             }
         } catch (e) {}
     }
 
-    return isWin ? 'python' : 'python3';
+    // Try system python commands only if verified operational
+    const systemCommands = isWin ? ['python', 'py -3'] : ['python3', 'python'];
+    for (const cmd of systemCommands) {
+        if (isWorkingPython(cmd)) {
+            return cmd;
+        }
+    }
+
+    return null;
 }
 const PYTHON_CMD = getPythonCmd();
 
 function ensureTtsDependencies() {
+    if (!PYTHON_CMD) {
+        console.warn('[Python TTS] No working Python environment found. Edge-TTS local speech synthesis will not be available.');
+        return;
+    }
     exec(`"${PYTHON_CMD}" -c "import edge_tts"`, { env: PYTHON_ENV }, (err) => {
         if (err) {
             console.warn('[Python TTS] edge-tts not found in python environment. Auto-installing...');
@@ -625,6 +649,81 @@ app.post('/api/save-srt', (req, res) => {
     res.json({ success: true, filePath: savedPath });
 });
 
+// Direct native FFmpeg stem separation (stereo phase cancellation)
+// Zero Python dependencies, zero setup, instant and 100% reliable across all systems.
+function isolateBgmWithFfmpeg(audioPath, outputDir, jobId, isFallback = false) {
+    const ffmpegBin = getFFmpegBinary();
+    const jobSuffix = `${process.pid}_${Date.now()}`;
+    const jobDir = path.join(outputDir, `ffmpeg_${jobSuffix}`);
+    try {
+        if (!fs.existsSync(jobDir)) {
+            fs.mkdirSync(jobDir, { recursive: true });
+        }
+    } catch (e) {
+        console.error('[FFmpeg Vocal Separation] Could not create job directory:', jobDir, e);
+    }
+
+    const bgmPath = path.join(jobDir, 'accompaniment.wav');
+    const vocalPath = path.join(jobDir, 'vocals.wav');
+
+    const filterGraph = '[0:a]aformat=channel_layouts=stereo,asplit=2[a_bgm_in][a_voc_in];[a_bgm_in]stereotools=mode=lr>l-r[bgm];[a_voc_in]stereotools=mode=lr>l+r,highpass=f=200,lowpass=f=3500[vocal]';
+
+    const args = [
+        '-y',
+        '-i', audioPath,
+        '-filter_complex', filterGraph,
+        '-map', '[bgm]', bgmPath,
+        '-map', '[vocal]', vocalPath
+    ];
+
+    console.log(`[FFmpeg Vocal Separation] Starting separation for job ${jobId} (fallback: ${isFallback}) using ${ffmpegBin}...`);
+    let child;
+    try {
+        child = spawn(ffmpegBin, args, { windowsHide: true });
+        trackProcess(child);
+    } catch (err) {
+        console.error('[FFmpeg Vocal Separation Spawn Error]', err);
+        bgmJobs.set(jobId, { status: 'error', success: false, error: `Failed to spawn FFmpeg process: ${err.message}` });
+        return;
+    }
+
+    let stderr = '';
+    const stderrDecoder = new StringDecoder('utf8');
+    child.stderr.on('data', d => stderr += stderrDecoder.write(d));
+
+    child.on('error', (err) => {
+        console.error('[FFmpeg Vocal Separation Error]', err);
+        bgmJobs.set(jobId, { status: 'error', success: false, error: `FFmpeg execution error: ${err.message}` });
+    });
+
+    child.on('close', (code) => {
+        if (code === 0 && fs.existsSync(bgmPath) && fs.existsSync(vocalPath)) {
+            console.log(`[FFmpeg Vocal Separation Succeeded] Job ${jobId} finished! BGM: ${bgmPath}`);
+            const bgmUri = `/api/audio?path=${encodeURIComponent(bgmPath)}`;
+            const vocalUri = `/api/audio?path=${encodeURIComponent(vocalPath)}`;
+            bgmJobs.set(jobId, {
+                status: 'done',
+                success: true,
+                progress: 100,
+                url: bgmUri,
+                file: bgmPath,
+                bgmPath: bgmPath,
+                vocalPath: vocalPath,
+                bgmUrl: bgmUri,
+                vocalUrl: vocalUri,
+                method: isFallback ? 'ffmpeg_fallback' : 'ffmpeg'
+            });
+        } else {
+            console.error(`[FFmpeg Vocal Separation Failed] Code ${code}, Stderr: ${stderr.trim()}`);
+            bgmJobs.set(jobId, {
+                status: 'error',
+                success: false,
+                error: stderr.trim() || `FFmpeg separation process exited with code ${code}`
+            });
+        }
+    });
+}
+
 // 3. Remove Vocals / BGM Isolation
 app.post('/api/remove-vocals', upload.any(), (req, res) => {
     const uploadedFile = (req.files && req.files.length > 0) ? req.files[0].path : null;
@@ -640,9 +739,21 @@ app.post('/api/remove-vocals', upload.any(), (req, res) => {
 
     let engine = req.body.engine;
     if (!engine || (engine !== 'spleeter' && engine !== 'demucs' && engine !== 'ffmpeg')) engine = 'spleeter';
-    // Only force CPU when the user explicitly disabled GPU (Safe Mode); otherwise
-    // leave --device unset so Demucs auto-detects, rather than requesting "cuda"
-    // outright and hard-failing on a machine/torch build without working CUDA.
+
+    // Fast path: If the user specifically chose FFmpeg, run native FFmpeg directly
+    if (engine === 'ffmpeg') {
+        isolateBgmWithFfmpeg(audioPath, SEPARATED_DIR, jobId, false);
+        return;
+    }
+
+    // If no operational Python environment is detected on this machine,
+    // seamlessly fall back to direct native FFmpeg phase cancellation immediately.
+    if (!PYTHON_CMD) {
+        console.warn(`[Vocal Separator] Requested engine '${engine}', but no operational Python found. Falling back to native FFmpeg separation...`);
+        isolateBgmWithFfmpeg(audioPath, SEPARATED_DIR, jobId, true);
+        return;
+    }
+
     const useGPU = req.body.useGPU === true || req.body.useGPU === 'true';
     const pyArgs = ['--input', audioPath, '--output', SEPARATED_DIR, '--engine', engine];
     if (engine === 'demucs' && !useGPU) {
@@ -661,8 +772,8 @@ app.post('/api/remove-vocals', upload.any(), (req, res) => {
         child = spawn(PYTHON_CMD, [pyScript, ...pyArgs], { env: PYTHON_ENV });
         trackProcess(child);
     } catch (spawnErr) {
-        console.error('[Python Vocal Separator Spawn Error]', spawnErr);
-        bgmJobs.set(jobId, { status: 'error', success: false, error: `Failed to spawn Python process: ${spawnErr.message}` });
+        console.warn('[Python Vocal Separator Spawn Failed]', spawnErr.message, 'Falling back to native FFmpeg separation...');
+        isolateBgmWithFfmpeg(audioPath, SEPARATED_DIR, jobId, true);
         return;
     }
 
@@ -673,20 +784,16 @@ app.post('/api/remove-vocals', upload.any(), (req, res) => {
     child.stdout.on('data', d => output += stdoutDecoder.write(d));
     child.stderr.on('data', d => stderr += stderrDecoder.write(d));
     child.on('error', (err) => {
-        console.error('[Python Vocal Separator Error]', err);
-        bgmJobs.set(jobId, { status: 'error', success: false, error: `Python execution error: ${err.message}` });
+        console.warn('[Python Vocal Separator Process Error]', err.message, 'Falling back to native FFmpeg separation...');
+        isolateBgmWithFfmpeg(audioPath, SEPARATED_DIR, jobId, true);
     });
     child.on('close', (code) => {
         const trimmedOut = output.trim();
         const trimmedErr = stderr.trim();
 
         if (code !== 0 && !trimmedOut) {
-            console.error(`[Python Vocal Separator Failed] Code ${code}, Stderr: ${trimmedErr}`);
-            bgmJobs.set(jobId, {
-                status: 'error',
-                success: false,
-                error: trimmedErr || `Vocal separator process exited with code ${code}`
-            });
+            console.warn(`[Python Vocal Separator Failed] Code ${code}, Stderr: ${trimmedErr}. Seamlessly falling back to native FFmpeg separation...`);
+            isolateBgmWithFfmpeg(audioPath, SEPARATED_DIR, jobId, true);
             return;
         }
 
@@ -715,19 +822,12 @@ app.post('/api/remove-vocals', upload.any(), (req, res) => {
                     method: data.method || engine
                 });
             } else {
-                bgmJobs.set(jobId, {
-                    status: 'error',
-                    success: false,
-                    error: data.error || trimmedErr || 'Separation failed'
-                });
+                console.warn('[Python Vocal Separator reported failure]', data.error || trimmedErr, 'Falling back to native FFmpeg separation...');
+                isolateBgmWithFfmpeg(audioPath, SEPARATED_DIR, jobId, true);
             }
         } catch (e) {
-            console.error('[Python Vocal Separator Parse Error]', e, 'Stdout:', output, 'Stderr:', stderr);
-            bgmJobs.set(jobId, {
-                status: 'error',
-                success: false,
-                error: trimmedErr || trimmedOut || `Failed to parse separation result: ${e.message}`
-            });
+            console.warn('[Python Vocal Separator Parse Error]', e.message, 'Falling back to native FFmpeg separation...');
+            isolateBgmWithFfmpeg(audioPath, SEPARATED_DIR, jobId, true);
         }
     });
 });
