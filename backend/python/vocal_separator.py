@@ -74,33 +74,69 @@ ensure_ffmpeg_in_path()
 # instead point --demucs-folder at their own portable Demucs install (the
 # "Demucs Folder Path" setting in the UI); that folder's own python is used
 # in preference to the bundled venv when present.
+def is_working_python(py_path):
+    if not py_path or not os.path.isfile(py_path):
+        return False
+    try:
+        res = subprocess.run(
+            [py_path, "-c", "import sys; sys.exit(0)"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=3
+        )
+        return res.returncode == 0
+    except Exception:
+        return False
+
+def get_ffmpeg_executable():
+    import shutil
+    bin_path = shutil.which("ffmpeg")
+    if bin_path and os.path.isfile(bin_path):
+        return bin_path
+    py_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(py_dir, "..", "bin", "ffmpeg.exe" if os.name == "nt" else "ffmpeg"),
+        os.path.join(py_dir, "..", "..", "backend", "bin", "ffmpeg.exe" if os.name == "nt" else "ffmpeg"),
+    ]
+    local_app_data = os.environ.get("LOCALAPPDATA", "")
+    if local_app_data:
+        candidates.append(os.path.join(local_app_data, "Programs", "DR Dubber Pro", "resources", "app.asar.unpacked", "backend", "bin", "ffmpeg.exe"))
+        candidates.append(os.path.join(local_app_data, "Microsoft", "WinGet", "Links", "ffmpeg.exe"))
+    for c in candidates:
+        if os.path.isfile(c):
+            return os.path.abspath(c)
+    return "ffmpeg"
+
 DEMUCS_PYTHON_DEFAULT = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "demucs-env",
     "Scripts" if os.name == "nt" else "bin", "python.exe" if os.name == "nt" else "python"
 )
 DEMUCS_MODEL = os.environ.get("DEMUCS_MODEL") or "htdemucs"
 
-# Spleeter runs in its own venv (backend/spleeter-env) for the same reason as
-# Demucs above -- it pulls in its own TensorFlow pin. A user can instead point
-# --spleeter-folder at their own portable Spleeter install, same convention as
 def get_spleeter_python_default():
     py_dir = os.path.dirname(os.path.abspath(__file__))
     if "app.asar" in py_dir and "app.asar.unpacked" not in py_dir:
         py_dir = py_dir.replace("app.asar", "app.asar.unpacked")
     candidates = [
+        os.path.join(py_dir, "..", "python_env", "python.exe" if os.name == "nt" else "python"),
+        os.path.join(py_dir, "..", "..", "backend", "python_env", "python.exe" if os.name == "nt" else "python"),
         os.path.join(py_dir, "..", "spleeter-env", "Scripts" if os.name == "nt" else "bin", "python.exe" if os.name == "nt" else "python"),
         os.path.join(py_dir, "..", "..", "backend", "spleeter-env", "Scripts" if os.name == "nt" else "bin", "python.exe" if os.name == "nt" else "python"),
     ]
     local_app_data = os.environ.get("LOCALAPPDATA", "")
     if local_app_data:
         candidates.append(os.path.join(
+            local_app_data, "Programs", "DR Dubber Pro", "resources", "app.asar.unpacked", "backend", "python_env",
+            "python.exe" if os.name == "nt" else "python"
+        ))
+        candidates.append(os.path.join(
             local_app_data, "Programs", "DR Dubber Pro", "resources", "app.asar.unpacked", "backend", "spleeter-env",
             "Scripts" if os.name == "nt" else "bin", "python.exe" if os.name == "nt" else "python"
         ))
     for c in candidates:
-        if os.path.isfile(c):
+        if is_working_python(c):
             return os.path.abspath(c)
-    return candidates[0]
+    return None
 
 SPLEETER_PYTHON_DEFAULT = get_spleeter_python_default()
 
@@ -116,7 +152,7 @@ def find_python_in_folder(folder):
         os.path.join(folder, "python"),
     ]
     for c in candidates:
-        if os.path.isfile(c):
+        if is_working_python(c):
             return c
     return None
 
@@ -125,8 +161,8 @@ def separate_demucs(input_audio, output_dir, demucs_folder=None, segment=None, d
     High-fidelity ML-based separation via Demucs (htdemucs model). Produces a
     genuine isolated vocal stem and a clean instrumental/BGM stem.
     """
-    demucs_python = find_python_in_folder(demucs_folder) or os.environ.get("DEMUCS_PYTHON") or (DEMUCS_PYTHON_DEFAULT if os.path.exists(DEMUCS_PYTHON_DEFAULT) else None) or (sys.executable if os.path.exists(sys.executable) else None)
-    if not demucs_python or not os.path.exists(demucs_python):
+    demucs_python = find_python_in_folder(demucs_folder) or os.environ.get("DEMUCS_PYTHON") or (DEMUCS_PYTHON_DEFAULT if is_working_python(DEMUCS_PYTHON_DEFAULT) else None) or (sys.executable if is_working_python(sys.executable) else None)
+    if not demucs_python or not is_working_python(demucs_python):
         return None
     try:
         output_dir = os.path.abspath(output_dir)
@@ -178,8 +214,8 @@ def separate_spleeter(input_audio, output_dir, spleeter_folder=None):
     """
     ML-based separation via Spleeter's 2stems (vocals/accompaniment) model.
     """
-    spleeter_python = find_python_in_folder(spleeter_folder) or os.environ.get("SPLEETER_PYTHON") or (get_spleeter_python_default() if os.path.exists(get_spleeter_python_default()) else None) or (SPLEETER_PYTHON_DEFAULT if os.path.exists(SPLEETER_PYTHON_DEFAULT) else None) or (sys.executable if os.path.exists(sys.executable) else None)
-    if not spleeter_python or not os.path.exists(spleeter_python):
+    spleeter_python = find_python_in_folder(spleeter_folder) or os.environ.get("SPLEETER_PYTHON") or get_spleeter_python_default() or (sys.executable if is_working_python(sys.executable) else None)
+    if not spleeter_python or not is_working_python(spleeter_python):
         return None
     try:
         output_dir = os.path.abspath(output_dir)
@@ -258,8 +294,9 @@ def separate_ffmpeg(input_audio, output_dir):
             "[a_voc_in]stereotools=mode=lr>l+r,highpass=f=200,lowpass=f=3500[vocal]"
         )
 
+        ffmpeg_bin = get_ffmpeg_executable()
         cmd = [
-            "ffmpeg", "-y", "-i", input_audio,
+            ffmpeg_bin, "-y", "-i", input_audio,
             "-filter_complex", filter_graph,
             "-map", "[bgm]", bgm_path,
             "-map", "[vocal]", vocal_path

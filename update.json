@@ -1,6 +1,6 @@
 {
-  "version": "1.1.9",
-  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.1.9/DR.Dubber.Pro.Setup.1.1.9.exe",
+  "version": "1.2.0",
+  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.2.0/DR.Dubber.Pro.Setup.1.2.0.exe",
   "mac_link": "https://github.com/chhordalim14/dr-dubber/releases",
-  "notes": "- Bundled full offline Spleeter AI environment with 2stems pretrained model for zero-setup BGM isolation\n- Added automatic FFmpeg phase-cancellation fallback to prevent isolation failures\n- Added instant FFmpeg separation option in Settings -> Vocal Removal Engine\n- Fixed vocal separator engine persistence and error handling"
+  "notes": "- Pre-bundled full standalone offline Spleeter AI environment with 2stems model for zero-setup BGM isolation\n- Fixed 'No Python' error on fresh installations\n- Added automatic native FFmpeg phase-cancellation fallback to prevent isolation failures\n- Added 1-click setup_spleeter.bat for Git users"
 }
