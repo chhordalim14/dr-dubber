@@ -3328,7 +3328,7 @@
             <!-- ── Vocal Removal Engine ── -->
             <div class="flex flex-col gap-3 pt-4 border-t border-[var(--border-color)]">
               <label class="text-sm text-[var(--text-bright)] font-medium">Vocal Removal Engine</label>
-              <div class="grid grid-cols-2 gap-3 mt-1">
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-1">
                 <label
                   class="group relative flex flex-col p-3 cursor-pointer rounded-xl border border-[var(--border-light)] bg-[var(--bg-base)] hover:bg-[var(--bg-hover)] hover:shadow-md transition-all duration-300 ease-out hover:-translate-y-1 active:scale-[0.96]">
                   <input type="radio" name="vocal-engine" value="demucs" class="peer sr-only" />
@@ -3376,7 +3376,32 @@
                       </svg>
                     </div>
                   </div>
-                  <span class="text-[10px] text-[var(--text-secondary)] leading-tight mt-1">Fast AI vocal separation (2-stems). Portable bundle.</span>
+                  <span class="text-[10px] text-[var(--text-secondary)] leading-tight mt-1">Fast AI vocal separation (2-stems). Built-in & ready.</span>
+                </label>
+
+                <label
+                  class="group relative flex flex-col p-3 cursor-pointer rounded-xl border border-[var(--border-light)] bg-[var(--bg-base)] hover:bg-[var(--bg-hover)] hover:shadow-md transition-all duration-300 ease-out hover:-translate-y-1 active:scale-[0.96]">
+                  <input type="radio" name="vocal-engine" value="ffmpeg" class="peer sr-only" />
+                  <div
+                    class="absolute inset-0 rounded-xl border-2 border-transparent peer-checked:border-blue-500 transition-colors pointer-events-none peer-checked:shadow-[0_0_15px_-3px_rgba(59,130,246,0.3)]">
+                  </div>
+                  <div class="flex items-center justify-between mb-1">
+                    <span
+                      class="text-sm font-bold text-[var(--text-bright)] flex items-center gap-2 w-full overflow-hidden pr-2">
+                      <i data-lucide="zap"
+                        class="w-4 h-4 text-blue-400 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 shrink-0"></i>
+                      FFmpeg (Instant)
+                    </span>
+                    <div
+                      class="w-5 h-5 rounded-full border border-[var(--border-light)] peer-checked:border-blue-500 peer-checked:bg-blue-500 flex items-center justify-center transition-all shadow-sm">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="3" stroke-linecap="round" stroke-linejoin="round"
+                        class="w-3 h-3 text-white opacity-0 peer-checked:opacity-100 transition-all transform scale-50 peer-checked:scale-100 duration-200">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                      </svg>
+                    </div>
+                  </div>
+                  <span class="text-[10px] text-[var(--text-secondary)] leading-tight mt-1">Phase cancellation. Instant, zero setup or model needed.</span>
                 </label>
               </div>
 
@@ -3384,19 +3409,16 @@
               <div id="spleeter-options"
                 class="flex flex-col gap-3 mt-1 p-3 rounded-xl bg-[var(--bg-base)] border border-[var(--border-light)] overflow-hidden transition-all duration-300 ease-in-out max-h-0 opacity-0 pointer-events-none border-opacity-0">
                 <div class="flex flex-col gap-1.5">
-                  <label class="text-xs text-[var(--text-secondary)] font-medium">Spleeter Folder Path</label>
+                  <label class="text-xs text-[var(--text-secondary)] font-medium">Spleeter Folder Path (Optional)</label>
                   <div class="flex gap-2">
                     <input id="setting-spleeter-folder" type="text"
-                      placeholder="Optional — leave blank to use the built-in Spleeter install"
+                      placeholder="Optional — leave blank to use the built-in Spleeter environment"
                       class="flex-1 text-xs bg-[var(--bg-hover)] border border-[var(--border-light)] rounded-lg px-3 py-2 text-[var(--text-primary)] placeholder-[var(--text-muted)] transition-colors focus:outline-none focus:border-[var(--accent-primary)]" />
                     <button id="btn-browse-spleeter"
                       class="px-3 py-2 rounded-lg text-xs font-medium bg-[var(--bg-hover)] border border-[var(--border-light)] text-[var(--text-primary)] hover:brightness-110 transition-all active:scale-95">Browse</button>
                   </div>
                   <p class="text-[10px] text-[var(--text-muted)]">
-                    Leave blank to use the app's bundled Spleeter install, or point this at a portable
-                    install's folder containing
-                    <span class="text-[var(--text-secondary)] font-medium">python-embed\</span>
-                    inside.
+                    The app includes a built-in Spleeter environment with offline AI models. Leave blank to use it, or point to an external custom Spleeter folder if desired.
                   </p>
                 </div>
               </div>
@@ -13006,10 +13028,6 @@
 
     // Load vocal engine setting
     let savedVocalEngine = localStorage.getItem("aiDubberVocalEngine") || "spleeter";
-    if (savedVocalEngine === "ffmpeg") {
-      savedVocalEngine = "spleeter";
-      localStorage.setItem("aiDubberVocalEngine", "spleeter");
-    }
     const vocalEngineRadio = document.querySelector(`input[name="vocal-engine"][value="${savedVocalEngine}"]`);
     if (vocalEngineRadio) vocalEngineRadio.checked = true;
     const demucsOptions = document.getElementById("demucs-options");
@@ -22776,36 +22794,9 @@
         const savedGpuPref = localStorage.getItem("aiDubberUseGPU");
         const useGPU = savedGpuPref !== null ? savedGpuPref !== "false" : !isMacForGpu;
         let vocalEngine = localStorage.getItem("aiDubberVocalEngine") || "spleeter";
-        if (vocalEngine === "ffmpeg") {
-          vocalEngine = "spleeter";
-          localStorage.setItem("aiDubberVocalEngine", "spleeter");
-        }
-
-        let demucsFolder = "";
-        let demucsSegment = "7";
-        if (vocalEngine === "demucs") {
-          demucsFolder = localStorage.getItem("aiDubberDemucsFolder") || "";
-          demucsSegment = localStorage.getItem("aiDubberDemucsSegment") || "7";
-          if (!demucsFolder || !demucsFolder.trim()) {
-            showToast("Please select your Demucs folder in Settings (or download it via Settings).", "warning");
-            isIsolatingBgm = false;
-            updateIsolateBgmButton();
-            const modalSettings = document.getElementById("modal-settings");
-            if (modalSettings) {
-              modalSettings.classList.remove("hidden");
-              setTimeout(() => modalSettings.classList.add("opacity-100"), 10);
-              _lucideCreateIcons();
-            }
-            return;
-          }
-        }
-
-        let spleeterFolder = "";
-        if (vocalEngine === "spleeter") {
-          // Same convention as Demucs: leave blank to use the app's built-in
-          // Spleeter install, or point it at a portable Spleeter install instead.
-          spleeterFolder = localStorage.getItem("aiDubberSpleeterFolder") || "";
-        }
+        let demucsFolder = localStorage.getItem("aiDubberDemucsFolder") || "";
+        let demucsSegment = localStorage.getItem("aiDubberDemucsSegment") || "7";
+        let spleeterFolder = localStorage.getItem("aiDubberSpleeterFolder") || "";
 
         let response;
         const localVideoPath = targetProject.videoFilePath || (targetProject.file && targetProject.file.path ? targetProject.file.path : null);
@@ -22844,13 +22835,9 @@
           formData.append("jobId", uniqueJobId);
           formData.append("useGPU", useGPU);
           formData.append("engine", vocalEngine);
-          if (vocalEngine === "demucs") {
-            formData.append("demucsFolder", demucsFolder);
-            formData.append("demucsSegment", demucsSegment);
-          }
-          if (vocalEngine === "spleeter") {
-            formData.append("spleeterFolder", spleeterFolder);
-          }
+          if (demucsFolder) formData.append("demucsFolder", demucsFolder);
+          if (demucsSegment) formData.append("demucsSegment", demucsSegment);
+          if (spleeterFolder) formData.append("spleeterFolder", spleeterFolder);
 
           response = await fetch("http://localhost:3001/api/remove-vocals", {
             method: "POST",
@@ -22932,7 +22919,15 @@
             drawVocalWaveformOnA1(targetProject.vocalUrl);
           }
 
-          if (!isBatch) showToast("BGM successfully isolated!", "success");
+          if (!isBatch) {
+            if (data.method === "ffmpeg_fallback") {
+              showToast("BGM isolated via FFmpeg phase cancellation (ML engine not found).", "info");
+            } else if (data.method === "ffmpeg") {
+              showToast("BGM isolated via FFmpeg phase cancellation!", "success");
+            } else {
+              showToast("BGM successfully isolated!", "success");
+            }
+          }
         } else if (!isBatch) {
           showToast("Background BGM isolation finished!", "success");
         }

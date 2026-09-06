@@ -83,11 +83,26 @@ DEMUCS_MODEL = os.environ.get("DEMUCS_MODEL") or "htdemucs"
 # Spleeter runs in its own venv (backend/spleeter-env) for the same reason as
 # Demucs above -- it pulls in its own TensorFlow pin. A user can instead point
 # --spleeter-folder at their own portable Spleeter install, same convention as
-# --demucs-folder.
-SPLEETER_PYTHON_DEFAULT = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "spleeter-env",
-    "Scripts" if os.name == "nt" else "bin", "python.exe" if os.name == "nt" else "python"
-)
+def get_spleeter_python_default():
+    py_dir = os.path.dirname(os.path.abspath(__file__))
+    if "app.asar" in py_dir and "app.asar.unpacked" not in py_dir:
+        py_dir = py_dir.replace("app.asar", "app.asar.unpacked")
+    candidates = [
+        os.path.join(py_dir, "..", "spleeter-env", "Scripts" if os.name == "nt" else "bin", "python.exe" if os.name == "nt" else "python"),
+        os.path.join(py_dir, "..", "..", "backend", "spleeter-env", "Scripts" if os.name == "nt" else "bin", "python.exe" if os.name == "nt" else "python"),
+    ]
+    local_app_data = os.environ.get("LOCALAPPDATA", "")
+    if local_app_data:
+        candidates.append(os.path.join(
+            local_app_data, "Programs", "DR Dubber Pro", "resources", "app.asar.unpacked", "backend", "spleeter-env",
+            "Scripts" if os.name == "nt" else "bin", "python.exe" if os.name == "nt" else "python"
+        ))
+    for c in candidates:
+        if os.path.isfile(c):
+            return os.path.abspath(c)
+    return candidates[0]
+
+SPLEETER_PYTHON_DEFAULT = get_spleeter_python_default()
 
 def find_python_in_folder(folder):
     if not folder:
@@ -163,7 +178,7 @@ def separate_spleeter(input_audio, output_dir, spleeter_folder=None):
     """
     ML-based separation via Spleeter's 2stems (vocals/accompaniment) model.
     """
-    spleeter_python = find_python_in_folder(spleeter_folder) or os.environ.get("SPLEETER_PYTHON") or (SPLEETER_PYTHON_DEFAULT if os.path.exists(SPLEETER_PYTHON_DEFAULT) else None) or (sys.executable if os.path.exists(sys.executable) else None)
+    spleeter_python = find_python_in_folder(spleeter_folder) or os.environ.get("SPLEETER_PYTHON") or (get_spleeter_python_default() if os.path.exists(get_spleeter_python_default()) else None) or (SPLEETER_PYTHON_DEFAULT if os.path.exists(SPLEETER_PYTHON_DEFAULT) else None) or (sys.executable if os.path.exists(sys.executable) else None)
     if not spleeter_python or not os.path.exists(spleeter_python):
         return None
     try:
@@ -182,7 +197,26 @@ def separate_spleeter(input_audio, output_dir, spleeter_folder=None):
             input_audio,
         ]
 
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+        env = os.environ.copy()
+        py_dir = os.path.dirname(os.path.abspath(__file__))
+        if "app.asar" in py_dir and "app.asar.unpacked" not in py_dir:
+            py_dir = py_dir.replace("app.asar", "app.asar.unpacked")
+        candidates_model = [
+            os.path.abspath(os.path.join(py_dir, "..", "pretrained_models")),
+            os.path.abspath(os.path.join(py_dir, "..", "..", "pretrained_models")),
+            os.path.abspath(os.path.join(py_dir, "pretrained_models")),
+        ]
+        local_app_data = os.environ.get("LOCALAPPDATA", "")
+        if local_app_data:
+            candidates_model.append(
+                os.path.join(local_app_data, "Programs", "DR Dubber Pro", "resources", "app.asar.unpacked", "backend", "pretrained_models")
+            )
+        for cand in candidates_model:
+            if os.path.isdir(os.path.join(cand, "2stems")):
+                env["MODEL_PATH"] = cand
+                break
+
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=env)
 
         base_name = os.path.splitext(os.path.basename(input_audio))[0]
         stem_dir = os.path.join(job_dir, base_name)
@@ -203,7 +237,57 @@ def separate_spleeter(input_audio, output_dir, spleeter_folder=None):
         sys.stderr.write(f"[Spleeter] exception: {e}\n")
         return None
 
+def separate_ffmpeg(input_audio, output_dir):
+    """
+    Zero-dependency stem separation using FFmpeg stereo phase cancellation.
+    Extracts out-of-phase audio as background music (accompaniment/BGM) and
+    center/in-phase audio as vocal stem.
+    """
+    try:
+        output_dir = os.path.abspath(output_dir)
+        job_suffix = f"{os.getpid()}_{int(time.time() * 1000)}"
+        job_dir = os.path.join(output_dir, f"ffmpeg_{job_suffix}")
+        os.makedirs(job_dir, exist_ok=True)
+
+        vocal_path = os.path.join(job_dir, "vocals.wav")
+        bgm_path = os.path.join(job_dir, "accompaniment.wav")
+
+        filter_graph = (
+            "[0:a]aformat=channel_layouts=stereo,asplit=2[a_bgm_in][a_voc_in];"
+            "[a_bgm_in]stereotools=mode=lr>l-r[bgm];"
+            "[a_voc_in]stereotools=mode=lr>l+r,highpass=f=200,lowpass=f=3500[vocal]"
+        )
+
+        cmd = [
+            "ffmpeg", "-y", "-i", input_audio,
+            "-filter_complex", filter_graph,
+            "-map", "[bgm]", bgm_path,
+            "-map", "[vocal]", vocal_path
+        ]
+
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+
+        if os.path.exists(bgm_path) and os.path.exists(vocal_path):
+            return {
+                "success": True,
+                "method": "ffmpeg",
+                "vocal": os.path.abspath(vocal_path),
+                "bgm": os.path.abspath(bgm_path)
+            }
+        if res.returncode != 0:
+            sys.stderr.write(f"[FFmpeg] exit code {res.returncode}: {res.stderr}\n")
+        return None
+    except Exception as e:
+        sys.stderr.write(f"[FFmpeg] exception: {e}\n")
+        return None
+
 def separate(input_audio, output_dir, engine="spleeter", demucs_folder=None, segment=None, device=None, spleeter_folder=None):
+    if engine == "ffmpeg":
+        res = separate_ffmpeg(input_audio, output_dir)
+        if res:
+            return res
+        return {"success": False, "error": "FFmpeg audio separation failed."}
+
     if engine == "spleeter":
         result = separate_spleeter(input_audio, output_dir, spleeter_folder)
         if result:
@@ -212,7 +296,12 @@ def separate(input_audio, output_dir, engine="spleeter", demucs_folder=None, seg
         demucs_res = separate_demucs(input_audio, output_dir, demucs_folder, segment, device)
         if demucs_res:
             return demucs_res
-        return {"success": False, "error": "Spleeter stem isolation failed and Demucs fallback was unavailable."}
+        sys.stderr.write("[Demucs] unavailable or failed, falling back to FFmpeg separation\n")
+        ffmpeg_res = separate_ffmpeg(input_audio, output_dir)
+        if ffmpeg_res:
+            ffmpeg_res["method"] = "ffmpeg_fallback"
+            return ffmpeg_res
+        return {"success": False, "error": "Stem separation failed (Spleeter, Demucs, and FFmpeg fallback were unavailable)."}
 
     if engine in ("demucs", "auto"):
         result = separate_demucs(input_audio, output_dir, demucs_folder, segment, device)
@@ -222,15 +311,24 @@ def separate(input_audio, output_dir, engine="spleeter", demucs_folder=None, seg
         spleeter_res = separate_spleeter(input_audio, output_dir, spleeter_folder)
         if spleeter_res:
             return spleeter_res
-        return {"success": False, "error": "Demucs stem isolation failed and Spleeter fallback was unavailable."}
+        sys.stderr.write("[Spleeter] unavailable or failed, falling back to FFmpeg separation\n")
+        ffmpeg_res = separate_ffmpeg(input_audio, output_dir)
+        if ffmpeg_res:
+            ffmpeg_res["method"] = "ffmpeg_fallback"
+            return ffmpeg_res
+        return {"success": False, "error": "Stem separation failed (Demucs, Spleeter, and FFmpeg fallback were unavailable)."}
 
-    # For any legacy or unspecified engine, try spleeter then demucs
+    # For any legacy or unspecified engine, try spleeter then demucs then ffmpeg
     spleeter_res = separate_spleeter(input_audio, output_dir, spleeter_folder)
     if spleeter_res:
         return spleeter_res
     demucs_res = separate_demucs(input_audio, output_dir, demucs_folder, segment, device)
     if demucs_res:
         return demucs_res
+    ffmpeg_res = separate_ffmpeg(input_audio, output_dir)
+    if ffmpeg_res:
+        ffmpeg_res["method"] = "ffmpeg_fallback"
+        return ffmpeg_res
     return {"success": False, "error": f"Stem separation failed for engine '{engine}'."}
 
 def main():
@@ -243,7 +341,7 @@ def main():
         parser = argparse.ArgumentParser(description="Stem & Vocal Separator")
         parser.add_argument("--input", required=True, help="Input audio or video file")
         parser.add_argument("--output", required=True, help="Output directory")
-        parser.add_argument("--engine", default="spleeter", help="Separation engine (spleeter or demucs)")
+        parser.add_argument("--engine", default="spleeter", help="Separation engine (spleeter, demucs, or ffmpeg)")
         parser.add_argument("--demucs-folder", default=None, help="Optional portable Demucs install to use instead of the bundled one")
         parser.add_argument("--segment", default=None, help="Demucs chunk size (lower = less RAM)")
         parser.add_argument("--device", default=None, help="Demucs device override; omit to let demucs auto-detect")
