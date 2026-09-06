@@ -639,23 +639,21 @@ app.post('/api/remove-vocals', upload.any(), (req, res) => {
     res.json({ success: true, jobId: jobId, status: 'processing' });
 
     let engine = req.body.engine;
-    if (engine === 'ffmpeg') engine = 'spleeter';
-    if (!engine || (engine !== 'spleeter' && engine !== 'demucs')) engine = 'spleeter';
+    if (!engine || (engine !== 'spleeter' && engine !== 'demucs' && engine !== 'ffmpeg')) engine = 'spleeter';
     // Only force CPU when the user explicitly disabled GPU (Safe Mode); otherwise
     // leave --device unset so Demucs auto-detects, rather than requesting "cuda"
     // outright and hard-failing on a machine/torch build without working CUDA.
     const useGPU = req.body.useGPU === true || req.body.useGPU === 'true';
     const pyArgs = ['--input', audioPath, '--output', SEPARATED_DIR, '--engine', engine];
-    if (engine === 'demucs') {
-        if (!useGPU) pyArgs.push('--device', 'cpu');
-        const demucsFolder = (req.body.demucsFolder || '').trim();
-        const demucsSegment = (req.body.demucsSegment || '').trim();
-        if (demucsFolder) pyArgs.push('--demucs-folder', demucsFolder);
-        if (demucsSegment) pyArgs.push('--segment', demucsSegment);
-    } else if (engine === 'spleeter') {
-        const spleeterFolder = (req.body.spleeterFolder || '').trim();
-        if (spleeterFolder) pyArgs.push('--spleeter-folder', spleeterFolder);
+    if (engine === 'demucs' && !useGPU) {
+        pyArgs.push('--device', 'cpu');
     }
+    const demucsFolder = (req.body.demucsFolder || '').trim();
+    const demucsSegment = (req.body.demucsSegment || '').trim();
+    const spleeterFolder = (req.body.spleeterFolder || '').trim();
+    if (demucsFolder) pyArgs.push('--demucs-folder', demucsFolder);
+    if (demucsSegment) pyArgs.push('--segment', demucsSegment);
+    if (spleeterFolder) pyArgs.push('--spleeter-folder', spleeterFolder);
 
     const pyScript = getPythonScriptPath('vocal_separator.py');
     let child;
@@ -713,7 +711,8 @@ app.post('/api/remove-vocals', upload.any(), (req, res) => {
                     bgmPath: data.bgm,
                     vocalPath: data.vocal,
                     bgmUrl: bgmUri,
-                    vocalUrl: vocalUri
+                    vocalUrl: vocalUri,
+                    method: data.method || engine
                 });
             } else {
                 bgmJobs.set(jobId, {

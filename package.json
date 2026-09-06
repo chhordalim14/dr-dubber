@@ -1,6 +1,6 @@
 {
   "name": "dr-dubber-pro",
-  "version": "1.1.8",
+  "version": "1.1.9",
   "description": "DR Dubber Pro - Khmer Edition AI Dubbing Studio",
   "main": "main.js",
   "scripts": {
@@ -26,7 +26,6 @@
       "preload.js",
       "backend/**/*",
       "!backend/demucs-env/**/*",
-      "!backend/spleeter-env/**/*",
       "frontend/**/*",
       "assets/**/*",
       "whisper_engine/**/*",
@@ -37,6 +36,8 @@
       "backend/bin/**/*",
       "backend/python_env/**/*",
       "backend/python/**/*",
+      "backend/spleeter-env/**/*",
+      "backend/pretrained_models/**/*",
       "whisper_engine/**/*"
     ],
     "mac": {
