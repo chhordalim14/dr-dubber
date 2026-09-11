@@ -2230,6 +2230,43 @@ app.post('/api/render', upload.any(), (req, res) => {
         };
     }).filter(img => img.path && fs.existsSync(img.path));
 
+    // 3.6 Resolve overlay videos from multipart uploads and local paths
+    const uploadedVideoOverlayFiles = (req.files || []).filter(f => f.fieldname === 'overlayVideos');
+    const videoOverlayFileByIndex = new Map();
+    uploadedVideoOverlayFiles.forEach((f, idx) => {
+        const match = (f.originalname || '').match(/overvid_(\d+)/);
+        if (match) {
+            videoOverlayFileByIndex.set(parseInt(match[1], 10), f.path);
+        } else {
+            videoOverlayFileByIndex.set(idx, f.path);
+        }
+    });
+
+    const rawVideoOverlays = Array.isArray(renderOpts.videoOverlays) ? renderOpts.videoOverlays : [];
+    const resolvedVideoOverlays = rawVideoOverlays.map((vid, idx) => {
+        let videoOverlayPath = null;
+        if (vid.filePath && fs.existsSync(vid.filePath)) {
+            videoOverlayPath = vid.filePath;
+        } else if (vid.path && fs.existsSync(vid.path)) {
+            videoOverlayPath = vid.path;
+        } else if (videoOverlayFileByIndex.has(idx)) {
+            videoOverlayPath = videoOverlayFileByIndex.get(idx);
+        } else if (uploadedVideoOverlayFiles[idx]) {
+            videoOverlayPath = uploadedVideoOverlayFiles[idx].path;
+        }
+
+        return {
+            ...vid,
+            path: videoOverlayPath,
+            x: vid.x !== undefined ? parseFloat(vid.x) : 0,
+            y: vid.y !== undefined ? parseFloat(vid.y) : 0,
+            w: vid.w !== undefined ? parseFloat(vid.w) : 30,
+            h: vid.h !== undefined ? parseFloat(vid.h) : 30,
+            opacity: vid.opacity !== undefined ? (parseFloat(vid.opacity) > 1 ? parseFloat(vid.opacity) / 100 : parseFloat(vid.opacity)) : 1.0,
+            radius: vid.radius !== undefined ? parseFloat(vid.radius) : 0
+        };
+    }).filter(vid => vid.path && fs.existsSync(vid.path));
+
     // 4. Resolve output folder and file name
     const ext = isAudioOnly ? (renderOpts.audioFormat || 'mp3') : 'mp4';
     const baseName = videoPath ? path.basename(videoPath, path.extname(videoPath)) : `audio_${Date.now()}`;
@@ -2264,6 +2301,14 @@ app.post('/api/render', upload.any(), (req, res) => {
         bgmPath,
         bgmVolume,
         overlayImages: resolvedOverlayImages,
+        videoOverlays: resolvedVideoOverlays,
+        blurBoxes: Array.isArray(renderOpts.blurBoxes) ? renderOpts.blurBoxes : [],
+        freeTexts: Array.isArray(renderOpts.freeTexts) ? renderOpts.freeTexts : [],
+        videoPan: renderOpts.videoPan,
+        videoZoom: renderOpts.videoZoom,
+        videoScaleX: renderOpts.videoScaleX,
+        videoScaleY: renderOpts.videoScaleY,
+        encoder: renderOpts.encoder || (renderOpts.renderEngine === 'cpu' ? 'libx264' : 'auto'),
         outputPath
     },
     (progress, eta) => { },

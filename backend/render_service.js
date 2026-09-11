@@ -224,6 +224,79 @@ function createSrtFile(subtitles, outputPath) {
     return false;
 }
 
+function formatAssTimestamp(seconds) {
+    const num = Math.max(0, parseFloat(seconds) || 0);
+    const hrs = Math.floor(num / 3600);
+    const mins = Math.floor((num % 3600) / 60);
+    const secs = Math.floor(num % 60);
+    const centis = Math.min(99, Math.floor((num % 1) * 100));
+    return `${hrs}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(centis).padStart(2, '0')}`;
+}
+
+function escapeAssText(text) {
+    return String(text)
+        .replace(/\\/g, '\\\\')
+        .replace(/\{/g, '\\{')
+        .replace(/\}/g, '\\}')
+        .replace(/\r\n|\r|\n/g, '\\N');
+}
+
+// Renders draggable "free text" overlays (persistent, full-duration captions the user
+// positions freely on the canvas) by piggy-backing on the libass `subtitles` filter,
+// since this ffmpeg build path already guarantees libass availability via hasSubtitlesFilter().
+function buildFreeTextAssFile(freeTexts, canvasW, canvasH, videoDuration, tempDir) {
+    const w = canvasW || 1920;
+    const h = canvasH || 1080;
+    const endTime = formatAssTimestamp(Math.max(0.1, videoDuration || 60));
+
+    const events = freeTexts.map((t) => {
+        const px = Math.round((w * (parseFloat(t.x) || 0)) / 100);
+        const py = Math.round((h * (parseFloat(t.y) || 0)) / 100);
+        const fontName = t.fontFamily || 'Kantumruy Pro';
+        const fontSize = parseInt(t.fontSize, 10) || 28;
+        const primaryColor = hexToAssColor(t.color, '&H00FFFFFF');
+        const outlineColor = hexToAssColor(t.strokeColor, '&H00000000');
+        const outlineW = t.strokeWidth !== undefined ? parseFloat(t.strokeWidth) || 0 : 0;
+        const rawOpacity = t.opacity !== undefined ? parseFloat(t.opacity) : 100;
+        const opacityPct = !isNaN(rawOpacity) ? Math.min(100, Math.max(0, rawOpacity)) : 100;
+        const alphaByte = Math.round((1 - opacityPct / 100) * 255).toString(16).padStart(2, '0').toUpperCase();
+        const alphaTag = `\\alpha&H${alphaByte}&`;
+        const boldTag = t.bold ? '\\b1' : '\\b0';
+        const italicTag = t.italic ? '\\i1' : '\\i0';
+
+        const styleName = `FT_${Math.random().toString(36).slice(2, 8)}`;
+        const styleLine = `Style: ${styleName},${fontName},${fontSize},${primaryColor},${primaryColor},${outlineColor},&H64000000,${t.bold ? -1 : 0},${t.italic ? -1 : 0},0,0,100,100,0,0,1,${outlineW},0,5,0,0,0,1`;
+
+        const text = escapeAssText(t.text);
+        const dialogueLine = `Dialogue: 0,0:00:00.00,${endTime},${styleName},,0,0,0,,{\\an5\\pos(${px},${py})${boldTag}${italicTag}${alphaTag}}${text}`;
+
+        return { styleLine, dialogueLine };
+    });
+
+    if (events.length === 0) return null;
+
+    const assContent = [
+        '[Script Info]',
+        'ScriptType: v4.00+',
+        `PlayResX: ${w}`,
+        `PlayResY: ${h}`,
+        'WrapStyle: 0',
+        'ScaledBorderAndShadow: yes',
+        '',
+        '[V4+ Styles]',
+        'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
+        ...events.map(e => e.styleLine),
+        '',
+        '[Events]',
+        'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+        ...events.map(e => e.dialogueLine)
+    ].join('\n');
+
+    const assPath = path.join(tempDir, 'freetext_burn.ass');
+    fs.writeFileSync(assPath, assContent, 'utf8');
+    return assPath;
+}
+
 /**
  * Fast Dialogue Stem Pre-Assembly.
  * Combines all subtitle audio cues into a single master PCM dialogue track in a lightning-fast pass.
@@ -517,7 +590,14 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         flipVertical,
         cropConfig,
         duration: providedDuration,
-        overlayImages = []
+        overlayImages = [],
+        blurBoxes = [],
+        videoOverlays = [],
+        freeTexts = [],
+        videoPan,
+        videoZoom = 1,
+        videoScaleX = 1,
+        videoScaleY
     } = options;
 
     try {
@@ -657,6 +737,21 @@ async function renderVideo(options, onProgress, onComplete, onError) {
 
         // Overlay image inputs
         const validOverlays = (Array.isArray(overlayImages) ? overlayImages : []).filter(ov => {
+            const p = ov.path || ov.filePath;
+            return p && fs.existsSync(p);
+        }).map(ov => {
+            const p = ov.path || ov.filePath;
+            args.push('-i', p);
+            const inputIndex = nextInputIndex++;
+            return {
+                ...ov,
+                path: p,
+                inputIndex
+            };
+        });
+
+        // Overlay video inputs
+        const validVideoOverlays = (Array.isArray(videoOverlays) ? videoOverlays : []).filter(ov => {
             const p = ov.path || ov.filePath;
             return p && fs.existsSync(p);
         }).map(ov => {
@@ -820,8 +915,77 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             filterComplex.push(`[${videoInTag}]scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1[${scaledTag}]`);
         }
 
-        // Apply Image Overlays
+        // Apply Video Pan / Zoom / Stretch (repositions the video content within the frame;
+        // blur boxes, overlays and free text are positioned in fixed frame coordinates and are
+        // intentionally unaffected by this, matching the editor's DOM layering)
         let currentVideoTag = scaledTag;
+        {
+            const zoom = Math.max(0.05, parseFloat(videoZoom) || 1);
+            const stretchX = Math.max(0.05, parseFloat(videoScaleX) || 1);
+            const stretchY = Math.max(0.05, parseFloat(videoScaleY !== undefined ? videoScaleY : videoScaleX) || 1);
+            const panXPct = (videoPan && videoPan.x !== undefined) ? (parseFloat(videoPan.x) || 0) : 0;
+            const panYPct = (videoPan && videoPan.y !== undefined) ? (parseFloat(videoPan.y) || 0) : 0;
+
+            const hasPanZoom = Math.abs(zoom - 1) > 0.001 || Math.abs(stretchX - 1) > 0.001 || Math.abs(stretchY - 1) > 0.001 || Math.abs(panXPct) > 0.001 || Math.abs(panYPct) > 0.001;
+
+            if (hasPanZoom) {
+                const cropW = Math.max(2, Math.round(canvasW / zoom / 2) * 2);
+                const cropH = Math.max(2, Math.round(canvasH / zoom / 2) * 2);
+                const cropX = Math.round((canvasW - cropW) / 2);
+                const cropY = Math.round((canvasH - cropH) / 2);
+
+                const placedW = Math.max(2, Math.round(canvasW * stretchX / 2) * 2);
+                const placedH = Math.max(2, Math.round(canvasH * stretchY / 2) * 2);
+
+                const posX = Math.round((canvasW - placedW) / 2 + (canvasW * panXPct / 100));
+                const posY = Math.round((canvasH - placedH) / 2 + (canvasH * panYPct / 100));
+
+                const unionLeft = Math.min(0, posX);
+                const unionTop = Math.min(0, posY);
+                const unionRight = Math.max(canvasW, posX + placedW);
+                const unionBottom = Math.max(canvasH, posY + placedH);
+                // Even-align by rounding UP only — padW/padH must never shrink below
+                // (unionRight-unionLeft)/(unionBottom-unionTop), or ffmpeg's `pad` filter
+                // will reject the target size as smaller than the input.
+                const padWRaw = unionRight - unionLeft;
+                const padHRaw = unionBottom - unionTop;
+                const padW = padWRaw % 2 === 0 ? padWRaw : padWRaw + 1;
+                const padH = padHRaw % 2 === 0 ? padHRaw : padHRaw + 1;
+                // Where the CONTENT is placed within the padded canvas (for the `pad` filter)
+                const contentPlaceX = posX - unionLeft;
+                const contentPlaceY = posY - unionTop;
+                // Where the FRAME window starts within that same padded canvas (for the final crop)
+                const frameOffsetX = 0 - unionLeft;
+                const frameOffsetY = 0 - unionTop;
+
+                filterComplex.push(`[${currentVideoTag}]crop=${cropW}:${cropH}:${cropX}:${cropY},scale=${placedW}:${placedH},pad=${padW}:${padH}:${contentPlaceX}:${contentPlaceY}:black,crop=${canvasW}:${canvasH}:${frameOffsetX}:${frameOffsetY}[pz_out]`);
+                currentVideoTag = 'pz_out';
+            }
+        }
+
+        // Apply Blur Boxes (censor regions)
+        const validBlurBoxes = (Array.isArray(blurBoxes) ? blurBoxes : []).filter(b => (parseFloat(b.strength) || 0) > 0);
+        validBlurBoxes.forEach((box, bIdx) => {
+            const bx = Math.max(0, Math.min(canvasW - 2, Math.round((canvasW * (parseFloat(box.x) || 0)) / 100)));
+            const by = Math.max(0, Math.min(canvasH - 2, Math.round((canvasH * (parseFloat(box.y) || 0)) / 100)));
+            const bw = Math.max(2, Math.min(canvasW - bx, Math.round((canvasW * (parseFloat(box.w) || 0)) / 100)));
+            const bh = Math.max(2, Math.min(canvasH - by, Math.round((canvasH * (parseFloat(box.h) || 0)) / 100)));
+            const radius = Math.max(1, Math.min(17, Math.round((parseFloat(box.strength) || 0) / 100 * 17)));
+
+            const mainTag = `blur_main_${bIdx}`;
+            const srcTag = `blur_src_${bIdx}`;
+            const cropTag = `blur_crop_${bIdx}`;
+            const blurredTag = `blur_blurred_${bIdx}`;
+            const outTag = `blur_out_${bIdx}`;
+
+            filterComplex.push(`[${currentVideoTag}]split=2[${mainTag}][${srcTag}]`);
+            filterComplex.push(`[${srcTag}]crop=${bw}:${bh}:${bx}:${by}[${cropTag}]`);
+            filterComplex.push(`[${cropTag}]boxblur=${radius}:2[${blurredTag}]`);
+            filterComplex.push(`[${mainTag}][${blurredTag}]overlay=${bx}:${by}[${outTag}]`);
+            currentVideoTag = outTag;
+        });
+
+        // Apply Image Overlays
         if (validOverlays.length > 0) {
             validOverlays.forEach((ov, ovIdx) => {
                 const ovW = Math.max(2, Math.round((canvasW * (parseFloat(ov.w) || 20)) / 100 / 2) * 2);
@@ -879,6 +1043,52 @@ async function renderVideo(options, onProgress, onComplete, onError) {
 
                 const nextVideoTag = `ov_out_${ovIdx}`;
                 filterComplex.push(`[${currentVideoTag}][${ovProcTag}]overlay=x='${xExpr}':y='${yExpr}'${evalParam}:eof_action=repeat[${nextVideoTag}]`);
+                currentVideoTag = nextVideoTag;
+            });
+        }
+
+        // Apply Video Overlays (picture-in-picture clips, optional chroma key)
+        if (validVideoOverlays.length > 0) {
+            validVideoOverlays.forEach((ov, ovIdx) => {
+                const ovW = Math.max(2, Math.round((canvasW * (parseFloat(ov.w) || 20)) / 100 / 2) * 2);
+                const ovH = Math.max(2, Math.round((canvasH * (parseFloat(ov.h) || 20)) / 100 / 2) * 2);
+
+                let chromaFilter = '';
+                if (ov.chromaKey && ov.chromaKey.enabled) {
+                    const hexColor = (ov.chromaKey.color || '#00ff00').replace('#', '0x');
+                    const tolerance = parseFloat(ov.chromaKey.tolerance);
+                    const similarity = (Math.min(100, Math.max(0, isNaN(tolerance) ? 80 : tolerance)) / 100 * 0.5 + 0.01).toFixed(3);
+                    const smooth = parseFloat(ov.chromaKey.smooth);
+                    const blend = (Math.min(100, Math.max(0, isNaN(smooth) ? 20 : smooth)) / 100 * 0.3).toFixed(3);
+                    chromaFilter = `,colorkey=color=${hexColor}:similarity=${similarity}:blend=${blend}`;
+                }
+
+                let radiusFilter = '';
+                const rPercent = parseFloat(ov.radius) || 0;
+                if (rPercent > 0) {
+                    const maxR = Math.min(ovW, ovH) / 2;
+                    const rPx = Math.min(maxR, (Math.min(ovW, ovH) * (rPercent / 100)));
+                    if (rPx >= 1) {
+                        const r = Math.round(rPx);
+                        radiusFilter = `,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(X,${r})*lt(Y,${r}),if(gt(hypot(${r}-X,${r}-Y),${r}),0,alpha(X,Y)),if(gt(X,${ovW}-${r})*lt(Y,${r}),if(gt(hypot(X-(${ovW}-${r}),${r}-Y),${r}),0,alpha(X,Y)),if(lt(X,${r})*gt(Y,${ovH}-${r}),if(gt(hypot(${r}-X,Y-(${ovH}-${r})),${r}),0,alpha(X,Y)),if(gt(X,${ovW}-${r})*gt(Y,${ovH}-${r}),if(gt(hypot(X-(${ovW}-${r}),Y-(${ovH}-${r})),${r}),0,alpha(X,Y)),alpha(X,Y)))))'`;
+                    }
+                }
+
+                let alphaFilter = '';
+                const rawOpacity = ov.opacity !== undefined ? parseFloat(ov.opacity) : 100;
+                const opacityVal = !isNaN(rawOpacity) ? (rawOpacity > 1 ? rawOpacity / 100 : rawOpacity) : 1.0;
+                if (!isNaN(opacityVal) && opacityVal >= 0 && opacityVal < 1.0) {
+                    alphaFilter = `,colorchannelmixer=aa=${opacityVal.toFixed(2)}`;
+                }
+
+                const ovProcTag = `vov_proc_${ovIdx}`;
+                filterComplex.push(`[${ov.inputIndex}:v]scale=${ovW}:${ovH}:force_original_aspect_ratio=increase,crop=${ovW}:${ovH},format=rgba${chromaFilter}${radiusFilter}${alphaFilter}[${ovProcTag}]`);
+
+                const baseX = Math.round((canvasW * (parseFloat(ov.x) || 0)) / 100);
+                const baseY = Math.round((canvasH * (parseFloat(ov.y) || 0)) / 100);
+
+                const nextVideoTag = `vov_out_${ovIdx}`;
+                filterComplex.push(`[${currentVideoTag}][${ovProcTag}]overlay=x=${baseX}:y=${baseY}:eof_action=repeat[${nextVideoTag}]`);
                 currentVideoTag = nextVideoTag;
             });
         }
@@ -950,8 +1160,21 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             filterComplex.push(`[${currentVideoTag}]null[final_video]`);
         }
 
+        // Apply Free Text overlays (draggable persistent captions)
+        let finalVideoTag = 'final_video';
+        const validFreeTexts = (Array.isArray(freeTexts) ? freeTexts : []).filter(t => t && typeof t.text === 'string' && t.text.trim().length > 0);
+        if (validFreeTexts.length > 0 && hasSubtitlesFilter()) {
+            const assPath = buildFreeTextAssFile(validFreeTexts, canvasW, canvasH, videoDuration, tempDir);
+            if (assPath) {
+                const escapedAssPath = escapeFfmpegFilterPath(assPath);
+                const ftFontsDir = escapeFfmpegFilterPath(path.join(__dirname, '..', 'frontend', 'fonts'));
+                filterComplex.push(`[${finalVideoTag}]subtitles=filename='${escapedAssPath}':fontsdir='${ftFontsDir}'[final_video_ft]`);
+                finalVideoTag = 'final_video_ft';
+            }
+        }
+
         args.push('-filter_complex', filterComplex.join(';'));
-        args.push('-map', '[final_video]');
+        args.push('-map', `[${finalVideoTag}]`);
         args.push('-map', '[final_audio]');
         if (softSrtInputIndex >= 0) {
             args.push('-map', `${softSrtInputIndex}:s?`);
