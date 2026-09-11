@@ -1,6 +1,6 @@
 {
-  "version": "1.2.0",
+  "version": "1.2.1",
   "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.2.0/DR.Dubber.Pro.Setup.1.2.0.exe",
-  "mac_link": "https://github.com/chhordalim14/dr-dubber/releases",
-  "notes": "- Pre-bundled full standalone offline Spleeter AI environment with 2stems model for zero-setup BGM isolation\n- Fixed 'No Python' error on fresh installations\n- Added automatic native FFmpeg phase-cancellation fallback to prevent isolation failures\n- Added 1-click setup_spleeter.bat for Git users"
+  "mac_link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.2.1/DR.Dubber.Pro-1.2.1-arm64.dmg",
+  "notes": "macOS (Apple Silicon) update available now:\n- Fixed blur boxes, video overlays (chroma key), free text, and Pan/Zoom/Stretch not appearing in the final rendered video\n- Fixed CPU/GPU render engine choice being ignored during export\n- Restored 'Isolate BGM (All Tabs)' and 'Generate Selected Audio (All Tabs)' buttons\n\nWindows users: a Windows build with these fixes has not been published yet — this download link is still v1.2.0. Please check back soon for the Windows update."
 }
