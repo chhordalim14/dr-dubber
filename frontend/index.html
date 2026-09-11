@@ -1667,6 +1667,13 @@
             <span id="text-isolate" class="text-xs font-medium">Isolate BGM</span>
           </button>
 
+          <button id="btn-isolate-bgm-all" title="Isolate BGM for ALL open project tabs"
+            class="group flex flex-col items-center justify-center gap-2 bg-[var(--bg-hover)] hover:brightness-110 border border-[var(--border-light)] p-3 rounded-xl transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.92] cursor-pointer">
+            <i id="icon-isolate-all" data-lucide="layers"
+              class="w-5 h-5 text-pink-400 workspace-icon-glow transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
+            <span id="text-isolate-all" class="text-xs font-medium">Isolate All Tabs</span>
+          </button>
+
           <button id="btn-mute-audio"
             class="group flex flex-col items-center justify-center gap-2 bg-[var(--bg-hover)] hover:brightness-110 border border-[var(--border-light)] text-[var(--text-primary)] p-3 rounded-xl transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.92]">
             <i data-lucide="mic"
@@ -2086,6 +2093,14 @@
               <i id="icon-generate" data-lucide="audio-lines" class="w-[14px] h-[14px] shrink-0"></i>
               <span class="hidden sm:inline" id="text-generate">Generate Selected Audio</span>
               <span class="sm:hidden" id="text-generate-mobile">Generate</span>
+            </button>
+
+            <button id="btn-generate-audio-all" title="Generate audio for ALL open project tabs"
+              class="group px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ease-out bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-secondary)] hover:text-[var(--text-bright)] hover:border-emerald-400/50 shadow-sm active:scale-[0.95]">
+              <i id="icon-generate-all" data-lucide="layers"
+                class="w-[14px] h-[14px] text-emerald-400 shrink-0 transition-transform duration-300 group-hover:scale-110"></i>
+              <span class="hidden md:inline" id="text-generate-all">Generate All Tabs</span>
+              <span class="md:hidden">All Tabs</span>
             </button>
           </div>
         </div>
@@ -19660,7 +19675,46 @@
 
     let isGeneratingAudioAll = false;
 
-    const updateGenerateAllButtonState = () => { };
+    const updateGenerateAllButtonState = () => {
+      const btnAll = document.getElementById("btn-generate-audio-all");
+      if (!btnAll) return;
+
+      const isAnyRunning = isGeneratingAudioAll || isGeneratingAudio || (typeof voxQueueRunning !== "undefined" && voxQueueRunning) || projects.some((p) => p.isGeneratingAudio || p._voxQueued);
+      const hasAnySubtitles = Array.isArray(projects) && projects.some((p) => p.subtitles && p.subtitles.length > 0);
+
+      if (isAnyRunning) {
+        btnAll.disabled = false;
+        btnAll.className = "group px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ease-out bg-red-600 border border-red-600 text-white shadow-md shadow-red-900/20 active:scale-[0.95] animate-pulse cursor-pointer";
+        btnAll.innerHTML = `
+            <i data-lucide="x-circle" class="w-[14px] h-[14px] shrink-0"></i>
+            <span class="hidden md:inline">Stop All</span>
+            <span class="md:hidden">Stop</span>
+          `;
+        btnAll.title = "Stop audio generation for all project tabs";
+      } else if (!hasAnySubtitles) {
+        btnAll.disabled = true;
+        btnAll.className = "group px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ease-out bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-muted)] opacity-60 cursor-not-allowed";
+        btnAll.innerHTML = `
+            <i id="icon-generate-all" data-lucide="layers" class="w-[14px] h-[14px] text-[var(--text-muted)] shrink-0"></i>
+            <span class="hidden md:inline" id="text-generate-all">Generate All Tabs</span>
+            <span class="md:hidden">All Tabs</span>
+          `;
+        btnAll.title = "Load subtitles in project tabs first to Generate All Tabs";
+      } else {
+        btnAll.disabled = false;
+        btnAll.className = "group px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ease-out bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-secondary)] hover:text-[var(--text-bright)] hover:border-emerald-400/50 shadow-sm active:scale-[0.95] cursor-pointer";
+        btnAll.innerHTML = `
+            <i id="icon-generate-all" data-lucide="layers" class="w-[14px] h-[14px] text-emerald-400 shrink-0 transition-transform duration-300 group-hover:scale-110"></i>
+            <span class="hidden md:inline" id="text-generate-all">Generate All Tabs</span>
+            <span class="md:hidden">All Tabs</span>
+          `;
+        btnAll.title = "Generate audio for ALL open project tabs (selected lines, or all pending)";
+      }
+
+      if (typeof lucide !== "undefined") {
+        _lucideCreateIcons({ root: btnAll });
+      }
+    };
 
     // --- NATIVE PARTICLE BURST ENGINE ---
     const triggerParticleBurst = (buttonElement, colorClass) => {
@@ -20829,7 +20883,10 @@
       }
     }
 
-    // btn-generate-audio-all removed
+    const btnGenerateAudioAll = document.getElementById("btn-generate-audio-all");
+    if (btnGenerateAudioAll) {
+      btnGenerateAudioAll.addEventListener("click", generateSelectedAudioAllProjects);
+    }
 
     // --- 🟣 VOXCPM2 CROSS-PROJECT QUEUE ---
     let voxQueueRunning = false;
@@ -22757,6 +22814,44 @@
       if (typeof lucide !== "undefined") {
         _lucideCreateIcons({ root: btnIsolateBgm });
       }
+
+      if (typeof updateIsolateBgmAllButton === "function") updateIsolateBgmAllButton();
+    };
+
+    const updateIsolateBgmAllButton = () => {
+      const btnAll = document.getElementById("btn-isolate-bgm-all");
+      if (!btnAll) return;
+      const hasAnyVideo = Array.isArray(projects) && projects.some((p) => !p.isAudioOnly && (p.file || p.blobUrl));
+
+      if (isIsolatingBgmAll) {
+        btnAll.disabled = false;
+        btnAll.className = "group flex flex-col items-center justify-center gap-2 bg-red-600 border border-red-600 text-white shadow-md shadow-red-900/20 p-3 rounded-xl transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lg hover:brightness-110 active:scale-[0.92] cursor-pointer";
+        btnAll.innerHTML = `
+            <i data-lucide="x-circle" class="w-5 h-5 animate-pulse"></i>
+            <span class="text-xs font-medium">Stop All Tabs</span>
+          `;
+        btnAll.title = "Stop BGM isolation for all project tabs";
+      } else if (!hasAnyVideo) {
+        btnAll.disabled = true;
+        btnAll.className = "group flex flex-col items-center justify-center gap-2 bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-muted)] opacity-60 p-3 rounded-xl transition-all duration-300 ease-out cursor-not-allowed";
+        btnAll.innerHTML = `
+            <i data-lucide="layers" class="w-5 h-5 opacity-50"></i>
+            <span class="text-xs font-medium">Isolate All Tabs</span>
+          `;
+        btnAll.title = "Load videos in project tabs first to Isolate All Tabs";
+      } else {
+        btnAll.disabled = false;
+        btnAll.className = "group flex flex-col items-center justify-center gap-2 bg-[var(--bg-hover)] hover:brightness-110 border border-[var(--border-light)] p-3 rounded-xl transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.92] cursor-pointer";
+        btnAll.innerHTML = `
+            <i data-lucide="layers" class="w-5 h-5 text-pink-400 workspace-icon-glow transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
+            <span class="text-xs font-medium">Isolate All Tabs</span>
+          `;
+        btnAll.title = "Isolate BGM for ALL open project tabs";
+      }
+
+      if (typeof lucide !== "undefined") {
+        _lucideCreateIcons({ root: btnAll });
+      }
     };
 
     async function isolateBgmForProject(targetProject, isBatch = false) {
@@ -23063,7 +23158,10 @@
       });
     }
 
-    // btn-isolate-bgm-all removed
+    const btnIsolateBgmAll = document.getElementById("btn-isolate-bgm-all");
+    if (btnIsolateBgmAll) {
+      btnIsolateBgmAll.addEventListener("click", isolateBgmAllProjects);
+    }
 
     // 3. Mute Audio Feature
     btnMuteAudio.addEventListener("click", () => {
