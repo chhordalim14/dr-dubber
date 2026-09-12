@@ -1,6 +1,6 @@
 {
-  "version": "1.2.3",
-  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.2.3/DR.Dubber.Pro.Setup.1.2.3.exe",
+  "version": "1.2.4",
+  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.2.4/DR.Dubber.Pro.Setup.1.2.4.exe",
   "mac_link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.2.1/DR.Dubber.Pro-1.2.1-arm64.dmg",
-  "notes": "v1.2.3 Release:\n- Upgraded Chroma Key green screen removal with Vlahos color-difference algorithm and smoothstep edge antialiasing\n- Added Spill Removal (Despill) slider to eliminate green fringe/halo around hair, skin, and edges\n- Upgraded video export with native FFmpeg chromakey (YUV) and despill filters\n- Optimized multi-threaded Web Worker for high-fps live video overlay playback"
+  "notes": "v1.2.4 Release:\n- Fixed render queue and video export getting stuck at 99% when long/looping video overlays or long audio tracks are used\n- Added automatic video duration cutoff (-t) to guarantee exact timeline sync on export\n- Added real-time progress reporting for audio-only export mode"
 }

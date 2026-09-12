@@ -590,6 +590,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         flipVertical,
         cropConfig,
         duration: providedDuration,
+        videoDuration: optVideoDuration,
         overlayImages = [],
         blurBoxes = [],
         videoOverlays = [],
@@ -638,6 +639,11 @@ async function renderVideo(options, onProgress, onComplete, onError) {
 
         const renderStartTime = Date.now();
 
+        // Determine reliable target duration (from options or ffprobe)
+        const rawDuration = providedDuration || optVideoDuration || (videoPath ? await getVideoDuration(videoPath) : 0) || 0;
+        const effectiveVideoDuration = rawDuration > 0 ? Math.max(0.1, parseFloat(rawDuration)) : (videoPath ? await getVideoDuration(videoPath) : null);
+        const videoDuration = effectiveVideoDuration || 60;
+
         // ─────────────────────────────────────────────────────────────
         // AUDIO ONLY EXPORT
         // ─────────────────────────────────────────────────────────────
@@ -676,13 +682,38 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             }
 
             if (audioFormat === 'wav') {
-                args.push('-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2', outputPath);
+                args.push('-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2');
             } else {
-                args.push('-c:a', 'libmp3lame', '-b:a', '192k', '-ar', '44100', '-ac', '2', outputPath);
+                args.push('-c:a', 'libmp3lame', '-b:a', '192k', '-ar', '44100', '-ac', '2');
             }
 
+            if (effectiveVideoDuration && effectiveVideoDuration > 0) {
+                args.push('-t', effectiveVideoDuration.toFixed(3));
+            }
+            args.push(outputPath);
+
+            console.log(`[Render] Spawning FFmpeg to export audio: ${outputPath}`);
             const ffmpeg = spawn(getFFmpegBinary(), args, { windowsHide: true });
             activeRenderProcess = ffmpeg;
+
+            let fullStderr = '';
+            ffmpeg.stderr.on('data', (data) => {
+                const text = data.toString();
+                fullStderr += text;
+                const timeMatch = text.match(/time=(\d{2}):(\d{2}):(\d{2}\.\d{2})/);
+                if (timeMatch && effectiveVideoDuration && effectiveVideoDuration > 0) {
+                    const currentSec = parseFloat(timeMatch[1]) * 3600 + parseFloat(timeMatch[2]) * 60 + parseFloat(timeMatch[3]);
+                    const progressPct = Math.min(99, Math.max(1, Math.round((currentSec / effectiveVideoDuration) * 100)));
+                    const elapsedSec = (Date.now() - renderStartTime) / 1000;
+                    const speed = currentSec / (elapsedSec || 0.001);
+                    const etaSec = Math.max(0, Math.round((effectiveVideoDuration - currentSec) / (speed || 1)));
+                    const etaStr = etaSec < 60 ? `${etaSec}s` : `${Math.floor(etaSec / 60)}m ${etaSec % 60}s`;
+
+                    currentRenderJob.progress = progressPct;
+                    currentRenderJob.eta = etaStr;
+                    if (onProgress) onProgress(progressPct, etaStr);
+                }
+            });
 
             ffmpeg.on('close', (code) => {
                 activeRenderProcess = null;
@@ -713,8 +744,6 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         // ─────────────────────────────────────────────────────────────
         // VIDEO EXPORT
         // ─────────────────────────────────────────────────────────────
-        const videoDuration = providedDuration || (await getVideoDuration(videoPath)) || 60;
-
         const args = ['-y'];
 
         // Main video input (input 0)
@@ -1215,6 +1244,9 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         args.push('-c:a', 'aac');
         args.push('-b:a', '192k');
         args.push('-pix_fmt', 'yuv420p');
+        if (effectiveVideoDuration && effectiveVideoDuration > 0) {
+            args.push('-t', effectiveVideoDuration.toFixed(3));
+        }
         args.push(outputPath);
 
         console.log(`[Render] Spawning FFmpeg to render: ${outputPath}`);
