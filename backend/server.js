@@ -2302,6 +2302,8 @@ app.post('/api/render', upload.any(), (req, res) => {
         burnSubtitles: shouldShowSubs,
         bgmPath,
         bgmVolume,
+        duration: renderOpts.duration || renderOpts.videoDuration,
+        videoDuration: renderOpts.videoDuration || renderOpts.duration,
         overlayImages: resolvedOverlayImages,
         videoOverlays: resolvedVideoOverlays,
         blurBoxes: Array.isArray(renderOpts.blurBoxes) ? renderOpts.blurBoxes : [],
