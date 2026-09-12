@@ -1,6 +1,6 @@
 {
-  "version": "1.2.1",
-  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.2.0/DR.Dubber.Pro.Setup.1.2.0.exe",
+  "version": "1.2.3",
+  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.2.3/DR.Dubber.Pro.Setup.1.2.3.exe",
   "mac_link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.2.1/DR.Dubber.Pro-1.2.1-arm64.dmg",
-  "notes": "macOS (Apple Silicon) update available now:\n- Fixed blur boxes, video overlays (chroma key), free text, and Pan/Zoom/Stretch not appearing in the final rendered video\n- Fixed CPU/GPU render engine choice being ignored during export\n- Restored 'Isolate BGM (All Tabs)' and 'Generate Selected Audio (All Tabs)' buttons\n\nWindows users: a Windows build with these fixes has not been published yet — this download link is still v1.2.0. Please check back soon for the Windows update."
+  "notes": "v1.2.3 Release:\n- Upgraded Chroma Key green screen removal with Vlahos color-difference algorithm and smoothstep edge antialiasing\n- Added Spill Removal (Despill) slider to eliminate green fringe/halo around hair, skin, and edges\n- Upgraded video export with native FFmpeg chromakey (YUV) and despill filters\n- Optimized multi-threaded Web Worker for high-fps live video overlay playback"
 }

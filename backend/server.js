@@ -2249,6 +2249,8 @@ app.post('/api/render', upload.any(), (req, res) => {
             videoOverlayPath = vid.filePath;
         } else if (vid.path && fs.existsSync(vid.path)) {
             videoOverlayPath = vid.path;
+        } else if (vid.videoPath && fs.existsSync(vid.videoPath)) {
+            videoOverlayPath = vid.videoPath;
         } else if (videoOverlayFileByIndex.has(idx)) {
             videoOverlayPath = videoOverlayFileByIndex.get(idx);
         } else if (uploadedVideoOverlayFiles[idx]) {

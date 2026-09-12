@@ -1700,6 +1700,13 @@
               class="workspace-icon-glow w-5 h-5 text-indigo-500 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
             <span class="text-xs font-medium">Add Blur Box (Censor)</span>
           </button>
+          <button id="btn-apply-blur-all"
+            class="group flex flex-col items-center justify-center gap-2 bg-[var(--bg-hover)] hover:brightness-110 border border-[var(--border-light)] p-3 rounded-xl transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.92]"
+            title="Apply blur boxes to all project tabs">
+            <i id="icon-apply-blur-all" data-lucide="layers"
+              class="workspace-icon-glow w-5 h-5 text-indigo-400 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
+            <span id="text-apply-blur-all" class="text-xs font-medium">Apply Blur to All</span>
+          </button>
         </div>
         <div class="mt-auto pt-4 flex flex-col gap-2">
           <button id="btn-render"
@@ -2427,6 +2434,17 @@
     <button id="vid-ctx-send-back"
       class="w-full text-left px-3 py-2 hover:bg-[var(--bg-hover)] transition-colors flex items-center gap-2 text-[12px]"><i
         data-lucide="send-to-back" class="w-3.5 h-3.5"></i> Send to Back</button>
+    <div class="border-t border-[var(--border-color)] my-1"></div>
+    <div class="p-2">
+      <button id="btn-vid-apply-all"
+        class="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 hover:text-amber-300 border border-amber-500/25 transition-all text-xs font-medium active:scale-95"
+        title="Apply current video overlays to all project tabs">
+        <span class="flex items-center gap-1.5">
+          <i data-lucide="layers" class="w-3.5 h-3.5"></i> Apply to All
+        </span>
+        <span class="text-[10px] text-amber-400/80 bg-amber-400/10 px-1 py-0.5 rounded font-mono">Tabs</span>
+      </button>
+    </div>
   </div>
 
   <!-- ── Reverb Modal ─────────────────────────────────────── -->
@@ -2626,6 +2644,23 @@
               class="text-[10px] font-mono bg-[var(--bg-base)] px-1.5 py-0.5 rounded text-[var(--text-secondary)]">20</span>
           </div>
           <input type="range" id="chroma-smooth" min="0" max="100" value="20"
+            class="w-full accent-emerald-400 h-1.5 bg-[var(--border-light)] rounded-lg appearance-none cursor-pointer" />
+        </div>
+
+        <!-- Spill Removal (Despill) Slider -->
+        <div class="flex flex-col gap-1.5">
+          <div class="flex justify-between items-center">
+            <label class="text-[11px] font-medium text-[var(--text-primary)] flex items-center gap-1.5">
+              <i data-lucide="sparkles" class="w-3 h-3 text-emerald-400"></i>
+              Spill Removal
+              <span
+                class="text-[9px] text-emerald-400 bg-emerald-400/10 px-1 py-0.5 rounded border border-emerald-400/20">Cleans
+                edges</span>
+            </label>
+            <span id="lbl-chroma-spill"
+              class="text-[10px] font-mono bg-[var(--bg-base)] px-1.5 py-0.5 rounded text-[var(--text-secondary)]">80</span>
+          </div>
+          <input type="range" id="chroma-spill" min="0" max="100" value="80"
             class="w-full accent-emerald-400 h-1.5 bg-[var(--border-light)] rounded-lg appearance-none cursor-pointer" />
         </div>
       </div>
@@ -7862,7 +7897,7 @@
       window.videoScaleX = p.videoScaleX;
       window.videoScaleY = p.videoScaleY;
       cropConfig = { ...p.cropConfig };
-      blurBoxes = p.blurBoxes.map((b) => ({ ...b }));
+      blurBoxes = Array.isArray(p.blurBoxes) ? p.blurBoxes.map((b) => ({ ...b })) : [];
 
       if (typeof window.restoreAspectRatioFromProject === "function") window.restoreAspectRatioFromProject(p);
 
@@ -10614,6 +10649,9 @@
 
       activeBlurId = newId;
       BlurSettings.save(blurBoxes);
+      if (projects && projects[activeProjectIndex]) {
+        projects[activeProjectIndex].blurBoxes = blurBoxes.map((b) => ({ ...b }));
+      }
       renderBlurBoxes();
     });
 
@@ -10646,7 +10684,12 @@
           <span class="text-xs font-mono text-[var(--text-secondary)] w-8 text-right">${box.strength}%</span>
         </div>
         <div class="w-px h-5 bg-[var(--border-color)]"></div>
-        <button class="btn-remove-blur text-[var(--text-muted)] hover:text-red-500 transition-colors" data-id="${box.id}"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+        <button class="btn-apply-blur-all-box flex items-center gap-1.5 text-[var(--text-muted)] hover:text-amber-400 transition-colors px-1.5 py-0.5 rounded hover:bg-[var(--bg-hover)]" data-id="${box.id}" title="Apply blur boxes to all project tabs">
+          <i data-lucide="layers" class="w-4 h-4"></i>
+          <span class="text-[10px] font-medium hidden sm:inline">All Tabs</span>
+        </button>
+        <div class="w-px h-5 bg-[var(--border-color)]"></div>
+        <button class="btn-remove-blur text-[var(--text-muted)] hover:text-red-500 transition-colors px-1 py-0.5 rounded hover:bg-[var(--bg-hover)]" data-id="${box.id}" title="Delete blur box"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
       </div>
       
       <div class="blur-handle cursor-nw-resize absolute -top-2 -left-2 w-3.5 h-3.5 bg-white border-2 border-indigo-500 rounded-full z-50" style="display: ${handleStyle}" data-dir="nw" data-id="${box.id}"></div>
@@ -10695,7 +10738,17 @@
             const boxEl = document.getElementById(id);
             if (boxEl) boxEl.style.backdropFilter = `blur(${(box.strength / 100) * 40}px)`;
             BlurSettings.save(blurBoxes);
+            if (projects && projects[activeProjectIndex]) {
+              projects[activeProjectIndex].blurBoxes = blurBoxes.map((b) => ({ ...b }));
+            }
           }
+        });
+      });
+
+      document.querySelectorAll(".btn-apply-blur-all-box").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          applyBlurBoxesToAllProjects(btn);
         });
       });
 
@@ -10705,6 +10758,9 @@
           blurBoxes = blurBoxes.filter((b) => b.id !== id);
           if (activeBlurId === id) activeBlurId = null;
           BlurSettings.save(blurBoxes);
+          if (projects && projects[activeProjectIndex]) {
+            projects[activeProjectIndex].blurBoxes = blurBoxes.map((b) => ({ ...b }));
+          }
           renderBlurBoxes();
         });
       });
@@ -10725,6 +10781,80 @@
             startHeight = box.h;
           }
         });
+      });
+    }
+
+    // Function to apply blur boxes across all project tabs
+    function applyBlurBoxesToAllProjects(triggerBtn = null) {
+      if (!projects || projects.length === 0) return showToast("No project tabs open.", "error");
+
+      if (!blurBoxes || blurBoxes.length === 0) {
+        return showToast("No blur boxes to apply.", "error");
+      }
+
+      // Sync active project state in memory
+      if (projects[activeProjectIndex]) {
+        projects[activeProjectIndex].blurBoxes = blurBoxes.map((b) => ({ ...b }));
+      }
+
+      const snapshot = blurBoxes.map((b) => ({
+        x: Number(b.x),
+        y: Number(b.y),
+        w: Number(b.w),
+        h: Number(b.h),
+        strength: Number(b.strength) || 30,
+      }));
+
+      // Copy across all project tabs
+      projects.forEach((proj, idx) => {
+        proj.blurBoxes = snapshot.map((b, bIdx) => ({
+          ...b,
+          id: idx === activeProjectIndex && blurBoxes[bIdx] ? blurBoxes[bIdx].id : `blur_${Date.now()}_${idx}_${bIdx}`,
+        }));
+      });
+
+      BlurSettings.save(blurBoxes);
+      if (typeof saveCurrentProjectState === "function") saveCurrentProjectState();
+
+      const count = projects.length;
+      showToast(`Blur box${snapshot.length > 1 ? "es" : ""} applied to all ${count} tab${count !== 1 ? "s" : ""}!`, "success");
+
+      // Visual feedback on sidebar button
+      const sidebarBtn = document.getElementById("btn-apply-blur-all");
+      if (sidebarBtn) {
+        const origHTML = sidebarBtn.innerHTML;
+        sidebarBtn.innerHTML = `
+          <i data-lucide="check" class="workspace-icon-glow w-5 h-5 text-emerald-400 transition-transform duration-300"></i>
+          <span class="text-xs font-medium text-emerald-400">Applied!</span>
+        `;
+        if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: sidebarBtn });
+        setTimeout(() => {
+          sidebarBtn.innerHTML = origHTML;
+          if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: sidebarBtn });
+        }, 1500);
+      }
+
+      // Visual feedback on trigger button (e.g. from blur toolbar)
+      if (triggerBtn && triggerBtn !== sidebarBtn) {
+        const origHTML = triggerBtn.innerHTML;
+        triggerBtn.innerHTML = `
+          <i data-lucide="check" class="w-4 h-4 text-emerald-400"></i>
+          <span class="text-[10px] font-semibold text-emerald-400">Applied!</span>
+        `;
+        if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: triggerBtn });
+        setTimeout(() => {
+          triggerBtn.innerHTML = origHTML;
+          if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: triggerBtn });
+        }, 1500);
+      }
+    }
+    window.applyBlurBoxesToAllProjects = applyBlurBoxesToAllProjects;
+
+    const btnApplyBlurAll = document.getElementById("btn-apply-blur-all");
+    if (btnApplyBlurAll) {
+      btnApplyBlurAll.addEventListener("click", (e) => {
+        e.stopPropagation();
+        applyBlurBoxesToAllProjects(btnApplyBlurAll);
       });
     }
 
@@ -10850,6 +10980,9 @@
     window.addEventListener("mouseup", (e) => {
       if (isDraggingBlur || isResizingBlur) {
         BlurSettings.save(blurBoxes);
+        if (projects && projects[activeProjectIndex]) {
+          projects[activeProjectIndex].blurBoxes = blurBoxes.map((b) => ({ ...b }));
+        }
       }
       isDraggingBlur = false;
       isResizingBlur = false;
@@ -10878,7 +11011,7 @@
       }
 
       // Plain mouseup outside the active blur box → deselect
-      if (activeBlurId && !e.target.closest(`#${activeBlurId}`) && !e.target.closest("#btn-add-blur")) {
+      if (activeBlurId && !e.target.closest(`#${activeBlurId}`) && !e.target.closest("#btn-add-blur") && !e.target.closest("#btn-apply-blur-all")) {
         activeBlurId = null;
         renderBlurBoxes();
       }
@@ -11556,12 +11689,14 @@
       const tolLbl = document.getElementById("lbl-chroma-tolerance");
       const smoSlider = document.getElementById("chroma-smooth");
       const smoLbl = document.getElementById("lbl-chroma-smooth");
+      const spillSlider = document.getElementById("chroma-spill");
+      const spillLbl = document.getElementById("lbl-chroma-spill");
 
       // Helper: hex → {r,g,b}
       const hexToRgb = (hex) => ({
-        r: parseInt(hex.slice(1, 3), 16),
-        g: parseInt(hex.slice(3, 5), 16),
-        b: parseInt(hex.slice(5, 7), 16),
+        r: parseInt(hex.slice(1, 3), 16) || 0,
+        g: parseInt(hex.slice(3, 5), 16) || 0,
+        b: parseInt(hex.slice(5, 7), 16) || 0,
       });
 
       // Core pixel loop — runs on every animation frame while modal is open
@@ -11581,24 +11716,89 @@
         ctx2d.drawImage(vid, 0, 0, canvas.width, canvas.height);
 
         const { r: kr, g: kg, b: kb } = hexToRgb(colorPick.value);
-        const tolerance = parseInt(tolSlider.value);
-        const smoothing = parseInt(smoSlider.value);
+        const tolerance = parseInt(tolSlider.value) || 80;
+        const smoothing = parseInt(smoSlider.value) || 20;
+        const spill = spillSlider ? parseInt(spillSlider.value) : 80;
 
         const imgData = ctx2d.getImageData(0, 0, canvas.width, canvas.height);
         const data = imgData.data;
 
-        for (let i = 0; i < data.length; i += 4) {
-          const dr = data[i] - kr;
-          const dg = data[i + 1] - kg;
-          const db = data[i + 2] - kb;
-          const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+        const isGreenKey = (kg > kr * 1.15 && kg > kb * 1.15) || (kg >= 170 && kr < 110 && kb < 110);
+        const isBlueKey = kb > kr * 1.15 && kb > kg * 1.15;
+        const despillFactor = Math.min(1, Math.max(0, spill / 100));
 
-          if (dist < tolerance) {
-            data[i + 3] = 0; // fully transparent
-          } else if (dist < tolerance + smoothing) {
-            // Feathered edge
-            const alpha = ((dist - tolerance) / smoothing) * 255;
-            data[i + 3] = Math.round(alpha);
+        const tNorm = Math.min(1, Math.max(0, tolerance / 255));
+        const cutoff = Math.max(1, Math.round(28 * (1 - tNorm) + 2));
+        const feather = Math.max(1, Math.round(smoothing * 0.35));
+
+        if (isGreenKey) {
+          for (let i = 0; i < data.length; i += 4) {
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+            const maxRB = r > b ? r : b;
+            const greenDiff = g - maxRB;
+
+            if (greenDiff >= cutoff + feather) {
+              data[i + 3] = 0; // fully transparent
+            } else {
+              if (greenDiff > cutoff) {
+                const frac = (greenDiff - cutoff) / feather;
+                data[i + 3] = Math.round((1 - frac * frac * (3 - 2 * frac)) * 255);
+              }
+              // Despill excess green on visible foreground and edge pixels
+              if (despillFactor > 0 && g > maxRB) {
+                data[i + 1] = Math.round(g * (1 - despillFactor) + maxRB * despillFactor);
+              }
+            }
+          }
+        } else if (isBlueKey) {
+          for (let i = 0; i < data.length; i += 4) {
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+            const maxRG = r > g ? r : g;
+            const blueDiff = b - maxRG;
+
+            if (blueDiff >= cutoff + feather) {
+              data[i + 3] = 0;
+            } else {
+              if (blueDiff > cutoff) {
+                const frac = (blueDiff - cutoff) / feather;
+                data[i + 3] = Math.round((1 - frac * frac * (3 - 2 * frac)) * 255);
+              }
+              if (despillFactor > 0 && b > maxRG) {
+                data[i + 2] = Math.round(b * (1 - despillFactor) + maxRG * despillFactor);
+              }
+            }
+          }
+        } else {
+          // General color key in YUV space
+          const ky = 0.299 * kr + 0.587 * kg + 0.114 * kb;
+          const ku = -0.168736 * kr - 0.331264 * kg + 0.5 * kb;
+          const kv = 0.5 * kr - 0.418688 * kg - 0.081312 * kb;
+          const tolMapped = tolerance * 0.65;
+          const smoMapped = Math.max(1, smoothing * 0.45);
+
+          for (let i = 0; i < data.length; i += 4) {
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+            const y = 0.299 * r + 0.587 * g + 0.114 * b;
+            const u = -0.168736 * r - 0.331264 * g + 0.5 * b;
+            const v = 0.5 * r - 0.418688 * g - 0.081312 * b;
+
+            const du = u - ku;
+            const dv = v - kv;
+            const dy = (y - ky) * 0.25;
+            const dist = Math.sqrt(du * du + dv * dv + dy * dy);
+
+            if (dist <= tolMapped) {
+              data[i + 3] = 0;
+            } else if (dist < tolMapped + smoMapped) {
+              const frac = (dist - tolMapped) / smoMapped;
+              data[i + 3] = Math.round(frac * frac * (3 - 2 * frac) * 255);
+            }
           }
         }
 
@@ -11616,8 +11816,10 @@
         syncSwatch(colorPick.value);
         tolSlider.value = saved.tolerance ?? 80;
         smoSlider.value = saved.smooth ?? 20;
+        if (spillSlider) spillSlider.value = saved.spill ?? 80;
         tolLbl.textContent = tolSlider.value;
         smoLbl.textContent = smoSlider.value;
+        if (spillLbl) spillLbl.textContent = spillSlider ? spillSlider.value : "80";
 
         modal.classList.remove("hidden");
         _lucideCreateIcons({ root: modal });
@@ -11644,6 +11846,7 @@
           color: colorPick.value,
           tolerance: parseInt(tolSlider.value),
           smooth: parseInt(smoSlider.value),
+          spill: spillSlider ? parseInt(spillSlider.value) : 80,
         };
         // Persist into videoOverlays state so it survives preset save
         const item = (window.videoOverlays || []).find((v) => v.id === chromaTargetId);
@@ -11661,8 +11864,10 @@
         syncSwatch("#00ff00");
         tolSlider.value = 80;
         smoSlider.value = 20;
+        if (spillSlider) spillSlider.value = 80;
         tolLbl.textContent = "80";
         smoLbl.textContent = "20";
+        if (spillLbl) spillLbl.textContent = "80";
         if (chromaTargetId) {
           const wrapper = document.querySelector(`.video-overlay-item[data-id="${chromaTargetId}"]`);
           const vid = wrapper?.querySelector("video");
@@ -11690,6 +11895,11 @@
       smoSlider.addEventListener("input", () => {
         smoLbl.textContent = smoSlider.value;
       });
+      if (spillSlider && spillLbl) {
+        spillSlider.addEventListener("input", () => {
+          spillLbl.textContent = spillSlider.value;
+        });
+      }
 
       // ── Eyedropper: pick color from preview canvas ──────────────
       let eyedropperActive = false;
@@ -11862,10 +12072,9 @@
         const lCtx = liveCanvas.getContext("2d");
 
         const { r: kr, g: kg, b: kb } = hexToRgb(settings.color);
-        const tolerance = settings.tolerance;
-        const smoothing = settings.smooth || 1;
-        const tolSq = tolerance * tolerance;
-        const edgeSq = (tolerance + smoothing) * (tolerance + smoothing);
+        const tolerance = settings.tolerance ?? 80;
+        const smoothing = settings.smooth ?? 20;
+        const spill = settings.spill ?? 80;
 
         const TARGET_FPS = 20; // Lower FPS per overlay — still smooth visually
         const FRAME_MS = 1000 / TARGET_FPS;
@@ -11918,9 +12127,9 @@
                   kr,
                   kg,
                   kb,
-                  tolSq,
-                  edgeSq,
+                  tolerance,
                   smoothing,
+                  spill,
                   width: vw,
                   height: vh,
                   overlayId,
@@ -12042,7 +12251,7 @@
       }
 
       // Plain click outside → deselect blur box
-      if (activeBlurId && !e.target.closest(`#${activeBlurId}`) && !e.target.closest("#btn-add-blur")) {
+      if (activeBlurId && !e.target.closest(`#${activeBlurId}`) && !e.target.closest("#btn-add-blur") && !e.target.closest("#btn-apply-blur-all")) {
         activeBlurId = null;
         renderBlurBoxes();
       }
@@ -12064,7 +12273,7 @@
       }
 
       // Plain click outside → deselect blur box
-      if (activeBlurId && !e.target.closest(`#${activeBlurId}`) && !e.target.closest("#btn-add-blur")) {
+      if (activeBlurId && !e.target.closest(`#${activeBlurId}`) && !e.target.closest("#btn-add-blur") && !e.target.closest("#btn-apply-blur-all")) {
         activeBlurId = null;
         renderBlurBoxes();
       }
@@ -15359,6 +15568,9 @@
         scaleX: window.videoScaleX || videoZoom || 1,
         scaleY: window.videoScaleY || videoZoom || 1,
         texts: JSON.parse(JSON.stringify(freeTexts)),
+        blurBoxes: JSON.parse(JSON.stringify(blurBoxes || [])),
+        imageOverlays: JSON.parse(JSON.stringify(window.imageOverlays || [])),
+        videoOverlays: JSON.parse(JSON.stringify(window.videoOverlays || [])),
         subtitleStyle: {
           subtitleColor: globalSubtitleColor,
           subtitleFont: globalSubtitleFont,
@@ -23865,36 +24077,38 @@
                 }
                 : null;
 
-            const blurLayerBounds = document.getElementById("blur-layer").getBoundingClientRect();
-            // ✅ FIX 4: Use per-project resolution for blur coordinate math
-            const projVidW = targetProject.videoWidth || mainVideo.videoWidth;
-            const projVidH = targetProject.videoHeight || mainVideo.videoHeight;
-            const vidRatio = projVidW / projVidH;
-            const contRatio = blurLayerBounds.width / blurLayerBounds.height;
+            const blurLayerEl = document.getElementById("blur-layer");
+            const blurLayerBounds = blurLayerEl ? blurLayerEl.getBoundingClientRect() : { width: 1920, height: 1080 };
+            const projVidW = targetProject.videoWidth || mainVideo.videoWidth || 1920;
+            const projVidH = targetProject.videoHeight || mainVideo.videoHeight || 1080;
+            const blurW = (blurLayerBounds && blurLayerBounds.width > 0) ? blurLayerBounds.width : projVidW;
+            const blurH = (blurLayerBounds && blurLayerBounds.height > 0) ? blurLayerBounds.height : projVidH;
+            const vidRatio = (projVidW > 0 && projVidH > 0) ? projVidW / projVidH : (16 / 9);
+            const contRatio = blurW / blurH;
             let drawW, drawH, offsetX, offsetY;
             if (vidRatio > contRatio) {
-              drawW = blurLayerBounds.width;
-              drawH = blurLayerBounds.width / vidRatio;
+              drawW = blurW;
+              drawH = blurW / vidRatio;
               offsetX = 0;
-              offsetY = (blurLayerBounds.height - drawH) / 2;
+              offsetY = (blurH - drawH) / 2;
             } else {
-              drawH = blurLayerBounds.height;
-              drawW = blurLayerBounds.height * vidRatio;
-              offsetX = (blurLayerBounds.width - drawW) / 2;
+              drawH = blurH;
+              drawW = blurH * vidRatio;
+              offsetX = (blurW - drawW) / 2;
               offsetY = 0;
             }
 
             const correctedBlurBoxes = projBlurBoxes.map((box) => {
-              const pixelX = (box.x / 100) * blurLayerBounds.width;
-              const pixelY = (box.y / 100) * blurLayerBounds.height;
-              const pixelW = (box.w / 100) * blurLayerBounds.width;
-              const pixelH = (box.h / 100) * blurLayerBounds.height;
+              const pixelX = (box.x / 100) * blurW;
+              const pixelY = (box.y / 100) * blurH;
+              const pixelW = (box.w / 100) * blurW;
+              const pixelH = (box.h / 100) * blurH;
               return {
                 ...box,
-                x: ((pixelX - offsetX) / drawW) * 100,
-                y: ((pixelY - offsetY) / drawH) * 100,
-                w: (pixelW / drawW) * 100,
-                h: (pixelH / drawH) * 100,
+                x: ((pixelX - offsetX) / (drawW || 1)) * 100,
+                y: ((pixelY - offsetY) / (drawH || 1)) * 100,
+                w: (pixelW / (drawW || 1)) * 100,
+                h: (pixelH / (drawH || 1)) * 100,
               };
             });
 
@@ -23963,15 +24177,21 @@
                 filePath: img.filePath || (img.file && img.file.path ? img.file.path : (img._file && img._file.path ? img._file.path : null)),
               })),
 
-              videoOverlays: (targetProject.videoOverlays || []).map((v) => ({
-                x: v.x,
-                y: v.y,
-                w: v.w,
-                h: v.h,
-                opacity: v.opacity ?? 100,
-                radius: v.radius ?? 0,
-                chromaKey: v.chromaKey || null,
-              })),
+              videoOverlays: (targetProject.videoOverlays || []).map((v) => {
+                const localPath = v.videoPath || v.filePath || (v.file && v.file.path ? v.file.path : (v._file && v._file.path ? v._file.path : null));
+                return {
+                  x: v.x,
+                  y: v.y,
+                  w: v.w,
+                  h: v.h,
+                  opacity: v.opacity ?? 100,
+                  radius: v.radius ?? 0,
+                  loop: v.loop !== false,
+                  chromaKey: v.chromaKey || null,
+                  filePath: localPath,
+                  videoPath: localPath,
+                };
+              }),
               subtitleColor: targetProject.subtitleColor,
               subtitleFont: targetProject.subtitleFont,
               subtitleOutlineColor: targetProject.subtitleOutlineColor,
@@ -24056,7 +24276,11 @@
             // Video overlay blobs
             const videoOverlayBlobs = await Promise.all(
               (targetProject.videoOverlays || []).map(async (v) => {
-                if (!v.blobUrl) return null;
+                const localPath = v.videoPath || v.filePath || (v.file && v.file.path ? v.file.path : (v._file && v._file.path ? v._file.path : null));
+                if (localPath) return null; // Server reads directly from local file path
+                const actualFile = (v.file instanceof File) ? v.file : ((v._file instanceof File) ? v._file : null);
+                if (actualFile) return actualFile;
+                if (!v.blobUrl || v.blobUrl.startsWith("file:")) return null;
                 try {
                   return await (await fetch(v.blobUrl)).blob();
                 } catch {
@@ -24494,15 +24718,21 @@
                 filePath: img.filePath || (img.file && img.file.path ? img.file.path : (img._file && img._file.path ? img._file.path : null)),
               })),
 
-              videoOverlays: (proj.videoOverlays || []).map((v) => ({
-                x: v.x,
-                y: v.y,
-                w: v.w,
-                h: v.h,
-                opacity: v.opacity ?? 100,
-                radius: v.radius ?? 0,
-                chromaKey: v.chromaKey || null,
-              })),
+              videoOverlays: (proj.videoOverlays || []).map((v) => {
+                const localPath = v.videoPath || v.filePath || (v.file && v.file.path ? v.file.path : (v._file && v._file.path ? v._file.path : null));
+                return {
+                  x: v.x,
+                  y: v.y,
+                  w: v.w,
+                  h: v.h,
+                  opacity: v.opacity ?? 100,
+                  radius: v.radius ?? 0,
+                  loop: v.loop !== false,
+                  chromaKey: v.chromaKey || null,
+                  filePath: localPath,
+                  videoPath: localPath,
+                };
+              }),
               subtitleColor: proj.subtitleColor,
               subtitleFont: proj.subtitleFont,
               subtitleOutlineColor: proj.subtitleOutlineColor,
@@ -25205,6 +25435,11 @@
 
               const queueVideoOverlayBlobs = await Promise.all(
                 (item.videoOverlays || []).map(async (v) => {
+                  const localPath = v.videoPath || v.filePath || (v.file && v.file.path ? v.file.path : (v._file && v._file.path ? v._file.path : null));
+                  if (localPath) return null; // Server reads directly from local file path
+                  const actualFile = (v.file instanceof File) ? v.file : ((v._file instanceof File) ? v._file : null);
+                  if (actualFile) return actualFile;
+                  if (!v.blobUrl || v.blobUrl.startsWith("file:")) return null;
                   const src = v.blobUrl || null;
                   if (!src) return null;
                   try {
@@ -25372,7 +25607,7 @@
     // built. Read the real version from Electron (package.json) instead;
     // falls back to this literal only when running outside Electron (e.g.
     // a plain browser during development).
-    let CURRENT_APP_VERSION = "1.1.7";
+    let CURRENT_APP_VERSION = "1.2.3";
     const aboutAppVersionDisplay = document.getElementById("about-app-version");
     if (aboutAppVersionDisplay) aboutAppVersionDisplay.textContent = `Version ${CURRENT_APP_VERSION}`;
     if (window.electronAPI && window.electronAPI.getAppVersion) {
@@ -25864,7 +26099,7 @@
 
     // --- WORKSPACE TOOLBAR CONTROLLER ---
     const updateWorkspaceToolbar = (hasVideo) => {
-      const tools = ["btn-flip-h", "btn-flip-v", "btn-crop-mode", "btn-reset-crop", "btn-add-free-text", "btn-add-image", "btn-add-video-overlay", "btn-add-blur", "btn-color-adjust", "btn-vignette", "btn-video-preset", "btn-aspect-ratio"];
+      const tools = ["btn-flip-h", "btn-flip-v", "btn-crop-mode", "btn-reset-crop", "btn-add-free-text", "btn-add-image", "btn-add-video-overlay", "btn-add-blur", "btn-apply-blur-all", "btn-color-adjust", "btn-vignette", "btn-video-preset", "btn-aspect-ratio"];
 
       tools.forEach((id) => {
         const btn = document.getElementById(id);
@@ -26594,6 +26829,17 @@
       };
       wrapper.appendChild(delBtn);
 
+      // ── Apply All button (top-left) ──
+      const applyAllBtn = document.createElement("button");
+      applyAllBtn.innerHTML = `<i data-lucide="layers" class="w-3.5 h-3.5 text-white"></i>`;
+      applyAllBtn.className = "absolute -top-4 -left-4 bg-amber-500 hover:bg-amber-400 rounded-full p-1 hidden apply-all-vid-btn shadow-lg hover:scale-110 active:scale-95 transition-transform z-50";
+      applyAllBtn.title = "Apply all video overlays to all project tabs";
+      applyAllBtn.onclick = (e) => {
+        e.stopPropagation();
+        applyVideoOverlaysToAllProjects(applyAllBtn);
+      };
+      wrapper.appendChild(applyAllBtn);
+
       // ── Drag ──
       wrapper.addEventListener("mousedown", (e) => {
         // THE FIX: Allow dragging on the darkened overlay, just ignore the buttons!
@@ -26645,7 +26891,7 @@
     function selectVideoItem(targetWrapper) {
       document.querySelectorAll(".video-overlay-item").forEach((el) => {
         el.style.outline = "none";
-        el.querySelectorAll(".vid-handle, .delete-vid-btn").forEach((h) => (h.style.display = "none"));
+        el.querySelectorAll(".vid-handle, .delete-vid-btn, .apply-all-vid-btn").forEach((h) => (h.style.display = "none"));
         const bar = el.querySelector(".vid-ctrl-bar");
         if (bar) {
           bar.classList.add("hidden");
@@ -26655,7 +26901,7 @@
       activeVideoItem = targetWrapper;
       if (targetWrapper) {
         targetWrapper.style.outline = "2px dashed #38bdf8";
-        targetWrapper.querySelectorAll(".vid-handle, .delete-vid-btn").forEach((h) => (h.style.display = "block"));
+        targetWrapper.querySelectorAll(".vid-handle, .delete-vid-btn, .apply-all-vid-btn").forEach((h) => (h.style.display = "block"));
         const bar = targetWrapper.querySelector(".vid-ctrl-bar");
         if (bar) {
           bar.classList.remove("hidden");
@@ -26853,6 +27099,106 @@
             }
           }
         }
+      });
+    }
+
+    // --- APPLY ALL VIDEO OVERLAYS TO ALL PROJECTS ---
+    function applyVideoOverlaysToAllProjects(triggerBtn = null) {
+      if (!projects || projects.length === 0) return showToast("No project tabs open.", "error");
+
+      // Sync active DOM geometry (x, y, w, h) into window.videoOverlays
+      document.querySelectorAll(".video-overlay-item").forEach((wrapper) => {
+        const id = wrapper.dataset.id;
+        const item = window.videoOverlays.find((v) => v.id === id);
+        if (item) {
+          item.x = parseFloat(wrapper.style.left) || 0;
+          item.y = parseFloat(wrapper.style.top) || 0;
+          item.w = parseFloat(wrapper.style.width) || 0;
+          item.h = parseFloat(wrapper.style.height) || 0;
+        }
+      });
+
+      if (!window.videoOverlays || window.videoOverlays.length === 0) {
+        return showToast("No video overlays to apply.", "error");
+      }
+
+      // Snapshot all current video overlays
+      const snapshot = window.videoOverlays.map((vid) => {
+        let blobUrl = vid.blobUrl;
+        if (!blobUrl && vid.file) {
+          try {
+            blobUrl = URL.createObjectURL(vid.file);
+          } catch (e) {
+            console.warn("Could not create object URL for video overlay:", e);
+          }
+        }
+        return {
+          ...vid,
+          blobUrl,
+          file: vid.file || null,
+          videoPath: vid.videoPath || (vid.file && vid.file.path ? vid.file.path : null),
+          chromaKey: vid.chromaKey ? { ...vid.chromaKey } : (window.chromaSettings && window.chromaSettings[vid.id] ? { ...window.chromaSettings[vid.id] } : null),
+        };
+      });
+
+      // Stamp across every project tab
+      projects.forEach((proj, idx) => {
+        proj.videoOverlays = snapshot.map((vid) => {
+          const newId = idx === activeProjectIndex ? vid.id : crypto.randomUUID();
+          return {
+            ...vid,
+            id: newId,
+            chromaKey: vid.chromaKey ? { ...vid.chromaKey } : null,
+          };
+        });
+      });
+
+      if (projects[activeProjectIndex]) {
+        projects[activeProjectIndex].videoOverlays = (window.videoOverlays || []).map((v) => ({ ...v }));
+      }
+      if (typeof saveCurrentProjectState === "function") saveCurrentProjectState();
+
+      const count = projects.length;
+      showToast(`Video overlay${snapshot.length > 1 ? "s" : ""} applied to all ${count} tab${count !== 1 ? "s" : ""}!`, "success");
+
+      // Flash feedback on context menu button
+      const ctxBtn = document.getElementById("btn-vid-apply-all");
+      if (ctxBtn) {
+        const originalHTML = ctxBtn.innerHTML;
+        ctxBtn.innerHTML = `
+          <span class="flex items-center gap-1.5 text-emerald-400 font-semibold">
+            <i data-lucide="check" class="w-3.5 h-3.5"></i> Applied!
+          </span>
+          <span class="text-[10px] text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded font-mono">Done</span>
+        `;
+        if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: ctxBtn });
+        setTimeout(() => {
+          ctxBtn.innerHTML = originalHTML;
+          if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: ctxBtn });
+        }, 1500);
+      }
+
+      // Flash feedback on trigger button (e.g. on overlay item)
+      if (triggerBtn && triggerBtn !== ctxBtn) {
+        triggerBtn.innerHTML = `<i data-lucide="check" class="w-3.5 h-3.5 text-white"></i>`;
+        triggerBtn.classList.remove("bg-amber-500", "hover:bg-amber-400");
+        triggerBtn.classList.add("bg-emerald-500");
+        if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: triggerBtn });
+        setTimeout(() => {
+          triggerBtn.innerHTML = `<i data-lucide="layers" class="w-3.5 h-3.5 text-white"></i>`;
+          triggerBtn.classList.remove("bg-emerald-500");
+          triggerBtn.classList.add("bg-amber-500", "hover:bg-amber-400");
+          if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: triggerBtn });
+        }, 1500);
+      }
+    }
+    window.applyVideoOverlaysToAllProjects = applyVideoOverlaysToAllProjects;
+
+    const btnVidApplyAll = document.getElementById("btn-vid-apply-all");
+    if (btnVidApplyAll) {
+      btnVidApplyAll.addEventListener("click", (e) => {
+        e.stopPropagation();
+        applyVideoOverlaysToAllProjects(btnVidApplyAll);
       });
     }
 

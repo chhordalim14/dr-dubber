@@ -752,10 +752,13 @@ async function renderVideo(options, onProgress, onComplete, onError) {
 
         // Overlay video inputs
         const validVideoOverlays = (Array.isArray(videoOverlays) ? videoOverlays : []).filter(ov => {
-            const p = ov.path || ov.filePath;
+            const p = ov.path || ov.filePath || ov.videoPath;
             return p && fs.existsSync(p);
         }).map(ov => {
-            const p = ov.path || ov.filePath;
+            const p = ov.path || ov.filePath || ov.videoPath;
+            if (ov.loop !== false) {
+                args.push('-stream_loop', '-1');
+            }
             args.push('-i', p);
             const inputIndex = nextInputIndex++;
             return {
@@ -966,10 +969,14 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         // Apply Blur Boxes (censor regions)
         const validBlurBoxes = (Array.isArray(blurBoxes) ? blurBoxes : []).filter(b => (parseFloat(b.strength) || 0) > 0);
         validBlurBoxes.forEach((box, bIdx) => {
-            const bx = Math.max(0, Math.min(canvasW - 2, Math.round((canvasW * (parseFloat(box.x) || 0)) / 100)));
-            const by = Math.max(0, Math.min(canvasH - 2, Math.round((canvasH * (parseFloat(box.y) || 0)) / 100)));
-            const bw = Math.max(2, Math.min(canvasW - bx, Math.round((canvasW * (parseFloat(box.w) || 0)) / 100)));
-            const bh = Math.max(2, Math.min(canvasH - by, Math.round((canvasH * (parseFloat(box.h) || 0)) / 100)));
+            let bx = Math.max(0, Math.min(canvasW - 2, Math.round((canvasW * (parseFloat(box.x) || 0)) / 100)));
+            let by = Math.max(0, Math.min(canvasH - 2, Math.round((canvasH * (parseFloat(box.y) || 0)) / 100)));
+            let bw = Math.max(2, Math.min(canvasW - bx, Math.round((canvasW * (parseFloat(box.w) || 0)) / 100)));
+            let bh = Math.max(2, Math.min(canvasH - by, Math.round((canvasH * (parseFloat(box.h) || 0)) / 100)));
+            if (bw % 2 !== 0) bw = Math.max(2, bw - 1);
+            if (bh % 2 !== 0) bh = Math.max(2, bh - 1);
+            if (bx % 2 !== 0) bx = Math.max(0, bx - 1);
+            if (by % 2 !== 0) by = Math.max(0, by - 1);
             const radius = Math.max(1, Math.min(17, Math.round((parseFloat(box.strength) || 0) / 100 * 17)));
 
             const mainTag = `blur_main_${bIdx}`;
@@ -1055,12 +1062,33 @@ async function renderVideo(options, onProgress, onComplete, onError) {
 
                 let chromaFilter = '';
                 if (ov.chromaKey && ov.chromaKey.enabled) {
-                    const hexColor = (ov.chromaKey.color || '#00ff00').replace('#', '0x');
+                    const rawColor = ov.chromaKey.color || '#00ff00';
+                    const hexColor = rawColor.replace('#', '0x');
                     const tolerance = parseFloat(ov.chromaKey.tolerance);
-                    const similarity = (Math.min(100, Math.max(0, isNaN(tolerance) ? 80 : tolerance)) / 100 * 0.5 + 0.01).toFixed(3);
+                    const safeTol = Math.min(255, Math.max(0, isNaN(tolerance) ? 80 : tolerance));
+                    // FFmpeg chromakey similarity typically ranges 0.05 to 0.40
+                    const similarity = ((safeTol / 255) * 0.35 + 0.05).toFixed(3);
+
                     const smooth = parseFloat(ov.chromaKey.smooth);
-                    const blend = (Math.min(100, Math.max(0, isNaN(smooth) ? 20 : smooth)) / 100 * 0.3).toFixed(3);
-                    chromaFilter = `,colorkey=color=${hexColor}:similarity=${similarity}:blend=${blend}`;
+                    const safeSmooth = Math.min(100, Math.max(0, isNaN(smooth) ? 20 : smooth));
+                    // FFmpeg chromakey blend typically ranges 0.01 to 0.16
+                    const blend = ((safeSmooth / 100) * 0.15 + 0.01).toFixed(3);
+
+                    // Despill filter for green or blue keys
+                    const rVal = parseInt(rawColor.slice(1, 3), 16) || 0;
+                    const gVal = parseInt(rawColor.slice(3, 5), 16) || 0;
+                    const bVal = parseInt(rawColor.slice(5, 7), 16) || 0;
+                    const rawSpill = parseFloat(ov.chromaKey.spill);
+                    const spillMix = (!isNaN(rawSpill) ? Math.min(1.0, Math.max(0, rawSpill / 100)) : 0.8).toFixed(2);
+
+                    let despillFilter = '';
+                    if ((gVal > rVal * 1.1 && gVal > bVal * 1.1) || (gVal >= 170 && rVal < 110 && bVal < 110)) {
+                        despillFilter = `,despill=type=green:mix=${spillMix}:expand=0`;
+                    } else if (bVal > rVal * 1.1 && bVal > gVal * 1.1) {
+                        despillFilter = `,despill=type=blue:mix=${spillMix}:expand=0`;
+                    }
+
+                    chromaFilter = `,chromakey=color=${hexColor}:similarity=${similarity}:blend=${blend}${despillFilter},format=rgba`;
                 }
 
                 let radiusFilter = '';
