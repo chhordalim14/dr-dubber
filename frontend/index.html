@@ -6389,6 +6389,16 @@
       p.videoScaleX = window.videoScaleX || 1;
       p.videoScaleY = window.videoScaleY || 1;
       p.cropConfig = { ...cropConfig };
+      document.querySelectorAll("#blur-layer > div[id^='blur_']").forEach((boxEl) => {
+        const id = boxEl.id;
+        const box = blurBoxes.find((b) => b.id === id);
+        if (box) {
+          if (boxEl.style.left && boxEl.style.left.includes("%")) box.x = parseFloat(boxEl.style.left) || box.x;
+          if (boxEl.style.top && boxEl.style.top.includes("%")) box.y = parseFloat(boxEl.style.top) || box.y;
+          if (boxEl.style.width && boxEl.style.width.includes("%")) box.w = parseFloat(boxEl.style.width) || box.w;
+          if (boxEl.style.height && boxEl.style.height.includes("%")) box.h = parseFloat(boxEl.style.height) || box.h;
+        }
+      });
       p.blurBoxes = blurBoxes.map((b) => ({ ...b }));
       if (mainVideo.videoWidth > 0) p.videoWidth = mainVideo.videoWidth;
       if (mainVideo.videoHeight > 0) p.videoHeight = mainVideo.videoHeight;
@@ -7818,6 +7828,9 @@
 
         mainVideo.addEventListener("loadedmetadata", function restoreTime() {
           mainVideo.currentTime = p.currentTime || 0;
+          if (mainVideo.videoWidth > 0) p.videoWidth = mainVideo.videoWidth;
+          if (mainVideo.videoHeight > 0) p.videoHeight = mainVideo.videoHeight;
+          if (typeof syncVideoDimensions === "function") syncVideoDimensions();
           // Auto-apply saved default AR to new projects that have none set
           if (!p.customAspectRatio) {
             const defaultAR = (() => {
@@ -7833,8 +7846,14 @@
               if (typeof window.restoreAspectRatioFromProject === "function") window.restoreAspectRatioFromProject(p);
             }
           }
+          if (typeof renderBlurBoxes === "function") renderBlurBoxes();
           mainVideo.removeEventListener("loadedmetadata", restoreTime);
         });
+        if (mainVideo.videoWidth > 0) {
+          p.videoWidth = mainVideo.videoWidth;
+          p.videoHeight = mainVideo.videoHeight;
+          if (typeof syncVideoDimensions === "function") syncVideoDimensions();
+        }
       } else {
         mainVideo.classList.add("hidden");
         videoPlaceholder.classList.remove("hidden");
@@ -7962,6 +7981,7 @@
       if (zoomText) zoomText.textContent = Math.round(p.videoScaleX * 100) + "%";
 
       // Re-render blur boxes
+      if (typeof syncVideoDimensions === "function") syncVideoDimensions();
       if (typeof renderBlurBoxes === "function") renderBlurBoxes();
 
       // Apply transforms to canvas immediately
@@ -10788,6 +10808,18 @@
     function applyBlurBoxesToAllProjects(triggerBtn = null) {
       if (!projects || projects.length === 0) return showToast("No project tabs open.", "error");
 
+      // Sync active DOM geometry (left, top, width, height) into blurBoxes
+      document.querySelectorAll("#blur-layer > div[id^='blur_']").forEach((boxEl) => {
+        const id = boxEl.id;
+        const box = blurBoxes.find((b) => b.id === id);
+        if (box) {
+          if (boxEl.style.left && boxEl.style.left.includes("%")) box.x = parseFloat(boxEl.style.left) || box.x;
+          if (boxEl.style.top && boxEl.style.top.includes("%")) box.y = parseFloat(boxEl.style.top) || box.y;
+          if (boxEl.style.width && boxEl.style.width.includes("%")) box.w = parseFloat(boxEl.style.width) || box.w;
+          if (boxEl.style.height && boxEl.style.height.includes("%")) box.h = parseFloat(boxEl.style.height) || box.h;
+        }
+      });
+
       if (!blurBoxes || blurBoxes.length === 0) {
         return showToast("No blur boxes to apply.", "error");
       }
@@ -10798,11 +10830,11 @@
       }
 
       const snapshot = blurBoxes.map((b) => ({
-        x: Number(b.x),
-        y: Number(b.y),
-        w: Number(b.w),
-        h: Number(b.h),
-        strength: Number(b.strength) || 30,
+        x: isNaN(parseFloat(b.x)) ? 20 : parseFloat(b.x),
+        y: isNaN(parseFloat(b.y)) ? 75 : parseFloat(b.y),
+        w: isNaN(parseFloat(b.w)) ? 60 : parseFloat(b.w),
+        h: isNaN(parseFloat(b.h)) ? 15 : parseFloat(b.h),
+        strength: isNaN(parseFloat(b.strength)) ? 30 : parseFloat(b.strength),
       }));
 
       // Copy across all project tabs
@@ -24077,40 +24109,16 @@
                 }
                 : null;
 
-            const blurLayerEl = document.getElementById("blur-layer");
-            const blurLayerBounds = blurLayerEl ? blurLayerEl.getBoundingClientRect() : { width: 1920, height: 1080 };
-            const projVidW = targetProject.videoWidth || mainVideo.videoWidth || 1920;
-            const projVidH = targetProject.videoHeight || mainVideo.videoHeight || 1080;
-            const blurW = (blurLayerBounds && blurLayerBounds.width > 0) ? blurLayerBounds.width : projVidW;
-            const blurH = (blurLayerBounds && blurLayerBounds.height > 0) ? blurLayerBounds.height : projVidH;
-            const vidRatio = (projVidW > 0 && projVidH > 0) ? projVidW / projVidH : (16 / 9);
-            const contRatio = blurW / blurH;
-            let drawW, drawH, offsetX, offsetY;
-            if (vidRatio > contRatio) {
-              drawW = blurW;
-              drawH = blurW / vidRatio;
-              offsetX = 0;
-              offsetY = (blurH - drawH) / 2;
-            } else {
-              drawH = blurH;
-              drawW = blurH * vidRatio;
-              offsetX = (blurW - drawW) / 2;
-              offsetY = 0;
-            }
-
-            const correctedBlurBoxes = projBlurBoxes.map((box) => {
-              const pixelX = (box.x / 100) * blurW;
-              const pixelY = (box.y / 100) * blurH;
-              const pixelW = (box.w / 100) * blurW;
-              const pixelH = (box.h / 100) * blurH;
-              return {
-                ...box,
-                x: ((pixelX - offsetX) / (drawW || 1)) * 100,
-                y: ((pixelY - offsetY) / (drawH || 1)) * 100,
-                w: (pixelW / (drawW || 1)) * 100,
-                h: (pixelH / (drawH || 1)) * 100,
-              };
-            });
+            // Direct normalized percentages (0-100%) - #blur-layer is strictly locked to video bounds
+            const rawBoxes = (projBlurBoxes && projBlurBoxes.length > 0) ? projBlurBoxes : (blurBoxes || []);
+            const cleanBlurBoxes = rawBoxes.map((box) => ({
+              ...box,
+              x: isNaN(parseFloat(box.x)) ? 0 : Math.max(0, Math.min(100, parseFloat(box.x))),
+              y: isNaN(parseFloat(box.y)) ? 0 : Math.max(0, Math.min(100, parseFloat(box.y))),
+              w: isNaN(parseFloat(box.w)) ? 20 : Math.max(1, Math.min(100, parseFloat(box.w))),
+              h: isNaN(parseFloat(box.h)) ? 10 : Math.max(1, Math.min(100, parseFloat(box.h))),
+              strength: isNaN(parseFloat(box.strength)) ? 30 : Math.max(0, Math.min(100, parseFloat(box.strength))),
+            }));
 
             const configData = {
               audioTracks,
@@ -24127,7 +24135,7 @@
               exportPath: activeRenderExportPath,
               renderEngine: localStorage.getItem("aiDubberRenderEngine") || "cpu",
               videoDuration: projDuration,
-              blurBoxes: correctedBlurBoxes,
+              blurBoxes: cleanBlurBoxes,
               subtitleSize: getSubtitleSize(),
               flipHorizontal: projIsFlippedH,
               flipVertical: projIsFlippedV,
@@ -24627,33 +24635,15 @@
               }
               : null;
 
-          // Blur box correction — use stored video dimensions (per-project, safe for background tabs)
-          const projVidW = proj.videoWidth || mainVideo.videoWidth || 1920,
-            projVidH = proj.videoHeight || mainVideo.videoHeight || 1080;
-          const blurLayerEl = document.getElementById("blur-layer");
-          const blurLayerBounds = blurLayerEl ? blurLayerEl.getBoundingClientRect() : { width: 1920, height: 1080 };
-          const blurW = (blurLayerBounds && blurLayerBounds.width > 0) ? blurLayerBounds.width : 1920;
-          const blurH = (blurLayerBounds && blurLayerBounds.height > 0) ? blurLayerBounds.height : 1080;
-          const vidRatio = projVidW / projVidH,
-            contRatio = blurW / blurH;
-          let drawW, drawH, offsetX, offsetY;
-          if (vidRatio > contRatio) {
-            drawW = blurW;
-            drawH = blurW / vidRatio;
-            offsetX = 0;
-            offsetY = (blurH - drawH) / 2;
-          } else {
-            drawH = blurH;
-            drawW = blurH * vidRatio;
-            offsetX = (blurW - drawW) / 2;
-            offsetY = 0;
-          }
-          const correctedBlurBoxes = projBlurBoxes.map((box) => ({
+          // Direct normalized percentages (0-100%) - #blur-layer is strictly locked to video bounds
+          const rawBoxes = (projBlurBoxes && projBlurBoxes.length > 0) ? projBlurBoxes : (proj === projects[activeProjectIndex] ? blurBoxes : []);
+          const cleanBlurBoxes = (rawBoxes || []).map((box) => ({
             ...box,
-            x: (((box.x / 100) * blurW - offsetX) / (drawW || 1)) * 100,
-            y: (((box.y / 100) * blurH - offsetY) / (drawH || 1)) * 100,
-            w: (((box.w / 100) * blurW) / (drawW || 1)) * 100,
-            h: (((box.h / 100) * blurH) / (drawH || 1)) * 100,
+            x: isNaN(parseFloat(box.x)) ? 0 : Math.max(0, Math.min(100, parseFloat(box.x))),
+            y: isNaN(parseFloat(box.y)) ? 0 : Math.max(0, Math.min(100, parseFloat(box.y))),
+            w: isNaN(parseFloat(box.w)) ? 20 : Math.max(1, Math.min(100, parseFloat(box.w))),
+            h: isNaN(parseFloat(box.h)) ? 10 : Math.max(1, Math.min(100, parseFloat(box.h))),
+            strength: isNaN(parseFloat(box.strength)) ? 30 : Math.max(0, Math.min(100, parseFloat(box.strength))),
           }));
 
           return {
@@ -24673,7 +24663,7 @@
               exportPath: localStorage.getItem("aiDubberExportPath") || (isMac ? "" : "C:\\Export\\AIDubber"),
               renderEngine: localStorage.getItem("aiDubberRenderEngine") || "cpu",
               videoDuration: projDuration,
-              blurBoxes: correctedBlurBoxes,
+              blurBoxes: cleanBlurBoxes,
               subtitleSize: getSubtitleSize(),
               flipHorizontal: projIsFlippedH,
               flipVertical: projIsFlippedV,
@@ -24836,6 +24826,15 @@
 
               // Apply active tab's mute state to all projects for consistent batch render
               proj.isOriginalAudioMuted = isOriginalAudioMuted;
+
+              // Auto-inherit blur boxes from active project if background project has none defined
+              const activeProjBlurBoxes = projects[activeProjectIndex]?.blurBoxes || blurBoxes || [];
+              if ((!proj.blurBoxes || proj.blurBoxes.length === 0) && activeProjBlurBoxes.length > 0) {
+                proj.blurBoxes = activeProjBlurBoxes.map((b, bIdx) => ({
+                  ...b,
+                  id: `blur_${Date.now()}_${i}_${bIdx}`,
+                }));
+              }
 
               const baseName = (proj.file.name || "video").replace(/\.[^/.]+$/, "");
               const langSuffix = proj.targetLanguage || targetLanguage || "Khmer";
@@ -25607,7 +25606,7 @@
     // built. Read the real version from Electron (package.json) instead;
     // falls back to this literal only when running outside Electron (e.g.
     // a plain browser during development).
-    let CURRENT_APP_VERSION = "1.2.4";
+    let CURRENT_APP_VERSION = "1.2.5";
     const aboutAppVersionDisplay = document.getElementById("about-app-version");
     if (aboutAppVersionDisplay) aboutAppVersionDisplay.textContent = `Version ${CURRENT_APP_VERSION}`;
     if (window.electronAPI && window.electronAPI.getAppVersion) {

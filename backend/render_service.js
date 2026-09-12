@@ -997,16 +997,20 @@ async function renderVideo(options, onProgress, onComplete, onError) {
 
         // Apply Blur Boxes (censor regions)
         const validBlurBoxes = (Array.isArray(blurBoxes) ? blurBoxes : []).filter(b => (parseFloat(b.strength) || 0) > 0);
+        if (validBlurBoxes.length > 0) {
+            console.log(`[Render] Applying ${validBlurBoxes.length} blur box(es):`, validBlurBoxes.map(b => `[x:${b.x}%, y:${b.y}%, w:${b.w}%, h:${b.h}%, str:${b.strength}%]`));
+        }
         validBlurBoxes.forEach((box, bIdx) => {
             let bx = Math.max(0, Math.min(canvasW - 2, Math.round((canvasW * (parseFloat(box.x) || 0)) / 100)));
             let by = Math.max(0, Math.min(canvasH - 2, Math.round((canvasH * (parseFloat(box.y) || 0)) / 100)));
-            let bw = Math.max(2, Math.min(canvasW - bx, Math.round((canvasW * (parseFloat(box.w) || 0)) / 100)));
-            let bh = Math.max(2, Math.min(canvasH - by, Math.round((canvasH * (parseFloat(box.h) || 0)) / 100)));
+            let bw = Math.max(2, Math.min(canvasW - bx, Math.round((canvasW * (parseFloat(box.w) || 20)) / 100)));
+            let bh = Math.max(2, Math.min(canvasH - by, Math.round((canvasH * (parseFloat(box.h) || 10)) / 100)));
             if (bw % 2 !== 0) bw = Math.max(2, bw - 1);
             if (bh % 2 !== 0) bh = Math.max(2, bh - 1);
             if (bx % 2 !== 0) bx = Math.max(0, bx - 1);
             if (by % 2 !== 0) by = Math.max(0, by - 1);
-            const radius = Math.max(1, Math.min(17, Math.round((parseFloat(box.strength) || 0) / 100 * 17)));
+            let radius = Math.max(1, Math.min(17, Math.round((parseFloat(box.strength) || 0) / 100 * 17)));
+            radius = Math.min(radius, Math.max(1, Math.floor(Math.min(bw, bh) / 2)));
 
             const mainTag = `blur_main_${bIdx}`;
             const srcTag = `blur_src_${bIdx}`;
