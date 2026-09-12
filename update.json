@@ -1,6 +1,6 @@
 {
-  "version": "1.2.4",
-  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.2.4/DR.Dubber.Pro.Setup.1.2.4.exe",
+  "version": "1.2.5",
+  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.2.5/DR.Dubber.Pro.Setup.1.2.5.exe",
   "mac_link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.2.1/DR.Dubber.Pro-1.2.1-arm64.dmg",
-  "notes": "v1.2.4 Release:\n- Fixed render queue and video export getting stuck at 99% when long/looping video overlays or long audio tracks are used\n- Added automatic video duration cutoff (-t) to guarantee exact timeline sync on export\n- Added real-time progress reporting for audio-only export mode"
+  "notes": "v1.2.5 Release:\n- Fixed blur boxes (censor regions) not appearing or displaced when rendering single videos or batch rendering All Tabs\n- Added automatic blur box inheritance to All to Queue batch rendering\n- Improved blur box dimension calculations and radius clamping on export"
 }
