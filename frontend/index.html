@@ -24740,8 +24740,15 @@
                 h: (projCropConfig && projCropConfig.h) || 100,
               },
               videoPan: projVideoPan,
-              videoWidth: proj.videoWidth || projVidW,
-              videoHeight: proj.videoHeight || projVidH,
+              // projVidW/projVidH never existed — undefined variable reference that threw
+              // a ReferenceError for every project queued via "Add All to Queue". Only the
+              // active tab's dimensions are safely readable from the live <video> element;
+              // any other tab's proj.videoWidth/Height should already be populated from when
+              // its metadata first loaded (see restoreProjectState), so this fallback is just
+              // a last resort, matching the existing active-tab-only pattern used for blurBoxes
+              // a few lines above.
+              videoWidth: proj.videoWidth || (proj === projects[activeProjectIndex] ? mainVideo.videoWidth : 0),
+              videoHeight: proj.videoHeight || (proj === projects[activeProjectIndex] ? mainVideo.videoHeight : 0),
               videoZoom: projVideoZoom || 1,
               videoScaleX: proj.videoScaleX || projVideoZoom,
               videoScaleY: proj.videoScaleY || projVideoZoom,
