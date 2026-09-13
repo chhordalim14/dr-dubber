@@ -1,6 +1,6 @@
 {
-  "version": "1.2.5",
-  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.2.5/DR.Dubber.Pro.Setup.1.2.5.exe",
+  "version": "1.2.6",
+  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.2.6/DR.Dubber.Pro.Setup.1.2.6.exe",
   "mac_link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.2.1/DR.Dubber.Pro-1.2.1-arm64.dmg",
-  "notes": "v1.2.5 Release:\n- Fixed blur boxes (censor regions) not appearing or displaced when rendering single videos or batch rendering All Tabs\n- Added automatic blur box inheritance to All to Queue batch rendering\n- Improved blur box dimension calculations and radius clamping on export"
+  "notes": "v1.2.6 Release:\n- Fixed Color Adjustment, Vignette and Video Preset panels getting stuck closed after Clear All Data\n- Blur boxes, filters, vignette, crop and flip now carry over to the next video you load, including after Clear All Data\n- Fixed crop-mode label overlapping its close button\n- Fixed exported video's audio track being cut to 1 second when original audio is muted and no dubbed/BGM audio is present"
 }

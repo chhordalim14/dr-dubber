@@ -2161,6 +2161,9 @@ app.post('/api/render', upload.any(), (req, res) => {
     const uploadedBgm = (req.files || []).find(f => f.fieldname === 'bgmFile' || f.fieldname === 'bgm');
     let bgmPath = resolveLocalFilePath(renderOpts.bgmPath || renderOpts.bgmTrack?.serverPath || (uploadedBgm ? uploadedBgm.path : null));
     const bgmVolume = renderOpts.bgmVolume !== undefined ? parseFloat(renderOpts.bgmVolume) : (renderOpts.bgmTrack?.volume !== undefined ? parseFloat(renderOpts.bgmTrack.volume) : 0.5);
+    const bgmStart = renderOpts.bgmStart !== undefined ? parseFloat(renderOpts.bgmStart) : (renderOpts.bgmTrack?.start !== undefined ? parseFloat(renderOpts.bgmTrack.start) : 0) || 0;
+    const bgmFadeIn = renderOpts.bgmFadeIn !== undefined ? parseFloat(renderOpts.bgmFadeIn) : (renderOpts.bgmTrack?.fadeIn !== undefined ? parseFloat(renderOpts.bgmTrack.fadeIn) : 0) || 0;
+    const bgmFadeOut = renderOpts.bgmFadeOut !== undefined ? parseFloat(renderOpts.bgmFadeOut) : (renderOpts.bgmTrack?.fadeOut !== undefined ? parseFloat(renderOpts.bgmTrack.fadeOut) : 0) || 0;
 
     // 3. Resolve imported audio files and audioTracks / subtitles
     const importedAudioFiles = (req.files || []).filter(f => f.fieldname === 'importedAudioFiles');
@@ -2302,6 +2305,9 @@ app.post('/api/render', upload.any(), (req, res) => {
         burnSubtitles: shouldShowSubs,
         bgmPath,
         bgmVolume,
+        bgmStart,
+        bgmFadeIn,
+        bgmFadeOut,
         duration: renderOpts.duration || renderOpts.videoDuration,
         videoDuration: renderOpts.videoDuration || renderOpts.duration,
         overlayImages: resolvedOverlayImages,

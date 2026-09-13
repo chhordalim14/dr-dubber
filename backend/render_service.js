@@ -554,6 +554,9 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         showSubtitles,
         bgmPath,
         bgmVolume = 0.5,
+        bgmStart = 0,
+        bgmFadeIn = 0,
+        bgmFadeOut = 0,
         voiceVolume = 1.0,
         duckingEnabled = true,
         duckingDepth = 'standard', // 'light' | 'standard' | 'deep'
@@ -639,6 +642,29 @@ async function renderVideo(options, onProgress, onComplete, onError) {
 
         const renderStartTime = Date.now();
 
+        // BGM start offset + fade in/out (mirrors the live editor preview envelope, which
+        // computes fadeMult from bgmTrack.start/fadeIn/fadeOut against bgmTrack.duration).
+        let bgmFilterChain = `volume=${bgmVolume}`;
+        if (bgmPath && fs.existsSync(bgmPath) && (bgmStart > 0 || bgmFadeIn > 0 || bgmFadeOut > 0)) {
+            const parts = [];
+            if (bgmStart > 0) {
+                const delayMs = Math.round(bgmStart * 1000);
+                parts.push(`adelay=${delayMs}|${delayMs}`);
+            }
+            parts.push(`volume=${bgmVolume}`);
+            if (bgmFadeIn > 0) {
+                parts.push(`afade=t=in:st=${bgmStart.toFixed(3)}:d=${bgmFadeIn}`);
+            }
+            if (bgmFadeOut > 0) {
+                const bgmDurationSec = await getVideoDuration(bgmPath);
+                if (bgmDurationSec && bgmDurationSec > 0) {
+                    const fadeOutStart = Math.max(bgmStart, bgmStart + bgmDurationSec - bgmFadeOut);
+                    parts.push(`afade=t=out:st=${fadeOutStart.toFixed(3)}:d=${bgmFadeOut}`);
+                }
+            }
+            bgmFilterChain = parts.join(',');
+        }
+
         // Determine reliable target duration (from options or ffprobe)
         const rawDuration = providedDuration || optVideoDuration || (videoPath ? await getVideoDuration(videoPath) : 0) || 0;
         const effectiveVideoDuration = rawDuration > 0 ? Math.max(0.1, parseFloat(rawDuration)) : (videoPath ? await getVideoDuration(videoPath) : null);
@@ -665,7 +691,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
 
             if (dIndex >= 0 && bIndex >= 0) {
                 const fComplex = [
-                    `[${bIndex}:a]volume=${bgmVolume}[bgm_vol]`,
+                    `[${bIndex}:a]${bgmFilterChain}[bgm_vol]`,
                     `[bgm_vol][${dIndex}:a]sidechaincompress=threshold=0.08:ratio=7:attack=15:release=350[bgm_ducked]`,
                     `[bgm_ducked]equalizer=f=1100:t=q:w=1.5:g=-6[bgm_clean]`,
                     `[bgm_clean][${dIndex}:a]amix=inputs=2:normalize=0:duration=longest[final_audio]`
@@ -675,7 +701,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             } else if (dIndex >= 0) {
                 args.push('-map', `${dIndex}:a`);
             } else if (bIndex >= 0) {
-                args.push('-af', `volume=${bgmVolume}`);
+                args.push('-af', bgmFilterChain);
                 args.push('-map', `${bIndex}:a`);
             } else {
                 throw new Error('No audio track or BGM found to export.');
@@ -805,7 +831,6 @@ async function renderVideo(options, onProgress, onComplete, onError) {
 
         if (dialogueInputIndex >= 0) {
             if (bgmInputIndex >= 0) {
-                const bgmVol = bgmVolume;
                 if (duckingEnabled) {
                     let sidechainParams = 'threshold=0.08:ratio=7:attack=15:release=350';
                     if (duckingDepth === 'light') {
@@ -813,7 +838,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                     } else if (duckingDepth === 'deep') {
                         sidechainParams = 'threshold=0.04:ratio=12:attack=10:release=300';
                     }
-                    filterComplex.push(`[${bgmInputIndex}:a]volume=${bgmVol}[bgm_vol]`);
+                    filterComplex.push(`[${bgmInputIndex}:a]${bgmFilterChain}[bgm_vol]`);
                     filterComplex.push(`[bgm_vol][${dialogueInputIndex}:a]sidechaincompress=${sidechainParams}[bgm_ducked]`);
                     filterComplex.push(`[bgm_ducked]equalizer=f=1100:t=q:w=1.5:g=-6[bgm_clean]`);
                     if (!isMuted) {
@@ -823,7 +848,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                         filterComplex.push(`[bgm_clean][${dialogueInputIndex}:a]amix=inputs=2:normalize=0:duration=longest[final_audio]`);
                     }
                 } else {
-                    filterComplex.push(`[${bgmInputIndex}:a]volume=${bgmVol}[bgm_vol]`);
+                    filterComplex.push(`[${bgmInputIndex}:a]${bgmFilterChain}[bgm_vol]`);
                     if (!isMuted) {
                         filterComplex.push(`[0:a]volume=1.0[orig_a]`);
                         filterComplex.push(`[bgm_vol][${dialogueInputIndex}:a][orig_a]amix=inputs=3:normalize=0:duration=longest[final_audio]`);
@@ -841,17 +866,20 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             }
         } else if (bgmInputIndex >= 0) {
             if (!isMuted) {
-                filterComplex.push(`[${bgmInputIndex}:a]volume=${bgmVolume}[bgm_vol]`);
+                filterComplex.push(`[${bgmInputIndex}:a]${bgmFilterChain}[bgm_vol]`);
                 filterComplex.push(`[0:a]volume=1.0[orig_a]`);
                 filterComplex.push(`[bgm_vol][orig_a]amix=inputs=2:normalize=0:duration=longest[final_audio]`);
             } else {
-                filterComplex.push(`[${bgmInputIndex}:a]volume=${bgmVolume}[final_audio]`);
+                filterComplex.push(`[${bgmInputIndex}:a]${bgmFilterChain}[final_audio]`);
             }
         } else {
             if (!isMuted) {
                 filterComplex.push(`[0:a]volume=1.0[final_audio]`);
             } else {
-                filterComplex.push(`aevalsrc=0:d=1[final_audio]`);
+                // No dialogue, no BGM, original audio muted — still need an audio stream
+                // covering the FULL clip, not a fixed 1s stub (which left the container's
+                // audio track much shorter than its video track on anything longer than 1s).
+                filterComplex.push(`aevalsrc=0:d=${videoDuration}[final_audio]`);
             }
         }
 
@@ -1009,7 +1037,9 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             if (bh % 2 !== 0) bh = Math.max(2, bh - 1);
             if (bx % 2 !== 0) bx = Math.max(0, bx - 1);
             if (by % 2 !== 0) by = Math.max(0, by - 1);
-            let radius = Math.max(1, Math.min(17, Math.round((parseFloat(box.strength) || 0) / 100 * 17)));
+            // Match the editor preview's scale (frontend uses backdropFilter blur(strength/100*40)px)
+            // so the exported blur strength matches what the user sees while editing.
+            let radius = Math.max(1, Math.min(40, Math.round((parseFloat(box.strength) || 0) / 100 * 40)));
             radius = Math.min(radius, Math.max(1, Math.floor(Math.min(bw, bh) / 2)));
 
             const mainTag = `blur_main_${bIdx}`;
@@ -1194,7 +1224,13 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             if (hasSubtitlesFilter()) {
                 const finalFont = subtitleFont || 'Kantumruy Pro';
                 const rawFontSize = parseInt(subtitleFontSize || subtitleSize, 10) || 28;
-                const effectiveFontSize = targetH && targetH > 1200 ? Math.round(rawFontSize * (targetH / 1080)) : rawFontSize;
+                // Mirror the editor preview's "Exact Backend Font Size Math" (index.html
+                // updateSubtitleDisplay): scale by min(canvasW, canvasH)/1080, not just an
+                // explicit resolution/aspect-ratio override (targetH) — otherwise subtitles are
+                // burned in unscaled whenever no explicit resolution was chosen, even though the
+                // live preview always applies this scale.
+                const refDimension = Math.min(canvasW || 1920, canvasH || 1080);
+                const effectiveFontSize = refDimension ? Math.round(rawFontSize * (refDimension / 1080)) : rawFontSize;
                 const fontCol = hexToAssColor(subtitleFontColor || subtitleColor, '&H00FFFFFF');
                 const outlineCol = hexToAssColor(subtitleOutlineColor, '&H00000000');
                 const outlineW = subtitleOutlineWidth !== undefined ? subtitleOutlineWidth : 2;

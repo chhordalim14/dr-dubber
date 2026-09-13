@@ -1530,10 +1530,11 @@
               class="absolute hidden border-2 border-orange-500 shadow-[0_0_0_9999px_rgba(0,0,0,0.85)] z-50 cursor-move"
               style="top: 10%; left: 10%; width: 80%; height: 80%; overflow: visible">
               <div
-                class="absolute -top-7 left-0 bg-orange-500 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow pointer-events-none whitespace-nowrap">
+                class="absolute -top-7 left-0 bg-orange-500 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow pointer-events-none whitespace-nowrap overflow-hidden text-ellipsis"
+                style="max-width: calc(100% - 22px)">
                 Crop Window (Double-Click to Pan/Zoom Video)</div>
               <button id="btn-close-crop"
-                class="absolute -top-7 right-0 bg-red-500 hover:bg-red-600 text-white rounded p-0.5 pointer-events-auto transition-colors">
+                class="absolute -top-7 right-0 z-10 bg-red-500 hover:bg-red-600 text-white rounded p-0.5 pointer-events-auto transition-colors">
                 <i data-lucide="x" class="w-3 h-3"></i>
               </button>
               <div id="crop-resize-handle"
@@ -6257,6 +6258,12 @@
     renderProjectTabs();
 
     function createEmptyProjectState(file) {
+      // Seed visual-edit fields (filter, vignette, flip/pan/zoom/crop, blur boxes)
+      // from whatever is currently active rather than hardcoded defaults. This is
+      // the user's "sticky" edit template: settings they dial in on one video (or
+      // apply via "Apply to All") should carry straight into the next video they
+      // load — including right after "Clear All Data" — and only go back to true
+      // defaults on a fresh app launch, when these `let`s are freshly initialized.
       return {
         // Core
         file,
@@ -6264,8 +6271,8 @@
         currentTime: 0,
         subtitles: [],
         detachedAudios: [],
-        videoColorAdj: { ...colorDefaults },
-        videoVignette: { ...vignetteDefaults },
+        videoColorAdj: { ...videoColorAdj },
+        videoVignette: { ...videoVignette },
         pastStates: [],
         freeTexts: [],
         imageOverlays: [],
@@ -6288,14 +6295,14 @@
         isOriginalAudioMuted: false,
 
         // ── Video visual transforms (per-project) ──
-        isFlippedH: false,
-        isFlippedV: false,
-        videoPan: { x: 0, y: 0 },
-        videoZoom: 1,
-        videoScaleX: 1,
-        videoScaleY: 1,
-        cropConfig: { x: 0, y: 0, w: 100, h: 100 },
-        blurBoxes: [],
+        isFlippedH: isFlippedH,
+        isFlippedV: isFlippedV,
+        videoPan: { ...videoPan },
+        videoZoom: videoZoom,
+        videoScaleX: window.videoScaleX || 1,
+        videoScaleY: window.videoScaleY || 1,
+        cropConfig: { ...cropConfig },
+        blurBoxes: blurBoxes.map((b) => ({ ...b, id: `blur_${Date.now()}_${Math.random().toString(36).slice(2, 7)}` })),
         videoWidth: 0,
         videoHeight: 0,
 
@@ -10954,8 +10961,9 @@
           // THE FIX: Apply dynamic scaling to the UI immediately during resize
           const boundsInner = document.getElementById("video-bounds-inner");
           const currentH = boundsInner ? boundsInner.clientHeight : 1080;
-          const previewScaleFactor = currentH / 1080;
-          const scaledSize = Math.max(1, Math.round(newSize * previewScaleFactor * 1.2));
+          const refCanvasH = (window.customAspectRatio && window.customAspectRatio.h > 0) ? window.customAspectRatio.h : (mainVideo.videoHeight || 1080);
+          const previewScaleFactor = currentH / refCanvasH;
+          const scaledSize = Math.max(1, Math.round(newSize * previewScaleFactor));
 
           const domElem = document.querySelector(`.text-overlay-input[data-id="${activeFreeTextId}"]`);
           if (domElem) domElem.style.fontSize = `${scaledSize}px`;
@@ -11152,8 +11160,9 @@
         textWrapper.style.zIndex = 100 + index;
         const boundsInner = document.getElementById("video-bounds-inner");
         const currentH = boundsInner ? boundsInner.clientHeight : 1080;
-        const previewScaleFactor = currentH / 1080;
-        const scaledFontSize = Math.max(1, Math.round(item.fontSize * previewScaleFactor * 1.2));
+        const refCanvasH = (window.customAspectRatio && window.customAspectRatio.h > 0) ? window.customAspectRatio.h : (mainVideo.videoHeight || 1080);
+        const previewScaleFactor = currentH / refCanvasH;
+        const scaledFontSize = Math.max(1, Math.round(item.fontSize * previewScaleFactor));
         const displayStyle = isSelected ? "flex" : "none";
 
         const sw = item.strokeWidth !== undefined ? item.strokeWidth : 1.5;
@@ -23543,13 +23552,18 @@
           activeProjectIndex = 0;
 
           // ── STEP 7: Reset all global state variables ──
+          // NOTE: blurBoxes, videoColorAdj, videoVignette, and the flip/pan/zoom/crop
+          // transforms are intentionally left untouched here. They act as a "sticky"
+          // edit template — the user wants blur/filter/etc. set on one project to
+          // carry over to the next video they load, and only reset when the app
+          // itself is closed (a fresh page load resets these `let`s naturally),
+          // not every time they hit "Clear All Data".
           subtitles = [];
           pastStates = [];
           freeTexts = [];
           detachedAudios = [];
           window.imageOverlays = [];
           window.videoOverlays = [];
-          blurBoxes = [];
           isA1Muted = false;
           isPlaying = false;
           duration = 0;
@@ -23574,11 +23588,31 @@
           clearVocalWaveform();
           renderFreeTexts();
 
-          // Hide Color Adjustment and Video Preset panels if open
+          // Hide Color Adjustment, Video Preset, and Vignette panels if open.
+          // Must also strip "flex"/animation classes — the toggle handlers check
+          // classList.contains("flex") to decide open vs. closed, so leaving it
+          // behind here makes the next tap run the "close" branch instead of
+          // "open", and the panel appears permanently stuck shut.
           const colorAdjPanel = document.getElementById("color-adjust-panel");
-          if (colorAdjPanel) colorAdjPanel.classList.add("hidden");
+          if (colorAdjPanel) {
+            colorAdjPanel.classList.remove("flex", "ca-panel-entering", "ca-panel-leaving");
+            colorAdjPanel.classList.add("hidden");
+          }
+          document.getElementById("btn-color-adjust")?.classList.remove("text-yellow-400");
+
           const videoPresetPanel = document.getElementById("video-preset-panel");
-          if (videoPresetPanel) videoPresetPanel.classList.add("hidden");
+          if (videoPresetPanel) {
+            videoPresetPanel.classList.remove("flex", "ca-panel-entering", "ca-panel-leaving");
+            videoPresetPanel.classList.add("hidden");
+          }
+          document.getElementById("btn-video-preset")?.classList.remove("text-purple-400");
+
+          const vignettePanel = document.getElementById("vignette-panel");
+          if (vignettePanel) {
+            vignettePanel.classList.remove("flex", "ca-panel-entering", "ca-panel-leaving");
+            vignettePanel.classList.add("hidden");
+          }
+          document.getElementById("btn-vignette")?.classList.remove("text-fuchsia-400");
 
           const imgContainer = document.getElementById("image-overlay-container");
           if (imgContainer) imgContainer.innerHTML = "";
@@ -24151,6 +24185,7 @@
               videoHeight: targetProject.videoHeight || mainVideo.videoHeight,
               videoZoom: projVideoZoom || 1,
               videoScaleX: targetProject.videoScaleX || projVideoZoom,
+              videoScaleY: targetProject.videoScaleY || projVideoZoom,
               customAspectRatio: targetProject.customAspectRatio || null,
               aspectRatio: targetProject.customAspectRatio ? `${targetProject.customAspectRatio.w}:${targetProject.customAspectRatio.h}` : null,
               resolution: targetProject.customAspectRatio ? `${targetProject.customAspectRatio.w}x${targetProject.customAspectRatio.h}` : null,
@@ -24546,7 +24581,10 @@
           const projSubs = proj.subtitles;
           const projDetachedAudios = proj.detachedAudios || [];
           const projBgmTrack = proj.bgmTrack;
-          const projDuration = proj.duration || duration;
+          // Do NOT fall back to the active tab's global `duration` here — for a project whose
+          // video was never opened/played, that would send an unrelated tab's duration as this
+          // job's -t cutoff. Leave it undefined so the backend ffprobes this project's own file.
+          const projDuration = proj.duration || undefined;
           const projIsA1Muted = proj.isA1Muted;
           const projIsFlippedH = proj.isFlippedH;
           const projIsFlippedV = proj.isFlippedV;
@@ -24824,8 +24862,11 @@
             projects.forEach((proj, i) => {
               if (!proj.file) return;
 
-              // Apply active tab's mute state to all projects for consistent batch render
-              proj.isOriginalAudioMuted = isOriginalAudioMuted;
+              // Keep each project's own mute state (do not overwrite with the active tab's),
+              // so a background tab that intentionally kept original audio on isn't silently muted.
+              if (proj === projects[activeProjectIndex]) {
+                proj.isOriginalAudioMuted = isOriginalAudioMuted;
+              }
 
               // Auto-inherit blur boxes from active project if background project has none defined
               const activeProjBlurBoxes = projects[activeProjectIndex]?.blurBoxes || blurBoxes || [];
@@ -25577,13 +25618,17 @@
         freeTextLayer.style.left = "0px";
         freeTextLayer.style.top = "0px";
 
-        // Keep the dynamic font scaling!
-        const previewScaleFactor = actualH / 1080;
+        // Keep the dynamic font scaling! Scaled against the REAL render canvas height (custom
+        // aspect ratio target, or the source video's own native height) so the on-screen size
+        // matches what the backend actually burns in (fontSize is used as raw ASS pixel units
+        // against PlayResY=canvasH there — no separate 1080 baseline or fudge factor).
+        const refCanvasH = (window.customAspectRatio && window.customAspectRatio.h > 0) ? window.customAspectRatio.h : (mainVideo.videoHeight || 1080);
+        const previewScaleFactor = actualH / refCanvasH;
         document.querySelectorAll(".text-overlay-input").forEach((el) => {
           const id = el.getAttribute("data-id");
           const textObj = freeTexts.find((t) => t.id === id);
           if (textObj) {
-            const scaledSize = Math.max(1, Math.round(textObj.fontSize * previewScaleFactor * 1.2));
+            const scaledSize = Math.max(1, Math.round(textObj.fontSize * previewScaleFactor));
             el.style.fontSize = `${scaledSize}px`;
           }
         });
