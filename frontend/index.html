@@ -13836,7 +13836,12 @@
 
     window.generateSelectedAudio = async () => {
       const targetProject = projects[activeProjectIndex];
-      if (!targetProject || !targetProject.subtitles || targetProject.subtitles.length === 0) return;
+      // Check the live `subtitles` array, not targetProject.subtitles — the project's
+      // copy only gets synced by saveCurrentProjectState() below, so it's stale
+      // whenever a subtitle was just added and nothing else has saved state yet.
+      // Checking the stale copy here made "Generate Selected Audio" silently do
+      // nothing the very first time you added a subtitle to a fresh project.
+      if (!targetProject || !subtitles || subtitles.length === 0) return;
       saveCurrentProjectState();
       const subsToGenerate = subtitles.filter((s) => selectedItems.includes(`text-${s.id}`) || selectedItems.includes(`audio-${s.id}`));
       const idsToProcess = subsToGenerate.length > 0 ? subsToGenerate.map((s) => s.id) : targetProject.subtitles.map((s) => s.id);
@@ -15814,6 +15819,12 @@
 
       selectedItems = [`text-${newSub.id}`, `audio-${newSub.id}`];
       renderSubtitles();
+      // renderSubtitles() only refreshes the "Generate Selected Audio" button's
+      // enabled state from inside a row checkbox's own change handler — adding a
+      // subtitle here never fires that, so without this call the button stayed
+      // disabled/gray even though the new subtitle was already auto-selected.
+      if (typeof updateGenerateButtonState === "function") updateGenerateButtonState();
+      if (typeof updateGenerateAllButtonState === "function") updateGenerateAllButtonState();
       closeAddModal();
       showToast("Subtitle added", "success");
     });
@@ -19933,7 +19944,16 @@
       if (!btnAll) return;
 
       const isAnyRunning = isGeneratingAudioAll || isGeneratingAudio || (typeof voxQueueRunning !== "undefined" && voxQueueRunning) || projects.some((p) => p.isGeneratingAudio || p._voxQueued);
-      const hasAnySubtitles = Array.isArray(projects) && projects.some((p) => p.subtitles && p.subtitles.length > 0);
+      // For the active tab, check the live `subtitles` array rather than p.subtitles —
+      // the project's own copy is only synced by saveCurrentProjectState(), so it's
+      // stale right after adding a subtitle and would otherwise leave this button
+      // (and "No subtitles found" on click) wrongly reporting none exist.
+      const hasAnySubtitles =
+        Array.isArray(projects) &&
+        projects.some((p) => {
+          const subsForP = p === projects[activeProjectIndex] ? subtitles : p.subtitles;
+          return subsForP && subsForP.length > 0;
+        });
 
       if (isAnyRunning) {
         btnAll.disabled = false;
@@ -21042,6 +21062,13 @@
         document.getElementById("btn-open-settings")?.click();
         return;
       }
+
+      // The active tab's projects[i].subtitles is only synced from the live `subtitles`
+      // array by saveCurrentProjectState() — without this, a subtitle just added (e.g.
+      // via "+ Add Text") on the active tab isn't reflected here yet, so that tab could
+      // be wrongly excluded from eligibleProjects (or report "No subtitles found" if
+      // it's the only tab open), same class of bug as the single-tab Generate button had.
+      saveCurrentProjectState();
 
       const eligibleProjects = projects.filter((p) => p.subtitles && p.subtitles.length > 0);
       if (eligibleProjects.length === 0) {

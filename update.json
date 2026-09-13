@@ -1,6 +1,6 @@
 {
-  "version": "1.2.6",
-  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.2.6/DR.Dubber.Pro.Setup.1.2.6.exe",
+  "version": "1.2.7",
+  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.2.7/DR.Dubber.Pro.Setup.1.2.7.exe",
   "mac_link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.2.1/DR.Dubber.Pro-1.2.1-arm64.dmg",
-  "notes": "v1.2.6 Release:\n- Fixed Color Adjustment, Vignette and Video Preset panels getting stuck closed after Clear All Data\n- Blur boxes, filters, vignette, crop and flip now carry over to the next video you load, including after Clear All Data\n- Fixed crop-mode label overlapping its close button\n- Fixed exported video's audio track being cut to 1 second when original audio is muted and no dubbed/BGM audio is present"
+  "notes": "v1.2.7 Release:\n- Fixed \"Generate Selected Audio\" staying disabled after manually adding a subtitle, requiring an unrelated click to unlock it\n- Fixed \"Generate All Tabs\" not detecting a freshly-added subtitle on the active tab, sometimes reporting \"No subtitles found\"\n- Both now correctly generate audio for subtitles added moments earlier, with no extra clicks needed"
 }
