@@ -1,6 +1,6 @@
 {
   "name": "dr-dubber-pro",
-  "version": "1.2.8",
+  "version": "1.2.9",
   "description": "DR Dubber Pro - Khmer Edition AI Dubbing Studio",
   "main": "main.js",
   "scripts": {
