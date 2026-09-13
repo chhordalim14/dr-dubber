@@ -1,6 +1,6 @@
 {
-  "version": "1.2.7",
-  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.2.7/DR.Dubber.Pro.Setup.1.2.7.exe",
+  "version": "1.2.8",
+  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.2.8/DR.Dubber.Pro.Setup.1.2.8.exe",
   "mac_link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.2.1/DR.Dubber.Pro-1.2.1-arm64.dmg",
-  "notes": "v1.2.7 Release:\n- Fixed \"Generate Selected Audio\" staying disabled after manually adding a subtitle, requiring an unrelated click to unlock it\n- Fixed \"Generate All Tabs\" not detecting a freshly-added subtitle on the active tab, sometimes reporting \"No subtitles found\"\n- Both now correctly generate audio for subtitles added moments earlier, with no extra clicks needed"
+  "notes": "v1.2.8 Release:\n- Fixed \"Generate Selected Audio\" crashing with an unreadable error on machines with no Python installed\n- Restored a working bundled text-to-speech engine, so voice generation now works out of the box on a fresh install again (this had been silently broken since v1.2.0)"
 }

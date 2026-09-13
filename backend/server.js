@@ -1807,6 +1807,19 @@ app.post('/api/generate-audio', (req, res) => {
         }
     }
 
+    // spawn(null, ...) throws synchronously (not via the 'error' event), which
+    // Express's default handler turns into an HTML error page instead of JSON —
+    // the frontend's `await response.json()` then fails with "Unexpected token
+    // '<'". Guard here (after the cache check above) so a machine with no
+    // working Python/edge-tts gets a clear, actionable JSON error instead of a
+    // crash, while a cache hit still succeeds even without Python installed.
+    if (!PYTHON_CMD) {
+        return res.status(500).json({
+            success: false,
+            error: 'No working Python environment found for text-to-speech. Install Python 3.9-3.11 (with "Add to PATH" checked) and run: pip install edge-tts'
+        });
+    }
+
     const outFile = resolveAudioOutputFile(tempPath, index);
     const pyScript = getPythonScriptPath('tts_generator.py');
 
@@ -1920,6 +1933,17 @@ app.post('/api/generate-batch-audio', async (req, res) => {
             success: true,
             count: updatedSubtitles.length,
             subtitles: updatedSubtitles
+        });
+    }
+
+    // spawn(null, ...) throws synchronously (not via the 'error' event), which
+    // Express's default handler turns into an HTML error page instead of JSON.
+    // Only check this once we know we actually need to spawn — an all-cached
+    // batch above should still succeed with no Python environment at all.
+    if (!PYTHON_CMD) {
+        return res.status(500).json({
+            success: false,
+            error: 'No working Python environment found for text-to-speech. Install Python 3.9-3.11 (with "Add to PATH" checked) and run: pip install edge-tts'
         });
     }
 
