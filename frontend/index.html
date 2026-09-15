@@ -633,24 +633,24 @@
       transform: scale(0.97);
     }
 
-    /* CSS Variables - Default Dark Theme */
+    /* CSS Variables - Default Dark Theme (Clean Obsidian Studio) */
     :root {
       color-scheme: dark;
-      --bg-base: #09090f;
-      --bg-panel: #0e0e1a;
-      --bg-hover: #16162a;
-      --border-color: #1c1c30;
-      --border-light: #2a2a45;
-      --text-bright: #f0f0ff;
-      --text-primary: #c8cce8;
-      --text-secondary: #8890b8;
-      --text-muted: #525a80;
+      --bg-base: #090a10;
+      --bg-panel: #11121c;
+      --bg-hover: #1b1c2b;
+      --border-color: rgba(255, 255, 255, 0.08);
+      --border-light: rgba(255, 255, 255, 0.14);
+      --text-bright: #f8fafc;
+      --text-primary: #cbd5e1;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
       --accent-primary: #6366f1;
       --accent-text: #a5b4fc;
-      --accent-glow: rgba(99, 102, 241, 0.35);
+      --accent-glow: rgba(99, 102, 241, 0.25);
       --btn-radius: 8px;
-      --font-sans: "Inter", "suisse", sans-serif;
-      --font-khmer: "Kantumruy Pro", "Khmer OS Battambang", "Hanuman", "Leelawadee UI", "DaunPenh", sans-serif;
+      --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-khmer: "Kantumruy Pro", "Khmer OS Battambang", "Hanuman", "Leelawadee UI", sans-serif;
       --dynamic-ambient: transparent;
       /* Motion tokens */
       --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -660,24 +660,24 @@
       --duration-slow: 350ms;
     }
 
-    /* Light Theme Override Class */
+    /* Light Theme Override Class (Clean Studio Light) */
     :root.light-theme {
       color-scheme: light;
-      --bg-base: #f4f4fb;
+      --bg-base: #f8fafc;
       --bg-panel: #ffffff;
-      --bg-hover: #eeeef8;
-      --border-color: #ddddf0;
-      --border-light: #c8c8e8;
-      --text-bright: #0a0a18;
-      --text-primary: #252545;
-      --text-secondary: #454570;
-      --text-muted: #888aaa;
+      --bg-hover: #f1f5f9;
+      --border-color: #e2e8f0;
+      --border-light: #cbd5e1;
+      --text-bright: #0f172a;
+      --text-primary: #334155;
+      --text-secondary: #64748b;
+      --text-muted: #94a3b8;
       --accent-primary: #4f46e5;
-      --accent-text: #3730a3;
-      --accent-glow: rgba(79, 70, 229, 0.2);
+      --accent-text: #4338ca;
+      --accent-glow: rgba(79, 70, 229, 0.15);
       --btn-radius: 8px;
-      --font-sans: "Inter", "suisse", sans-serif;
-      --font-khmer: "Kantumruy Pro", "Khmer OS Battambang", "Leelawadee UI", "DaunPenh", sans-serif;
+      --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-khmer: "Kantumruy Pro", "Khmer OS Battambang", "Leelawadee UI", sans-serif;
       /* Motion tokens */
       --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
       --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
@@ -1372,75 +1372,134 @@
 
         <!-- Color Adjustment Panel -->
         <div id="color-adjust-panel"
-          class="font-khmer hidden flex-col gap-2 bg-[var(--bg-base)] border border-[var(--border-light)] rounded-xl px-3 py-2.5 shadow-inner overflow-hidden min-w-0"
+          class="font-khmer hidden flex-col gap-2.5 bg-[var(--bg-base)] border border-[var(--border-light)] rounded-xl p-3 shadow-2xl overflow-hidden min-w-0"
           style="transform-origin: top center">
-          <div class="flex items-center justify-between mb-0.5">
-            <span class="text-[11px] font-semibold text-[var(--text-bright)] tracking-wide uppercase">Color
-              Adjustment</span>
-            <button id="btn-reset-color"
-              class="text-[10px] text-[var(--text-muted)] hover:text-red-400 transition-colors px-1.5 py-0.5 rounded hover:bg-[var(--bg-hover)]">Reset</button>
-          </div>
-          <!-- Brightness -->
-          <div class="flex items-center gap-2">
-            <span class="text-[10px] text-[var(--text-secondary)] w-14 shrink-0">Brightness</span>
-            <input type="range" id="ca-brightness" min="0" max="200" value="100"
-              class="flex-1 h-1 rounded appearance-none cursor-pointer" style="accent-color: var(--accent-primary)" />
-            <span id="ca-brightness-val"
-              class="text-[10px] font-mono text-[var(--text-muted)] w-7 text-right">100</span>
-          </div>
-          <!-- Contrast -->
-          <div class="flex items-center gap-2">
-            <span class="text-[10px] text-[var(--text-secondary)] w-14 shrink-0">Contrast</span>
-            <input type="range" id="ca-contrast" min="0" max="200" value="100"
-              class="flex-1 h-1 rounded appearance-none cursor-pointer" style="accent-color: var(--accent-primary)" />
-            <span id="ca-contrast-val" class="text-[10px] font-mono text-[var(--text-muted)] w-7 text-right">100</span>
-          </div>
-          <!-- Saturation -->
-          <div class="flex items-center gap-2">
-            <span class="text-[10px] text-[var(--text-secondary)] w-14 shrink-0">Saturation</span>
-            <input type="range" id="ca-saturation" min="0" max="200" value="100"
-              class="flex-1 h-1 rounded appearance-none cursor-pointer" style="accent-color: var(--accent-primary)" />
-            <span id="ca-saturation-val"
-              class="text-[10px] font-mono text-[var(--text-muted)] w-7 text-right">100</span>
-          </div>
-          <!-- Sharpness (via contrast tweak proxy) -->
-          <div class="flex items-center gap-2">
-            <span class="text-[10px] text-[var(--text-secondary)] w-14 shrink-0">Sharpness</span>
-            <div class="relative flex-1">
-              <input type="range" id="ca-sharpness" min="-2" max="5" value="0" step="0.5"
-                class="w-full h-1 rounded appearance-none cursor-pointer" style="accent-color: var(--accent-primary)" />
-              <!-- Zero tick: min=-2, max=5 → 0 sits at 2/7 ≈ 28.57% of the track -->
-              <div
-                class="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-px h-2.5 bg-[var(--text-muted)]/50 pointer-events-none"
-                style="left: 28.57%"></div>
+          
+          <!-- Top Title & Action Strip -->
+          <div class="flex items-center justify-between border-b border-[var(--border-light)] pb-2">
+            <div class="flex items-center gap-1.5">
+              <i data-lucide="sparkles" class="w-3.5 h-3.5 text-amber-400 shrink-0"></i>
+              <span class="text-[11px] font-bold text-[var(--text-bright)] tracking-wide uppercase">Cinematic Color Studio</span>
             </div>
-            <span id="ca-sharpness-val" class="text-[10px] font-mono text-[var(--text-muted)] w-7 text-right">0</span>
+            <div class="flex items-center gap-1.5">
+              <!-- Hold to Compare Button -->
+              <button id="btn-ca-compare"
+                class="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md font-medium text-slate-300 bg-white/[0.06] hover:bg-white/[0.12] hover:text-white border border-white/[0.08] transition-all select-none cursor-pointer active:scale-95"
+                title="Hold mouse down to view original raw video without color filter">
+                <i data-lucide="eye" class="w-3 h-3"></i>
+                <span>Hold Compare</span>
+              </button>
+              <button id="btn-reset-color"
+                class="text-[10px] text-[var(--text-muted)] hover:text-rose-400 transition-colors px-1.5 py-0.5 rounded hover:bg-[var(--bg-hover)]"
+                title="Reset all adjustments to neutral default">Reset</button>
+            </div>
           </div>
-          <!-- Hue -->
-          <div class="flex items-center gap-2">
-            <span class="text-[10px] text-[var(--text-secondary)] w-14 shrink-0">Hue</span>
-            <input type="range" id="ca-hue" min="-180" max="180" value="0"
-              class="flex-1 h-1 rounded appearance-none cursor-pointer"
-              style="accent-color: oklch(0.7 0.2 var(--hue-val, 270))" />
-            <span id="ca-hue-val" class="text-[10px] font-mono text-[var(--text-muted)] w-7 text-right">0°</span>
-          </div>
-          <div class="mt-1 pt-2 border-t border-[var(--border-light)]">
-            <div class="flex items-center justify-between mb-1.5">
-              <span
-                class="text-[10px] font-semibold text-[var(--text-secondary)] uppercase tracking-wide">Presets</span>
+
+          <!-- Quick Presets Section (Cards & Categories) -->
+          <div class="flex flex-col gap-1.5">
+            <div class="flex items-center justify-between">
+              <span class="text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-wider">Cinematic LUTs</span>
               <div class="flex items-center gap-1">
                 <button id="btn-ca-apply-all"
-                  class="flex items-center gap-1 text-[10px] text-[var(--text-muted)] hover:text-amber-400 hover:brightness-125 transition-all px-1.5 py-0.5 rounded hover:bg-[var(--bg-hover)] font-medium"
-                  title="Apply current color settings to all projects">
-                  <i data-lucide="layers" class="w-3 h-3"></i> All
+                  class="flex items-center gap-1 text-[10px] text-[var(--text-muted)] hover:text-amber-400 transition-all px-1.5 py-0.5 rounded hover:bg-[var(--bg-hover)] font-medium"
+                  title="Apply current color filter to all project tabs">
+                  <i data-lucide="layers" class="w-3 h-3"></i> All Tabs
                 </button>
                 <button id="btn-ca-save-preset"
-                  class="flex items-center gap-1 text-[10px] text-[var(--accent-primary)] hover:brightness-125 transition-all px-1.5 py-0.5 rounded hover:bg-[var(--bg-hover)] font-medium"><i
-                    data-lucide="plus" class="w-3 h-3"></i> Save</button>
+                  class="flex items-center gap-1 text-[10px] text-cyan-400 hover:brightness-125 transition-all px-1.5 py-0.5 rounded hover:bg-cyan-500/10 font-semibold">
+                  <i data-lucide="plus" class="w-3 h-3"></i> Save
+                </button>
               </div>
             </div>
-            <div id="ca-preset-list" class="flex flex-wrap gap-1.5 min-h-[24px]">
-              <!-- preset chips injected by JS -->
+
+            <!-- Category Filter Tabs -->
+            <div id="ca-category-tabs" class="flex items-center gap-1 overflow-x-auto custom-scrollbar pb-0.5 select-none">
+              <button class="ca-cat-btn active text-[9px] font-bold px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 transition-all" data-cat="all">All</button>
+              <button class="ca-cat-btn text-[9px] font-medium px-2 py-0.5 rounded-full text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.08] transition-all" data-cat="cinematic">Cinematic</button>
+              <button class="ca-cat-btn text-[9px] font-medium px-2 py-0.5 rounded-full text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.08] transition-all" data-cat="aesthetic">Aesthetic</button>
+              <button class="ca-cat-btn text-[9px] font-medium px-2 py-0.5 rounded-full text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.08] transition-all" data-cat="vintage">Vintage</button>
+              <button class="ca-cat-btn text-[9px] font-medium px-2 py-0.5 rounded-full text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.08] transition-all" data-cat="moody">Moody</button>
+              <button class="ca-cat-btn text-[9px] font-medium px-2 py-0.5 rounded-full text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.08] transition-all" data-cat="custom">Custom</button>
+            </div>
+
+            <!-- Presets Grid Container -->
+            <div id="ca-preset-list"
+              class="grid grid-cols-2 gap-1.5 max-h-[145px] overflow-y-auto custom-scrollbar pr-0.5 p-0.5">
+              <!-- Preset cards injected by JS -->
+            </div>
+          </div>
+
+          <!-- Fine-Tuning Sliders Section -->
+          <div class="mt-1 pt-2 border-t border-[var(--border-light)] flex flex-col gap-2">
+            <div class="flex items-center justify-between mb-0.5">
+              <span class="text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-wider">Fine-Tune Grading</span>
+              <span class="text-[9px] text-[var(--text-muted)] italic">Double-click slider to reset</span>
+            </div>
+
+            <!-- Brightness -->
+            <div class="flex items-center gap-2 group">
+              <span class="text-[10px] text-[var(--text-secondary)] w-16 shrink-0 flex items-center gap-1.5 font-medium">
+                <i data-lucide="sun" class="w-3 h-3 text-amber-400 shrink-0"></i>
+                <span>Bright</span>
+              </span>
+              <div class="relative flex-1 flex items-center">
+                <input type="range" id="ca-brightness" min="0" max="200" value="100"
+                  class="w-full h-1.5 rounded-lg appearance-none cursor-pointer bg-slate-800 accent-amber-400" />
+              </div>
+              <span id="ca-brightness-val" class="text-[10px] font-mono text-[var(--text-bright)] w-8 text-right bg-white/[0.04] px-1 py-0.5 rounded border border-white/[0.06] cursor-pointer" title="Double click to reset">100</span>
+            </div>
+
+            <!-- Contrast -->
+            <div class="flex items-center gap-2 group">
+              <span class="text-[10px] text-[var(--text-secondary)] w-16 shrink-0 flex items-center gap-1.5 font-medium">
+                <i data-lucide="contrast" class="w-3 h-3 text-indigo-400 shrink-0"></i>
+                <span>Contrast</span>
+              </span>
+              <div class="relative flex-1 flex items-center">
+                <input type="range" id="ca-contrast" min="0" max="200" value="100"
+                  class="w-full h-1.5 rounded-lg appearance-none cursor-pointer bg-slate-800 accent-indigo-400" />
+              </div>
+              <span id="ca-contrast-val" class="text-[10px] font-mono text-[var(--text-bright)] w-8 text-right bg-white/[0.04] px-1 py-0.5 rounded border border-white/[0.06] cursor-pointer" title="Double click to reset">100</span>
+            </div>
+
+            <!-- Saturation -->
+            <div class="flex items-center gap-2 group">
+              <span class="text-[10px] text-[var(--text-secondary)] w-16 shrink-0 flex items-center gap-1.5 font-medium">
+                <i data-lucide="palette" class="w-3 h-3 text-fuchsia-400 shrink-0"></i>
+                <span>Saturate</span>
+              </span>
+              <div class="relative flex-1 flex items-center">
+                <input type="range" id="ca-saturation" min="0" max="200" value="100"
+                  class="w-full h-1.5 rounded-lg appearance-none cursor-pointer bg-slate-800 accent-fuchsia-400" />
+              </div>
+              <span id="ca-saturation-val" class="text-[10px] font-mono text-[var(--text-bright)] w-8 text-right bg-white/[0.04] px-1 py-0.5 rounded border border-white/[0.06] cursor-pointer" title="Double click to reset">100</span>
+            </div>
+
+            <!-- Sharpness -->
+            <div class="flex items-center gap-2 group">
+              <span class="text-[10px] text-[var(--text-secondary)] w-16 shrink-0 flex items-center gap-1.5 font-medium">
+                <i data-lucide="sparkles" class="w-3 h-3 text-cyan-400 shrink-0"></i>
+                <span>Sharp</span>
+              </span>
+              <div class="relative flex-1 flex items-center">
+                <input type="range" id="ca-sharpness" min="-2" max="5" value="0" step="0.5"
+                  class="w-full h-1.5 rounded-lg appearance-none cursor-pointer bg-slate-800 accent-cyan-400" />
+              </div>
+              <span id="ca-sharpness-val" class="text-[10px] font-mono text-[var(--text-bright)] w-8 text-right bg-white/[0.04] px-1 py-0.5 rounded border border-white/[0.06] cursor-pointer" title="Double click to reset">0</span>
+            </div>
+
+            <!-- Hue (With real continuous rainbow spectrum track!) -->
+            <div class="flex items-center gap-2 group">
+              <span class="text-[10px] text-[var(--text-secondary)] w-16 shrink-0 flex items-center gap-1.5 font-medium">
+                <i data-lucide="disc" class="w-3 h-3 text-pink-400 shrink-0"></i>
+                <span>Hue</span>
+              </span>
+              <div class="relative flex-1 flex items-center">
+                <input type="range" id="ca-hue" min="-180" max="180" value="0"
+                  class="w-full h-1.5 rounded-lg appearance-none cursor-pointer"
+                  style="background: linear-gradient(to right, #ef4444, #eab308, #22c55e, #06b6d4, #3b82f6, #a855f7, #ef4444); accent-color: #ffffff;" />
+              </div>
+              <span id="ca-hue-val" class="text-[10px] font-mono text-[var(--text-bright)] w-8 text-right bg-white/[0.04] px-1 py-0.5 rounded border border-white/[0.06] cursor-pointer" title="Double click to reset">0°</span>
             </div>
           </div>
         </div>
@@ -1629,98 +1688,118 @@
         </div>
       </div>
 
-      <!-- Workspace Tools Section -->
-      <div class="px-4 pb-8 flex flex-col gap-3 flex-1 min-h-0">
-        <h2 class="text-sm font-semibold text-[var(--text-bright)] flex items-center gap-2 mt-2">
-          <i id="lottie-workspace-tools" class="w-4 h-4 lottie-icon text-[var(--accent-text)] shrink-0"></i>
-          Workspace Tools
-        </h2>
-
-        <div class="grid grid-cols-2 gap-2">
-          <input type="file" id="video-upload" accept="video/*" class="hidden" />
-          <button id="btn-load-video"
-            class="group flex flex-col items-center justify-center gap-2 bg-[var(--bg-hover)] hover:brightness-110 border border-[var(--border-light)] p-3 rounded-xl transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.92]">
-            <i data-lucide="folder-open"
-              class="workspace-icon-glow w-5 h-5 text-blue-500 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
-            <span class="text-xs font-medium">Load Video</span>
-          </button>
-
-          <input type="file" id="bgm-upload" accept="audio/*" class="hidden" />
-          <button id="btn-load-bgm"
-            class="group flex flex-col items-center justify-center gap-2 bg-[var(--bg-hover)] hover:brightness-110 border border-[var(--border-light)] p-3 rounded-xl transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.92]">
-            <i data-lucide="music"
-              class="workspace-icon-glow w-5 h-5 text-purple-500 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
-            <span class="text-xs font-medium">Load BGM</span>
-          </button>
-
-          <input type="file" id="a1-audio-upload" accept="audio/*" class="hidden" multiple />
-          <button id="btn-load-a1-audio"
-            class="group flex flex-col items-center justify-center gap-2 bg-[var(--bg-hover)] hover:brightness-110 border border-[var(--border-light)] p-3 rounded-xl transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.92] col-span-2 sm:col-span-1">
-            <i data-lucide="audio-waveform"
-              class="workspace-icon-glow w-5 h-5 text-orange-400 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
-            <span class="text-xs font-medium">Load A1 Audio</span>
-          </button>
-
-          <button id="btn-isolate-bgm"
-            class="group flex flex-col items-center justify-center gap-2 bg-[var(--bg-hover)] hover:brightness-110 border border-[var(--border-light)] p-3 rounded-xl transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.92] cursor-pointer">
-            <i id="icon-isolate" data-lucide="wand-2"
-              class="w-5 h-5 text-pink-500 workspace-icon-glow transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
-            <span id="text-isolate" class="text-xs font-medium">Isolate BGM</span>
-          </button>
-
-          <button id="btn-isolate-bgm-all" title="Isolate BGM for ALL open project tabs"
-            class="group flex flex-col items-center justify-center gap-2 bg-[var(--bg-hover)] hover:brightness-110 border border-[var(--border-light)] p-3 rounded-xl transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.92] cursor-pointer">
-            <i id="icon-isolate-all" data-lucide="layers"
-              class="w-5 h-5 text-pink-400 workspace-icon-glow transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
-            <span id="text-isolate-all" class="text-xs font-medium">Isolate All Tabs</span>
-          </button>
-
-          <button id="btn-mute-audio"
-            class="group flex flex-col items-center justify-center gap-2 bg-[var(--bg-hover)] hover:brightness-110 border border-[var(--border-light)] text-[var(--text-primary)] p-3 rounded-xl transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.92]">
-            <i data-lucide="mic"
-              class="workspace-icon-glow w-5 h-5 text-emerald-500 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
-            <span class="text-xs font-medium">Mute Audio</span>
-          </button>
-          <button id="btn-export-srt"
-            class="group flex flex-col items-center justify-center gap-2 bg-[var(--bg-hover)] hover:brightness-110 border border-[var(--border-light)] p-3 rounded-xl transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.92]">
-            <i data-lucide="download"
-              class="workspace-icon-glow w-5 h-5 text-cyan-500 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
-            <span class="text-xs font-medium">Export SRT</span>
-          </button>
-
-          <input type="file" id="srt-upload" accept=".srt" class="hidden" multiple />
-          <button id="btn-import-srt"
-            class="group flex flex-col items-center justify-center gap-2 bg-[var(--bg-hover)] hover:brightness-110 border border-[var(--border-light)] p-3 rounded-xl transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.92]">
-            <i data-lucide="file-json"
-              class="workspace-icon-glow w-5 h-5 text-amber-500 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
-            <span class="text-xs font-medium">Import (SRT)</span>
-          </button>
-          <button id="btn-add-blur"
-            class="group flex flex-col items-center justify-center gap-2 bg-[var(--bg-hover)] hover:brightness-110 border border-[var(--border-light)] p-3 rounded-xl transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.92]">
-            <i data-lucide="square-dashed"
-              class="workspace-icon-glow w-5 h-5 text-indigo-500 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
-            <span class="text-xs font-medium">Add Blur Box (Censor)</span>
-          </button>
-          <button id="btn-apply-blur-all"
-            class="group flex flex-col items-center justify-center gap-2 bg-[var(--bg-hover)] hover:brightness-110 border border-[var(--border-light)] p-3 rounded-xl transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.92]"
-            title="Apply blur boxes to all project tabs">
-            <i id="icon-apply-blur-all" data-lucide="layers"
-              class="workspace-icon-glow w-5 h-5 text-indigo-400 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
-            <span id="text-apply-blur-all" class="text-xs font-medium">Apply Blur to All</span>
-          </button>
+      <!-- Workspace Workflow Decks -->
+      <div class="px-4 pb-6 flex flex-col gap-3 flex-1 min-h-0">
+        <div class="flex items-center justify-between mt-1">
+          <h2 class="text-xs font-bold uppercase tracking-widest text-slate-400 flex items-center gap-2">
+            <i id="lottie-workspace-tools" class="w-3.5 h-3.5 lottie-icon text-[var(--accent-text)] shrink-0"></i>
+            Studio Workflow
+          </h2>
+          <span class="text-[10px] font-mono text-slate-500">v1.2.9 Pro</span>
         </div>
-        <div class="mt-auto pt-4 flex flex-col gap-2">
+
+        <!-- Deck 1: Media Sources -->
+        <div class="bg-[var(--bg-hover)]/40 border border-[var(--border-color)] rounded-xl p-2.5 flex flex-col gap-2 shadow-sm">
+          <div class="studio-deck-header px-1">
+            <i data-lucide="folder" class="w-3 h-3 text-sky-400"></i>
+            <span>1. Media Sources</span>
+          </div>
+          <div class="grid grid-cols-2 gap-1.5">
+            <input type="file" id="video-upload" accept="video/*" class="hidden" />
+            <button id="btn-load-video"
+              class="group flex items-center gap-2 px-2.5 py-2 bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] border border-[var(--border-light)] hover:border-sky-500/40 rounded-lg text-xs font-medium text-[var(--text-primary)] transition-all active:scale-[0.97]">
+              <i data-lucide="film" class="w-4 h-4 text-sky-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+              <span class="truncate">Load Video</span>
+            </button>
+
+            <input type="file" id="bgm-upload" accept="audio/*" class="hidden" />
+            <button id="btn-load-bgm"
+              class="group flex items-center gap-2 px-2.5 py-2 bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] border border-[var(--border-light)] hover:border-purple-500/40 rounded-lg text-xs font-medium text-[var(--text-primary)] transition-all active:scale-[0.97]">
+              <i data-lucide="music" class="w-4 h-4 text-purple-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+              <span class="truncate">Load BGM</span>
+            </button>
+
+            <input type="file" id="a1-audio-upload" accept="audio/*" class="hidden" multiple />
+            <button id="btn-load-a1-audio"
+              class="group col-span-2 flex items-center justify-center gap-2 px-2.5 py-2 bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] border border-[var(--border-light)] hover:border-amber-500/40 rounded-lg text-xs font-medium text-[var(--text-primary)] transition-all active:scale-[0.97]">
+              <i data-lucide="audio-waveform" class="w-4 h-4 text-amber-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+              <span>Load A1 Dubbed Audio (Multiple)</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Deck 2: AI Audio Processing -->
+        <div class="bg-[var(--bg-hover)]/40 border border-[var(--border-color)] rounded-xl p-2.5 flex flex-col gap-2 shadow-sm">
+          <div class="studio-deck-header px-1">
+            <i data-lucide="sparkles" class="w-3 h-3 text-pink-400"></i>
+            <span>2. AI Vocal & Audio</span>
+          </div>
+          <div class="grid grid-cols-2 gap-1.5">
+            <button id="btn-isolate-bgm"
+              class="group flex items-center gap-2 px-2.5 py-2 bg-[var(--bg-panel)] hover:bg-pink-500/10 border border-[var(--border-light)] hover:border-pink-500/40 rounded-lg text-xs font-medium text-[var(--text-primary)] transition-all active:scale-[0.97]">
+              <i id="icon-isolate" data-lucide="wand-2" class="w-4 h-4 text-pink-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+              <span id="text-isolate" class="truncate">Isolate BGM</span>
+            </button>
+
+            <button id="btn-isolate-bgm-all" title="Isolate BGM for ALL open project tabs"
+              class="group flex items-center gap-2 px-2.5 py-2 bg-[var(--bg-panel)] hover:bg-pink-500/10 border border-[var(--border-light)] hover:border-pink-500/40 rounded-lg text-xs font-medium text-[var(--text-primary)] transition-all active:scale-[0.97]">
+              <i id="icon-isolate-all" data-lucide="layers" class="w-4 h-4 text-pink-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+              <span id="text-isolate-all" class="truncate">Isolate All</span>
+            </button>
+
+            <button id="btn-mute-audio"
+              class="group col-span-2 flex items-center justify-center gap-2 px-2.5 py-2 bg-[var(--bg-panel)] hover:bg-emerald-500/10 border border-[var(--border-light)] hover:border-emerald-500/40 rounded-lg text-xs font-medium text-[var(--text-primary)] transition-all active:scale-[0.97]">
+              <i data-lucide="mic-off" class="w-4 h-4 text-emerald-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+              <span>Mute Original Video Audio</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Deck 3: Subtitles & Censor -->
+        <div class="bg-[var(--bg-hover)]/40 border border-[var(--border-color)] rounded-xl p-2.5 flex flex-col gap-2 shadow-sm">
+          <div class="studio-deck-header px-1">
+            <i data-lucide="subtitles" class="w-3 h-3 text-indigo-400"></i>
+            <span>3. Subtitles & Censor</span>
+          </div>
+          <div class="grid grid-cols-2 gap-1.5">
+            <input type="file" id="srt-upload" accept=".srt" class="hidden" multiple />
+            <button id="btn-import-srt"
+              class="group flex items-center gap-2 px-2.5 py-2 bg-[var(--bg-panel)] hover:bg-white/[0.07] border border-[var(--border-light)] hover:border-indigo-500/40 rounded-lg text-xs font-medium text-[var(--text-primary)] transition-all active:scale-[0.97]">
+              <i data-lucide="file-down" class="w-4 h-4 text-indigo-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+              <span class="truncate">Import SRT</span>
+            </button>
+
+            <button id="btn-export-srt"
+              class="group flex items-center gap-2 px-2.5 py-2 bg-[var(--bg-panel)] hover:bg-white/[0.07] border border-[var(--border-light)] hover:border-cyan-500/40 rounded-lg text-xs font-medium text-[var(--text-primary)] transition-all active:scale-[0.97]">
+              <i data-lucide="file-up" class="w-4 h-4 text-cyan-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+              <span class="truncate">Export SRT</span>
+            </button>
+
+            <button id="btn-add-blur"
+              class="group flex items-center gap-2 px-2.5 py-2 bg-[var(--bg-panel)] hover:bg-amber-500/10 border border-[var(--border-light)] hover:border-amber-500/40 rounded-lg text-xs font-medium text-[var(--text-primary)] transition-all active:scale-[0.97]">
+              <i data-lucide="square-dashed" class="w-4 h-4 text-amber-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+              <span class="truncate">Blur Censor</span>
+            </button>
+
+            <button id="btn-apply-blur-all" title="Apply blur boxes to all project tabs"
+              class="group flex items-center gap-2 px-2.5 py-2 bg-[var(--bg-panel)] hover:bg-amber-500/10 border border-[var(--border-light)] hover:border-amber-500/40 rounded-lg text-xs font-medium text-[var(--text-primary)] transition-all active:scale-[0.97]">
+              <i id="icon-apply-blur-all" data-lucide="layers" class="w-4 h-4 text-amber-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+              <span id="text-apply-blur-all" class="truncate">Blur to All</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Deck 4: Output & Actions -->
+        <div class="mt-auto pt-2 flex flex-col gap-2">
           <button id="btn-render"
-            class="ambient-btn-glow group w-full py-2 bg-[var(--accent-primary)] hover:brightness-110 border border-[var(--accent-primary)] rounded-lg text-sm text-white flex items-center justify-center gap-2 transition-all duration-300 ease-out hover:-translate-y-1 active:scale-[0.96]">
-            <i data-lucide="film"
-              class="w-4 h-4 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
-            Final Render
+            class="group w-full py-2.5 px-4 rounded-xl text-xs font-semibold text-white bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:to-purple-500 shadow-lg shadow-indigo-500/25 border border-indigo-400/30 flex items-center justify-center gap-2 transition-all active:scale-[0.98]">
+            <i data-lucide="film" class="w-4 h-4 group-hover:scale-110 transition-transform"></i>
+            <span>Final Studio Render</span>
           </button>
           <button id="btn-clear"
-            class="group w-full py-2 bg-[var(--bg-hover)] hover:brightness-110 text-red-500 border border-[var(--border-light)] rounded-lg text-sm flex items-center justify-center gap-2 transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.96]">
-            <i data-lucide="trash-2"
-              class="w-3.5 h-3.5 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
-            Clear All Data
+            class="group w-full py-2 px-4 rounded-xl text-xs font-medium text-rose-400 hover:text-rose-300 bg-rose-500/5 hover:bg-rose-500/10 border border-rose-500/20 hover:border-rose-500/40 flex items-center justify-center gap-2 transition-all active:scale-[0.98]">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5 group-hover:scale-110 transition-transform"></i>
+            <span>Clear All Data</span>
           </button>
         </div>
       </div>
@@ -1730,148 +1809,134 @@
     <div class="flex-1 flex flex-col min-w-0 bg-[var(--bg-base)] h-full">
       <!-- Subtitle Data Panel -->
       <div class="flex-1 p-4 min-h-0 overflow-hidden flex flex-col">
-        <div class="flex items-center justify-between mb-2 px-1 overflow-x-auto custom-scrollbar flex-nowrap shrink-0" style="scrollbar-width: thin">
-          <div class="flex items-center gap-4 shrink-0 flex-nowrap">
+        <div class="flex items-center justify-between mb-2 px-1 relative z-30 shrink-0">
+          <div class="flex items-center gap-3 shrink-0 flex-nowrap">
             <div class="text-sm font-semibold text-[var(--text-bright)] flex items-center gap-2 shrink-0">
-              <i id="lottie-subtitle-data" class="w-4 h-4 lottie-icon text-[var(--text-bright)] shrink-0"></i>
-              Subtitle Data
+              <i id="lottie-subtitle-data" class="w-4 h-4 lottie-icon text-indigo-400 shrink-0"></i>
+              <span>Subtitle Data</span>
             </div>
-            <div class="flex items-center gap-2 shrink-0 flex-nowrap">
-              <button id="btn-add-text"
-                class="group bg-[var(--bg-hover)] border border-[var(--border-light)] hover:bg-[var(--accent-primary)] hover:border-[var(--accent-primary)] hover:text-white text-[var(--text-primary)] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-md active:scale-[0.95] shrink-0">
-                <i data-lucide="plus"
-                  class="w-[14px] h-[14px] transition-transform duration-300 group-hover:scale-110 group-active:scale-90"></i>
-                Add Text
+
+            <div class="h-4 w-px bg-[var(--border-color)] shrink-0"></div>
+
+            <button id="btn-add-text"
+              class="group h-8 px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm shadow-indigo-600/30 transition-all active:scale-[0.97] shrink-0">
+              <i data-lucide="plus" class="w-3.5 h-3.5 group-hover:scale-110 transition-transform"></i>
+              <span>Add Text</span>
+            </button>
+
+            <!-- Segmented Edit Strip -->
+            <div class="flex items-center bg-[var(--bg-hover)] border border-[var(--border-color)] rounded-lg p-0.5 shrink-0 flex-nowrap">
+              <button id="btn-edit-selected"
+                class="group h-7 px-2.5 rounded-md text-xs font-medium flex items-center gap-1.5 text-[var(--text-secondary)] hover:text-blue-400 hover:bg-blue-500/10 transition-all shrink-0"
+                title="Edit checked items">
+                <i data-lucide="type-outline" class="w-3.5 h-3.5 group-hover:scale-110 transition-transform"></i>
+                <span>Edit</span>
               </button>
 
-              <div
-                class="flex items-center gap-1 bg-[var(--bg-hover)]/60 border border-[var(--border-color)] rounded-lg p-0.5 shrink-0 flex-nowrap">
-                <button id="btn-edit-selected"
-                  class="group bg-[var(--bg-hover)] border border-[var(--border-light)] hover:bg-blue-500/20 hover:border-blue-500 hover:text-blue-500 text-[var(--text-primary)] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-md active:scale-[0.95] shrink-0"
-                  title="Edit checked items">
-                  <i data-lucide="type-outline"
-                    class="w-[14px] h-[14px] transition-transform duration-300 group-hover:scale-110 group-active:scale-90"></i>
-                  Edit
+              <button id="btn-delete-selected"
+                class="group h-7 px-2.5 rounded-md text-xs font-medium flex items-center gap-1.5 text-[var(--text-secondary)] hover:text-rose-400 hover:bg-rose-500/10 transition-all shrink-0"
+                title="Delete checked items">
+                <i data-lucide="trash-2" class="w-3.5 h-3.5 group-hover:scale-110 transition-transform"></i>
+                <span>Delete</span>
+              </button>
+
+              <button id="btn-find-replace"
+                class="group h-7 px-2.5 rounded-md text-xs font-medium flex items-center gap-1.5 text-[var(--text-secondary)] hover:text-amber-400 hover:bg-amber-500/10 transition-all shrink-0"
+                title="Find & Replace (Ctrl+H)">
+                <i data-lucide="search-code" class="w-3.5 h-3.5 group-hover:scale-110 transition-transform"></i>
+                <span>Find &amp; Replace</span>
+              </button>
+
+              <div class="h-3.5 w-px bg-[var(--border-color)] mx-1 shrink-0"></div>
+
+              <!-- ⚡ AI Refactor & Polish Dropdown (Non-Clipping) -->
+              <div class="relative">
+                <button id="btn-refactor-menu-toggle"
+                  class="group h-7 px-2.5 rounded-md text-xs font-semibold flex items-center gap-1.5 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/15 transition-all shrink-0"
+                  title="⚡ AI Refactor & Polish Subtitles (Natural Spoken & Short Dubbing Tone)">
+                  <i data-lucide="wand-2" class="w-3.5 h-3.5 text-emerald-400 group-hover:scale-110 transition-transform"></i>
+                  <span>AI Refactor</span>
+                  <i data-lucide="chevron-down" class="w-3 h-3 text-emerald-400/70 shrink-0"></i>
                 </button>
 
-                <button id="btn-delete-selected"
-                  class="group bg-[var(--bg-hover)] border border-[var(--border-light)] hover:bg-red-500/20 hover:border-red-500 hover:text-red-500 text-[var(--text-primary)] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-md active:scale-[0.95] shrink-0"
-                  title="Delete checked items">
-                  <i data-lucide="trash-2"
-                    class="w-[14px] h-[14px] transition-transform duration-300 group-hover:scale-110 group-active:scale-90"></i>
-                  Delete
-                </button>
-
-                <button id="btn-find-replace"
-                  class="group bg-[var(--bg-hover)] border border-[var(--border-light)] hover:bg-amber-500/20 hover:border-amber-500 hover:text-amber-400 text-[var(--text-primary)] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-md active:scale-[0.95] shrink-0"
-                  title="Find & Replace (Ctrl+H)">
-                  <i data-lucide="search-code"
-                    class="w-[14px] h-[14px] transition-transform duration-300 group-hover:scale-110 group-active:scale-90"></i>
-                  Find &amp; Replace
-                </button>
-
-                <!-- ⚡ AI Refactor & Polish Dropdown -->
-                <div class="relative">
-                  <button id="btn-refactor-menu-toggle"
-                    class="group bg-[var(--bg-hover)] border border-[var(--border-light)] hover:bg-emerald-500/20 hover:border-emerald-500 hover:text-emerald-400 text-[var(--text-primary)] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-md active:scale-[0.95] shrink-0"
-                    title="⚡ AI Refactor & Polish Subtitles (Natural Spoken & Short Dubbing Tone)">
-                    <i data-lucide="wand-2"
-                      class="w-[14px] h-[14px] text-emerald-400 transition-transform duration-300 group-hover:scale-110"></i>
-                    <span>AI Refactor</span>
-                    <i data-lucide="chevron-down" class="w-3 h-3 text-[var(--text-muted)] shrink-0"></i>
+                <div id="refactor-dropdown-menu"
+                  class="hidden absolute top-full mt-1.5 left-0 w-[270px] bg-studio-card border border-white/[0.12] shadow-2xl rounded-xl p-2.5 z-[999] animate-dropdown origin-top-left font-sans backdrop-blur-xl">
+                  <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-2 py-1">
+                    Action
+                  </div>
+                  <button id="btn-refactor-current"
+                    class="w-full text-left px-2.5 py-1.5 text-xs flex items-center gap-2 rounded-lg hover:bg-white/[0.08] text-slate-200 hover:text-emerald-400 cursor-pointer transition-colors">
+                    <i data-lucide="sparkles" class="w-3.5 h-3.5 text-emerald-400 shrink-0"></i>
+                    <span>Refactor Current Tab</span>
+                  </button>
+                  <button id="btn-refactor-all"
+                    class="w-full text-left px-2.5 py-1.5 text-xs flex items-center gap-2 rounded-lg hover:bg-white/[0.08] text-slate-200 hover:text-emerald-400 cursor-pointer transition-colors">
+                    <i data-lucide="layers" class="w-3.5 h-3.5 text-emerald-400 shrink-0"></i>
+                    <span class="font-semibold text-emerald-400">🌟 1-Click All 9 Tabs (In Order)</span>
                   </button>
 
-                  <div id="refactor-dropdown-menu"
-                    class="hidden absolute top-full mt-1.5 left-0 w-[260px] bg-[var(--bg-panel)] border border-[var(--border-color)] shadow-2xl rounded-xl p-2 z-[999] animate-dropdown origin-top-left font-sans">
-                    <div class="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider px-2 py-1">
-                      Action
-                    </div>
-                    <button id="btn-refactor-current"
-                      class="w-full text-left px-2.5 py-1.5 text-xs flex items-center gap-2 rounded-lg hover:bg-[var(--bg-hover)] text-[var(--text-primary)] hover:text-emerald-400 cursor-pointer transition-colors">
-                      <i data-lucide="sparkles" class="w-3.5 h-3.5 text-emerald-400"></i>
-                      <span>Refactor Current Tab</span>
-                    </button>
-                    <button id="btn-refactor-all"
-                      class="w-full text-left px-2.5 py-1.5 text-xs flex items-center gap-2 rounded-lg hover:bg-[var(--bg-hover)] text-[var(--text-primary)] hover:text-emerald-400 cursor-pointer transition-colors">
-                      <i data-lucide="layers" class="w-3.5 h-3.5 text-emerald-400"></i>
-                      <span class="font-semibold text-emerald-400">🌟 1-Click All 9 Tabs (In Order)</span>
-                    </button>
+                  <div class="my-1.5 border-t border-white/[0.08]"></div>
+                  <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-2 py-1">
+                    Dubbing Tone / Style
+                  </div>
+                  <label class="flex items-center gap-2 px-2.5 py-1 text-xs text-slate-300 hover:text-white cursor-pointer rounded hover:bg-white/[0.06]">
+                    <input type="radio" name="refactor-style-choice" value="natural" checked class="accent-emerald-400" />
+                    <span>⚡ Natural &amp; Short (ខ្លី ខ្លឹម)</span>
+                  </label>
+                  <label class="flex items-center gap-2 px-2.5 py-1 text-xs text-slate-300 hover:text-white cursor-pointer rounded hover:bg-white/[0.06]">
+                    <input type="radio" name="refactor-style-choice" value="shorten" class="accent-emerald-400" />
+                    <span>✂️ Ultra-Short (កាត់ខ្លីបំផុត)</span>
+                  </label>
+                  <label class="flex items-center gap-2 px-2.5 py-1 text-xs text-slate-300 hover:text-white cursor-pointer rounded hover:bg-white/[0.06]">
+                    <input type="radio" name="refactor-style-choice" value="dramatic" class="accent-emerald-400" />
+                    <span>🎭 Dramatic Emotion (កាច / កម្សត់)</span>
+                  </label>
+                  <label class="flex items-center gap-2 px-2.5 py-1 text-xs text-slate-300 hover:text-white cursor-pointer rounded hover:bg-white/[0.06]">
+                    <input type="radio" name="refactor-style-choice" value="royal" class="accent-emerald-400" />
+                    <span>👑 Royal Register (រាជស័ព្ទ / បុរាណ)</span>
+                  </label>
+                  <label class="flex items-center gap-2 px-2.5 py-1 text-xs text-slate-300 hover:text-white cursor-pointer rounded hover:bg-white/[0.06]">
+                    <input type="radio" name="refactor-style-choice" value="comedy" class="accent-emerald-400" />
+                    <span>😆 Comedy (កំប្លែង)</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
 
-                    <div class="my-1.5 border-t border-[var(--border-light)]"></div>
-                    <div class="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider px-2 py-1">
-                      Dubbing Tone / Style
-                    </div>
-                    <label class="flex items-center gap-2 px-2.5 py-1 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer rounded hover:bg-[var(--bg-hover)]">
-                      <input type="radio" name="refactor-style-choice" value="natural" checked class="accent-emerald-400" />
-                      <span>⚡ Natural &amp; Short (ខ្លី ខ្លឹម)</span>
-                    </label>
-                    <label class="flex items-center gap-2 px-2.5 py-1 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer rounded hover:bg-[var(--bg-hover)]">
-                      <input type="radio" name="refactor-style-choice" value="shorten" class="accent-emerald-400" />
-                      <span>✂️ Ultra-Short (កាត់ខ្លីបំផុត)</span>
-                    </label>
-                    <label class="flex items-center gap-2 px-2.5 py-1 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer rounded hover:bg-[var(--bg-hover)]">
-                      <input type="radio" name="refactor-style-choice" value="dramatic" class="accent-emerald-400" />
-                      <span>🎭 Dramatic Emotion (កាច / កម្សត់)</span>
-                    </label>
-                    <label class="flex items-center gap-2 px-2.5 py-1 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer rounded hover:bg-[var(--bg-hover)]">
-                      <input type="radio" name="refactor-style-choice" value="royal" class="accent-emerald-400" />
-                      <span>👑 Royal Register (រាជស័ព្ទ / បុរាណ)</span>
-                    </label>
-                    <label class="flex items-center gap-2 px-2.5 py-1 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer rounded hover:bg-[var(--bg-hover)]">
-                      <input type="radio" name="refactor-style-choice" value="comedy" class="accent-emerald-400" />
-                      <span>😆 Comedy (កំប្លែង)</span>
-                    </label>
+          <!-- Right: Voice Quick Selector -->
+          <div class="flex items-center gap-2.5 ml-auto shrink-0 flex-nowrap">
+            <span id="bulk-voice-label" class="text-[var(--text-muted)] text-xs flex items-center gap-1 font-medium">Voice:</span>
+            <div class="flex items-center gap-1">
+              <!-- Edge-TTS mode buttons (shown when VoxCPM2 off) -->
+              <button id="btn-bulk-male"
+                class="bounce-on-click h-7 px-2.5 bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-primary)] hover:text-white hover:bg-indigo-600 hover:border-indigo-500 rounded-md text-xs font-medium transition-all shadow-sm flex items-center gap-1">
+                <i data-lucide="user" class="w-3 h-3"></i> Male
+              </button>
+              <button id="btn-bulk-female"
+                class="bounce-on-click h-7 px-2.5 bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-primary)] hover:text-white hover:bg-pink-600 hover:border-pink-500 rounded-md text-xs font-medium transition-all shadow-sm flex items-center gap-1">
+                <i data-lucide="user-round" class="w-3 h-3"></i> Female
+              </button>
+              <!-- VoxCPM2 mode dropdown (shown when VoxCPM2 on) -->
+              <div class="relative hidden" id="bulk-vox-custom-wrap">
+                <button id="bulk-vox-custom-trigger"
+                  class="flex items-center justify-between gap-1.5 bg-[var(--bg-hover)] border border-violet-500/30 text-violet-400 text-xs px-2.5 h-7 rounded-md outline-none cursor-pointer hover:border-violet-400 transition-colors min-w-[120px]">
+                  <span id="bulk-vox-custom-label" class="font-khmer truncate flex items-center gap-1">Select Profile...</span>
+                  <i data-lucide="chevron-down" id="bulk-vox-custom-chevron" class="w-3 h-3 shrink-0 transition-transform duration-300"></i>
+                </button>
+                <input type="hidden" id="bulk-vox-profile-select" value="" />
+                <div id="bulk-vox-custom-panel"
+                  class="absolute z-50 top-full mt-1 left-0 rounded-xl border border-white/[0.12] bg-studio-card shadow-2xl overflow-hidden grid grid-rows-[0fr] transition-[grid-template-rows] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] min-w-[150px]">
+                  <div class="overflow-hidden">
+                    <div id="bulk-vox-custom-list"
+                      class="flex flex-col p-1.5 gap-0.5 overflow-y-auto custom-scrollbar max-h-48"></div>
                   </div>
                 </div>
               </div>
-
-              <div class="flex items-center gap-3 ml-auto shrink-0 flex-nowrap">
-                <button id="btn-open-batch-dubber" onclick="openBatchDubberModal()"
-                  class="group bg-[var(--bg-hover)] border border-[var(--border-light)] hover:bg-amber-500/20 hover:border-amber-500 hover:text-amber-400 text-[var(--text-primary)] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-md active:scale-[0.95]"
-                  title="🚀 Batch Multi-Episode Dubbing Queue">
-                  <i data-lucide="rocket"
-                    class="w-[14px] h-[14px] text-amber-400 transition-transform duration-300 group-hover:scale-110"></i>
-                  Batch Dubber
-                </button>
-
-                <div class="h-4 w-px bg-[var(--border-light)] mx-1"></div>
-
-                <span id="bulk-voice-label" class="text-[var(--text-muted)] text-xs flex items-center gap-1">Set voice
-                  to:</span>
-                <div class="flex items-center gap-1">
-                  <!-- Edge-TTS mode buttons (shown when VoxCPM2 off) -->
-                  <button id="btn-bulk-male"
-                    class="bounce-on-click bg-[var(--bg-hover)] border border-[var(--border-light)] text-[var(--text-primary)] hover:text-white hover:bg-indigo-600 px-2 py-1 rounded text-xs transition-all duration-300 ease-out shadow-sm flex items-center gap-1">
-                    <i data-lucide="user" class="w-3 h-3"></i> Male
-                  </button>
-                  <button id="btn-bulk-female"
-                    class="bounce-on-click bg-[var(--bg-hover)] border border-[var(--border-light)] text-[var(--text-primary)] hover:text-white hover:bg-pink-600 px-2 py-1 rounded text-xs transition-all duration-300 ease-out shadow-sm flex items-center gap-1">
-                    <i data-lucide="user-round" class="w-3 h-3"></i> Female
-                  </button>
-                  <!-- VoxCPM2 mode dropdown (shown when VoxCPM2 on) -->
-                  <div class="relative hidden" id="bulk-vox-custom-wrap">
-                    <button id="bulk-vox-custom-trigger"
-                      class="flex items-center justify-between gap-1.5 bg-[var(--bg-hover)] border border-violet-500/30 text-violet-400 text-xs px-2 h-[26px] rounded outline-none cursor-pointer hover:border-violet-400 transition-colors min-w-[120px]">
-                      <span id="bulk-vox-custom-label" class="font-khmer truncate flex items-center gap-1">Select
-                        Profile...</span>
-                      <i data-lucide="chevron-down" id="bulk-vox-custom-chevron"
-                        class="w-3 h-3 shrink-0 transition-transform duration-300"></i>
-                    </button>
-                    <input type="hidden" id="bulk-vox-profile-select" value="" />
-                    <div id="bulk-vox-custom-panel"
-                      class="absolute z-50 top-full mt-1 left-0 rounded-lg border border-[var(--border-light)] bg-[var(--bg-panel)] shadow-xl overflow-hidden grid grid-rows-[0fr] transition-[grid-template-rows] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] min-w-[140px]">
-                      <div class="overflow-hidden">
-                        <div id="bulk-vox-custom-list"
-                          class="flex flex-col p-1 gap-0.5 overflow-y-auto custom-scrollbar max-h-48"></div>
-                      </div>
-                    </div>
-                  </div>
-                  <button id="btn-bulk-vox-apply"
-                    class="hidden bounce-on-click bg-violet-500/15 border border-violet-500/30 text-violet-400 hover:bg-violet-500/25 px-2 py-1 rounded text-xs transition-all duration-300 ease-out shadow-sm flex items-center gap-1">
-                    <i data-lucide="check" class="w-3 h-3"></i> Apply
-                  </button>
-                </div>
-              </div>
+              <button id="btn-bulk-vox-apply"
+                class="hidden bounce-on-click h-7 bg-violet-500/15 border border-violet-500/30 text-violet-400 hover:bg-violet-500/25 px-2.5 rounded-md text-xs font-medium transition-all shadow-sm flex items-center gap-1">
+                <i data-lucide="check" class="w-3 h-3"></i> Apply
+              </button>
             </div>
           </div>
         </div>
@@ -1920,97 +1985,96 @@
         </div>
 
         <div
-          class="flex flex-row items-center justify-between gap-3 px-3 sm:px-5 py-2 border-b border-[var(--border-color)] bg-[var(--bg-base)] shrink-0 overflow-x-auto custom-scrollbar flex-nowrap"
-          style="scrollbar-width: thin">
-          <div
-            class="flex items-center gap-3 sm:gap-4 shrink-0 flex-nowrap">
-            <h3
-              class="flex items-center gap-2 text-base font-semibold text-[var(--text-bright)] tracking-wide whitespace-nowrap shrink-0">
-              <i id="lottie-timeline-editor" class="w-4 h-4 lottie-icon text-[var(--text-bright)] shrink-0"></i>
+          class="flex flex-row items-center justify-between gap-3 px-3 sm:px-4 py-2 border-b border-[var(--border-color)] bg-[var(--bg-panel)] shrink-0 relative z-30">
+          <div class="flex items-center gap-3 shrink-0 flex-nowrap">
+            <h3 class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[var(--text-bright)] whitespace-nowrap shrink-0">
+              <i id="lottie-timeline-editor" class="w-3.5 h-3.5 lottie-icon text-indigo-400 shrink-0"></i>
               <span>Timeline Editor</span>
             </h3>
 
-            <div class="h-5 w-px bg-[var(--border-light)] opacity-60 shrink-0"></div>
+            <div class="h-4 w-px bg-[var(--border-color)] shrink-0"></div>
 
-            <div class="flex items-center gap-2 shrink-0">
-              <span class="text-[11px] font-bold text-[var(--text-secondary)] uppercase tracking-wider shrink-0">Zoom:</span>
+            <!-- Zoom Control -->
+            <div class="flex items-center gap-2 bg-[var(--bg-hover)] border border-[var(--border-color)] rounded-lg px-2 py-1 shrink-0">
+              <span class="text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider shrink-0">Zoom:</span>
               <input id="timeline-zoom" type="range" min="100" max="5000" value="100"
-                class="w-20 sm:w-28 h-1.5 bg-[var(--border-light)] rounded-lg appearance-none cursor-pointer shrink-0"
+                class="w-20 sm:w-24 h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer shrink-0"
                 style="accent-color: var(--accent-primary)" />
               <span class="flex items-center shrink-0">
                 <input id="timeline-zoom-display" type="number" min="100" max="5000" step="10" value="100"
-                  class="w-11 text-[10px] font-mono text-[var(--text-muted)] text-right bg-transparent border-none outline-none focus:text-[var(--accent-primary)] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+                  class="w-9 text-[10px] font-mono text-[var(--text-muted)] text-right bg-transparent border-none outline-none focus:text-[var(--accent-primary)] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
                 <span class="text-[10px] text-[var(--text-muted)] font-mono">%</span>
               </span>
             </div>
 
-            <div class="h-5 w-px bg-[var(--border-light)] opacity-60 shrink-0"></div>
-
-            <!-- Split button — always visible, independent of selection -->
+            <!-- Split button -->
             <div id="split-control-group" class="flex items-center shrink-0">
               <button id="btn-split-audio" title="Toggle split mode — click an audio clip to cut it at that point"
                 disabled
-                class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-all duration-300 ease-out shadow-sm border-emerald-500/40 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 opacity-40 cursor-not-allowed hover:shadow-lg hover:shadow-emerald-500/30 hover:brightness-110 hover:bg-emerald-500/25 hover:border-emerald-400 active:scale-[0.95] active:translate-y-0 shrink-0">
+                class="h-7 px-2.5 rounded-lg text-xs font-medium border transition-all duration-200 shadow-sm border-emerald-500/30 text-emerald-400 bg-emerald-500/10 opacity-40 cursor-not-allowed hover:bg-emerald-500/20 active:scale-95 flex items-center gap-1.5 shrink-0">
                 <i data-lucide="scissors" class="w-3.5 h-3.5 shrink-0"></i>
                 <span id="btn-split-label">Split</span>
               </button>
             </div>
 
-            <div id="context-controls" class="hidden flex-nowrap items-center gap-3 animate-slide-in-right shrink-0">
-              <div class="h-5 w-px bg-[var(--border-light)] opacity-60 shrink-0"></div>
-
-              <div id="speed-control-group" class="flex items-center gap-2 shrink-0">
-                <span class="text-[11px] font-bold text-[var(--text-secondary)] uppercase tracking-wider shrink-0">Speed:</span>
+            <!-- Context controls -->
+            <div id="context-controls" class="hidden flex-nowrap items-center gap-2.5 animate-slide-in-right shrink-0 bg-[var(--bg-hover)] border border-[var(--border-color)] rounded-lg px-2 py-0.5">
+              <div id="speed-control-group" class="flex items-center gap-1.5 shrink-0">
+                <span class="text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider shrink-0">Speed:</span>
                 <input id="input-speed" type="range" step="0.1" min="0.5" max="2.5" value="1.0"
-                  class="w-16 h-1.5 bg-[var(--border-light)] rounded-lg appearance-none cursor-pointer shrink-0"
+                  class="w-14 h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer shrink-0"
                   style="accent-color: var(--accent-primary)" />
                 <span class="flex items-center shrink-0">
                   <input id="display-speed" type="number" step="0.1" min="0.5" max="2.5" value="1.0"
-                    class="w-9 text-[10px] font-mono text-[var(--text-muted)] text-right bg-transparent border-none outline-none focus:text-[var(--accent-primary)] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+                    class="w-8 text-[10px] font-mono text-[var(--text-muted)] text-right bg-transparent border-none outline-none focus:text-[var(--accent-primary)] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
                   <span class="text-[10px] text-[var(--text-muted)] font-mono">x</span>
                 </span>
               </div>
 
-              <div class="flex items-center gap-2 shrink-0">
-                <span class="text-[11px] font-bold text-[var(--text-secondary)] uppercase tracking-wider shrink-0">Vol:</span>
+              <div class="h-3 w-px bg-[var(--border-color)]"></div>
+
+              <div id="vol-control-group" class="flex items-center gap-1.5 shrink-0">
+                <span class="text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider shrink-0">Vol:</span>
                 <input id="input-volume" type="range" step="0.1" min="0" max="5.0" value="1.0"
-                  class="w-16 h-1.5 bg-[var(--border-light)] rounded-lg appearance-none cursor-pointer shrink-0"
+                  class="w-14 h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer shrink-0"
                   style="accent-color: var(--accent-primary)" />
                 <input id="display-volume" type="number" step="0.1" min="0" max="5.0" value="1.0"
-                  class="w-9 text-[10px] font-mono text-[var(--text-muted)] text-right bg-transparent border-none outline-none focus:text-[var(--accent-primary)] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none shrink-0" />
+                  class="w-8 text-[10px] font-mono text-[var(--text-muted)] text-right bg-transparent border-none outline-none focus:text-[var(--accent-primary)] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none shrink-0" />
               </div>
 
-              <div id="pitch-control-group" class="flex items-center gap-2 shrink-0">
-                <span class="text-[11px] font-bold text-[var(--text-secondary)] uppercase tracking-wider shrink-0">Pitch:</span>
+              <div class="h-3 w-px bg-[var(--border-color)]"></div>
+
+              <div id="pitch-control-group" class="flex items-center gap-1.5 shrink-0">
+                <span class="text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider shrink-0">Pitch:</span>
                 <input id="input-pitch" type="range" step="1" min="-12" max="12" value="0"
-                  class="w-16 h-1.5 bg-[var(--border-light)] rounded-lg appearance-none cursor-pointer shrink-0"
+                  class="w-14 h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer shrink-0"
                   style="accent-color: var(--accent-primary)" />
                 <input id="display-pitch" type="number" step="1" min="-12" max="12" value="0"
-                  class="w-9 text-[10px] font-mono text-[var(--text-muted)] text-right bg-transparent border-none outline-none focus:text-[var(--accent-primary)] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none shrink-0" />
+                  class="w-8 text-[10px] font-mono text-[var(--text-muted)] text-right bg-transparent border-none outline-none focus:text-[var(--accent-primary)] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none shrink-0" />
               </div>
 
-              <!-- Reverb button — only visible when audio is selected -->
+              <!-- Reverb button -->
               <div id="reverb-control-group" class="hidden items-center shrink-0">
                 <button id="btn-reverb"
-                  class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-all duration-300 ease-out shadow-sm border-purple-500/40 text-purple-400 bg-purple-500/10 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-purple-500/30 hover:brightness-110 hover:bg-purple-500/25 hover:border-purple-400 active:scale-[0.95] active:translate-y-0 shrink-0">
-                  <i data-lucide="waves" class="w-3.5 h-3.5 shrink-0"></i>
+                  class="flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium border border-purple-500/30 text-purple-400 bg-purple-500/10 hover:bg-purple-500/20 active:scale-95 shrink-0">
+                  <i data-lucide="waves" class="w-3 h-3 shrink-0"></i>
                   <span id="btn-reverb-label">Reverb</span>
                 </button>
               </div>
 
               <span id="display-selection-count"
-                class="text-[11px] font-bold text-[var(--accent-text)] hidden whitespace-nowrap ml-1 tracking-wide shrink-0"> (2
-                items) </span>
+                class="text-[10px] font-bold text-[var(--accent-text)] hidden whitespace-nowrap tracking-wide shrink-0"> (2 items) </span>
             </div>
           </div>
 
-          <div
-            class="flex items-center gap-2 shrink-0 flex-nowrap">
+          <!-- Actions & Dropdowns -->
+          <div class="flex items-center gap-2 shrink-0 flex-nowrap">
+            <!-- Language Dropdown -->
             <div class="relative" id="lang-dropdown-container">
               <button id="btn-language-select"
-                class="flex items-center justify-between gap-2 bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] font-medium text-xs rounded-lg px-3 py-1.5 outline-none focus:border-[var(--accent-primary)] focus:ring-1 focus:ring-[var(--accent-primary)] transition-all duration-200 shadow-sm w-[110px] sm:w-[130px] active:scale-95">
+                class="flex items-center justify-between gap-1.5 bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-primary)] hover:text-white font-medium text-xs rounded-lg px-2.5 h-8 outline-none transition-all shadow-sm w-[110px] sm:w-[125px] active:scale-95">
                 <span class="flex items-center gap-1.5 truncate">
-                  <div class="w-[14px] h-[14px] shrink-0 bg-[var(--accent-text)] transition-colors" style="
+                  <div class="w-3.5 h-3.5 shrink-0 bg-[var(--accent-text)]" style="
                         -webkit-mask-image: url(&quot;assets/icons/language-switch.svg&quot;);
                         -webkit-mask-size: contain;
                         -webkit-mask-repeat: no-repeat;
@@ -2020,93 +2084,90 @@
                         mask-repeat: no-repeat;
                         mask-position: center;
                       "></div>
-
                   <span id="display-language" class="truncate">Khmer</span>
                 </span>
-                <i id="icon-lang-chevron" data-lucide="chevron-down"
-                  class="w-[14px] h-[14px] text-[var(--text-muted)] shrink-0 transition-transform duration-300"></i>
+                <i id="icon-lang-chevron" data-lucide="chevron-down" class="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0"></i>
               </button>
 
               <div id="lang-dropdown-menu"
-                class="hidden absolute bottom-full mb-2 left-0 w-[140px] bg-[var(--bg-panel)] border border-[var(--border-color)] shadow-2xl rounded-xl py-1.5 z-50 animate-dropdown origin-bottom-left overflow-y-auto max-h-[min(320px,50vh)]">
+                class="hidden absolute bottom-full mb-2 left-0 w-[140px] bg-studio-card border border-white/[0.12] shadow-2xl rounded-xl py-1.5 z-50 animate-dropdown origin-bottom-left overflow-y-auto max-h-[min(320px,50vh)]">
               </div>
             </div>
 
             <!-- Drama Style / Genre Selector -->
             <div class="relative">
               <button id="btn-genre-select"
-                class="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-primary)] hover:border-amber-400/50 hover:bg-[var(--bg-hover)] transition-all duration-300 ease-out cursor-pointer"
+                class="flex items-center gap-1.5 px-2.5 h-8 rounded-lg text-xs font-medium bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-primary)] hover:border-amber-400/50 hover:text-white transition-all cursor-pointer"
                 title="Drama Genre Register for accurate Cambodian royal & conversational dubbing">
                 <span id="genre-icon" class="text-sm">👑</span>
-                <span id="genre-label"
-                  class="hidden sm:inline font-khmer text-xs text-amber-400 font-semibold">បុរាណ/រាជវង្ស</span>
+                <span id="genre-label" class="hidden sm:inline font-khmer text-xs text-amber-400 font-semibold">បុរាណ/រាជវង្ស</span>
                 <i data-lucide="chevron-down" class="w-3 h-3 text-[var(--text-muted)] shrink-0"></i>
               </button>
               <div id="genre-dropdown-menu"
-                class="hidden absolute bottom-full mb-2 left-0 w-[210px] bg-[var(--bg-panel)] border border-[var(--border-color)] shadow-2xl rounded-xl py-1 z-50 animate-dropdown font-khmer origin-bottom-left">
+                class="hidden absolute bottom-full mb-2 left-0 w-[210px] bg-studio-card border border-white/[0.12] shadow-2xl rounded-xl py-1 z-50 animate-dropdown font-khmer origin-bottom-left">
                 <button data-genre="historical"
-                  class="genre-opt w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-[var(--bg-hover)] text-amber-400 font-semibold cursor-pointer">
+                  class="genre-opt w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-white/[0.08] text-amber-400 font-semibold cursor-pointer">
                   <span class="text-sm">👑</span> <span>បុរាណ / រាជវាំង / ក្បាច់គុន</span>
                 </button>
                 <button data-genre="modern"
-                  class="genre-opt w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-[var(--bg-hover)] text-cyan-400 cursor-pointer">
+                  class="genre-opt w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-white/[0.08] text-cyan-400 cursor-pointer">
                   <span class="text-sm">🏙️</span> <span>សម័យ / ស្នេហា / CEO</span>
                 </button>
                 <button data-genre="action"
-                  class="genre-opt w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-[var(--bg-hover)] text-rose-400 cursor-pointer">
+                  class="genre-opt w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-white/[0.08] text-rose-400 cursor-pointer">
                   <span class="text-sm">💥</span> <span>សកម្មភាព / កងទ័ព / ឧក្រិដ្ឋ</span>
                 </button>
                 <button data-genre="comedy"
-                  class="genre-opt w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-[var(--bg-hover)] text-emerald-400 cursor-pointer">
+                  class="genre-opt w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-white/[0.08] text-emerald-400 cursor-pointer">
                   <span class="text-sm">😂</span> <span>កំប្លែង / កំប្លុកកំប្លែង</span>
                 </button>
               </div>
             </div>
 
-            <div class="hidden sm:block h-5 w-px bg-[var(--border-light)] opacity-60"></div>
+            <div class="hidden sm:block h-4 w-px bg-[var(--border-color)]"></div>
 
+            <!-- Transcribe Single & All -->
             <button id="btn-transcribe" disabled
-              class="px-3 sm:px-4 py-1.5 rounded-lg text-xs font-medium flex items-center gap-2 transition-all duration-300 ease-out bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-muted)] opacity-60 cursor-not-allowed">
-              <i id="icon-transcribe" data-lucide="sparkles" class="w-[14px] h-[14px] shrink-0"></i>
+              class="h-8 px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-muted)] opacity-60 cursor-not-allowed">
+              <i id="icon-transcribe" data-lucide="sparkles" class="w-3.5 h-3.5 shrink-0"></i>
               <span id="text-transcribe" class="hidden sm:inline">Transcribe</span>
             </button>
 
             <button id="btn-transcribe-all" title="Transcribe & Translate ALL open project tabs"
-              class="group px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ease-out bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-secondary)] hover:text-[var(--text-bright)] hover:border-emerald-400/50 shadow-sm active:scale-[0.95]">
+              class="group h-8 px-2.5 sm:px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-white hover:border-emerald-500/50 shadow-sm active:scale-[0.95]">
               <i id="icon-transcribe-all" data-lucide="layers"
-                class="w-[14px] h-[14px] text-emerald-400 shrink-0 transition-transform duration-300 group-hover:scale-110"></i>
+                class="w-3.5 h-3.5 text-emerald-400 shrink-0 group-hover:scale-110 transition-transform"></i>
               <span class="hidden md:inline" id="text-transcribe-all">Transcribe All Tabs</span>
               <span class="md:hidden">All Tabs</span>
             </button>
 
+            <!-- Auto-Fit & Sync End -->
             <button id="btn-auto-fit"
-              class="group px-3 sm:px-4 py-1.5 rounded-lg text-xs font-medium flex items-center gap-2 transition-all duration-300 ease-out bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-muted)] opacity-70 hover:opacity-100 shadow-sm active:scale-[0.95]">
-              <i id="icon-auto-fit" data-lucide="zap"
-                class="w-[14px] h-[14px] shrink-0 transition-colors duration-300"></i>
+              class="group h-8 px-2.5 sm:px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-muted)] opacity-70 hover:opacity-100 shadow-sm active:scale-[0.95]">
+              <i id="icon-auto-fit" data-lucide="zap" class="w-3.5 h-3.5 shrink-0"></i>
               <span id="text-auto-fit" class="hidden sm:inline">Auto-Fit: OFF</span>
             </button>
 
             <button id="btn-match-audio-end"
-              class="group px-3 sm:px-4 py-1.5 rounded-lg text-xs font-medium flex items-center gap-2 transition-all duration-300 ease-out bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-muted)] opacity-70 hover:opacity-100 shadow-sm active:scale-[0.95]"
+              class="group h-8 px-2.5 sm:px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-muted)] opacity-70 hover:opacity-100 shadow-sm active:scale-[0.95]"
               title="When ON: after Generate Audio / Stop, each subtitle's end time snaps to match its own audio's end time.">
-              <i id="icon-match-audio-end" data-lucide="scissors"
-                class="w-[14px] h-[14px] shrink-0 transition-colors duration-300"></i>
+              <i id="icon-match-audio-end" data-lucide="scissors" class="w-3.5 h-3.5 shrink-0"></i>
               <span id="text-match-audio-end" class="hidden sm:inline">Sync End: OFF</span>
             </button>
 
-            <div class="hidden sm:block h-5 w-px bg-[var(--border-light)] opacity-60"></div>
+            <div class="hidden sm:block h-4 w-px bg-[var(--border-color)]"></div>
 
+            <!-- Generate Audio Single & All -->
             <button id="btn-generate-audio" disabled
-              class="px-3 sm:px-4 py-1.5 rounded-lg text-xs font-medium flex items-center gap-2 transition-all duration-300 ease-out bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-muted)] opacity-60 cursor-not-allowed">
-              <i id="icon-generate" data-lucide="audio-lines" class="w-[14px] h-[14px] shrink-0"></i>
-              <span class="hidden sm:inline" id="text-generate">Generate Selected Audio</span>
+              class="h-8 px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-muted)] opacity-60 cursor-not-allowed">
+              <i id="icon-generate" data-lucide="audio-lines" class="w-3.5 h-3.5 shrink-0"></i>
+              <span class="hidden sm:inline" id="text-generate">Generate Audio</span>
               <span class="sm:hidden" id="text-generate-mobile">Generate</span>
             </button>
 
             <button id="btn-generate-audio-all" title="Generate audio for ALL open project tabs"
-              class="group px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ease-out bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-secondary)] hover:text-[var(--text-bright)] hover:border-emerald-400/50 shadow-sm active:scale-[0.95]">
-              <i id="icon-generate-all" data-lucide="layers"
-                class="w-[14px] h-[14px] text-emerald-400 shrink-0 transition-transform duration-300 group-hover:scale-110"></i>
+              class="group h-8 px-2.5 sm:px-3 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm shadow-indigo-600/30 active:scale-[0.95]">
+              <i id="icon-generate-all" data-lucide="layers" class="w-3.5 h-3.5 shrink-0 group-hover:scale-110 transition-transform"></i>
               <span class="hidden md:inline" id="text-generate-all">Generate All Tabs</span>
               <span class="md:hidden">All Tabs</span>
             </button>
@@ -2138,49 +2199,51 @@
             </div>
 
             <div id="timeline-tracks" class="pt-8 px-2 pb-32 flex flex-col gap-2 relative z-20 min-h-full">
+              <!-- Subtitle Track (T1) -->
               <div id="track-t1"
-                class="bg-[var(--bg-panel)] rounded border border-[var(--border-color)] flex items-center relative group shrink-0"
+                class="bg-[var(--bg-panel)] rounded-xl border border-[var(--border-color)] hover:border-violet-500/30 flex items-center relative group shrink-0 transition-colors shadow-sm"
                 style="height: 48px">
                 <div
-                  class="absolute left-2 text-xs text-[var(--text-secondary)] font-semibold z-30 bg-[var(--bg-base)] px-1.5 py-0.5 rounded shadow-md pointer-events-none sticky flex items-center gap-1.5">
-                  T1
+                  class="absolute left-2.5 text-[11px] text-[var(--text-secondary)] font-semibold z-30 bg-studio-card/90 border border-white/[0.08] px-2 py-0.5 rounded-lg shadow-sm pointer-events-none sticky flex items-center gap-1.5 backdrop-blur-sm">
+                  <span class="text-violet-400 font-bold">T1</span>
                   <button id="btn-link-t1a1" title="T1 & A1 are linked — click to unlink"
-                    class="pointer-events-auto transition-colors text-[var(--accent-primary)] ml-0.5 p-1 -m-1 rounded hover:bg-[var(--bg-hover)]">
+                    class="pointer-events-auto transition-colors text-indigo-400 hover:text-indigo-300 ml-0.5 p-1 -m-1 rounded hover:bg-white/[0.06]">
                     <i id="icon-link-t1a1" data-lucide="link" class="w-3.5 h-3.5"></i>
                   </button>
                   <button id="btn-delete-t1"
-                    class="pointer-events-auto hover:text-red-500 text-[var(--text-muted)] transition-colors ml-0.5 p-1 -m-1 rounded hover:bg-[var(--bg-hover)]">
+                    class="pointer-events-auto hover:text-rose-400 text-[var(--text-muted)] transition-colors ml-0.5 p-1 -m-1 rounded hover:bg-white/[0.06]">
                     <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
                   </button>
                 </div>
                 <div onmousedown="startDrag(event, null, 'resize-track', 't1')"
-                  class="absolute bottom-0 left-0 right-0 h-1 cursor-s-resize hover:bg-[var(--accent-primary)] z-40 transition-colors">
+                  class="absolute bottom-0 left-0 right-0 h-1.5 cursor-s-resize hover:bg-indigo-500 z-40 transition-colors">
                 </div>
               </div>
 
+              <!-- Audio Track (A1) -->
               <div id="track-a1"
-                class="bg-[var(--bg-panel)] rounded border border-[var(--border-color)] flex items-center relative group shrink-0"
+                class="bg-[var(--bg-panel)] rounded-xl border border-[var(--border-color)] hover:border-sky-500/30 flex items-center relative group shrink-0 transition-colors shadow-sm"
                 style="height: 48px">
                 <div
-                  class="absolute left-2 text-xs text-[var(--text-secondary)] font-semibold z-30 bg-[var(--bg-base)] px-1.5 py-0.5 rounded shadow-md pointer-events-none sticky flex items-center gap-1.5">
-                  A1
+                  class="absolute left-2.5 text-[11px] text-[var(--text-secondary)] font-semibold z-30 bg-studio-card/90 border border-white/[0.08] px-2 py-0.5 rounded-lg shadow-sm pointer-events-none sticky flex items-center gap-1.5 backdrop-blur-sm">
+                  <span class="text-sky-400 font-bold">A1</span>
                   <button id="btn-mute-a1"
-                    class="pointer-events-auto hover:text-[var(--text-bright)] text-[var(--text-muted)] transition-colors p-1 -m-1 rounded hover:bg-[var(--bg-hover)]">
+                    class="pointer-events-auto hover:text-[var(--text-bright)] text-[var(--text-muted)] transition-colors p-1 -m-1 rounded hover:bg-white/[0.06]">
                     <i id="icon-mute-a1" data-lucide="volume-2" class="w-3.5 h-3.5"></i>
                   </button>
                   <button id="btn-delete-a1"
-                    class="pointer-events-auto hover:text-red-500 text-[var(--text-muted)] transition-colors ml-0.5 p-1 -m-1 rounded hover:bg-[var(--bg-hover)]">
+                    class="pointer-events-auto hover:text-rose-400 text-[var(--text-muted)] transition-colors ml-0.5 p-1 -m-1 rounded hover:bg-white/[0.06]">
                     <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
                   </button>
                 </div>
-                <div id="block-a1" class="absolute bg-blue-600/20 border border-blue-500/30 rounded z-10 hidden"
+                <div id="block-a1" class="absolute bg-sky-500/20 border border-sky-400/40 rounded-lg z-10 hidden"
                   style="left: 0; top: 4px; bottom: 4px"></div>
 
                 <canvas id="a1-waveform-canvas"
-                  class="absolute inset-0 w-full h-full pointer-events-none opacity-40 z-[5]"></canvas>
+                  class="absolute inset-0 w-full h-full pointer-events-none opacity-45 z-[5]"></canvas>
 
                 <div onmousedown="startDrag(event, null, 'resize-track', 'a1')"
-                  class="absolute bottom-0 left-0 right-0 h-1 cursor-s-resize hover:bg-[var(--accent-primary)] z-40 transition-colors">
+                  class="absolute bottom-0 left-0 right-0 h-1.5 cursor-s-resize hover:bg-sky-500 z-40 transition-colors">
                 </div>
               </div>
             </div>
@@ -2192,14 +2255,13 @@
 
   <!-- STATUS BAR -->
   <footer
-    class="h-10 bg-[var(--bg-panel)] border-t border-[var(--border-color)] flex items-center justify-between px-4 text-[11px] text-[var(--text-muted)] shrink-0">
+    class="h-9 bg-studio-card/90 border-t border-[var(--border-color)] flex items-center justify-between px-4 text-xs text-[var(--text-muted)] shrink-0 backdrop-blur-md">
     <div class="flex items-center gap-0 overflow-x-auto flex-1 min-w-0" id="project-tabs-bar">
       <!-- tabs rendered here by JS -->
-      <span id="footer-no-project" class="flex items-center gap-1.5 font-khmer">Project: បកប្រែរឿង</span>
+      <span id="footer-no-project" class="flex items-center gap-1.5 font-khmer text-slate-400 font-medium">Project: បកប្រែរឿង</span>
     </div>
     <div id="memory-usage-display"
-      class="transition-colors duration-300 shrink-0 ml-4 pl-4 border-l border-[var(--border-color)]">Memory Usage:
-      Normal</div>
+      class="transition-colors duration-300 shrink-0 ml-4 pl-4 border-l border-[var(--border-color)] font-mono text-[11px] text-slate-400">Memory Usage: Normal</div>
   </footer>
 
   <div id="text-context-menu"
@@ -3153,7 +3215,8 @@
 
               <!-- Hidden native select (still used by existing JS listeners) -->
               <select id="setting-ai-model" class="hidden">
-                <option value="gemini-3.7-flash" selected>Gemini 3.7 Flash</option>
+                <option value="gemini-3.8-flash" selected>Gemini 3.8 Flash</option>
+                <option value="gemini-3.7-flash">Gemini 3.7 Flash</option>
                 <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
                 <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
                 <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro</option>
@@ -3167,7 +3230,7 @@
                   class="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)] hover:border-[var(--accent-primary)] transition-all text-sm text-[var(--text-primary)]">
                   <span class="flex items-center gap-2.5">
                     <i id="gemini-model-icon" data-lucide="zap" class="w-4 h-4 text-amber-400 shrink-0"></i>
-                    <span id="gemini-model-label">Gemini 3.7 Flash (Hybrid Reasoning & Ultra Fast)</span>
+                    <span id="gemini-model-label">Gemini 3.8 Flash (Latest & Tunable Thinking)</span>
                   </span>
                   <i data-lucide="chevron-down" id="gemini-model-chevron"
                     class="w-4 h-4 text-[var(--text-muted)] shrink-0 transition-transform duration-300"></i>
@@ -3182,14 +3245,23 @@
                       <p
                         class="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider px-2 pt-1 pb-0.5">
                         High Speed & Latest Reasoning (Recommended)</p>
-                      <button data-model="gemini-3.7-flash"
-                        data-label="Gemini 3.7 Flash (Hybrid Reasoning & Ultra Fast)"
+                      <button data-model="gemini-3.8-flash"
+                        data-label="Gemini 3.8 Flash (Latest & Tunable Thinking)"
                         class="gemini-model-opt w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--bg-hover)] transition-colors text-sm text-[var(--text-primary)] hover:text-[var(--text-bright)] bg-[var(--accent-primary)] text-white">
                         <i data-lucide="zap" class="w-4 h-4 text-amber-400 shrink-0"></i>
-                        <span class="flex-1 font-semibold">Gemini 3.7 Flash</span>
+                        <span class="flex-1 font-semibold">Gemini 3.8 Flash</span>
                         <span
-                          class="text-[10px] text-amber-300 bg-amber-400/15 px-1.5 py-0.5 rounded border border-amber-400/30">3.7
-                          Flash ⚡</span>
+                          class="text-[10px] text-amber-300 bg-amber-400/15 px-1.5 py-0.5 rounded border border-amber-400/30">3.8
+                          Flash ⚡ (Latest)</span>
+                      </button>
+                      <button data-model="gemini-3.7-flash"
+                        data-label="Gemini 3.7 Flash (Hybrid Reasoning & Ultra Fast)"
+                        class="gemini-model-opt w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--bg-hover)] transition-colors text-sm text-[var(--text-primary)] hover:text-[var(--text-bright)]">
+                        <i data-lucide="zap" class="w-4 h-4 text-yellow-400 shrink-0"></i>
+                        <span class="flex-1">Gemini 3.7 Flash</span>
+                        <span
+                          class="text-[10px] text-yellow-300 bg-yellow-400/15 px-1.5 py-0.5 rounded border border-yellow-400/30">3.7
+                          Flash</span>
                       </button>
                       <button data-model="gemini-2.5-flash" data-label="Gemini 2.5 Flash (Free Tier & Ultra Fast)"
                         class="gemini-model-opt w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--bg-hover)] transition-colors text-sm text-[var(--text-primary)] hover:text-[var(--text-bright)]">
@@ -6625,11 +6697,32 @@
           }, 200);
         }
 
+        if (window.activeColorPresetName) {
+          window.activeColorPresetName = null;
+          if (typeof caUpdateActiveCards === "function") caUpdateActiveCards();
+        }
+
         videoColorAdj[k] = val;
         if (label) label.textContent = k === "hue" ? `${Math.round(val)}°` : Math.round(val);
         applyVideoColorFilter();
         if (projects.length > 0) projects[activeProjectIndex].videoColorAdj = { ...videoColorAdj };
       });
+
+      // Double-click to instantly snap back to neutral center
+      const resetThisParam = () => {
+        const center = _caCenter[k];
+        slider.value = center;
+        videoColorAdj[k] = center;
+        if (label) label.textContent = k === "hue" ? `${center}°` : center;
+        if (window.activeColorPresetName) {
+          window.activeColorPresetName = null;
+          if (typeof caUpdateActiveCards === "function") caUpdateActiveCards();
+        }
+        applyVideoColorFilter();
+        if (projects.length > 0) projects[activeProjectIndex].videoColorAdj = { ...videoColorAdj };
+      };
+      slider.addEventListener("dblclick", resetThisParam);
+      if (label) label.addEventListener("dblclick", resetThisParam);
     });
 
     // ── VIGNETTE (top-level — initialized once, never re-registered) ──
@@ -7482,33 +7575,123 @@
 
     const DEFAULT_COLOR_FILTERS = [
       {
-        name: "Cinematic Warm",
-        icon: "🎬",
-        adj: { brightness: 106, contrast: 116, saturation: 112, sharpness: 1.5, hue: -6 },
+        name: "Neutral (Raw)",
+        category: "all",
+        gradient: "linear-gradient(135deg, #475569, #1e293b)",
+        tag: "Original",
+        adj: { brightness: 100, contrast: 100, saturation: 100, sharpness: 0, hue: 0 },
+        isDefault: true,
+      },
+      {
+        name: "Blockbuster Warm",
+        category: "cinematic",
+        gradient: "linear-gradient(135deg, #f59e0b, #3b82f6)",
+        tag: "Hollywood",
+        adj: { brightness: 105, contrast: 118, saturation: 114, sharpness: 1.5, hue: -5 },
         isDefault: true,
       },
       {
         name: "Teal & Orange",
-        icon: "🌊",
-        adj: { brightness: 104, contrast: 122, saturation: 128, sharpness: 2.0, hue: 14 },
+        category: "cinematic",
+        gradient: "linear-gradient(135deg, #06b6d4, #f97316)",
+        tag: "Iconic",
+        adj: { brightness: 104, contrast: 124, saturation: 128, sharpness: 2.0, hue: 12 },
         isDefault: true,
       },
       {
-        name: "Vivid HDR",
-        icon: "✨",
-        adj: { brightness: 108, contrast: 125, saturation: 130, sharpness: 2.5, hue: 0 },
+        name: "Cyberpunk 2077",
+        category: "aesthetic",
+        gradient: "linear-gradient(135deg, #ec4899, #06b6d4)",
+        tag: "Neon",
+        adj: { brightness: 108, contrast: 130, saturation: 142, sharpness: 2.0, hue: -18 },
         isDefault: true,
       },
       {
-        name: "Vintage Retro",
-        icon: "🎞️",
-        adj: { brightness: 98, contrast: 95, saturation: 82, sharpness: 0.5, hue: -14 },
+        name: "Vivid HDR Pop",
+        category: "cinematic",
+        gradient: "linear-gradient(135deg, #8b5cf6, #3b82f6)",
+        tag: "Clarity",
+        adj: { brightness: 108, contrast: 126, saturation: 132, sharpness: 2.5, hue: 0 },
         isDefault: true,
       },
       {
-        name: "Classic Noir",
-        icon: "🖤",
-        adj: { brightness: 104, contrast: 132, saturation: 0, sharpness: 2.0, hue: 0 },
+        name: "Warm Espresso",
+        category: "aesthetic",
+        gradient: "linear-gradient(135deg, #78350f, #d97706)",
+        tag: "Coffee",
+        adj: { brightness: 99, contrast: 108, saturation: 92, sharpness: 1.0, hue: -10 },
+        isDefault: true,
+      },
+      {
+        name: "Cold Nordic",
+        category: "moody",
+        gradient: "linear-gradient(135deg, #38bdf8, #64748b)",
+        tag: "Icy Blue",
+        adj: { brightness: 102, contrast: 115, saturation: 85, sharpness: 1.5, hue: 16 },
+        isDefault: true,
+      },
+      {
+        name: "K-Drama Glow",
+        category: "aesthetic",
+        gradient: "linear-gradient(135deg, #f472b6, #fb7185)",
+        tag: "Airy Pastel",
+        adj: { brightness: 112, contrast: 104, saturation: 118, sharpness: 0.5, hue: -4 },
+        isDefault: true,
+      },
+      {
+        name: "Kodak Portra 400",
+        category: "vintage",
+        gradient: "linear-gradient(135deg, #fbbf24, #b45309)",
+        tag: "35mm Film",
+        adj: { brightness: 104, contrast: 110, saturation: 108, sharpness: 0.5, hue: -8 },
+        isDefault: true,
+      },
+      {
+        name: "Film Noir",
+        category: "moody",
+        gradient: "linear-gradient(135deg, #f1f5f9, #020617)",
+        tag: "B&W Sharp",
+        adj: { brightness: 106, contrast: 136, saturation: 0, sharpness: 2.5, hue: 0 },
+        isDefault: true,
+      },
+      {
+        name: "Golden Hour",
+        category: "aesthetic",
+        gradient: "linear-gradient(135deg, #fb923c, #eab308)",
+        tag: "Sunset",
+        adj: { brightness: 106, contrast: 114, saturation: 135, sharpness: 1.5, hue: -12 },
+        isDefault: true,
+      },
+      {
+        name: "Emerald Matrix",
+        category: "cinematic",
+        gradient: "linear-gradient(135deg, #10b981, #06b6d4)",
+        tag: "Sci-Fi",
+        adj: { brightness: 102, contrast: 122, saturation: 110, sharpness: 1.5, hue: 28 },
+        isDefault: true,
+      },
+      {
+        name: "Bleach Bypass",
+        category: "moody",
+        gradient: "linear-gradient(135deg, #94a3b8, #334155)",
+        tag: "Action",
+        adj: { brightness: 103, contrast: 140, saturation: 70, sharpness: 3.0, hue: 0 },
+        isDefault: true,
+      },
+      {
+        name: "VHS Retro 80s",
+        category: "vintage",
+        gradient: "linear-gradient(135deg, #a855f7, #f43f5e)",
+        tag: "Nostalgia",
+        adj: { brightness: 102, contrast: 96, saturation: 122, sharpness: -0.5, hue: -15 },
+        isDefault: true,
+      },
+      {
+        name: "Moonlight Mystery",
+        category: "moody",
+        gradient: "linear-gradient(135deg, #1e1b4b, #38bdf8)",
+        tag: "Midnight",
+        adj: { brightness: 94, contrast: 125, saturation: 88, sharpness: 1.5, hue: 20 },
         isDefault: true,
       },
     ];
@@ -7532,70 +7715,83 @@
       localStorage.setItem(CA_PRESET_KEY, JSON.stringify(list));
     }
 
-    function caPresetSwatch(adj) {
-      // Build a tiny visual hint: 5 mini bars representing b/c/s/sharpness/hue deviation
-      const keys = ["brightness", "contrast", "saturation", "sharpness", "hue"];
-      const centers = {
-        brightness: 100,
-        contrast: 100,
-        saturation: 100,
-        sharpness: 0,
-        hue: 0,
-      };
-      const maxDev = {
-        brightness: 100,
-        contrast: 100,
-        saturation: 100,
-        sharpness: 5,
-        hue: 180,
-      };
-      return keys
-        .map((k) => {
-          const pct = Math.round(50 + ((adj[k] - centers[k]) / maxDev[k]) * 50);
-          const active = adj[k] !== centers[k];
-          return `<span style="display:inline-block;width:2px;height:${6 + (Math.abs(adj[k] - centers[k]) / maxDev[k]) * 6}px;border-radius:1px;background:${active ? "var(--accent-primary)" : "var(--border-light)"};opacity:${active ? 0.9 : 0.4};vertical-align:middle;margin:0 0.5px;"></span>`;
-        })
-        .join("");
+    let caActiveCategory = "all";
+    window.activeColorPresetName = window.activeColorPresetName || null;
+
+    function caUpdateActiveCards() {
+      const cards = document.querySelectorAll(".ca-preset-card");
+      cards.forEach((card) => {
+        const name = card.dataset.presetName;
+        const isActive = window.activeColorPresetName && window.activeColorPresetName === name;
+        if (isActive) {
+          card.classList.add("border-cyan-400", "bg-cyan-500/15", "shadow-[0_0_12px_rgba(6,182,212,0.25)]", "ring-1", "ring-cyan-400/50");
+          card.classList.remove("border-white/[0.08]", "bg-white/[0.03]");
+          const dot = card.querySelector(".ca-active-dot");
+          if (dot) dot.classList.remove("hidden");
+        } else {
+          card.classList.remove("border-cyan-400", "bg-cyan-500/15", "shadow-[0_0_12px_rgba(6,182,212,0.25)]", "ring-1", "ring-cyan-400/50");
+          card.classList.add("border-white/[0.08]", "bg-white/[0.03]");
+          const dot = card.querySelector(".ca-active-dot");
+          if (dot) dot.classList.add("hidden");
+        }
+      });
     }
 
-    function caRenderPresets() {
+    function caRenderPresets(category = caActiveCategory) {
+      caActiveCategory = category;
       const list = caLoadPresets();
       const container = document.getElementById("ca-preset-list");
       if (!container) return;
-      if (list.length === 0) {
-        container.innerHTML = `<span class="text-[10px] text-[var(--text-muted)] italic">No presets yet</span>`;
+
+      const filtered = list.filter((p) => {
+        if (category === "all") return true;
+        if (category === "custom") return !p.isDefault;
+        return p.category === category;
+      });
+
+      if (filtered.length === 0) {
+        container.innerHTML = `<div class="col-span-2 text-center py-4 text-[10px] text-slate-400 italic">No presets in this category.</div>`;
         return;
       }
+
       container.innerHTML = "";
-      list.forEach((preset, i) => {
-        const chip = document.createElement("div");
-        chip.className = "group relative flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-[var(--border-light)] bg-[var(--bg-panel)] cursor-pointer hover:border-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/15 transition-all duration-150 select-none shadow-sm";
-        const iconHtml = preset.icon ? `<span class="text-xs shrink-0">${preset.icon}</span>` : `<img src="assets/icons/color-preset.svg" class="w-3.5 h-3.5 shrink-0 opacity-70 group-hover:opacity-100 transition-opacity ca-preset-icon" />`;
-        const delHtml = preset.isDefault ? '' : `<button class="ca-preset-del hidden group-hover:flex items-center justify-center w-3.5 h-3.5 rounded-full bg-red-500/80 hover:bg-red-500 text-white transition-all ml-0.5 shrink-0" data-index="${i}" title="Delete"><i data-lucide="x" class="w-2 h-2 pointer-events-none"></i></button>`;
+      filtered.forEach((preset) => {
+        const isCustom = !preset.isDefault;
+        const isActive = window.activeColorPresetName === preset.name;
+        const card = document.createElement("div");
+        card.dataset.presetName = preset.name;
+        card.className = `ca-preset-card group relative flex items-center gap-2 p-1.5 rounded-lg border transition-all duration-200 cursor-pointer select-none ${
+          isActive
+            ? "border-cyan-400 bg-cyan-500/15 shadow-[0_0_12px_rgba(6,182,212,0.25)] ring-1 ring-cyan-400/50"
+            : "border-white/[0.08] bg-white/[0.03] hover:border-white/[0.2] hover:bg-white/[0.07]"
+        }`;
 
-        chip.innerHTML = `
-  ${iconHtml}
-  <span class="relative group/tip flex items-center">
-    <span class="text-[11px] font-medium text-[var(--text-bright)] whitespace-nowrap">${preset.name}</span>
-    <span class="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5
-      whitespace-nowrap text-[10px] font-medium text-[var(--text-bright)]
-      bg-[var(--bg-panel)] border border-[var(--border-light)]
-      px-2 py-1 rounded-lg shadow-xl
-      opacity-0 scale-95 group-hover/tip:opacity-100 group-hover/tip:scale-100
-      transition-all duration-150 z-50">
-      ${preset.name} (1-Click Filter)
-    </span>
-  </span>
-  ${delHtml}
-`;
+        const swatchBg = preset.gradient || "linear-gradient(135deg, #06b6d4, #f97316)";
+        const tagLabel = preset.tag || (isCustom ? "Custom" : "LUT");
+        const delBtnHtml = isCustom
+          ? `<button class="ca-preset-del opacity-0 group-hover:opacity-100 flex items-center justify-center w-4 h-4 rounded-full bg-rose-500/80 hover:bg-rose-500 text-white transition-all ml-auto shrink-0" data-name="${preset.name}" title="Delete preset"><i data-lucide="x" class="w-2.5 h-2.5 pointer-events-none"></i></button>`
+          : "";
 
-        // Apply preset with smooth animation
-        chip.addEventListener("click", (e) => {
+        card.innerHTML = `
+          <div class="w-5 h-5 rounded-md shrink-0 shadow-sm relative overflow-hidden flex items-center justify-center border border-white/20" style="background: ${swatchBg}">
+            <div class="ca-active-dot w-1.5 h-1.5 rounded-full bg-white shadow-[0_0_4px_#fff] ${isActive ? "" : "hidden"}"></div>
+          </div>
+          <div class="flex flex-col min-w-0 flex-1">
+            <span class="text-[10px] font-semibold text-slate-200 truncate leading-tight group-hover:text-white">${preset.name}</span>
+            <span class="text-[8px] text-slate-400 tracking-wider uppercase leading-none mt-0.5">${tagLabel}</span>
+          </div>
+          ${delBtnHtml}
+        `;
+
+        card.addEventListener("click", (e) => {
           if (e.target.closest(".ca-preset-del")) return;
+          window.activeColorPresetName = preset.name;
+          caUpdateActiveCards();
+
           const target = { ...preset.adj };
           const from = { ...videoColorAdj };
           const startT = performance.now();
-          const dur = 350;
+          const dur = 320;
           function ease(t) {
             return t === 1 ? 1 : 1 - Math.pow(2, -10 * t);
           }
@@ -7617,33 +7813,28 @@
               videoColorAdj = { ...target };
               syncColorSliderUI();
               applyVideoColorFilter();
-              if (projects.length > 0)
-                projects[activeProjectIndex].videoColorAdj = {
-                  ...videoColorAdj,
-                };
+              if (projects.length > 0) {
+                projects[activeProjectIndex].videoColorAdj = { ...videoColorAdj };
+              }
             }
           }
           if (raf) cancelAnimationFrame(raf);
           raf = requestAnimationFrame(animate);
-
-          // Briefly highlight the chip
-          chip.classList.add("border-[var(--accent-primary)]", "bg-[var(--accent-primary)]/20");
-          setTimeout(() => chip.classList.remove("bg-[var(--accent-primary)]/20"), 400);
         });
 
-        // Delete on ✕ button
-        const delBtn = chip.querySelector(".ca-preset-del");
-        if (delBtn) delBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          const idx = parseInt(e.currentTarget.dataset.index, 10);
-          const updated = caLoadPresets();
-          updated.splice(idx, 1);
-          caSavePresets(updated);
-          caRenderPresets();
-          _lucideCreateIcons({ root: container });
-        });
+        const delBtn = card.querySelector(".ca-preset-del");
+        if (delBtn) {
+          delBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const pName = e.currentTarget.dataset.name;
+            const updated = caLoadPresets().filter((p) => p.isDefault || p.name !== pName);
+            caSavePresets(updated);
+            if (window.activeColorPresetName === pName) window.activeColorPresetName = null;
+            caRenderPresets(caActiveCategory);
+          });
+        }
 
-        container.appendChild(chip);
+        container.appendChild(card);
       });
 
       _lucideCreateIcons({ root: container });
@@ -7651,7 +7842,6 @@
 
     // Save current values as a new preset
     document.getElementById("btn-ca-save-preset").addEventListener("click", () => {
-      // Inline name input — appears inside the button row
       const container = document.getElementById("ca-preset-list");
       const existing = document.getElementById("ca-preset-name-input");
       if (existing) {
@@ -7661,12 +7851,12 @@
 
       const wrap = document.createElement("div");
       wrap.id = "ca-preset-name-input";
-      wrap.className = "flex items-center gap-1.5 w-full mt-0.5";
+      wrap.className = "flex items-center gap-1.5 w-full mt-1 col-span-2";
       wrap.innerHTML = `
-          <input id="ca-preset-name-field" type="text" maxlength="18" placeholder="Preset name…"
-            class="flex-1 text-[10px] bg-[var(--bg-hover)] border border-[var(--accent-primary)]/60 focus:border-[var(--accent-primary)] rounded-md px-2 py-1 text-[var(--text-bright)] outline-none transition-colors placeholder:text-[var(--text-muted)]" />
-          <button id="ca-preset-confirm" class="text-[10px] bg-[var(--accent-primary)] text-white px-2 py-1 rounded-md hover:brightness-110 transition-all font-medium active:scale-95">Save</button>
-          <button id="ca-preset-cancel"  class="text-[10px] text-[var(--text-muted)] hover:text-red-400 px-1.5 py-1 rounded-md hover:bg-[var(--bg-hover)] transition-colors">✕</button>
+          <input id="ca-preset-name-field" type="text" maxlength="18" placeholder="Custom preset name…"
+            class="flex-1 text-[10px] bg-slate-800 border border-cyan-500/60 focus:border-cyan-400 rounded-md px-2 py-1 text-slate-100 outline-none transition-colors placeholder:text-slate-500" />
+          <button id="ca-preset-confirm" class="text-[10px] bg-cyan-600 text-white px-2.5 py-1 rounded-md hover:bg-cyan-500 transition-all font-semibold active:scale-95">Save</button>
+          <button id="ca-preset-cancel"  class="text-[10px] text-slate-400 hover:text-rose-400 px-1.5 py-1 rounded-md hover:bg-white/[0.06] transition-colors">✕</button>
         `;
       container.before(wrap);
 
@@ -7677,12 +7867,27 @@
       field.focus();
 
       function doSave() {
-        const name = field.value.trim() || `Preset ${caLoadPresets().length + 1}`;
+        const name = field.value.trim() || `My Grade ${caLoadPresets().length + 1}`;
         const list = caLoadPresets();
-        list.push({ name, adj: { ...videoColorAdj } });
+        list.push({
+          name,
+          category: "custom",
+          gradient: "linear-gradient(135deg, #06b6d4, #a855f7)",
+          tag: "Custom",
+          adj: { ...videoColorAdj },
+          isDefault: false,
+        });
         caSavePresets(list);
         wrap.remove();
-        caRenderPresets();
+        window.activeColorPresetName = name;
+        caRenderPresets("custom");
+        document.querySelectorAll(".ca-cat-btn").forEach((b) => {
+          b.classList.toggle("active", b.dataset.cat === "custom");
+          b.classList.toggle("bg-cyan-500/20", b.dataset.cat === "custom");
+          b.classList.toggle("text-cyan-300", b.dataset.cat === "custom");
+          b.classList.toggle("border-cyan-500/30", b.dataset.cat === "custom");
+          b.classList.toggle("font-bold", b.dataset.cat === "custom");
+        });
       }
 
       confirm.addEventListener("click", doSave);
@@ -7692,6 +7897,41 @@
         if (e.key === "Escape") wrap.remove();
       });
     });
+
+    // Category Tabs Switching
+    document.querySelectorAll(".ca-cat-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".ca-cat-btn").forEach((b) => {
+          b.classList.remove("active", "bg-cyan-500/20", "text-cyan-300", "border-cyan-500/30", "font-bold");
+          b.classList.add("text-[var(--text-secondary)]", "font-medium");
+        });
+        btn.classList.add("active", "bg-cyan-500/20", "text-cyan-300", "border-cyan-500/30", "font-bold");
+        btn.classList.remove("text-[var(--text-secondary)]", "font-medium");
+        const cat = btn.dataset.cat || "all";
+        caRenderPresets(cat);
+      });
+    });
+
+    // Hold to Compare Button
+    const btnCompare = document.getElementById("btn-ca-compare");
+    if (btnCompare) {
+      const startCompare = (e) => {
+        if (e.button && e.button !== 0) return;
+        const v = document.getElementById("main-video");
+        if (v) v.style.filter = "none";
+        btnCompare.classList.add("bg-amber-500/25", "text-amber-300", "border-amber-400/50");
+      };
+      const stopCompare = () => {
+        applyVideoColorFilter();
+        btnCompare.classList.remove("bg-amber-500/25", "text-amber-300", "border-amber-400/50");
+      };
+      btnCompare.addEventListener("mousedown", startCompare);
+      btnCompare.addEventListener("mouseup", stopCompare);
+      btnCompare.addEventListener("mouseleave", stopCompare);
+      btnCompare.addEventListener("touchstart", startCompare, { passive: true });
+      btnCompare.addEventListener("touchend", stopCompare, { passive: true });
+      btnCompare.addEventListener("touchcancel", stopCompare, { passive: true });
+    }
 
     // Initial render
     caRenderPresets();
@@ -9024,7 +9264,7 @@
 
           if (projects[activeProjectIndex] === targetProject) showToast("Translating transcript with AI...", "info");
 
-          let activeModel = localStorage.getItem("aiDubberModel") || "gemini-3.7-flash";
+          let activeModel = localStorage.getItem("aiDubberModel") || "gemini-3.8-flash";
           let lastErrorType = "UNKNOWN_ERROR";
           let lastErrorMessage = "";
 
@@ -9148,7 +9388,7 @@
 
           const audioBase64 = await blobToBase64(audioBlob);
           const totalDur = (targetProject.duration || duration) > 0 ? (targetProject.duration || duration).toFixed(2) : 60;
-          let activeModel = localStorage.getItem("aiDubberModel") || "gemini-3.7-flash";
+          let activeModel = localStorage.getItem("aiDubberModel") || "gemini-3.8-flash";
           let lastErrorType = "UNKNOWN_ERROR";
           let lastErrorMessage = "";
 
@@ -12994,20 +13234,20 @@
     };
 
     const loadSettings = async () => {
-      // Default to Gemini 3.7 Flash (Hybrid reasoning & ultra fast)
-      let savedModel = localStorage.getItem("aiDubberModel") || "gemini-3.7-flash";
+      // Default to Gemini 3.8 Flash (Latest workhorse model)
+      let savedModel = localStorage.getItem("aiDubberModel") || "gemini-3.8-flash";
       if (savedModel === "gemini-3.1-pro") {
         savedModel = "gemini-3.1-pro-preview";
       }
       if (savedModel === "gemini-2.0-flash") {
-        savedModel = "gemini-3.7-flash";
+        savedModel = "gemini-3.8-flash";
       }
 
       const modelSelect = document.getElementById("setting-ai-model");
       if (modelSelect) {
         modelSelect.value = savedModel;
         if (modelSelect.selectedIndex === -1) {
-          savedModel = "gemini-3.7-flash";
+          savedModel = "gemini-3.8-flash";
           modelSelect.value = savedModel;
         }
       }
@@ -13540,7 +13780,7 @@
 
       try {
         const glossary = typeof getDramaGlossaryDict === "function" ? getDramaGlossaryDict() : null;
-        const activeModel = localStorage.getItem("aiDubberModel") || "gemini-3.7-flash";
+        const activeModel = localStorage.getItem("aiDubberModel") || "gemini-3.8-flash";
 
         const res = await fetch("http://localhost:3001/api/rewrite-dialogue", {
           method: "POST",
@@ -13626,7 +13866,7 @@
       }
 
       const glossary = typeof getDramaGlossaryDict === "function" ? getDramaGlossaryDict() : null;
-      const activeModel = localStorage.getItem("aiDubberModel") || "gemini-3.7-flash";
+      const activeModel = localStorage.getItem("aiDubberModel") || "gemini-3.8-flash";
 
       try {
         const res = await fetch("http://localhost:3001/api/refactor-subtitles-batch", {
@@ -25166,7 +25406,7 @@
               subtitlesContent = (await Promise.all(readPromises)).join("\n\n");
             }
 
-            const activeModel = localStorage.getItem("aiDubberModel") || "gemini-3.7-flash";
+            const activeModel = localStorage.getItem("aiDubberModel") || "gemini-3.8-flash";
             let suggestions = null;
             let lastErrorType = "";
 

@@ -13,7 +13,27 @@ module.exports = {
     'cursor-nw-resize', 'cursor-ne-resize', 'cursor-se-resize', 'cursor-sw-resize'
   ],
   theme: {
-    extend: {}
+    extend: {
+      colors: {
+        'studio-bg': '#090a10',
+        'studio-surface': '#11121c',
+        'studio-card': '#171826',
+        'studio-hover': '#1f2133',
+        'studio-border': 'rgba(255, 255, 255, 0.08)',
+        'studio-border-light': 'rgba(255, 255, 255, 0.14)',
+        'studio-accent': '#6366f1',
+        'studio-accent-hover': '#818cf8'
+      },
+      boxShadow: {
+        'studio-card': '0 4px 20px -2px rgba(0, 0, 0, 0.5)',
+        'studio-glow': '0 0 25px -5px rgba(99, 102, 241, 0.25)',
+        'studio-modal': '0 20px 50px -10px rgba(0, 0, 0, 0.7)'
+      },
+      fontFamily: {
+        sans: ['Inter', 'system-ui', 'sans-serif'],
+        khmer: ['"Kantumruy Pro"', '"Khmer OS Battambang"', 'sans-serif']
+      }
+    }
   },
   plugins: []
 };
