@@ -901,13 +901,13 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         const hue = ca.hue !== undefined ? parseFloat(ca.hue) : 0;
         const sharpness = ca.sharpness !== undefined ? parseFloat(ca.sharpness) : 0;
 
-        if (brightness !== 0 || contrast !== 1.0 || saturation !== 1.0) {
+        if (Math.abs(brightness) > 0.001 || Math.abs(contrast - 1.0) > 0.001 || Math.abs(saturation - 1.0) > 0.001) {
             vFilters.push(`eq=brightness=${brightness.toFixed(2)}:contrast=${contrast.toFixed(2)}:saturation=${saturation.toFixed(2)}`);
         }
-        if (hue !== 0) {
+        if (Math.abs(hue) > 0.01) {
             vFilters.push(`hue=h=${hue.toFixed(1)}`);
         }
-        if (sharpness > 0) {
+        if (sharpness > 0.01) {
             vFilters.push(`unsharp=5:5:${(sharpness * 0.4).toFixed(2)}:5:5:0.0`);
         }
 
@@ -932,6 +932,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         }
 
         if (vFilters.length > 0) {
+            console.log(`[Render] Video Color & Geometry Filters applied: ${vFilters.join(',')}`);
             filterComplex.push(`[${videoInTag}]${vFilters.join(',')}[v_proc]`);
             videoInTag = 'v_proc';
         }
