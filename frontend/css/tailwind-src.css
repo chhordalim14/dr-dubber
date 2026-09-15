@@ -1,3 +1,21 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer components {
+  .studio-card {
+    @apply bg-studio-card border border-white/[0.07] rounded-xl shadow-studio-card;
+  }
+
+  .studio-btn {
+    @apply inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 bg-white/[0.04] border border-white/[0.08] hover:bg-white/[0.08] hover:text-white hover:border-white/[0.16] transition-all duration-200 active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+
+  .studio-pill {
+    @apply p-1.5 rounded-md text-slate-400 hover:text-slate-200 hover:bg-white/[0.06] transition-all duration-150 active:scale-95;
+  }
+
+  .studio-deck-header {
+    @apply text-[10px] font-bold uppercase tracking-widest text-slate-400 select-none flex items-center gap-1.5;
+  }
+}

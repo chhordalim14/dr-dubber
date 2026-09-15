@@ -847,18 +847,13 @@ app.post('/api/cancel-remove-vocals', (req, res) => {
 
 // --- GEMINI MODEL RESOLUTION & FALLBACK ENGINE ---
 function resolveGeminiModel(modelName) {
-    if (!modelName) return 'gemini-3.7-flash';
+    if (!modelName || modelName === 'latest') return 'gemini-3.8-flash';
     const m = String(modelName).toLowerCase().trim();
-    if (m === 'gemini-3.7-flash' || m.includes('3.7-flash') || m.includes('3.7')) {
-        return 'gemini-3.7-flash';
-    }
-    if (m === 'gemini-3.1-pro-preview' || m === 'gemini-3.1-pro' || m.includes('3.1-pro')) {
-        return 'gemini-3.1-pro-preview';
-    }
-    if (m.includes('3.1-flash') || m.includes('3.1-flash-lite')) return 'gemini-2.0-flash-lite';
-    if (m.includes('3-flash')) return 'gemini-2.0-flash';
+    if (m === 'gemini-3.8-flash' || m.includes('3.8-flash') || m.includes('3.8')) return 'gemini-3.8-flash';
+    if (m === 'gemini-3.7-flash' || m.includes('3.7-flash') || m.includes('3.7')) return 'gemini-3.7-flash';
+    if (m.includes('2.5-flash') || m === 'gemini-2.5-flash') return 'gemini-2.5-flash';
+    if (m === 'gemini-3.1-pro-preview' || m === 'gemini-3.1-pro' || m.includes('3.1-pro')) return 'gemini-3.1-pro-preview';
     if (m === 'gemini-2.5-pro' || m.includes('2.5-pro')) return 'gemini-2.5-pro';
-    if (m === 'gemini-2.5-flash' || m.includes('2.5-flash')) return 'gemini-2.5-flash';
     if (m.includes('2.0-flash-lite') || m.includes('2.0-lite')) return 'gemini-2.0-flash-lite';
     if (m === 'gemini-2.0-flash' || m.includes('2.0') || m.includes('flash')) return 'gemini-2.0-flash';
     if (m === 'gemini-1.5-pro' || m.includes('1.5-pro')) return 'gemini-1.5-pro';
@@ -870,13 +865,14 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal) {
     const primaryModel = resolveGeminiModel(requestedModel);
     const candidateModels = [
         primaryModel,
+        'gemini-3.8-flash',
         'gemini-3.7-flash',
-        'gemini-2.0-flash',
         'gemini-2.5-flash',
+        'gemini-2.0-flash',
         'gemini-1.5-flash',
         'gemini-2.0-flash-lite',
-        'gemini-1.5-pro',
-        'gemini-3.1-pro-preview'
+        'gemini-2.5-pro',
+        'gemini-1.5-pro'
     ].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i);
 
     let primaryErrorMessage = null;
@@ -1362,7 +1358,7 @@ app.post('/api/rewrite-dialogue', async (req, res) => {
         genre = 'historical',
         glossary,
         apiKey,
-        model = 'gemini-2.0-flash',
+        model = 'gemini-3.8-flash',
         requestId
     } = req.body;
 
@@ -1454,7 +1450,7 @@ app.post('/api/refactor-subtitles-batch', async (req, res) => {
         dramaRegister,
         glossary,
         apiKey,
-        model = 'gemini-2.0-flash',
+        model = 'gemini-3.8-flash',
         requestId
     } = req.body;
 
