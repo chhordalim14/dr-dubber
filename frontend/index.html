@@ -1910,13 +1910,29 @@
             <div class="flex items-center gap-1">
               <!-- Edge-TTS mode buttons (shown when VoxCPM2 off) -->
               <button id="btn-bulk-male"
-                class="bounce-on-click h-7 px-2.5 bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-primary)] hover:text-white hover:bg-indigo-600 hover:border-indigo-500 rounded-md text-xs font-medium transition-all shadow-sm flex items-center gap-1">
+                class="bounce-on-click h-7 px-2.5 bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-primary)] hover:text-white hover:bg-indigo-600 hover:border-indigo-500 rounded-md text-xs font-medium transition-all shadow-sm flex items-center gap-1"
+                title="Set selected subtitles to Male (Piseth)">
                 <i data-lucide="user" class="w-3 h-3"></i> Male
               </button>
               <button id="btn-bulk-female"
-                class="bounce-on-click h-7 px-2.5 bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-primary)] hover:text-white hover:bg-pink-600 hover:border-pink-500 rounded-md text-xs font-medium transition-all shadow-sm flex items-center gap-1">
+                class="bounce-on-click h-7 px-2.5 bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-primary)] hover:text-white hover:bg-pink-600 hover:border-pink-500 rounded-md text-xs font-medium transition-all shadow-sm flex items-center gap-1"
+                title="Set selected subtitles to Female (Sreymom)">
                 <i data-lucide="user-round" class="w-3 h-3"></i> Female
               </button>
+
+              <!-- 10 Character Role Quick Dropdown -->
+              <div class="relative" id="bulk-char-wrap">
+                <button id="btn-bulk-char-trigger" type="button"
+                  class="bounce-on-click h-7 px-2 bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-primary)] hover:text-white hover:border-cyan-500 rounded-md text-xs font-medium transition-all shadow-sm flex items-center gap-1"
+                  title="Assign 1 of 10 Character Roles to Selected Subtitles">
+                  <i data-lucide="users" class="w-3 h-3 text-cyan-400"></i>
+                  <span class="hidden sm:inline">Role</span>
+                  <i data-lucide="chevron-down" id="bulk-char-chevron" class="w-3 h-3 text-[var(--text-muted)] transition-transform duration-300"></i>
+                </button>
+                <div id="bulk-char-dropdown"
+                  class="hidden absolute right-0 top-full mt-1 w-52 bg-[var(--bg-panel)] border border-[var(--border-light)] rounded-xl shadow-2xl p-1.5 z-[999] flex flex-col gap-0.5 max-h-64 overflow-y-auto custom-scrollbar">
+                </div>
+              </div>
               <!-- VoxCPM2 mode dropdown (shown when VoxCPM2 on) -->
               <div class="relative hidden" id="bulk-vox-custom-wrap">
                 <button id="bulk-vox-custom-trigger"
@@ -1984,8 +2000,8 @@
           class="absolute top-0 left-0 right-0 h-1.5 cursor-n-resize hover:bg-[var(--accent-primary)] z-[6] -translate-y-1/2">
         </div>
 
-        <div
-          class="flex flex-row items-center justify-between gap-3 px-3 sm:px-4 py-2 border-b border-[var(--border-color)] bg-[var(--bg-panel)] shrink-0 relative z-30">
+        <div id="timeline-toolbar-header"
+          class="flex flex-row items-center justify-between gap-3 px-3 sm:px-4 py-2 border-b border-[var(--border-color)] bg-[var(--bg-panel)] shrink-0 relative z-30 overflow-x-auto custom-scrollbar">
           <div class="flex items-center gap-3 shrink-0 flex-nowrap">
             <h3 class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[var(--text-bright)] whitespace-nowrap shrink-0">
               <i id="lottie-timeline-editor" class="w-3.5 h-3.5 lottie-icon text-indigo-400 shrink-0"></i>
@@ -5619,6 +5635,43 @@
     }
     window._lucideCreateIcons = _lucideCreateIcons;
 
+    // ── 10 CHARACTER AUTO-SPEAKER PRESETS (Edge-TTS Neural Engine) ──────────
+    window.CHARACTER_PRESETS = {
+      Male: { id: "Male", label: "👨 Piseth (Male)", gender: "Male", baseVoice: "km-KH-PisethNeural", pitch: "+0Hz", rate: "+0%", color: "#3b82f6" },
+      Female: { id: "Female", label: "👩 Sreymom (Female)", gender: "Female", baseVoice: "km-KH-SreymomNeural", pitch: "+0Hz", rate: "+0%", color: "#ec4899" },
+      Hero: { id: "Hero", label: "🦸‍♂️ Hero (តួឯកប្រុស)", gender: "Male", baseVoice: "km-KH-PisethNeural", pitch: "+4Hz", rate: "+5%", color: "#06b6d4" },
+      Heroine: { id: "Heroine", label: "👸 Heroine (តួឯកស្រី)", gender: "Female", baseVoice: "km-KH-SreymomNeural", pitch: "+10Hz", rate: "+4%", color: "#f43f5e" },
+      Father: { id: "Father", label: "🧔 Father (ឪពុក)", gender: "Male", baseVoice: "km-KH-PisethNeural", pitch: "-10Hz", rate: "-4%", color: "#0284c7" },
+      Mother: { id: "Mother", label: "👵 Mother (ម្តាយ)", gender: "Female", baseVoice: "km-KH-SreymomNeural", pitch: "-16Hz", rate: "-8%", color: "#f97316" },
+      Villain: { id: "Villain", label: "😈 Villain (តួកាច)", gender: "Male", baseVoice: "km-KH-PisethNeural", pitch: "-22Hz", rate: "-6%", color: "#8b5cf6" },
+      Queen: { id: "Queen", label: "👑 Queen (ម្ចាស់ក្សត្រី)", gender: "Female", baseVoice: "km-KH-SreymomNeural", pitch: "-12Hz", rate: "-5%", color: "#a855f7" },
+      Elder: { id: "Elder", label: "👴 Elder (តាចាស់/គ្រូ)", gender: "Male", baseVoice: "km-KH-PisethNeural", pitch: "-16Hz", rate: "-10%", color: "#f59e0b" },
+      Child: { id: "Child", label: "🧒 Child (កូនក្មេង)", gender: "Female", baseVoice: "km-KH-SreymomNeural", pitch: "+22Hz", rate: "+10%", color: "#eab308" }
+    };
+
+    window.resolveCharacterKey = function(val) {
+      if (!val) return "Male";
+      const str = String(val).trim().toLowerCase();
+      for (const k of Object.keys(window.CHARACTER_PRESETS)) {
+        if (k.toLowerCase() === str) return k;
+      }
+      // Explicit voice actor names
+      if (str.includes("sreymom") || str.includes("srey mom")) return "Female";
+      if (str.includes("piseth")) return "Male";
+
+      if (str.includes("heroine") || str.includes("ឯកស្រី") || str.includes("នាង") || str.includes("girl")) return "Heroine";
+      if (str.includes("hero") || str.includes("ឯកប្រុស") || str.includes("កំលោះ")) return "Hero";
+      if (str.includes("father") || str.includes("dad") || str.includes("ឪពុក") || str.includes("ប៉ា") || str.includes("ពុក")) return "Father";
+      if (str.includes("mother") || str.includes("mom") || str.includes("ម្តាយ") || str.includes("ម៉ាក់") || str.includes("ម៉ែ")) return "Mother";
+      if (str.includes("villain") || str.includes("boss") || str.includes("កាច") || str.includes("មេកើយ") || str.includes("ចោរ")) return "Villain";
+      if (str.includes("queen") || str.includes("empress") || str.includes("ក្សត្រី") || str.includes("ម្ចាស់ក្សត្រី")) return "Queen";
+      if (str.includes("elder") || str.includes("master") || str.includes("old") || str.includes("លោកតា") || str.includes("ព្រឹទ្ធាចារ្យ") || str.includes("គ្រូ") || str.includes("ចាស់")) return "Elder";
+      if (str.includes("child") || str.includes("kid") || str.includes("ក្មេង") || str.includes("កូន")) return "Child";
+      if (str.includes("female") || str.includes("ស្រី") || str.includes("នារី")) return "Female";
+      if (str.includes("male") || str.includes("ប្រុស") || str.includes("បុរស")) return "Male";
+      return "Male";
+    };
+
     // Initialize Lucide Icons
     _lucideCreateIcons();
 
@@ -6247,6 +6300,31 @@
       }).observe(timelineContent);
     }
 
+    // Enable smooth horizontal mouse-wheel scrolling for both Timeline Toolbar and Tracks
+    const timelineToolbarHeader = document.getElementById("timeline-toolbar-header");
+    if (timelineToolbarHeader) {
+      timelineToolbarHeader.addEventListener("wheel", (e) => {
+        if (e.deltaY !== 0 && !e.shiftKey) {
+          timelineToolbarHeader.scrollLeft += e.deltaY;
+          e.preventDefault();
+        }
+      }, { passive: false });
+      timelineToolbarHeader.addEventListener("scroll", () => {
+        if (typeof closeLangDropdown === "function") closeLangDropdown();
+        const gd = document.getElementById("genre-dropdown-menu");
+        if (gd) gd.classList.add("hidden");
+      }, { passive: true });
+    }
+
+    if (timelineScrollContainer) {
+      timelineScrollContainer.addEventListener("wheel", (e) => {
+        if (e.deltaY !== 0 && !e.shiftKey) {
+          timelineScrollContainer.scrollLeft += e.deltaY;
+          e.preventDefault();
+        }
+      }, { passive: false });
+    }
+
     // --- TOAST NOTIFICATION LOGIC (stacked, max 3 at once) ---
     const toastStack = document.getElementById("toast-stack");
     const toastTemplate = document.getElementById("toast-template");
@@ -6300,6 +6378,14 @@
           const res = await _origFetch.apply(this, arguments);
           const color = res.ok ? "#4ade80" : "#f87171";
           console.log(`%cResponse: ${res.status} ${res.statusText}`, `color:${color};font-weight:bold`);
+          if (!res.ok) {
+            try {
+              const clone = res.clone();
+              clone.text().then(t => {
+                console.error("%c[Server Error Details]:", "color:#f87171;font-weight:bold", t);
+              }).catch(() => {});
+            } catch (e) {}
+          }
           console.groupEnd();
           return res;
         } catch (err) {
@@ -8532,6 +8618,14 @@
     if (genreBtn && genreDropdown) {
       genreBtn.addEventListener("click", (e) => {
         e.stopPropagation();
+        const isOpening = genreDropdown.classList.contains("hidden");
+        if (isOpening) {
+          const rect = genreBtn.getBoundingClientRect();
+          genreDropdown.style.position = "fixed";
+          genreDropdown.style.left = `${Math.min(window.innerWidth - 220, Math.max(10, rect.left))}px`;
+          genreDropdown.style.bottom = `${window.innerHeight - rect.top + 6}px`;
+          genreDropdown.style.zIndex = "99999";
+        }
         genreDropdown.classList.toggle("hidden");
       });
       document.addEventListener("click", (e) => {
@@ -9301,11 +9395,17 @@
               const finalSubs = parsedSubs.map((sub, idx) => {
                 const tr = Array.isArray(translatedMap) ? translatedMap[idx] : null;
                 let khmerText = (tr && (tr.text || tr.dubbedText)) || sub.text;
-                let detectedGender = (tr && tr.gender) || sub.gender || "Female";
-                const isMaleTag = detectedGender === "Male" || String(detectedGender).includes("ប្រុស") || String(detectedGender).includes("បុរស");
-                const isFemaleTag = detectedGender === "Female" || String(detectedGender).includes("ស្រី") || String(detectedGender).includes("នារី");
-                if (isMaleTag) detectedGender = "Male";
-                else if (isFemaleTag) detectedGender = "Female";
+                let detectedChar = "Female";
+                if (tr && tr.speaker) {
+                  detectedChar = typeof window.resolveCharacterKey === "function" ? window.resolveCharacterKey(tr.speaker) : "Male";
+                } else if (tr && tr.character) {
+                  detectedChar = typeof window.resolveCharacterKey === "function" ? window.resolveCharacterKey(tr.character) : "Male";
+                } else if (sub.speaker) {
+                  detectedChar = typeof window.resolveCharacterKey === "function" ? window.resolveCharacterKey(sub.speaker) : "Male";
+                } else {
+                  let rawGender = (tr && tr.gender) || sub.gender || "Female";
+                  detectedChar = typeof window.resolveCharacterKey === "function" ? window.resolveCharacterKey(rawGender) : "Female";
+                }
 
                 return {
                   id: sub.id || crypto.randomUUID().substring(0, 8),
@@ -9314,11 +9414,12 @@
                   audioStart: sub.audioStart || sub.textStart,
                   audioEnd: sub.audioEnd || sub.textEnd,
                   originalText: sub.originalText || sub.text,
-                  speaker: (tr && tr.speaker) || sub.speaker || null,
+                  speaker: (tr && tr.speaker) || sub.speaker || detectedChar,
+                  character: detectedChar,
                   emotion: (tr && tr.emotion) || "Neutral",
                   text: khmerText,
                   voice: "KH Khmer",
-                  gender: detectedGender,
+                  gender: detectedChar,
                   status: "done",
                   audioStatus: "idle",
                   audioUrl: null,
@@ -9475,12 +9576,16 @@
                 const endRaw = sub.end !== undefined ? sub.end : 0;
                 const textRaw = sub.text || "";
 
-                let detectedGender = "Female";
-                const aiGender = (sub.gender || sub.voice || "").toLowerCase().trim();
-                const isMaleTag = aiGender === "male" || aiGender.includes("ប្រុស") || aiGender.includes("បុរស");
-                const isFemaleTag = aiGender === "female" || aiGender.includes("ស្រី") || aiGender.includes("នារី");
-                if (isMaleTag) detectedGender = "Male";
-                else if (isFemaleTag) detectedGender = "Female";
+                let detectedChar = "Male";
+                if (sub.speaker) {
+                  detectedChar = typeof window.resolveCharacterKey === "function" ? window.resolveCharacterKey(sub.speaker) : "Male";
+                } else if (sub.character) {
+                  detectedChar = typeof window.resolveCharacterKey === "function" ? window.resolveCharacterKey(sub.character) : "Male";
+                } else {
+                  const aiGender = (sub.gender || sub.voice || "").toLowerCase().trim();
+                  const isMaleTag = aiGender === "male" || aiGender.includes("ប្រុស") || aiGender.includes("បុរស");
+                  detectedChar = isMaleTag ? "Male" : "Female";
+                }
 
                 return {
                   id: crypto.randomUUID().substring(0, 8),
@@ -9489,11 +9594,12 @@
                   audioStart: parseAiTime(startRaw).toFixed(2),
                   audioEnd: parseAiTime(endRaw).toFixed(2),
                   originalText: sub.originalText || sub.original || null,
-                  speaker: sub.speaker || null,
+                  speaker: sub.speaker || detectedChar,
+                  character: detectedChar,
                   emotion: sub.emotion || "Neutral",
                   text: textRaw,
                   voice: "KH Khmer",
-                  gender: detectedGender,
+                  gender: detectedChar,
                   status: "done",
                   audioStatus: "idle",
                   audioUrl: null,
@@ -14174,6 +14280,9 @@
         const timeout = setTimeout(() => controller.abort(), 5000);
         const res = await fetch(normalised, { signal: controller.signal });
         clearTimeout(timeout);
+        if (res.ok) {
+          _voxPingReady = true;
+        }
         if (statusEl) {
           statusEl.textContent = `✓ Connected — HTTP ${res.status}`;
           statusEl.className = "text-[11px] text-emerald-400 min-h-[16px] transition-colors";
@@ -14956,20 +15065,24 @@
       voxCmp2SyncServerButtonState(); // Make sure the UI button matches actual server state
     }
 
-    // Returns the list of voice options for the subtitle gender select
+    // Returns the list of voice options for the subtitle gender/character select
     function voxCmp2GetVoiceOptions(currentGender) {
-      const data = voxCmp2Load();
+      const data = typeof voxCmp2Load === "function" ? voxCmp2Load() : { enabled: false, profiles: [] };
 
       let options;
       if (!data.enabled) {
-        // VoxCMP2 off — plain Male / Female, no suffix
-        options = [
-          { value: "Female", label: "Female", isMale: false },
-          { value: "Male", label: "Male", isMale: true },
-        ];
+        // Edge-TTS mode — return the 10 Character Auto-Speaker profiles!
+        options = Object.values(window.CHARACTER_PRESETS || {}).map((p) => ({
+          value: p.id,
+          label: p.label,
+          isMale: p.gender === "Male",
+          color: p.color,
+          pitch: p.pitch,
+          rate: p.rate
+        }));
       } else {
-        // VoxCMP2 on — only custom profiles; use each profile's own custom color
-        options = data.profiles.map((p) => ({
+        // VoxCMP2 on — custom profiles
+        options = (data.profiles || []).map((p) => ({
           value: p.id,
           label: p.label,
           isMale: (p.gender || "").toLowerCase() === "male",
@@ -14977,16 +15090,22 @@
         }));
         // Fallback if no profiles added yet
         if (options.length === 0) {
-          options = [
-            { value: "Female", label: "Female", isMale: false },
-            { value: "Male", label: "Male", isMale: true },
-          ];
+          options = Object.values(window.CHARACTER_PRESETS || {}).map((p) => ({
+            value: p.id,
+            label: p.label,
+            isMale: p.gender === "Male",
+            color: p.color,
+            pitch: p.pitch,
+            rate: p.rate
+          }));
         }
       }
 
-      // Mark selected: exact value match → gender keyword match → first
+      // Mark selected: exact value match → character key match → label match → first
+      const charKey = typeof window.resolveCharacterKey === "function" ? window.resolveCharacterKey(currentGender) : "Male";
       let matched = options.find((o) => o.value === currentGender);
-      if (!matched) matched = options.find((o) => o.label.toLowerCase() === currentGender.toLowerCase());
+      if (!matched) matched = options.find((o) => o.value === charKey);
+      if (!matched) matched = options.find((o) => o.label.toLowerCase() === String(currentGender).toLowerCase());
       if (!matched) matched = options.find((o) => o.isMale === (currentGender === "Male"));
       if (!matched) matched = options[0];
       options.forEach((o) => {
@@ -15675,6 +15794,11 @@
         closeLangDropdown();
       } else {
         renderLanguageOptions(); // Re-render to show correct checkmark
+        const rect = btnLanguageSelect.getBoundingClientRect();
+        langDropdownMenu.style.position = "fixed";
+        langDropdownMenu.style.left = `${Math.min(window.innerWidth - 150, Math.max(10, rect.left))}px`;
+        langDropdownMenu.style.bottom = `${window.innerHeight - rect.top + 6}px`;
+        langDropdownMenu.style.zIndex = "99999";
         langDropdownMenu.classList.remove("hidden");
         iconLangChevron.classList.add("rotate-180");
       }
@@ -16186,12 +16310,17 @@
       // Save undo state before modifying
       saveStateToPast();
 
+      const charKey = typeof window.resolveCharacterKey === "function" ? window.resolveCharacterKey(gender) : gender;
+      const charPreset = window.CHARACTER_PRESETS ? window.CHARACTER_PRESETS[charKey] : null;
+      const displayLabel = charPreset ? charPreset.label : charKey;
+
       subtitles = subtitles.map((s) => {
         if (selectedIds.includes(s.id)) {
-          // Apply gender AND clear the existing audio so it will be re-generated
+          // Apply character AND gender AND clear existing audio
           return {
             ...s,
-            gender,
+            gender: charKey,
+            character: charKey,
             audioStatus: "idle",
             audioUrl: null,
             audioStart: s.textStart,
@@ -16202,11 +16331,61 @@
       });
 
       renderSubtitles();
-      showToast(`${gender} voice applied to ${selectedIds.length} subtitle${selectedIds.length > 1 ? "s" : ""} (selected) — audio cleared`, "success");
+      showToast(`${displayLabel} applied to ${selectedIds.length} subtitle${selectedIds.length > 1 ? "s" : ""} — audio cleared`, "success");
     };
 
-    document.getElementById("btn-bulk-male").addEventListener("click", () => setBulkVoice("Male"));
-    document.getElementById("btn-bulk-female").addEventListener("click", () => setBulkVoice("Female"));
+    document.getElementById("btn-bulk-male")?.addEventListener("click", () => setBulkVoice("Male"));
+    document.getElementById("btn-bulk-female")?.addEventListener("click", () => setBulkVoice("Female"));
+
+    // ── BULK 10 CHARACTER ROLE DROPDOWN ──────────────────────────────
+    const bulkCharWrap = document.getElementById("bulk-char-wrap");
+    const bulkCharTrigger = document.getElementById("btn-bulk-char-trigger");
+    const bulkCharChevron = document.getElementById("bulk-char-chevron");
+    const bulkCharDropdown = document.getElementById("bulk-char-dropdown");
+
+    if (bulkCharDropdown && window.CHARACTER_PRESETS) {
+      bulkCharDropdown.innerHTML = Object.values(window.CHARACTER_PRESETS).map((char) => `
+        <button type="button" data-char-id="${char.id}" class="w-full text-left px-2 py-1.5 rounded-lg text-xs font-medium flex items-center justify-between gap-1.5 hover:bg-white/10 transition-colors cursor-pointer group">
+          <span class="flex items-center gap-1.5 truncate">
+            <span class="text-sm shrink-0">${char.label.split(" ")[0]}</span>
+            <span class="font-semibold text-white group-hover:text-cyan-300 transition-colors">${char.id}</span>
+            <span class="text-[10px] text-zinc-400 font-khmer truncate">(${char.label.replace(/^.*?\(|\)$/g, "")})</span>
+          </span>
+          <span class="text-[9px] px-1.5 py-0.5 rounded font-mono shrink-0 font-medium" style="background-color: ${char.color}22; color: ${char.color}; border: 1px solid ${char.color}44;">${char.pitch}</span>
+        </button>
+      `).join("");
+
+      bulkCharDropdown.addEventListener("click", (e) => {
+        const btn = e.target.closest("button[data-char-id]");
+        if (btn) {
+          const charId = btn.getAttribute("data-char-id");
+          setBulkVoice(charId);
+          bulkCharDropdown.classList.add("hidden");
+          if (bulkCharChevron) bulkCharChevron.style.transform = "rotate(0deg)";
+        }
+      });
+    }
+
+    if (bulkCharTrigger && bulkCharDropdown) {
+      bulkCharTrigger.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const isClosed = bulkCharDropdown.classList.contains("hidden");
+        if (isClosed) {
+          bulkCharDropdown.classList.remove("hidden");
+          if (bulkCharChevron) bulkCharChevron.style.transform = "rotate(180deg)";
+        } else {
+          bulkCharDropdown.classList.add("hidden");
+          if (bulkCharChevron) bulkCharChevron.style.transform = "rotate(0deg)";
+        }
+      });
+    }
+
+    document.addEventListener("click", (e) => {
+      if (bulkCharWrap && !bulkCharWrap.contains(e.target) && bulkCharDropdown) {
+        bulkCharDropdown.classList.add("hidden");
+        if (bulkCharChevron) bulkCharChevron.style.transform = "rotate(0deg)";
+      }
+    });
 
     // ── BULK VOX PROFILE SWITCHER ────────────────────────────────────
     const bulkVoxSelectWrap = document.getElementById("bulk-vox-custom-wrap");
@@ -16770,9 +16949,9 @@
           // Format: [BaseGender:ProfileID] (e.g., [Female:my_profile_id])
           genderMarker = `[${baseGender}:${sub.gender}] `;
         } else {
-          // Standard Edge-TTS mode (or fallback): Keep it clean and original [Male] or [Female]
-          const baseGender = sub.gender === "Male" ? "Male" : "Female";
-          genderMarker = `[${baseGender}] `;
+          // Standard Edge-TTS mode (10 Character Presets): Tag with exact character ID!
+          const charKey = typeof window.resolveCharacterKey === "function" ? window.resolveCharacterKey(sub.character || sub.gender) : (sub.gender || "Male");
+          genderMarker = `[${charKey}] `;
         }
 
         srtContent += `${genderMarker}${sub.text || ""}\n\n`;
@@ -17006,10 +17185,11 @@
           let textContent = lines.slice(2).join("\n");
           let extractedGender = "Female";
 
-          // 🟢 THE FIX: Smart Regex to match standard [Male]/[Female] OR [Male:ProfileID]/[Female:ProfileID]
-          const genderMatch = textContent.match(/^\[(Male|Female)(?::([^\]]+))?\]\s*/i);
+          // 🟢 THE FIX: Smart Regex to match [Male]/[Female]/[Hero]/[Father]/[Mother]... OR [Role:ProfileID]
+          const charTagRegex = /^\[(Male|Female|Hero|Heroine|Father|Mother|Villain|Queen|Elder|Child)(?::([^\]]+))?\]\s*/i;
+          const genderMatch = textContent.match(charTagRegex);
           if (genderMatch) {
-            const baseGender = genderMatch[1].charAt(0).toUpperCase() + genderMatch[1].slice(1).toLowerCase();
+            const rawRole = genderMatch[1];
             const profileId = genderMatch[2]; // Captures the exact VoxCPM2 profile ID if it exists
 
             let voxData = { enabled: false, profiles: [] };
@@ -17024,17 +17204,16 @@
             } catch (e) { }
             const isVoxMode = voxData && voxData.enabled;
 
-            // Smart Assignment: Use Profile ID in Vox mode, fallback to Male/Female in Edge-TTS mode
+            // Smart Assignment: Use Profile ID in Vox mode, fallback to character key in Edge-TTS mode
             if (isVoxMode && profileId) {
-              // Ensure the profile actually exists in the current settings, otherwise fallback to the base gender
               const profileExists = voxData.profiles?.some((p) => p.id === profileId || p.name === profileId || p.label === profileId);
-              extractedGender = profileExists ? profileId : baseGender;
+              extractedGender = profileExists ? profileId : (typeof window.resolveCharacterKey === "function" ? window.resolveCharacterKey(rawRole) : rawRole);
             } else {
-              extractedGender = baseGender;
+              extractedGender = typeof window.resolveCharacterKey === "function" ? window.resolveCharacterKey(rawRole) : rawRole;
             }
 
             // Strip the tag so the dialogue text is clean
-            textContent = textContent.replace(/^\[(Male|Female)(?::([^\]]+))?\]\s*/i, "").trim();
+            textContent = textContent.replace(charTagRegex, "").trim();
           }
 
           // Strip zero-width characters and normalize spaces
@@ -19084,7 +19263,7 @@
               `;
               btn.addEventListener("click", (e) => {
                 e.stopPropagation();
-                setVoxRowValue(opt.value, voxCmp2Settings.profiles);
+                setVoxRowValue(opt.value, options);
                 closeRowDropdown();
               });
               voxRowList.appendChild(btn);
@@ -19094,13 +19273,19 @@
 
           const setVoxRowValue = (val, profilesList) => {
             genderHidden.value = val;
-            const found = (profilesList || []).find((p) => p.id === val || p.name === val);
+            const found = (profilesList || []).find((p) => p.id === val || p.name === val || p.value === val);
             const label = found ? found.label || found.name : val;
             voxRowLabel.textContent = label;
 
-            const isMale = found ? (found.gender || "").toLowerCase() === "male" : val === "Male";
-            voxRowTrigger.className = `vox-row-trigger w-full flex items-center justify-between gap-1.5 bg-[var(--bg-base)] border rounded text-xs px-2 h-[26px] outline-none cursor-pointer transition-colors min-w-[130px] ${isMale ? "text-blue-400 border-blue-400/30 bg-blue-500/5" : "text-pink-400 border-pink-400/30 bg-pink-500/5"
-              } ${typeof bouncingGenderId !== "undefined" && bouncingGenderId === sub.id ? "animate-cute-bounce" : ""}`;
+            const isMale = found ? (found.isMale !== undefined ? found.isMale : (found.gender || "").toLowerCase() === "male") : val === "Male";
+            const customColor = found?.color;
+            voxRowTrigger.className = `vox-row-trigger w-full flex items-center justify-between gap-1.5 bg-[var(--bg-base)] border rounded text-xs px-2 h-[26px] outline-none cursor-pointer transition-colors min-w-[130px] ${
+              isMale ? "text-blue-400 border-blue-400/30 bg-blue-500/5" : "text-pink-400 border-pink-400/30 bg-pink-500/5"
+            } ${typeof bouncingGenderId !== "undefined" && bouncingGenderId === sub.id ? "animate-cute-bounce" : ""}`;
+            if (customColor) {
+              voxRowTrigger.style.borderColor = `${customColor}66`;
+              voxRowTrigger.style.color = customColor;
+            }
 
             genderHidden.dispatchEvent(new Event("change"));
           };
@@ -19159,38 +19344,30 @@
             });
 
             buildVoxRowList(profileOpts);
-            setVoxRowValue(targetProfileId, voxCmp2Settings.profiles);
+            setVoxRowValue(targetProfileId, profileOpts);
 
             const liveSubIdx = subtitles.findIndex((s) => s.id === sub.id);
             if (liveSubIdx > -1) {
               subtitles[liveSubIdx].gender = targetProfileId;
             }
           } else {
-            // --- MODE B: DEFAULT EDGE-TTS MODE ---
-            const isMale = sub.gender === "Male" || currentVoiceTag === "male";
-            const currentVal = isMale ? "Male" : "Female";
+            // --- MODE B: 10 CHARACTER AUTO-SPEAKER PRESETS (Edge-TTS) ---
+            const charKey = typeof window.resolveCharacterKey === "function" ? window.resolveCharacterKey(sub.character || sub.gender || currentVoiceTag) : (sub.gender === "Male" ? "Male" : "Female");
+            const charOpts = Object.values(window.CHARACTER_PRESETS || {}).map((p) => ({
+              value: p.id,
+              label: p.label,
+              isMale: p.gender === "Male",
+              color: p.color,
+              selected: p.id === charKey
+            }));
 
-            const defaultOpts = [
-              {
-                value: "Female",
-                label: "Female",
-                isMale: false,
-                selected: !isMale,
-              },
-              {
-                value: "Male",
-                label: "Male",
-                isMale: true,
-                selected: isMale,
-              },
-            ];
-
-            buildVoxRowList(defaultOpts);
-            setVoxRowValue(currentVal, defaultOpts);
+            buildVoxRowList(charOpts);
+            setVoxRowValue(charKey, charOpts);
 
             const liveSubIdx = subtitles.findIndex((s) => s.id === sub.id);
             if (liveSubIdx > -1) {
-              subtitles[liveSubIdx].gender = currentVal;
+              subtitles[liveSubIdx].gender = charKey;
+              subtitles[liveSubIdx].character = charKey;
             }
           }
 
@@ -19199,6 +19376,7 @@
             const currentIndex = subtitles.findIndex((s) => s.id === sub.id);
             if (currentIndex > -1) {
               subtitles[currentIndex].gender = selectedValue;
+              subtitles[currentIndex].character = selectedValue;
 
               if (subtitles[currentIndex].audioStatus === "ready") {
                 subtitles[currentIndex].audioStatus = "idle";
@@ -20675,12 +20853,22 @@
         // --- 🟢 NEW: SERVER STATUS CHECK BEFORE QUEUING ---
         // Pre-check: If attempting to queue/generate, ensure the server is ready first
         if (!currentProj.isGeneratingAudio && !currentProj._voxQueued) {
-          // FIX: Ensure _voxPingReady doesn't get stuck to true if manually stopped.
-          // We ONLY reset the ready flag. We DO NOT touch _voxPingActive, so the
-          // "starting up" state remains perfectly intact while the server boots!
           const srvBtn = document.getElementById("voxcpm2-server-toggle-btn");
-          if (srvBtn && srvBtn.dataset.running === "false") {
+          const srvUrl = (_voxCheck && _voxCheck.serverUrl ? _voxCheck.serverUrl : "").trim();
+          const isRemote = srvUrl && !srvUrl.includes("localhost") && !srvUrl.includes("127.0.0.1");
+
+          // Only reset _voxPingReady if it's a strictly local server that was stopped
+          if (!isRemote && srvBtn && srvBtn.dataset.running === "false") {
             _voxPingReady = false;
+          }
+
+          // If not confirmed ready yet, do a quick ping check if srvUrl is provided
+          if (!_voxPingReady && srvUrl) {
+            try {
+              const normUrl = srvUrl.endsWith("/") ? srvUrl : srvUrl + "/";
+              const testRes = await fetch(normUrl, { signal: AbortSignal.timeout(3000) });
+              if (testRes.ok) _voxPingReady = true;
+            } catch (err) {}
           }
 
           if (!_voxPingReady) {
@@ -20856,6 +21044,169 @@
       await generateStandardAudioForProject(targetProject, idsToProcess, false);
     });
 
+    async function executeVoxCpm2Synthesis({ text, serverUrl, tempPath, profile, index, speed = 1.0, emotion = 'Neutral', signal }) {
+      const srvUrl = (serverUrl || "http://127.0.0.1:8808").trim();
+      const isRemote = srvUrl && !srvUrl.includes("localhost") && !srvUrl.includes("127.0.0.1");
+
+      let refBase64 = null;
+      if (profile && profile.audioPath && window.electronAPI && typeof window.electronAPI.readFileAsBase64 === "function") {
+        try {
+          const rRes = await window.electronAPI.readFileAsBase64(profile.audioPath);
+          if (rRes && rRes.success && rRes.data) {
+            refBase64 = rRes.data;
+          }
+        } catch (_) {}
+      }
+
+      const saveAudioViaBackend = async (audioBase64) => {
+        try {
+          const saveRes = await fetch("http://localhost:3001/api/save-audio-file", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              tempPath,
+              index,
+              audioBase64
+            })
+          });
+          if (saveRes.ok) {
+            const sData = await saveRes.json();
+            if (sData.success) return sData;
+          }
+        } catch (_) {}
+        return null;
+      };
+
+      const createBlobFallback = (audioBase64, duration = 0) => {
+        const byteCharacters = atob(audioBase64);
+        const byteNumbers = new Uint8Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const blob = new Blob([byteNumbers], { type: "audio/wav" });
+        const blobUrl = URL.createObjectURL(blob);
+        return {
+          success: true,
+          file: blobUrl,
+          duration: duration,
+          url: blobUrl
+        };
+      };
+
+      // 🇰🇭 Khmer Text Normalization & Clean Sentence Closure
+      let cleanText = (text || "").trim();
+      const isKhmer = /[\u1780-\u17FF]/.test(cleanText);
+      if (isKhmer && cleanText) {
+        // Strip duplicate or conflicting punctuation and ensure a single clean sentence terminator
+        cleanText = cleanText.replace(/[!?.។៕\s]+$/, "") + "។";
+      }
+
+      // If text is Khmer and no reference audio is used, avoid injecting English prompt context
+      const effectiveInstruction = (isKhmer && !profile?.audioPath) ? "" : (profile?.instruction || "");
+
+      // 🌐 METHOD 1: Direct Browser Fetch for remote/Colab servers
+      if (isRemote) {
+        try {
+          const cleanBase = srvUrl.replace(/\/+$/, "");
+          const directEndpoint = `${cleanBase}/api/generate`;
+          console.log(`[VoxCPM2] Calling remote GPU directly at: ${directEndpoint}`);
+
+          const colabRes = await fetch(directEndpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              text: cleanText,
+              instruction: effectiveInstruction,
+              reference_audio: profile?.audioPath || "",
+              reference_audio_base64: refBase64,
+              speed: parseFloat(speed) || 1.0,
+              emotion: emotion || "Neutral",
+              cfg_value: 1.5
+            }),
+            signal
+          });
+
+          if (colabRes.ok) {
+            const colabData = await colabRes.json();
+            if (colabData.success && colabData.audio_base64) {
+              const saved = await saveAudioViaBackend(colabData.audio_base64);
+              if (saved && saved.file) {
+                return {
+                  success: true,
+                  file: saved.file,
+                  duration: colabData.duration || 0,
+                  url: saved.url
+                };
+              }
+              return createBlobFallback(colabData.audio_base64, colabData.duration || 0);
+            } else if (colabData.error) {
+              throw new Error(`VoxCPM2 GPU Error: ${colabData.error}`);
+            }
+          } else {
+            const errBody = await colabRes.text();
+            console.warn(`[VoxCPM2] Direct Colab fetch failed HTTP ${colabRes.status}: ${errBody}`);
+          }
+        } catch (directErr) {
+          if (directErr.name === "AbortError") throw directErr;
+          console.warn(`[VoxCPM2] Direct Colab fetch failed (${directErr.message}), trying backend proxy fallback...`);
+        }
+      }
+
+      // 💻 METHOD 2: Local Backend Proxy
+      const backendRes = await fetch("http://localhost:3001/api/generate-voxcmp2", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: cleanText,
+          serverUrl: srvUrl,
+          tempPath,
+          profile,
+          index,
+          speed: parseFloat(speed) || 1.0,
+          emotion: emotion || "Neutral",
+          cfg_value: 1.5
+        }),
+        signal
+      });
+
+      const bData = await backendRes.json();
+      if (!backendRes.ok || !bData.success) {
+        if (!isRemote) {
+          try {
+            const cleanBase = srvUrl.replace(/\/+$/, "");
+            const localDirectEndpoint = `${cleanBase}/api/generate`;
+            const ldRes = await fetch(localDirectEndpoint, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                text: cleanText,
+                instruction: effectiveInstruction,
+                reference_audio: profile?.audioPath || "",
+                reference_audio_base64: refBase64,
+                speed: parseFloat(speed) || 1.0,
+                emotion: emotion || "Neutral",
+                cfg_value: 1.5
+              }),
+              signal
+            });
+            if (ldRes.ok) {
+              const ldData = await ldRes.json();
+              if (ldData.success && ldData.audio_base64) {
+                const saved = await saveAudioViaBackend(ldData.audio_base64);
+                if (saved && saved.file) {
+                  return { success: true, file: saved.file, duration: ldData.duration || 0, url: saved.url };
+                }
+                return createBlobFallback(ldData.audio_base64, ldData.duration || 0);
+              }
+            }
+          } catch (_) {}
+        }
+        throw new Error(bData.error || bData.message || `VoxCPM2 synthesis failed (HTTP ${backendRes.status})`);
+      }
+
+      return bData;
+    }
+
     async function generateStandardAudioForProject(targetProject, explicitIds = null, isBatch = false) {
       if (!targetProject || !targetProject.subtitles || targetProject.subtitles.length === 0) {
         return { success: false, error: "No subtitles" };
@@ -20971,31 +21322,28 @@
           batchedRenderSubtitles(targetSubs[currentIndex]);
 
           try {
-            let response;
+            let data;
 
             if (isVoxCmp2Enabled) {
               const matchedProfile = resolveSmartVoxCpmProfile(sub.gender, voxCmp2Data.profiles);
-              response = await fetch("http://localhost:3001/api/generate-voxcmp2", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  text: sub.text,
-                  serverUrl: voxCmp2Data.serverUrl,
-                  tempPath: targetProject.tempAudioPath || tempAudioPath,
-                  profile: matchedProfile || null,
-                  index: sub.id,
-                  speed: sub.speed || 1.0,
-                  emotion: sub.emotion || "Neutral",
-                }),
+              data = await executeVoxCpm2Synthesis({
+                text: sub.text,
+                serverUrl: voxCmp2Data.serverUrl,
+                tempPath: targetProject.tempAudioPath || tempAudioPath,
+                profile: matchedProfile || null,
+                index: sub.id,
+                speed: sub.speed || 1.0,
+                emotion: sub.emotion || "Neutral",
                 signal: jobAbortController.signal,
               });
             } else {
-              response = await fetch("http://localhost:3001/api/generate-audio", {
+              const response = await fetch("http://localhost:3001/api/generate-audio", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                   text: sub.text,
                   gender: sub.gender,
+                  character: sub.character || sub.gender,
                   language: targetProject.targetLanguage || targetLanguage,
                   tempPath: targetProject.tempAudioPath || tempAudioPath,
                   index: sub.id,
@@ -21004,12 +21352,11 @@
                 }),
                 signal: jobAbortController.signal,
               });
+              data = await response.json();
             }
 
-            const data = await response.json();
-
             if (data.success) {
-              const freshUrl = `${data.url}&t=${Date.now()}`;
+              const freshUrl = (data.url && data.url.startsWith("blob:")) ? data.url : `${data.url}&t=${Date.now()}`;
               const safeIndex = targetSubs.findIndex((s) => s.id === subId);
               if (safeIndex > -1) {
                 spinOffOrphanAudioIfNeeded(targetSubs[safeIndex]);
@@ -21042,7 +21389,7 @@
                     delete activeAudios[subId];
                   }
                   const preWarmBaseUrl = freshUrl.split("&t=")[0];
-                  const preWarmUrl = (preWarmBaseUrl.startsWith("http") ? preWarmBaseUrl : `http://localhost:3001${preWarmBaseUrl}`) + `&_prewarm=${Date.now()}`;
+                  const preWarmUrl = freshUrl.startsWith("blob:") ? freshUrl : ((preWarmBaseUrl.startsWith("http") ? preWarmBaseUrl : `http://localhost:3001${preWarmBaseUrl}`) + `&_prewarm=${Date.now()}`);
                   const preWarmAudio = new Audio();
                   preWarmAudio.preload = "auto";
                   preWarmAudio.src = preWarmUrl;
@@ -21100,7 +21447,7 @@
                   if (data.duration && data.duration > 0) {
                     finalizeMeta(data.duration);
                   } else {
-                    const resolvedMetaUrl = freshUrl.startsWith("http") ? freshUrl : `http://localhost:3001${freshUrl}`;
+                    const resolvedMetaUrl = freshUrl.startsWith("http") || freshUrl.startsWith("blob:") ? freshUrl : `http://localhost:3001${freshUrl}`;
                     tempA = new Audio(resolvedMetaUrl);
                     tempA.onloadedmetadata = () => finalizeMeta(tempA.duration);
                     tempA.onerror = () => finalizeMeta(2.0);
@@ -21325,6 +21672,16 @@
 
       if (voxCmp2Data.enabled) {
         if (!_voxPingReady) {
+          const srvUrl = (voxCmp2Data.serverUrl || "").trim();
+          if (srvUrl) {
+            try {
+              const normUrl = srvUrl.endsWith("/") ? srvUrl : srvUrl + "/";
+              const testRes = await fetch(normUrl, { signal: AbortSignal.timeout(3000) });
+              if (testRes.ok) _voxPingReady = true;
+            } catch (err) {}
+          }
+        }
+        if (!_voxPingReady) {
           showToast("Please Start the VoxCPM2 Server first.", "warning");
           return;
         }
@@ -21488,24 +21845,18 @@
 
             try {
               const matchedProfile = resolveSmartVoxCpmProfile(sub.gender, voxCmp2Data.profiles);
-              const response = await fetch("http://localhost:3001/api/generate-voxcmp2", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  text: sub.text,
-                  serverUrl: voxCmp2Data.serverUrl,
-                  tempPath: proj.tempAudioPath || tempAudioPath,
-                  profile: matchedProfile || null,
-                  index: sub.id,
-                  speed: sub.speed || 1.0,
-                }),
+              const data = await executeVoxCpm2Synthesis({
+                text: sub.text,
+                serverUrl: voxCmp2Data.serverUrl,
+                tempPath: proj.tempAudioPath || tempAudioPath,
+                profile: matchedProfile || null,
+                index: sub.id,
+                speed: sub.speed || 1.0,
                 signal: jobAbortController.signal,
               });
 
-              const data = await response.json();
-
               if (data.success) {
-                const freshUrl = `${data.url}&t=${Date.now()}`;
+                const freshUrl = (data.url && data.url.startsWith("blob:")) ? data.url : `${data.url}&t=${Date.now()}`;
 
                 // ✅ IMMEDIATE UI UPDATE — mark ready as soon as server confirms success.
                 const i = subIdx();
@@ -21541,7 +21892,7 @@
                       delete activeAudios[sub.id];
                     }
                     const preWarmBaseUrl = freshUrl.split("&t=")[0];
-                    const preWarmUrl = (preWarmBaseUrl.startsWith("http") ? preWarmBaseUrl : `http://localhost:3001${preWarmBaseUrl}`) + `&_prewarm=${Date.now()}`;
+                    const preWarmUrl = freshUrl.startsWith("blob:") ? freshUrl : ((preWarmBaseUrl.startsWith("http") ? preWarmBaseUrl : `http://localhost:3001${preWarmBaseUrl}`) + `&_prewarm=${Date.now()}`);
                     const preWarmAudio = new Audio();
                     preWarmAudio.preload = "auto";
                     preWarmAudio.src = preWarmUrl;
@@ -21555,7 +21906,7 @@
                 // 🔄 BACKGROUND metadata load — refines duration/speed without blocking UI
                 const bgI = subIdx();
                 if (bgI > -1) {
-                  const resolvedMetaUrl = freshUrl.startsWith("http") ? freshUrl : `http://localhost:3001${freshUrl}`;
+                  const resolvedMetaUrl = freshUrl.startsWith("http") || freshUrl.startsWith("blob:") ? freshUrl : `http://localhost:3001${freshUrl}`;
                   const tempA = new Audio(resolvedMetaUrl);
                   const voxMetaPromise = new Promise((resolveVoxMeta) => {
                     const finalizeVoxMeta = (dur) => {
@@ -21612,7 +21963,7 @@
                   voxMetaPromises.push(voxMetaPromise);
                 }
               } else {
-                throw new Error(data.message || "Server returned failure");
+                throw new Error(data.error || data.message || "Server returned failure");
               }
             } catch (err) {
               if (err.name === "AbortError" || cancelRef.cancelled) {
