@@ -1,3 +1,4 @@
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
@@ -1119,9 +1120,20 @@ TIMESTAMPS & ACTING RULES:
    - "start" and "end" timestamps MUST correspond precisely to the real-time playback position from audio start (00:00.00). Format: MM:SS.ss (or HH:MM:SS.ss).
    - Divide subtitles into short lines (2 to 4 seconds per line). Timestamps must stay locked to speaker voices.${durationHint}
 
-2. Gender & Emotion Detection:
-   - Gender: "Male" / "Female".
-   - Emotion: "Neutral", "Angry", "Sad", "Whisper", "Excited", "Royal", "Romantic", "Fear".${genreGuidance}
+2. Speaker & Character Role Detection:
+   - speaker: Strictly assign one of the 10 distinct character roles based on character age, identity, role, and pronouns:
+     * "Hero" (Young male lead, protagonist, brave, e.g. "បង", "ខ្ញុំ")
+     * "Heroine" (Young female lead, sweet, emotional, e.g. "អូន", "នាងខ្ញុំ")
+     * "Father" (Mature male, dad, protector, elder family head, e.g. "ឪពុក", "ប៉ា", "ពុក")
+     * "Mother" (Mature female, mom, caring, maternal, e.g. "ម្តាយ", "ម៉ាក់", "ម៉ែ")
+     * "Villain" (Antagonist, evil boss, aggressive rival, cruel, e.g. "អញ", "ឯង")
+     * "Queen" (Empress, royal woman, cold/stern female authority, e.g. "ម្ចាស់ក្សត្រី", "ព្រះមេ")
+     * "Elder" (Old master, wise monk, grandfather, ancient teacher, e.g. "លោកតា", "គ្រូ")
+     * "Child" (Young kid, boy or girl, cute, playful, e.g. "កូន", "ក្មេង")
+     * "Male" (Neutral male, narrator, commoner, guard)
+     * "Female" (Neutral female, maid, servant, common woman)
+   - gender: "Male" or "Female" (Matching the character's gender).
+   - emotion: "Neutral", "Angry", "Sad", "Whisper", "Excited", "Royal", "Romantic", "Fear".${genreGuidance}
 
 3. Output Format:
    - Output ONLY a valid JSON array of objects with the exact schema below. No markdown, no extra text.
@@ -1134,7 +1146,7 @@ SCHEMA:
     "originalText": "Original spoken dialogue",
     "text": "Short punchy Khmer translation",
     "gender": "Male",
-    "speaker": "Speaker 1",
+    "speaker": "Hero",
     "emotion": "Neutral"
   }
 ]`;
@@ -1273,8 +1285,19 @@ LINE MATCHING & EMOTION RULES:
    - Output an array with the exact same number of items as the input lines.
    - Keep each translation strictly 3 to 10 syllables (3 to 8 words).
 
-2. Gender Tagging & Emotional Acting Detection:
-   - Assign "Male" or "Female" for each line based on context.
+2. Character Role Tagging & Emotional Acting Detection:
+   - Assign one of the 10 character roles to "speaker" based on context, pronouns, and character relationships:
+     * "Hero" (Young male lead, protagonist, brave, e.g. "បង", "ខ្ញុំ")
+     * "Heroine" (Young female lead, sweet, emotional, e.g. "អូន", "នាងខ្ញុំ")
+     * "Father" (Mature male, dad, protector, elder family head, e.g. "ឪពុក", "ប៉ា", "ពុក")
+     * "Mother" (Mature female, mom, caring, maternal, e.g. "ម្តាយ", "ម៉ាក់", "ម៉ែ")
+     * "Villain" (Antagonist, evil boss, aggressive rival, cruel, e.g. "អញ", "ឯង")
+     * "Queen" (Empress, royal woman, cold/stern female authority, e.g. "ម្ចាស់ក្សត្រី", "ព្រះមេ")
+     * "Elder" (Old master, wise monk, grandfather, ancient teacher, e.g. "លោកតា", "គ្រូ")
+     * "Child" (Young kid, boy or girl, cute, playful, e.g. "កូន", "ក្មេង")
+     * "Male" (Neutral male, narrator, commoner, guard)
+     * "Female" (Neutral female, maid, servant, common woman)
+   - Assign "gender": "Male" or "Female" (Matching the character's gender).
    - Assign the dramatic emotion: "Neutral", "Angry", "Sad", "Whisper", "Excited", "Royal", "Romantic", "Fear".${genreGuidance}
 
 3. Output Format:
@@ -1282,6 +1305,7 @@ LINE MATCHING & EMOTION RULES:
 [
   {
     "text": "Short Khmer translation",
+    "speaker": "Hero",
     "gender": "Male",
     "emotion": "Neutral"
   }
@@ -1702,43 +1726,108 @@ app.post('/api/transcribe-whisper', async (req, res) => {
     });
 });
 
-// Helper: Calculate emotional prosody modifiers (Pitch, Rate, Volume)
-function getEmotionProsody(emotion, basePitch, baseVolume, baseSpeed) {
-    let finalPitch = basePitch || '+0Hz';
-    let finalVolume = baseVolume || '+0%';
+// ── 10 CHARACTER AUTO-SPEAKER PRESETS (Edge-TTS Neural Engine) ──────────
+const CHARACTER_PRESETS = {
+    Male: { id: 'Male', label: '👨 Piseth (Male)', gender: 'Male', baseVoice: 'km-KH-PisethNeural', pitch: '+0Hz', rate: '+0%', color: '#3b82f6' },
+    Female: { id: 'Female', label: '👩 Sreymom (Female)', gender: 'Female', baseVoice: 'km-KH-SreymomNeural', pitch: '+0Hz', rate: '+0%', color: '#ec4899' },
+    Hero: { id: 'Hero', label: '🦸‍♂️ Hero (តួឯកប្រុស)', gender: 'Male', baseVoice: 'km-KH-PisethNeural', pitch: '+4Hz', rate: '+5%', color: '#06b6d4' },
+    Heroine: { id: 'Heroine', label: '👸 Heroine (តួឯកស្រី)', gender: 'Female', baseVoice: 'km-KH-SreymomNeural', pitch: '+10Hz', rate: '+4%', color: '#f43f5e' },
+    Father: { id: 'Father', label: '🧔 Father (ឪពុក)', gender: 'Male', baseVoice: 'km-KH-PisethNeural', pitch: '-10Hz', rate: '-4%', color: '#0284c7' },
+    Mother: { id: 'Mother', label: '👵 Mother (ម្តាយ)', gender: 'Female', baseVoice: 'km-KH-SreymomNeural', pitch: '-16Hz', rate: '-8%', color: '#f97316' },
+    Villain: { id: 'Villain', label: '😈 Villain (តួកាច)', gender: 'Male', baseVoice: 'km-KH-PisethNeural', pitch: '-22Hz', rate: '-6%', color: '#8b5cf6' },
+    Queen: { id: 'Queen', label: '👑 Queen (ម្ចាស់ក្សត្រី)', gender: 'Female', baseVoice: 'km-KH-SreymomNeural', pitch: '-12Hz', rate: '-5%', color: '#a855f7' },
+    Elder: { id: 'Elder', label: '👴 Elder (តាចាស់/គ្រូ)', gender: 'Male', baseVoice: 'km-KH-PisethNeural', pitch: '-16Hz', rate: '-10%', color: '#f59e0b' },
+    Child: { id: 'Child', label: '🧒 Child (កូនក្មេង)', gender: 'Female', baseVoice: 'km-KH-SreymomNeural', pitch: '+22Hz', rate: '+10%', color: '#eab308' }
+};
+
+function resolveCharacterPreset(identifier) {
+    if (!identifier) return CHARACTER_PRESETS.Male;
+    const clean = String(identifier).trim().toLowerCase();
+    
+    // Direct match
+    for (const [key, preset] of Object.entries(CHARACTER_PRESETS)) {
+        if (key.toLowerCase() === clean || preset.id.toLowerCase() === clean) return preset;
+    }
+
+    // Explicit voice actor names
+    if (clean.includes('sreymom') || clean.includes('srey mom')) return CHARACTER_PRESETS.Female;
+    if (clean.includes('piseth')) return CHARACTER_PRESETS.Male;
+
+    // Semantic matching for drama & Khmer terms
+    if (clean.includes('heroine') || clean.includes('ឯកស្រី') || clean.includes('នាង') || clean.includes('girl')) return CHARACTER_PRESETS.Heroine;
+    if (clean.includes('hero') || clean.includes('ឯកប្រុស') || clean.includes('កំលោះ')) return CHARACTER_PRESETS.Hero;
+    if (clean.includes('father') || clean.includes('dad') || clean.includes('ឪពុក') || clean.includes('ប៉ា') || clean.includes('ពុក')) return CHARACTER_PRESETS.Father;
+    if (clean.includes('mother') || clean.includes('mom') || clean.includes('ម្តាយ') || clean.includes('ម៉ាក់') || clean.includes('ម៉ែ')) return CHARACTER_PRESETS.Mother;
+    if (clean.includes('villain') || clean.includes('boss') || clean.includes('កាច') || clean.includes('មេកើយ') || clean.includes('ចោរ')) return CHARACTER_PRESETS.Villain;
+    if (clean.includes('queen') || clean.includes('empress') || clean.includes('ក្សត្រី') || clean.includes('ម្ចាស់ក្សត្រី')) return CHARACTER_PRESETS.Queen;
+    if (clean.includes('elder') || clean.includes('master') || clean.includes('old') || clean.includes('លោកតា') || clean.includes('ព្រឹទ្ធាចារ្យ') || clean.includes('គ្រូ') || clean.includes('ចាស់')) return CHARACTER_PRESETS.Elder;
+    if (clean.includes('child') || clean.includes('kid') || clean.includes('ក្មេង') || clean.includes('កូនតូច')) return CHARACTER_PRESETS.Child;
+    if (clean.includes('female') || clean.includes('ស្រី') || clean.includes('នារី')) return CHARACTER_PRESETS.Female;
+    if (clean.includes('male') || clean.includes('ប្រុស') || clean.includes('បុរស')) return CHARACTER_PRESETS.Male;
+
+    return CHARACTER_PRESETS.Male;
+}
+
+// Helper: Calculate emotional prosody modifiers (Pitch, Rate, Volume) combined with character base prosody
+function getEmotionProsody(emotion, basePitch, baseVolume, baseSpeed, baseRate) {
+    let basePitchVal = 0;
+    if (basePitch) {
+        const pNum = parseFloat(String(basePitch).replace('Hz', '').trim());
+        if (!isNaN(pNum)) basePitchVal = pNum;
+    }
+
+    let emotionPitchOffset = 0;
+    let emotionVolOffset = 0;
     let emotionRateOffset = 0;
 
     if (emotion) {
         const em = String(emotion).toLowerCase().trim();
         if (em === 'angry') {
-            finalPitch = '+10Hz';
-            finalVolume = '+15%';
+            emotionPitchOffset = 10;
+            emotionVolOffset = 15;
             emotionRateOffset = 12;
         } else if (em === 'sad') {
-            finalPitch = '-6Hz';
-            finalVolume = '-10%';
+            emotionPitchOffset = -6;
+            emotionVolOffset = -10;
             emotionRateOffset = -12;
         } else if (em === 'whisper') {
-            finalPitch = '-4Hz';
-            finalVolume = '-25%';
+            emotionPitchOffset = -4;
+            emotionVolOffset = -25;
             emotionRateOffset = -8;
         } else if (em === 'excited') {
-            finalPitch = '+12Hz';
-            finalVolume = '+10%';
+            emotionPitchOffset = 12;
+            emotionVolOffset = 10;
             emotionRateOffset = 15;
         } else if (em === 'royal') {
-            finalPitch = '-8Hz';
-            finalVolume = '+5%';
+            emotionPitchOffset = -8;
+            emotionVolOffset = 5;
             emotionRateOffset = -5;
         } else if (em === 'fear') {
-            finalPitch = '+15Hz';
-            finalVolume = '+5%';
+            emotionPitchOffset = 15;
+            emotionVolOffset = 5;
             emotionRateOffset = 18;
         }
     }
 
+    const totalPitch = basePitchVal + emotionPitchOffset;
+    const finalPitch = (totalPitch >= 0 ? `+${totalPitch}` : `${totalPitch}`) + 'Hz';
+
+    let baseVolVal = 0;
+    if (baseVolume) {
+        const vNum = parseFloat(String(baseVolume).replace('%', '').trim());
+        if (!isNaN(vNum)) baseVolVal = vNum;
+    }
+    const totalVol = baseVolVal + emotionVolOffset;
+    const finalVolume = (totalVol >= 0 ? `+${totalVol}` : `${totalVol}`) + '%';
+
+    let baseRateVal = 0;
+    if (baseRate) {
+        const rNum = parseFloat(String(baseRate).replace('%', '').trim());
+        if (!isNaN(rNum)) baseRateVal = rNum;
+    }
+
     const speedNum = typeof baseSpeed === 'number' ? baseSpeed : 1.0;
-    const totalSpeedPct = Math.round((speedNum - 1.0) * 100) + emotionRateOffset;
+    const totalSpeedPct = Math.round((speedNum - 1.0) * 100) + emotionRateOffset + baseRateVal;
     const rateStr = totalSpeedPct >= 0 ? `+${totalSpeedPct}%` : `${totalSpeedPct}%`;
 
     return { pitch: finalPitch, volume: finalVolume, rate: rateStr };
@@ -1749,6 +1838,7 @@ app.post('/api/generate-audio', (req, res) => {
     const {
         text,
         gender = 'Male',
+        character,
         language = 'Khmer',
         voice: customVoice,
         rate = '+0%',
@@ -1764,29 +1854,35 @@ app.post('/api/generate-audio', (req, res) => {
         return res.status(400).json({ success: false, error: 'Empty text' });
     }
 
-    let voice = 'km-KH-PisethNeural';
-    const isFemale = String(gender).toLowerCase() === 'female';
+    // Resolve character preset (Hero, Villain, Father, Mother, Elder, Queen, etc.)
+    const charPreset = resolveCharacterPreset(character || gender);
+    const isFemale = charPreset.gender === 'Female';
     const langStr = String(language || 'khmer').toLowerCase();
 
-    if (customVoice) {
-        voice = customVoice;
-    } else if (langStr.includes('en') || langStr.includes('english')) {
-        voice = isFemale ? 'en-US-JennyNeural' : 'en-US-GuyNeural';
-    } else if (langStr.includes('zh') || langStr.includes('chinese')) {
-        voice = isFemale ? 'zh-CN-XiaoxiaoNeural' : 'zh-CN-YunxiNeural';
-    } else if (langStr.includes('th') || langStr.includes('thai')) {
-        voice = isFemale ? 'th-TH-PremwadeeNeural' : 'th-TH-NiwatNeural';
-    } else if (langStr.includes('vi') || langStr.includes('viet')) {
-        voice = isFemale ? 'vi-VN-HoaiMyNeural' : 'vi-VN-NamMinhNeural';
-    } else if (langStr.includes('ja') || langStr.includes('japan')) {
-        voice = isFemale ? 'ja-JP-NanamiNeural' : 'ja-JP-KeitaNeural';
-    } else if (langStr.includes('ko') || langStr.includes('korean')) {
-        voice = isFemale ? 'ko-KR-SunHiNeural' : 'ko-KR-InJoonNeural';
-    } else {
-        voice = isFemale ? 'km-KH-SreymomNeural' : 'km-KH-PisethNeural';
+    let voice = customVoice;
+    if (!voice) {
+        if (langStr.includes('en') || langStr.includes('english')) {
+            voice = isFemale ? 'en-US-JennyNeural' : 'en-US-GuyNeural';
+        } else if (langStr.includes('zh') || langStr.includes('chinese')) {
+            voice = isFemale ? 'zh-CN-XiaoxiaoNeural' : 'zh-CN-YunxiNeural';
+        } else if (langStr.includes('th') || langStr.includes('thai')) {
+            voice = isFemale ? 'th-TH-PremwadeeNeural' : 'th-TH-NiwatNeural';
+        } else if (langStr.includes('vi') || langStr.includes('viet')) {
+            voice = isFemale ? 'vi-VN-HoaiMyNeural' : 'vi-VN-NamMinhNeural';
+        } else if (langStr.includes('ja') || langStr.includes('japan')) {
+            voice = isFemale ? 'ja-JP-NanamiNeural' : 'ja-JP-KeitaNeural';
+        } else if (langStr.includes('ko') || langStr.includes('korean')) {
+            voice = isFemale ? 'ko-KR-SunHiNeural' : 'ko-KR-InJoonNeural';
+        } else {
+            voice = charPreset.baseVoice;
+        }
     }
 
-    const prosody = getEmotionProsody(emotion, pitch, volume, speed);
+    // Merge character default pitch and rate if not explicitly overridden
+    const effectivePitch = (pitch && pitch !== '+0Hz') ? pitch : charPreset.pitch;
+    const effectiveRate = (rate && rate !== '+0%') ? rate : charPreset.rate;
+
+    const prosody = getEmotionProsody(emotion, effectivePitch, volume, speed, effectiveRate);
     const cacheKey = getTtsCacheKey(text, voice, prosody.rate, prosody.pitch, prosody.volume, speed, emotion);
 
     // Instant 0ms cache return if identical audio was previously generated
@@ -1891,11 +1987,14 @@ app.post('/api/generate-batch-audio', async (req, res) => {
         const text = (sub.dubbedText || sub.text || sub.originalText || '').trim();
         if (!text) continue;
 
-        let voice = sub.voice || defaultVoice;
-        if (!sub.voice) {
-            if (sub.gender === 'Female' || sub.gender === 'female') voice = 'km-KH-SreymomNeural';
+        const charPreset = resolveCharacterPreset(sub.character || sub.gender);
+        let voice = sub.voice;
+        if (!voice) {
+            voice = charPreset.baseVoice;
         }
-        const prosody = getEmotionProsody(sub.emotion, sub.pitch, sub.volume, sub.speed);
+        const effectivePitch = (sub.pitch && sub.pitch !== '+0Hz') ? sub.pitch : charPreset.pitch;
+        const effectiveRate = (sub.rate && sub.rate !== '+0%') ? sub.rate : charPreset.rate;
+        const prosody = getEmotionProsody(sub.emotion, effectivePitch, sub.volume, sub.speed, effectiveRate);
         const cacheKey = getTtsCacheKey(text, voice, prosody.rate, prosody.pitch, prosody.volume, sub.speed, sub.emotion);
 
         if (ttsCache.has(cacheKey)) {
@@ -2013,19 +2112,40 @@ app.post('/api/generate-voxcmp2', async (req, res) => {
     const { text, serverUrl = 'http://127.0.0.1:8808', tempPath, profile, index, speed = 1.0, emotion = 'Neutral' } = req.body;
     const outFile = resolveAudioOutputFile(tempPath, index);
 
+    const logVox = (msg) => {
+        try {
+            const line = `[${new Date().toISOString()}] ${msg}\n`;
+            fs.appendFileSync(path.join(LOGS_DIR, 'voxcpm_debug.log'), line, 'utf8');
+        } catch (_) {}
+    };
+
     // Normalize localhost to 127.0.0.1 to prevent Node.js 18+ IPv6 (::1) ECONNREFUSED on Windows
     let baseUrl = (serverUrl || 'http://127.0.0.1:8808').replace(/\/+$/, '');
     if (baseUrl.includes('localhost')) {
         baseUrl = baseUrl.replace('localhost', '127.0.0.1');
     }
 
+    logVox(`[Request] text="${(text || '').slice(0, 30)}..." baseUrl=${baseUrl} outFile=${outFile}`);
+
     try {
+        let refAudioBase64 = null;
+        if (profile && profile.audioPath && fs.existsSync(profile.audioPath)) {
+            try {
+                refAudioBase64 = fs.readFileSync(profile.audioPath).toString('base64');
+            } catch (refErr) {
+                console.warn('[VoxCPM2] Could not read reference audio file:', refErr.message);
+                logVox(`[Warn] Read ref audio failed: ${refErr.message}`);
+            }
+        }
+
         const payload = {
             text,
             instruction: (profile && profile.instruction) || '',
             reference_audio: (profile && profile.audioPath) || '',
+            reference_audio_base64: refAudioBase64,
             speed: parseFloat(speed) || 1.0,
             emotion: emotion || 'Neutral',
+            cfg_value: parseFloat(req.body.cfg_value) || 1.5,
             output_path: outFile,
             profile: profile || null
         };
@@ -2034,24 +2154,29 @@ app.post('/api/generate-voxcmp2', async (req, res) => {
         const timeout = setTimeout(() => controller.abort(), 120000); // 2 minute timeout for neural synthesis
 
         let targetEndpoint = `${baseUrl}/api/generate`;
-        console.log(`[VoxCPM2] Sending synthesis request to: ${targetEndpoint}`);
+        logVox(`[Send] POST ${targetEndpoint}`);
 
         let response;
+        const requestHeaders = {
+            'Content-Type': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        };
+
         try {
             response = await fetch(targetEndpoint, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: requestHeaders,
                 body: JSON.stringify(payload),
                 signal: controller.signal
             });
         } catch (fetchErr) {
-            // Fallback: if 127.0.0.1 failed, try original URL or localhost
+            logVox(`[Fetch Primary Error] ${fetchErr.message} (cause: ${fetchErr.cause ? fetchErr.cause.message : 'none'})`);
             const altBaseUrl = baseUrl.includes('127.0.0.1') ? baseUrl.replace('127.0.0.1', 'localhost') : baseUrl;
             targetEndpoint = `${altBaseUrl}/api/generate`;
-            console.warn(`[VoxCPM2] Primary connect failed (${fetchErr.message}), trying alternative: ${targetEndpoint}`);
+            logVox(`[Retry Alternative] POST ${targetEndpoint}`);
             response = await fetch(targetEndpoint, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: requestHeaders,
                 body: JSON.stringify(payload),
                 signal: controller.signal
             });
@@ -2060,25 +2185,35 @@ app.post('/api/generate-voxcmp2', async (req, res) => {
         // If /api/generate returned 404, fallback to /generate
         if (response.status === 404) {
             const fallbackEndpoint = `${baseUrl}/generate`;
-            console.log(`[VoxCPM2] /api/generate returned 404, trying fallback: ${fallbackEndpoint}`);
+            logVox(`[/api/generate returned 404, trying /generate] POST ${fallbackEndpoint}`);
             response = await fetch(fallbackEndpoint, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: requestHeaders,
                 body: JSON.stringify(payload),
                 signal: controller.signal
             });
         }
 
         clearTimeout(timeout);
+        logVox(`[Response Status] HTTP ${response.status}`);
 
         if (!response.ok) {
             const errText = await response.text();
+            logVox(`[Response Error Text] ${errText}`);
             throw new Error(`VoxCPM2 server returned HTTP ${response.status}: ${errText}`);
         }
 
         const data = await response.json();
         if (data.success === false) {
+            logVox(`[Data Failure] ${data.error}`);
             throw new Error(data.error || 'VoxCPM2 generation failed.');
+        }
+
+        // If returned as base64 from a remote cloud server (e.g. Google Colab)
+        if (data.audio_base64) {
+            fs.mkdirSync(path.dirname(outFile), { recursive: true });
+            fs.writeFileSync(outFile, Buffer.from(data.audio_base64, 'base64'));
+            logVox(`[Audio File Saved] ${outFile}`);
         }
 
         const duration = data.duration || 0;
@@ -2089,11 +2224,36 @@ app.post('/api/generate-voxcmp2', async (req, res) => {
             url: `/api/audio?path=${encodeURIComponent(outFile)}`
         });
     } catch (err) {
+        logVox(`[Crash Error] ${err.message}`);
         console.error('[VoxCPM2 Request Failed]', err.message);
         return res.status(500).json({
             success: false,
             error: `VoxCPM2 synthesis failed: ${err.message}. Please ensure the VoxCPM2 server is started in Settings -> VoxCPM2 AI.`
         });
+    }
+});
+
+// Endpoint to save audio base64 directly from browser (for remote Colab / cloud GPU synthesis)
+app.post('/api/save-audio-file', express.json({ limit: '50mb' }), (req, res) => {
+    try {
+        const { tempPath, index, audioBase64, filePath } = req.body;
+        if (!audioBase64) {
+            return res.status(400).json({ success: false, error: 'No audioBase64 provided' });
+        }
+        const targetFile = filePath || resolveAudioOutputFile(tempPath, index);
+        fs.mkdirSync(path.dirname(targetFile), { recursive: true });
+        const buffer = Buffer.from(audioBase64, 'base64');
+        fs.writeFileSync(targetFile, buffer);
+        
+        return res.json({
+            success: true,
+            file: targetFile,
+            size: buffer.length,
+            url: `/api/audio?path=${encodeURIComponent(targetFile)}`
+        });
+    } catch (err) {
+        console.error('[Save Audio File Error]', err.message);
+        return res.status(500).json({ success: false, error: err.message });
     }
 });
 
@@ -2129,6 +2289,11 @@ const VOICE_PRESETS = {
 
 app.get('/api/voices', (req, res) => {
     res.json({ success: true, voices: VOICE_PRESETS });
+});
+
+// 6b. Character Presets Endpoint (10 Auto-Speaker Roles)
+app.get('/api/characters', (req, res) => {
+    res.json({ success: true, characters: CHARACTER_PRESETS });
 });
 
 // 7. Video Preview & Conversion check
