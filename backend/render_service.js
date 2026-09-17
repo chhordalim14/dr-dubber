@@ -64,7 +64,7 @@ function canEncodeWith(codec) {
         }
         p.on('error', () => finish(false));
         p.on('close', (code) => finish(code === 0));
-        setTimeout(() => { try { p.kill(); } catch (e) {} finish(false); }, 4000);
+        setTimeout(() => { try { p.kill(); } catch (e) { } finish(false); }, 4000);
     });
 }
 
@@ -107,7 +107,7 @@ async function getVideoDuration(videoPath) {
     try {
         cacheKey = `${videoPath}:${fs.statSync(videoPath).mtimeMs}`;
         if (_videoDurationCache.has(cacheKey)) return _videoDurationCache.get(cacheKey);
-    } catch (e) {}
+    } catch (e) { }
 
     try {
         const { stdout } = await execFileAsync(getFFprobeBinary(), ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', videoPath], { timeout: 5000 });
@@ -126,7 +126,7 @@ async function getVideoDimensions(videoPath) {
     try {
         cacheKey = `${videoPath}:${fs.statSync(videoPath).mtimeMs}`;
         if (_videoDimensionsCache.has(cacheKey)) return _videoDimensionsCache.get(cacheKey);
-    } catch (e) {}
+    } catch (e) { }
 
     try {
         const { stdout } = await execFileAsync(getFFprobeBinary(), [
@@ -142,6 +142,31 @@ async function getVideoDimensions(videoPath) {
         return result;
     } catch (e) {
         return null;
+    }
+}
+
+const _videoHasAudioCache = new Map();
+async function videoHasAudio(videoPath) {
+    if (!videoPath) return false;
+    let cacheKey = videoPath;
+    try {
+        cacheKey = `${videoPath}:${fs.statSync(videoPath).mtimeMs}`;
+        if (_videoHasAudioCache.has(cacheKey)) return _videoHasAudioCache.get(cacheKey);
+    } catch (e) { }
+
+    try {
+        const { stdout } = await execFileAsync(getFFprobeBinary(), [
+            '-v', 'error',
+            '-select_streams', 'a',
+            '-show_entries', 'stream=codec_type',
+            '-of', 'csv=p=0',
+            videoPath
+        ], { timeout: 5000 });
+        const hasA = stdout.includes('audio');
+        _videoHasAudioCache.set(cacheKey, hasA);
+        return hasA;
+    } catch (e) {
+        return false;
     }
 }
 
@@ -268,7 +293,19 @@ function buildFreeTextAssFile(freeTexts, canvasW, canvasH, videoDuration, tempDi
         const styleLine = `Style: ${styleName},${fontName},${fontSize},${primaryColor},${primaryColor},${outlineColor},&H64000000,${t.bold ? -1 : 0},${t.italic ? -1 : 0},0,0,100,100,0,0,1,${outlineW},0,5,0,0,0,1`;
 
         const text = escapeAssText(t.text);
-        const dialogueLine = `Dialogue: 0,0:00:00.00,${endTime},${styleName},,0,0,0,,{\\an5\\pos(${px},${py})${boldTag}${italicTag}${alphaTag}}${text}`;
+        const motion = t.motion || 'none';
+        let dialogueLine;
+        if (motion === 'scroll_left') {
+            const startX = w + 150;
+            const endX = -150;
+            dialogueLine = `Dialogue: 0,0:00:00.00,${endTime},${styleName},,0,0,0,,{\\an5\\move(${startX},${py},${endX},${py})${boldTag}${italicTag}${alphaTag}}${text}`;
+        } else if (motion === 'scroll_right') {
+            const startX = -150;
+            const endX = w + 150;
+            dialogueLine = `Dialogue: 0,0:00:00.00,${endTime},${styleName},,0,0,0,,{\\an5\\move(${startX},${py},${endX},${py})${boldTag}${italicTag}${alphaTag}}${text}`;
+        } else {
+            dialogueLine = `Dialogue: 0,0:00:00.00,${endTime},${styleName},,0,0,0,,{\\an5\\pos(${px},${py})${boldTag}${italicTag}${alphaTag}}${text}`;
+        }
 
         return { styleLine, dialogueLine };
     });
@@ -297,6 +334,65 @@ function buildFreeTextAssFile(freeTexts, canvasW, canvasH, videoDuration, tempDi
     return assPath;
 }
 
+function buildClipAudioFilters(item, voiceVolume) {
+    const rawStart = item.start !== undefined ? item.start : (item.audioStart !== undefined ? item.audioStart : (item.textStart !== undefined ? item.textStart : (item.startTime || 0)));
+    const startSec = Math.max(0, parseTimeToSeconds(rawStart));
+    const delayMs = Math.round(startSec * 1000);
+    const subVol = parseFloat(item.volume || '1.0') || 1.0;
+    const totalVol = (voiceVolume * subVol).toFixed(2);
+    const speed = (item.speed && parseFloat(item.speed) > 0) ? parseFloat(item.speed) : 1.0;
+
+    const afParts = [];
+
+    // 1. Timeline trim / duration capping
+    const offset = item.sourceOffset ? parseFloat(item.sourceOffset) : 0;
+    const dur = item.duration ? parseFloat(item.duration) : null;
+
+    if (offset > 0 || (dur !== null && dur > 0)) {
+        if (dur !== null && dur > 0) {
+            const sourceDuration = (dur * speed).toFixed(3);
+            afParts.push(`atrim=start=${offset.toFixed(3)}:duration=${sourceDuration}`, 'asetpts=PTS-STARTPTS');
+        } else if (offset > 0) {
+            afParts.push(`atrim=start=${offset.toFixed(3)}`, 'asetpts=PTS-STARTPTS');
+        }
+    }
+
+    // 2. Speed (atempo)
+    if (Math.abs(speed - 1.0) > 0.01) {
+        afParts.push(`atempo=${speed.toFixed(3)}`);
+    }
+
+    // 3. Pitch shifting (semitones: -12 to +12)
+    if (item.pitch && Math.abs(parseFloat(item.pitch)) > 0.01) {
+        const pitchVal = parseFloat(item.pitch);
+        const pitchRatio = Math.pow(2, pitchVal / 12).toFixed(4);
+        afParts.push(`rubberband=pitch=${pitchRatio}`);
+    }
+
+    // 4. Acoustic Reverb (aecho)
+    if (item.reverb && (item.reverb.enabled === true || item.reverb.enabled === 'true' || item.reverb === true)) {
+        const preset = item.reverb.preset || 'room';
+        const str = Math.min(1.0, Math.max(0.05, (parseFloat(item.reverb.strength !== undefined ? item.reverb.strength : 30) || 30) / 100));
+        let delay = '40';
+        let decay = (0.2 * str).toFixed(2);
+        if (preset === 'palace') {
+            delay = '100|180';
+            decay = `${(0.35 * str).toFixed(2)}|${(0.25 * str).toFixed(2)}`;
+        } else if (preset === 'outdoor') {
+            delay = '80';
+            decay = `${(0.25 * str).toFixed(2)}`;
+        } else if (preset === 'flashback') {
+            delay = '150|300';
+            decay = `${(0.45 * str).toFixed(2)}|${(0.35 * str).toFixed(2)}`;
+        }
+        afParts.push(`aecho=0.8:0.88:${delay}:${decay}`);
+    }
+
+    // 5. Timeline delay and master volume
+    afParts.push(`adelay=${delayMs}|${delayMs}`, `volume=${totalVol}`);
+    return afParts;
+}
+
 /**
  * Fast Dialogue Stem Pre-Assembly.
  * Combines all subtitle audio cues into a single master PCM dialogue track in a lightning-fast pass.
@@ -321,20 +417,7 @@ async function assembleDialogueStem(validSubs, tempDir, voiceVolume = 1.0) {
     if (existing.length === 1) {
         const item = existing[0];
         const aPath = item.file || item.audioPath;
-        const rawStart = item.start !== undefined ? item.start : (item.audioStart !== undefined ? item.audioStart : (item.textStart !== undefined ? item.textStart : (item.startTime || 0)));
-        const startSec = Math.max(0, parseTimeToSeconds(rawStart));
-        const delayMs = Math.round(startSec * 1000);
-        const subVol = parseFloat(item.volume || '1.0') || 1.0;
-        const totalVol = (voiceVolume * subVol).toFixed(2);
-
-        const afParts = [];
-        if (item.sourceOffset && parseFloat(item.sourceOffset) > 0) {
-            afParts.push(`atrim=start=${parseFloat(item.sourceOffset)}`);
-        }
-        if (item.speed && parseFloat(item.speed) !== 1.0) {
-            afParts.push(`atempo=${parseFloat(item.speed)}`);
-        }
-        afParts.push(`adelay=${delayMs}|${delayMs}`, `volume=${totalVol}`);
+        const afParts = buildClipAudioFilters(item, voiceVolume);
 
         const args = [
             '-y', '-i', aPath,
@@ -357,20 +440,7 @@ async function assembleDialogueStem(validSubs, tempDir, voiceVolume = 1.0) {
     existing.forEach((sub, i) => {
         const aPath = sub.file || sub.audioPath;
         args.push('-i', aPath);
-        const rawStart = sub.start !== undefined ? sub.start : (sub.audioStart !== undefined ? sub.audioStart : (sub.textStart !== undefined ? sub.textStart : (sub.startTime || 0)));
-        const startSec = Math.max(0, parseTimeToSeconds(rawStart));
-        const delayMs = Math.round(startSec * 1000);
-        const subVol = parseFloat(sub.volume || '1.0') || 1.0;
-        const totalVol = (voiceVolume * subVol).toFixed(2);
-
-        const afParts = [];
-        if (sub.sourceOffset && parseFloat(sub.sourceOffset) > 0) {
-            afParts.push(`atrim=start=${parseFloat(sub.sourceOffset)}`);
-        }
-        if (sub.speed && parseFloat(sub.speed) !== 1.0) {
-            afParts.push(`atempo=${parseFloat(sub.speed)}`);
-        }
-        afParts.push(`adelay=${delayMs}|${delayMs}`, `volume=${totalVol}`);
+        const afParts = buildClipAudioFilters(sub, voiceVolume);
 
         filterParts.push(`[${i}:a]${afParts.join(',')}[a${i}]`);
         streamNames.push(`[a${i}]`);
@@ -619,7 +689,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         // Ensure output parent directory exists
         const outDir = path.dirname(outputPath);
         if (!fs.existsSync(outDir)) {
-            try { fs.mkdirSync(outDir, { recursive: true }); } catch (e) {}
+            try { fs.mkdirSync(outDir, { recursive: true }); } catch (e) { }
         }
 
         // Gather all audio items (from audioTracks or subtitles)
@@ -743,7 +813,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
 
             ffmpeg.on('close', (code) => {
                 activeRenderProcess = null;
-                try { if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true }); } catch (e) {}
+                try { if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true }); } catch (e) { }
                 if (code === 0 && fs.existsSync(outputPath)) {
                     currentRenderJob.status = 'done';
                     currentRenderJob.progress = 100;
@@ -758,7 +828,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
 
             ffmpeg.on('error', (err) => {
                 activeRenderProcess = null;
-                try { if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true }); } catch (e) {}
+                try { if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true }); } catch (e) { }
                 currentRenderJob.status = 'error';
                 currentRenderJob.error = err.message;
                 if (onError) onError(err);
@@ -827,7 +897,9 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         const filterComplex = [];
 
         // Audio mixing & Studio Auto-Ducking
+        const sourceHasAudio = videoPath ? await videoHasAudio(videoPath) : false;
         const isMuted = isOriginalAudioMuted !== undefined ? isOriginalAudioMuted : muteOriginal;
+        const includeOrigAudio = !isMuted && sourceHasAudio;
 
         if (dialogueInputIndex >= 0) {
             if (bgmInputIndex >= 0) {
@@ -841,7 +913,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                     filterComplex.push(`[${bgmInputIndex}:a]${bgmFilterChain}[bgm_vol]`);
                     filterComplex.push(`[bgm_vol][${dialogueInputIndex}:a]sidechaincompress=${sidechainParams}[bgm_ducked]`);
                     filterComplex.push(`[bgm_ducked]equalizer=f=1100:t=q:w=1.5:g=-6[bgm_clean]`);
-                    if (!isMuted) {
+                    if (includeOrigAudio) {
                         filterComplex.push(`[0:a]volume=1.0[orig_a]`);
                         filterComplex.push(`[bgm_clean][${dialogueInputIndex}:a][orig_a]amix=inputs=3:normalize=0:duration=longest[final_audio]`);
                     } else {
@@ -849,7 +921,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                     }
                 } else {
                     filterComplex.push(`[${bgmInputIndex}:a]${bgmFilterChain}[bgm_vol]`);
-                    if (!isMuted) {
+                    if (includeOrigAudio) {
                         filterComplex.push(`[0:a]volume=1.0[orig_a]`);
                         filterComplex.push(`[bgm_vol][${dialogueInputIndex}:a][orig_a]amix=inputs=3:normalize=0:duration=longest[final_audio]`);
                     } else {
@@ -857,7 +929,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                     }
                 }
             } else {
-                if (!isMuted) {
+                if (includeOrigAudio) {
                     filterComplex.push(`[0:a]volume=1.0[orig_a]`);
                     filterComplex.push(`[${dialogueInputIndex}:a][orig_a]amix=inputs=2:normalize=0:duration=longest[final_audio]`);
                 } else {
@@ -865,7 +937,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                 }
             }
         } else if (bgmInputIndex >= 0) {
-            if (!isMuted) {
+            if (includeOrigAudio) {
                 filterComplex.push(`[${bgmInputIndex}:a]${bgmFilterChain}[bgm_vol]`);
                 filterComplex.push(`[0:a]volume=1.0[orig_a]`);
                 filterComplex.push(`[bgm_vol][orig_a]amix=inputs=2:normalize=0:duration=longest[final_audio]`);
@@ -873,12 +945,10 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                 filterComplex.push(`[${bgmInputIndex}:a]${bgmFilterChain}[final_audio]`);
             }
         } else {
-            if (!isMuted) {
+            if (includeOrigAudio) {
                 filterComplex.push(`[0:a]volume=1.0[final_audio]`);
             } else {
-                // No dialogue, no BGM, original audio muted — still need an audio stream
-                // covering the FULL clip, not a fixed 1s stub (which left the container's
-                // audio track much shorter than its video track on anything longer than 1s).
+                // No dialogue, no BGM, original audio muted or missing — generate silent audio stream
                 filterComplex.push(`aevalsrc=0:d=${videoDuration}[final_audio]`);
             }
         }
@@ -908,7 +978,8 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             vFilters.push(`hue=h=${hue.toFixed(1)}`);
         }
         if (sharpness > 0.01) {
-            vFilters.push(`unsharp=5:5:${(sharpness * 0.4).toFixed(2)}:5:5:0.0`);
+            const lumaAmount = Math.min(2.5, Math.max(0.1, (sharpness / 100) * 2.5)).toFixed(2);
+            vFilters.push(`unsharp=5:5:${lumaAmount}:5:5:0.0`);
         }
 
         // Vignette
@@ -990,36 +1061,15 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             const hasPanZoom = Math.abs(zoom - 1) > 0.001 || Math.abs(stretchX - 1) > 0.001 || Math.abs(stretchY - 1) > 0.001 || Math.abs(panXPct) > 0.001 || Math.abs(panYPct) > 0.001;
 
             if (hasPanZoom) {
-                const cropW = Math.max(2, Math.round(canvasW / zoom / 2) * 2);
-                const cropH = Math.max(2, Math.round(canvasH / zoom / 2) * 2);
-                const cropX = Math.round((canvasW - cropW) / 2);
-                const cropY = Math.round((canvasH - cropH) / 2);
-
-                const placedW = Math.max(2, Math.round(canvasW * stretchX / 2) * 2);
-                const placedH = Math.max(2, Math.round(canvasH * stretchY / 2) * 2);
+                const placedW = Math.max(2, Math.round(canvasW * zoom * stretchX / 2) * 2);
+                const placedH = Math.max(2, Math.round(canvasH * zoom * stretchY / 2) * 2);
 
                 const posX = Math.round((canvasW - placedW) / 2 + (canvasW * panXPct / 100));
                 const posY = Math.round((canvasH - placedH) / 2 + (canvasH * panYPct / 100));
 
-                const unionLeft = Math.min(0, posX);
-                const unionTop = Math.min(0, posY);
-                const unionRight = Math.max(canvasW, posX + placedW);
-                const unionBottom = Math.max(canvasH, posY + placedH);
-                // Even-align by rounding UP only — padW/padH must never shrink below
-                // (unionRight-unionLeft)/(unionBottom-unionTop), or ffmpeg's `pad` filter
-                // will reject the target size as smaller than the input.
-                const padWRaw = unionRight - unionLeft;
-                const padHRaw = unionBottom - unionTop;
-                const padW = padWRaw % 2 === 0 ? padWRaw : padWRaw + 1;
-                const padH = padHRaw % 2 === 0 ? padHRaw : padHRaw + 1;
-                // Where the CONTENT is placed within the padded canvas (for the `pad` filter)
-                const contentPlaceX = posX - unionLeft;
-                const contentPlaceY = posY - unionTop;
-                // Where the FRAME window starts within that same padded canvas (for the final crop)
-                const frameOffsetX = 0 - unionLeft;
-                const frameOffsetY = 0 - unionTop;
-
-                filterComplex.push(`[${currentVideoTag}]crop=${cropW}:${cropH}:${cropX}:${cropY},scale=${placedW}:${placedH},pad=${padW}:${padH}:${contentPlaceX}:${contentPlaceY}:black,crop=${canvasW}:${canvasH}:${frameOffsetX}:${frameOffsetY}[pz_out]`);
+                filterComplex.push(`color=c=black:s=${canvasW}x${canvasH}[pz_bg]`);
+                filterComplex.push(`[${currentVideoTag}]scale=${placedW}:${placedH},setsar=1[pz_scaled]`);
+                filterComplex.push(`[pz_bg][pz_scaled]overlay=x=${posX}:y=${posY}:eof_action=repeat[pz_out]`);
                 currentVideoTag = 'pz_out';
             }
         }
@@ -1299,7 +1349,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                 if (tempDir && fs.existsSync(tempDir)) {
                     fs.rmSync(tempDir, { recursive: true, force: true });
                 }
-            } catch (e) {}
+            } catch (e) { }
         }
 
         let fullStderr = '';
@@ -1357,11 +1407,11 @@ function cancelRender() {
         try {
             if (process.platform === 'win32') {
                 const { exec } = require('child_process');
-                exec(`taskkill /pid ${activeRenderProcess.pid} /T /F`, () => {});
+                exec(`taskkill /pid ${activeRenderProcess.pid} /T /F`, () => { });
             } else {
                 activeRenderProcess.kill('SIGKILL');
             }
-        } catch (e) {}
+        } catch (e) { }
         activeRenderProcess = null;
         currentRenderJob.status = 'cancelled';
         return true;

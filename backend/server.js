@@ -172,6 +172,49 @@ function getPythonCmd() {
 }
 const PYTHON_CMD = getPythonCmd();
 
+function getSpleeterPythonCmd() {
+    if (process.env.SPLEETER_PYTHON && isWorkingPython(process.env.SPLEETER_PYTHON)) {
+        return process.env.SPLEETER_PYTHON;
+    }
+    const isWin = process.platform === 'win32';
+    const subPath = isWin ? path.join('Scripts', 'python.exe') : path.join('bin', 'python');
+    const unpackedRootDir = ROOT_DIR.includes('app.asar') ? ROOT_DIR.replace('app.asar', 'app.asar.unpacked') : ROOT_DIR;
+
+    const candidates = [
+        path.join(unpackedRootDir, 'backend', 'spleeter-env', subPath),
+        path.join(ROOT_DIR, 'backend', 'spleeter-env', subPath),
+        path.join(ROOT_DIR, 'spleeter-env', subPath),
+    ];
+    if (isWin) {
+        const pf = process.env.ProgramFiles || 'C:\\Program Files';
+        candidates.push(path.join(pf, 'Python310', 'python.exe'));
+        candidates.push(path.join(pf, 'Python39', 'python.exe'));
+        candidates.push(path.join(pf, 'Python311', 'python.exe'));
+        const localAppData = process.env.LOCALAPPDATA || (process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'AppData', 'Local') : '');
+        if (localAppData) {
+            candidates.push(path.join(localAppData, 'Programs', 'Python', 'Python310', 'python.exe'));
+            candidates.push(path.join(localAppData, 'Programs', 'DR Dubber Pro', 'resources', 'app.asar.unpacked', 'backend', 'spleeter-env', subPath));
+        }
+    }
+    candidates.push(path.join(unpackedRootDir, 'backend', 'python_env', isWin ? 'python.exe' : 'python'));
+    candidates.push(path.join(ROOT_DIR, 'backend', 'python_env', isWin ? 'python.exe' : 'python'));
+
+    for (const cand of candidates) {
+        if (!cand || !fs.existsSync(cand)) continue;
+        try {
+            execFileSync(cand, ['-c', 'import sys, spleeter; sys.exit(0)'], {
+                encoding: 'utf8',
+                timeout: 3500,
+                stdio: ['pipe', 'pipe', 'pipe'],
+                windowsHide: true
+            });
+            return cand;
+        } catch (e) {}
+    }
+    return null;
+}
+const SPLEETER_PYTHON_CMD = getSpleeterPythonCmd();
+
 function ensureTtsDependencies() {
     if (!PYTHON_CMD) {
         console.warn('[Python TTS] No working Python environment found. Edge-TTS local speech synthesis will not be available.');
@@ -667,7 +710,7 @@ function isolateBgmWithFfmpeg(audioPath, outputDir, jobId, isFallback = false) {
     const bgmPath = path.join(jobDir, 'accompaniment.wav');
     const vocalPath = path.join(jobDir, 'vocals.wav');
 
-    const filterGraph = '[0:a]aformat=channel_layouts=stereo,asplit=2[a_bgm_in][a_voc_in];[a_bgm_in]stereotools=mode=lr>l-r[bgm];[a_voc_in]stereotools=mode=lr>l+r,highpass=f=200,lowpass=f=3500[vocal]';
+    const filterGraph = '[0:a]aformat=channel_layouts=stereo,asplit=2[a_bgm_in][a_voc_in];[a_bgm_in]stereotools=mode=lr>l-r,volume=2.5[bgm];[a_voc_in]stereotools=mode=lr>l+r,highpass=f=200,lowpass=f=3500,volume=1.5[vocal]';
 
     const args = [
         '-y',
@@ -747,9 +790,15 @@ app.post('/api/remove-vocals', upload.any(), (req, res) => {
         return;
     }
 
+    const spleeterPython = SPLEETER_PYTHON_CMD || getSpleeterPythonCmd();
+    let separatorPython = PYTHON_CMD;
+    if (engine === 'spleeter' && spleeterPython) {
+        separatorPython = spleeterPython;
+    }
+
     // If no operational Python environment is detected on this machine,
     // seamlessly fall back to direct native FFmpeg phase cancellation immediately.
-    if (!PYTHON_CMD) {
+    if (!separatorPython) {
         console.warn(`[Vocal Separator] Requested engine '${engine}', but no operational Python found. Falling back to native FFmpeg separation...`);
         isolateBgmWithFfmpeg(audioPath, SEPARATED_DIR, jobId, true);
         return;
@@ -766,11 +815,19 @@ app.post('/api/remove-vocals', upload.any(), (req, res) => {
     if (demucsFolder) pyArgs.push('--demucs-folder', demucsFolder);
     if (demucsSegment) pyArgs.push('--segment', demucsSegment);
     if (spleeterFolder) pyArgs.push('--spleeter-folder', spleeterFolder);
+    if (spleeterPython) pyArgs.push('--spleeter-python', spleeterPython);
 
     const pyScript = getPythonScriptPath('vocal_separator.py');
+    const runEnv = {
+        ...PYTHON_ENV,
+        SPLEETER_PYTHON: spleeterPython || '',
+        PYTHONIOENCODING: 'utf-8',
+        PYTHONUTF8: '1',
+        TF_CPP_MIN_LOG_LEVEL: '2'
+    };
     let child;
     try {
-        child = spawn(PYTHON_CMD, [pyScript, ...pyArgs], { env: PYTHON_ENV });
+        child = spawn(separatorPython, [pyScript, ...pyArgs], { env: runEnv });
         trackProcess(child);
     } catch (spawnErr) {
         console.warn('[Python Vocal Separator Spawn Failed]', spawnErr.message, 'Falling back to native FFmpeg separation...');
