@@ -88,6 +88,26 @@ def is_working_python(py_path):
     except Exception:
         return False
 
+def is_working_module_python(py_path, module_name):
+    if not py_path or not os.path.isfile(py_path):
+        return False
+    try:
+        res = subprocess.run(
+            [py_path, "-c", f"import sys, {module_name}; sys.exit(0)"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5
+        )
+        return res.returncode == 0
+    except Exception:
+        return False
+
+def is_spleeter_python(py_path):
+    return is_working_module_python(py_path, "spleeter")
+
+def is_demucs_python(py_path):
+    return is_working_module_python(py_path, "demucs")
+
 def get_ffmpeg_executable():
     import shutil
     bin_path = shutil.which("ffmpeg")
@@ -107,10 +127,51 @@ def get_ffmpeg_executable():
             return os.path.abspath(c)
     return "ffmpeg"
 
-DEMUCS_PYTHON_DEFAULT = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "demucs-env",
-    "Scripts" if os.name == "nt" else "bin", "python.exe" if os.name == "nt" else "python"
-)
+def get_media_duration(file_path):
+    try:
+        ffmpeg_bin = get_ffmpeg_executable()
+        ffprobe_bin = "ffprobe"
+        if ffmpeg_bin and "ffmpeg.exe" in ffmpeg_bin.lower():
+            probe_cand = ffmpeg_bin.lower().replace("ffmpeg.exe", "ffprobe.exe")
+            if os.path.isfile(probe_cand):
+                ffprobe_bin = probe_cand
+        res = subprocess.run(
+            [ffprobe_bin, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", file_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            return float(res.stdout.strip())
+    except Exception:
+        pass
+    return None
+
+def get_demucs_python_default():
+    py_dir = os.path.dirname(os.path.abspath(__file__))
+    if "app.asar" in py_dir and "app.asar.unpacked" not in py_dir:
+        py_dir = py_dir.replace("app.asar", "app.asar.unpacked")
+    candidates = [
+        os.path.join(py_dir, "..", "demucs-env", "Scripts" if os.name == "nt" else "bin", "python.exe" if os.name == "nt" else "python"),
+        os.path.join(py_dir, "..", "..", "backend", "demucs-env", "Scripts" if os.name == "nt" else "bin", "python.exe" if os.name == "nt" else "python"),
+    ]
+    if os.name == "nt":
+        prog_files = os.environ.get("ProgramFiles", "C:\\Program Files")
+        for ver in ["Python310", "Python311", "Python39", "Python312"]:
+            candidates.append(os.path.join(prog_files, ver, "python.exe"))
+        local_app_data = os.environ.get("LOCALAPPDATA", "")
+        if local_app_data:
+            for ver in ["Python310", "Python311", "Python39", "Python312"]:
+                candidates.append(os.path.join(local_app_data, "Programs", "Python", ver, "python.exe"))
+    for c in candidates:
+        if is_demucs_python(c):
+            return os.path.abspath(c)
+    if is_demucs_python(sys.executable):
+        return os.path.abspath(sys.executable)
+    return None
+
+DEMUCS_PYTHON_DEFAULT = get_demucs_python_default()
 DEMUCS_MODEL = os.environ.get("DEMUCS_MODEL") or "htdemucs"
 
 def get_spleeter_python_default():
@@ -118,29 +179,64 @@ def get_spleeter_python_default():
     if "app.asar" in py_dir and "app.asar.unpacked" not in py_dir:
         py_dir = py_dir.replace("app.asar", "app.asar.unpacked")
     candidates = [
-        os.path.join(py_dir, "..", "python_env", "python.exe" if os.name == "nt" else "python"),
-        os.path.join(py_dir, "..", "..", "backend", "python_env", "python.exe" if os.name == "nt" else "python"),
+        # Dedicated Spleeter virtual environments first
         os.path.join(py_dir, "..", "spleeter-env", "Scripts" if os.name == "nt" else "bin", "python.exe" if os.name == "nt" else "python"),
         os.path.join(py_dir, "..", "..", "backend", "spleeter-env", "Scripts" if os.name == "nt" else "bin", "python.exe" if os.name == "nt" else "python"),
+        os.path.join(py_dir, "..", "..", "spleeter-env", "Scripts" if os.name == "nt" else "bin", "python.exe" if os.name == "nt" else "python"),
     ]
-    local_app_data = os.environ.get("LOCALAPPDATA", "")
-    if local_app_data:
-        candidates.append(os.path.join(
-            local_app_data, "Programs", "DR Dubber Pro", "resources", "app.asar.unpacked", "backend", "python_env",
-            "python.exe" if os.name == "nt" else "python"
-        ))
-        candidates.append(os.path.join(
-            local_app_data, "Programs", "DR Dubber Pro", "resources", "app.asar.unpacked", "backend", "spleeter-env",
-            "Scripts" if os.name == "nt" else "bin", "python.exe" if os.name == "nt" else "python"
-        ))
+    if os.name == "nt":
+        prog_files = os.environ.get("ProgramFiles", "C:\\Program Files")
+        prog_files_x86 = os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")
+        for pf in [prog_files, prog_files_x86]:
+            for ver in ["Python310", "Python39", "Python311", "Python38", "Python312"]:
+                candidates.append(os.path.join(pf, ver, "python.exe"))
+        local_app_data = os.environ.get("LOCALAPPDATA", "")
+        if local_app_data:
+            for ver in ["Python310", "Python39", "Python311", "Python38", "Python312"]:
+                candidates.append(os.path.join(local_app_data, "Programs", "Python", ver, "python.exe"))
+            candidates.append(os.path.join(
+                local_app_data, "Programs", "DR Dubber Pro", "resources", "app.asar.unpacked", "backend", "spleeter-env",
+                "Scripts", "python.exe"
+            ))
+            candidates.append(os.path.join(
+                local_app_data, "Programs", "DR Dubber Pro", "resources", "app.asar.unpacked", "backend", "python_env",
+                "python.exe"
+            ))
+
+    # General python_env candidates last
+    candidates.extend([
+        os.path.join(py_dir, "..", "python_env", "python.exe" if os.name == "nt" else "python"),
+        os.path.join(py_dir, "..", "..", "backend", "python_env", "python.exe" if os.name == "nt" else "python"),
+    ])
+
     for c in candidates:
-        if is_working_python(c):
+        if is_spleeter_python(c):
             return os.path.abspath(c)
+
+    if is_spleeter_python(sys.executable):
+        return os.path.abspath(sys.executable)
+
+    for cmd in (["py", "-3.10"], ["py", "-3"], ["python"], ["python3"]):
+        try:
+            res = subprocess.run(
+                cmd + ["-c", "import sys, spleeter; print(sys.executable)"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=5
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                py_found = res.stdout.strip().splitlines()[-1]
+                if is_spleeter_python(py_found):
+                    return os.path.abspath(py_found)
+        except Exception:
+            pass
+
     return None
 
 SPLEETER_PYTHON_DEFAULT = get_spleeter_python_default()
 
-def find_python_in_folder(folder):
+def find_python_in_folder(folder, module_name=None):
     if not folder:
         return None
     candidates = [
@@ -152,7 +248,10 @@ def find_python_in_folder(folder):
         os.path.join(folder, "python"),
     ]
     for c in candidates:
-        if is_working_python(c):
+        if module_name:
+            if is_working_module_python(c, module_name):
+                return c
+        elif is_working_python(c):
             return c
     return None
 
@@ -210,12 +309,19 @@ def separate_demucs(input_audio, output_dir, demucs_folder=None, segment=None, d
         sys.stderr.write(f"[Demucs] exception: {e}\n")
         return None
 
-def separate_spleeter(input_audio, output_dir, spleeter_folder=None):
+def separate_spleeter(input_audio, output_dir, spleeter_folder=None, spleeter_python_override=None):
     """
     ML-based separation via Spleeter's 2stems (vocals/accompaniment) model.
     """
-    spleeter_python = find_python_in_folder(spleeter_folder) or os.environ.get("SPLEETER_PYTHON") or get_spleeter_python_default() or (sys.executable if is_working_python(sys.executable) else None)
-    if not spleeter_python or not is_working_python(spleeter_python):
+    spleeter_python = (
+        (spleeter_python_override if is_spleeter_python(spleeter_python_override) else None)
+        or find_python_in_folder(spleeter_folder, "spleeter")
+        or (os.environ.get("SPLEETER_PYTHON") if is_spleeter_python(os.environ.get("SPLEETER_PYTHON")) else None)
+        or get_spleeter_python_default()
+        or (sys.executable if is_spleeter_python(sys.executable) else None)
+    )
+    if not spleeter_python:
+        sys.stderr.write("[Spleeter] No working Python environment with 'spleeter' installed was found.\n")
         return None
     try:
         output_dir = os.path.abspath(output_dir)
@@ -230,10 +336,17 @@ def separate_spleeter(input_audio, output_dir, spleeter_folder=None):
             spleeter_python, "-m", "spleeter", "separate",
             "-p", "spleeter:2stems",
             "-o", job_dir,
-            input_audio,
         ]
+        media_dur = get_media_duration(input_audio)
+        if media_dur and media_dur > 600.0:
+            cmd.extend(["-d", str(int(media_dur) + 10)])
+        cmd.append(input_audio)
 
         env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
+        env["TF_CPP_MIN_LOG_LEVEL"] = "2"
+
         py_dir = os.path.dirname(os.path.abspath(__file__))
         if "app.asar" in py_dir and "app.asar.unpacked" not in py_dir:
             py_dir = py_dir.replace("app.asar", "app.asar.unpacked")
@@ -258,6 +371,13 @@ def separate_spleeter(input_audio, output_dir, spleeter_folder=None):
         stem_dir = os.path.join(job_dir, base_name)
         vocal_path = os.path.join(stem_dir, "vocals.wav")
         bgm_path = os.path.join(stem_dir, "accompaniment.wav")
+
+        if not (os.path.exists(bgm_path) and os.path.exists(vocal_path)):
+            for root, dirs, files in os.walk(job_dir):
+                if "accompaniment.wav" in files and "vocals.wav" in files:
+                    vocal_path = os.path.join(root, "vocals.wav")
+                    bgm_path = os.path.join(root, "accompaniment.wav")
+                    break
 
         if os.path.exists(bgm_path) and os.path.exists(vocal_path):
             return {
@@ -290,8 +410,8 @@ def separate_ffmpeg(input_audio, output_dir):
 
         filter_graph = (
             "[0:a]aformat=channel_layouts=stereo,asplit=2[a_bgm_in][a_voc_in];"
-            "[a_bgm_in]stereotools=mode=lr>l-r[bgm];"
-            "[a_voc_in]stereotools=mode=lr>l+r,highpass=f=200,lowpass=f=3500[vocal]"
+            "[a_bgm_in]stereotools=mode=lr>l-r,volume=2.5[bgm];"
+            "[a_voc_in]stereotools=mode=lr>l+r,highpass=f=200,lowpass=f=3500,volume=1.5[vocal]"
         )
 
         ffmpeg_bin = get_ffmpeg_executable()
@@ -318,7 +438,7 @@ def separate_ffmpeg(input_audio, output_dir):
         sys.stderr.write(f"[FFmpeg] exception: {e}\n")
         return None
 
-def separate(input_audio, output_dir, engine="spleeter", demucs_folder=None, segment=None, device=None, spleeter_folder=None):
+def separate(input_audio, output_dir, engine="spleeter", demucs_folder=None, segment=None, device=None, spleeter_folder=None, spleeter_python=None):
     if engine == "ffmpeg":
         res = separate_ffmpeg(input_audio, output_dir)
         if res:
@@ -326,7 +446,7 @@ def separate(input_audio, output_dir, engine="spleeter", demucs_folder=None, seg
         return {"success": False, "error": "FFmpeg audio separation failed."}
 
     if engine == "spleeter":
-        result = separate_spleeter(input_audio, output_dir, spleeter_folder)
+        result = separate_spleeter(input_audio, output_dir, spleeter_folder=spleeter_folder, spleeter_python_override=spleeter_python)
         if result:
             return result
         sys.stderr.write("[Spleeter] unavailable or failed, attempting Demucs separation\n")
@@ -345,7 +465,7 @@ def separate(input_audio, output_dir, engine="spleeter", demucs_folder=None, seg
         if result:
             return result
         sys.stderr.write("[Demucs] unavailable or failed, attempting Spleeter separation\n")
-        spleeter_res = separate_spleeter(input_audio, output_dir, spleeter_folder)
+        spleeter_res = separate_spleeter(input_audio, output_dir, spleeter_folder=spleeter_folder, spleeter_python_override=spleeter_python)
         if spleeter_res:
             return spleeter_res
         sys.stderr.write("[Spleeter] unavailable or failed, falling back to FFmpeg separation\n")
@@ -356,7 +476,7 @@ def separate(input_audio, output_dir, engine="spleeter", demucs_folder=None, seg
         return {"success": False, "error": "Stem separation failed (Demucs, Spleeter, and FFmpeg fallback were unavailable)."}
 
     # For any legacy or unspecified engine, try spleeter then demucs then ffmpeg
-    spleeter_res = separate_spleeter(input_audio, output_dir, spleeter_folder)
+    spleeter_res = separate_spleeter(input_audio, output_dir, spleeter_folder=spleeter_folder, spleeter_python_override=spleeter_python)
     if spleeter_res:
         return spleeter_res
     demucs_res = separate_demucs(input_audio, output_dir, demucs_folder, segment, device)
@@ -383,9 +503,19 @@ def main():
         parser.add_argument("--segment", default=None, help="Demucs chunk size (lower = less RAM)")
         parser.add_argument("--device", default=None, help="Demucs device override; omit to let demucs auto-detect")
         parser.add_argument("--spleeter-folder", default=None, help="Optional portable Spleeter install to use instead of the bundled one")
+        parser.add_argument("--spleeter-python", default=None, help="Optional direct path to Spleeter Python binary")
 
         args = parser.parse_args()
-        result = separate(args.input, args.output, engine=args.engine, demucs_folder=args.demucs_folder, segment=args.segment, device=args.device, spleeter_folder=args.spleeter_folder)
+        result = separate(
+            args.input,
+            args.output,
+            engine=args.engine,
+            demucs_folder=args.demucs_folder,
+            segment=args.segment,
+            device=args.device,
+            spleeter_folder=args.spleeter_folder,
+            spleeter_python=args.spleeter_python
+        )
         print(json.dumps(result))
     except Exception as exc:
         print(json.dumps({"success": False, "error": str(exc)}))
