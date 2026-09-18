@@ -16,6 +16,6 @@
   }
 
   .studio-deck-header {
-    @apply text-[10px] font-bold uppercase tracking-widest text-slate-400 select-none flex items-center gap-1.5;
+    @apply text-xs font-semibold uppercase tracking-wider text-slate-300 select-none flex items-center gap-2;
   }
 }
