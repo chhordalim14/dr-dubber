@@ -1246,7 +1246,7 @@
     <!-- SIDEBAR (Left) -->
     <div id="left-sidebar"
       class="flex flex-col bg-[var(--bg-panel)] border-r border-[var(--border-color)] z-0 overflow-y-auto custom-scrollbar relative shrink-0"
-      style="width: 320px; min-width: 250px">
+      style="width: 350px; min-width: 280px">
       <div id="sidebar-resizer"
         class="absolute top-0 bottom-0 right-0 w-1.5 cursor-e-resize hover:bg-[var(--accent-primary)] z-50 translate-x-1/2">
       </div>
@@ -1398,7 +1398,7 @@
           <!-- Quick Presets Section (Cards & Categories) -->
           <div class="flex flex-col gap-1.5">
             <div class="flex items-center justify-between">
-              <span class="text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-wider">Cinematic LUTs</span>
+              <span class="text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-wider">Drama LUTs</span>
               <div class="flex items-center gap-1">
                 <button id="btn-ca-apply-all"
                   class="flex items-center gap-1 text-[10px] text-[var(--text-muted)] hover:text-amber-400 transition-all px-1.5 py-0.5 rounded hover:bg-[var(--bg-hover)] font-medium"
@@ -1415,10 +1415,10 @@
             <!-- Category Filter Tabs -->
             <div id="ca-category-tabs" class="flex items-center gap-1 overflow-x-auto custom-scrollbar pb-0.5 select-none">
               <button class="ca-cat-btn active text-[9px] font-bold px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 transition-all" data-cat="all">All</button>
+              <button class="ca-cat-btn text-[9px] font-medium px-2 py-0.5 rounded-full text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.08] transition-all" data-cat="romance">Romance</button>
+              <button class="ca-cat-btn text-[9px] font-medium px-2 py-0.5 rounded-full text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.08] transition-all" data-cat="historical">Historical</button>
               <button class="ca-cat-btn text-[9px] font-medium px-2 py-0.5 rounded-full text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.08] transition-all" data-cat="cinematic">Cinematic</button>
-              <button class="ca-cat-btn text-[9px] font-medium px-2 py-0.5 rounded-full text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.08] transition-all" data-cat="aesthetic">Aesthetic</button>
-              <button class="ca-cat-btn text-[9px] font-medium px-2 py-0.5 rounded-full text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.08] transition-all" data-cat="vintage">Vintage</button>
-              <button class="ca-cat-btn text-[9px] font-medium px-2 py-0.5 rounded-full text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.08] transition-all" data-cat="moody">Moody</button>
+              <button class="ca-cat-btn text-[9px] font-medium px-2 py-0.5 rounded-full text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.08] transition-all" data-cat="emotional">Melodrama</button>
               <button class="ca-cat-btn text-[9px] font-medium px-2 py-0.5 rounded-full text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.08] transition-all" data-cat="custom">Custom</button>
             </div>
 
@@ -1689,100 +1689,94 @@
       </div>
 
       <!-- Workspace Workflow Decks -->
-      <div class="px-4 pb-6 flex flex-col gap-3 flex-1 min-h-0">
-        <div class="flex items-center justify-between mt-1">
-          <h2 class="text-xs font-bold uppercase tracking-widest text-slate-400 flex items-center gap-2">
+      <div class="px-3.5 pb-6 flex flex-col gap-3 flex-1 min-h-0">
+        <div class="flex items-center justify-between mt-1 px-0.5">
+          <h2 class="text-xs font-bold uppercase tracking-widest text-slate-300 flex items-center gap-2">
             <i id="lottie-workspace-tools" class="w-3.5 h-3.5 lottie-icon text-[var(--accent-text)] shrink-0"></i>
             Studio Workflow
           </h2>
-          <span class="text-[10px] font-mono text-slate-500">v1.2.9 Pro</span>
+          <span class="text-[10px] font-mono text-slate-400 bg-white/[0.05] px-1.5 py-0.5 rounded border border-white/[0.08]">v1.2.9 Pro</span>
         </div>
 
-        <!-- Deck 1: Media Sources -->
-        <div class="bg-[var(--bg-hover)]/40 border border-[var(--border-color)] rounded-xl p-2.5 flex flex-col gap-2 shadow-sm">
-          <div class="studio-deck-header px-1">
-            <i data-lucide="folder" class="w-3 h-3 text-sky-400"></i>
-            <span>1. Media Sources</span>
+        <!-- Deck 1: Project Setup (Video & Subtitles) -->
+        <div class="bg-[var(--bg-hover)]/40 border border-[var(--border-color)] rounded-xl p-3 flex flex-col gap-2.5 shadow-sm">
+          <div class="studio-deck-header px-0.5">
+            <i data-lucide="folder-input" class="w-3.5 h-3.5 text-sky-400 shrink-0"></i>
+            <span>1. Project Setup</span>
           </div>
-          <div class="grid grid-cols-2 gap-1.5">
+          <div class="grid grid-cols-2 gap-2">
             <input type="file" id="video-upload" accept="video/*" class="hidden" />
             <button id="btn-load-video"
-              class="group flex items-center gap-2 px-2.5 py-2 bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] border border-[var(--border-light)] hover:border-sky-500/40 rounded-lg text-xs font-medium text-[var(--text-primary)] transition-all active:scale-[0.97]">
+              class="group flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-sky-500/10 border border-[var(--border-light)] hover:border-sky-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
               <i data-lucide="film" class="w-4 h-4 text-sky-400 shrink-0 group-hover:scale-110 transition-transform"></i>
               <span class="truncate">Load Video</span>
             </button>
 
-            <input type="file" id="bgm-upload" accept="audio/*" class="hidden" />
-            <button id="btn-load-bgm"
-              class="group flex items-center gap-2 px-2.5 py-2 bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] border border-[var(--border-light)] hover:border-purple-500/40 rounded-lg text-xs font-medium text-[var(--text-primary)] transition-all active:scale-[0.97]">
-              <i data-lucide="music" class="w-4 h-4 text-purple-400 shrink-0 group-hover:scale-110 transition-transform"></i>
-              <span class="truncate">Load BGM</span>
-            </button>
-
-            <input type="file" id="a1-audio-upload" accept="audio/*" class="hidden" multiple />
-            <button id="btn-load-a1-audio"
-              class="group col-span-2 flex items-center justify-center gap-2 px-2.5 py-2 bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] border border-[var(--border-light)] hover:border-amber-500/40 rounded-lg text-xs font-medium text-[var(--text-primary)] transition-all active:scale-[0.97]">
-              <i data-lucide="audio-waveform" class="w-4 h-4 text-amber-400 shrink-0 group-hover:scale-110 transition-transform"></i>
-              <span>Load A1 Dubbed Audio (Multiple)</span>
+            <input type="file" id="srt-upload" accept=".srt" class="hidden" multiple />
+            <button id="btn-import-srt"
+              class="group flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-indigo-500/10 border border-[var(--border-light)] hover:border-indigo-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
+              <i data-lucide="file-down" class="w-4 h-4 text-indigo-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+              <span class="truncate">Import SRT</span>
             </button>
           </div>
         </div>
 
-        <!-- Deck 2: AI Audio Processing -->
-        <div class="bg-[var(--bg-hover)]/40 border border-[var(--border-color)] rounded-xl p-2.5 flex flex-col gap-2 shadow-sm">
-          <div class="studio-deck-header px-1">
-            <i data-lucide="sparkles" class="w-3 h-3 text-pink-400"></i>
-            <span>2. AI Vocal & Audio</span>
+        <!-- Deck 2: Audio & Dubbing Tracks -->
+        <div class="bg-[var(--bg-hover)]/40 border border-[var(--border-color)] rounded-xl p-3 flex flex-col gap-2.5 shadow-sm">
+          <div class="studio-deck-header px-0.5">
+            <i data-lucide="sparkles" class="w-3.5 h-3.5 text-pink-400 shrink-0"></i>
+            <span>2. Audio & Dubbing Tracks</span>
           </div>
-          <div class="grid grid-cols-2 gap-1.5">
+          <div class="grid grid-cols-2 gap-2">
             <button id="btn-isolate-bgm"
-              class="group flex items-center gap-2 px-2.5 py-2 bg-[var(--bg-panel)] hover:bg-pink-500/10 border border-[var(--border-light)] hover:border-pink-500/40 rounded-lg text-xs font-medium text-[var(--text-primary)] transition-all active:scale-[0.97]">
+              class="group flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-pink-500/10 border border-[var(--border-light)] hover:border-pink-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
               <i id="icon-isolate" data-lucide="wand-2" class="w-4 h-4 text-pink-400 shrink-0 group-hover:scale-110 transition-transform"></i>
               <span id="text-isolate" class="truncate">Isolate BGM</span>
             </button>
 
             <button id="btn-isolate-bgm-all" title="Isolate BGM for ALL open project tabs"
-              class="group flex items-center gap-2 px-2.5 py-2 bg-[var(--bg-panel)] hover:bg-pink-500/10 border border-[var(--border-light)] hover:border-pink-500/40 rounded-lg text-xs font-medium text-[var(--text-primary)] transition-all active:scale-[0.97]">
+              class="group flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-pink-500/10 border border-[var(--border-light)] hover:border-pink-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
               <i id="icon-isolate-all" data-lucide="layers" class="w-4 h-4 text-pink-400 shrink-0 group-hover:scale-110 transition-transform"></i>
               <span id="text-isolate-all" class="truncate">Isolate All</span>
             </button>
 
             <button id="btn-mute-audio"
-              class="group col-span-2 flex items-center justify-center gap-2 px-2.5 py-2 bg-[var(--bg-panel)] hover:bg-emerald-500/10 border border-[var(--border-light)] hover:border-emerald-500/40 rounded-lg text-xs font-medium text-[var(--text-primary)] transition-all active:scale-[0.97]">
-              <i data-lucide="mic-off" class="w-4 h-4 text-emerald-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+              class="group col-span-2 flex items-center justify-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-emerald-500/10 border border-[var(--border-light)] hover:border-emerald-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
+              <i id="icon-workspace-mute" data-lucide="mic" class="w-4 h-4 text-emerald-400 shrink-0 group-hover:scale-110 transition-transform"></i>
               <span>Mute Original Video Audio</span>
+            </button>
+
+            <input type="file" id="a1-audio-upload" accept="audio/*" class="hidden" multiple />
+            <button id="btn-load-a1-audio"
+              class="group col-span-2 flex items-center justify-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-amber-500/10 border border-[var(--border-light)] hover:border-amber-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
+              <i data-lucide="audio-waveform" class="w-4 h-4 text-amber-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+              <span>Load A1 Dubbed Audio (Multiple)</span>
+            </button>
+
+            <input type="file" id="bgm-upload" accept="audio/*" class="hidden" />
+            <button id="btn-load-bgm"
+              class="group col-span-2 flex items-center justify-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-purple-500/10 border border-[var(--border-light)] hover:border-purple-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
+              <i data-lucide="music" class="w-4 h-4 text-purple-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+              <span>Load Background Music (BGM)</span>
             </button>
           </div>
         </div>
 
-        <!-- Deck 3: Subtitles & Censor -->
-        <div class="bg-[var(--bg-hover)]/40 border border-[var(--border-color)] rounded-xl p-2.5 flex flex-col gap-2 shadow-sm">
-          <div class="studio-deck-header px-1">
-            <i data-lucide="subtitles" class="w-3 h-3 text-indigo-400"></i>
-            <span>3. Subtitles & Censor</span>
+        <!-- Deck 3: Video Tools & Censor -->
+        <div class="bg-[var(--bg-hover)]/40 border border-[var(--border-color)] rounded-xl p-3 flex flex-col gap-2.5 shadow-sm">
+          <div class="studio-deck-header px-0.5">
+            <i data-lucide="shield-alert" class="w-3.5 h-3.5 text-amber-400 shrink-0"></i>
+            <span>3. Video Tools & Censor</span>
           </div>
-          <div class="grid grid-cols-2 gap-1.5">
-            <input type="file" id="srt-upload" accept=".srt" class="hidden" multiple />
-            <button id="btn-import-srt"
-              class="group flex items-center gap-2 px-2.5 py-2 bg-[var(--bg-panel)] hover:bg-white/[0.07] border border-[var(--border-light)] hover:border-indigo-500/40 rounded-lg text-xs font-medium text-[var(--text-primary)] transition-all active:scale-[0.97]">
-              <i data-lucide="file-down" class="w-4 h-4 text-indigo-400 shrink-0 group-hover:scale-110 transition-transform"></i>
-              <span class="truncate">Import SRT</span>
-            </button>
-
-            <button id="btn-export-srt"
-              class="group flex items-center gap-2 px-2.5 py-2 bg-[var(--bg-panel)] hover:bg-white/[0.07] border border-[var(--border-light)] hover:border-cyan-500/40 rounded-lg text-xs font-medium text-[var(--text-primary)] transition-all active:scale-[0.97]">
-              <i data-lucide="file-up" class="w-4 h-4 text-cyan-400 shrink-0 group-hover:scale-110 transition-transform"></i>
-              <span class="truncate">Export SRT</span>
-            </button>
-
+          <div class="grid grid-cols-2 gap-2">
             <button id="btn-add-blur"
-              class="group flex items-center gap-2 px-2.5 py-2 bg-[var(--bg-panel)] hover:bg-amber-500/10 border border-[var(--border-light)] hover:border-amber-500/40 rounded-lg text-xs font-medium text-[var(--text-primary)] transition-all active:scale-[0.97]">
+              class="group flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-amber-500/10 border border-[var(--border-light)] hover:border-amber-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
               <i data-lucide="square-dashed" class="w-4 h-4 text-amber-400 shrink-0 group-hover:scale-110 transition-transform"></i>
               <span class="truncate">Blur Censor</span>
             </button>
 
             <button id="btn-apply-blur-all" title="Apply blur boxes to all project tabs"
-              class="group flex items-center gap-2 px-2.5 py-2 bg-[var(--bg-panel)] hover:bg-amber-500/10 border border-[var(--border-light)] hover:border-amber-500/40 rounded-lg text-xs font-medium text-[var(--text-primary)] transition-all active:scale-[0.97]">
+              class="group flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-amber-500/10 border border-[var(--border-light)] hover:border-amber-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
               <i id="icon-apply-blur-all" data-lucide="layers" class="w-4 h-4 text-amber-400 shrink-0 group-hover:scale-110 transition-transform"></i>
               <span id="text-apply-blur-all" class="truncate">Blur to All</span>
             </button>
@@ -1791,8 +1785,13 @@
 
         <!-- Deck 4: Output & Actions -->
         <div class="mt-auto pt-2 flex flex-col gap-2">
+          <button id="btn-export-srt"
+            class="group w-full py-2.5 px-4 rounded-xl text-xs font-semibold text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 hover:border-cyan-500/50 flex items-center justify-center gap-2 transition-all active:scale-[0.98]">
+            <i data-lucide="file-up" class="w-4 h-4 text-cyan-400 group-hover:scale-110 transition-transform"></i>
+            <span>Export SRT Subtitles</span>
+          </button>
           <button id="btn-render"
-            class="group w-full py-2.5 px-4 rounded-xl text-xs font-semibold text-white bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:to-purple-500 shadow-lg shadow-indigo-500/25 border border-indigo-400/30 flex items-center justify-center gap-2 transition-all active:scale-[0.98]">
+            class="group w-full py-2.5 px-4 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:to-purple-500 shadow-lg shadow-indigo-500/25 border border-indigo-400/30 flex items-center justify-center gap-2 transition-all active:scale-[0.98]">
             <i data-lucide="film" class="w-4 h-4 group-hover:scale-110 transition-transform"></i>
             <span>Final Studio Render</span>
           </button>
@@ -6713,6 +6712,8 @@
             if (labels[k]) labels[k].textContent = k === "hue" ? `${colorDefaults[k]}°` : colorDefaults[k];
           });
           applyVideoColorFilter();
+          window.activeColorPresetName = "Neutral (Raw)";
+          if (typeof caUpdateActiveCards === "function") caUpdateActiveCards();
           if (projects.length > 0)
             projects[activeProjectIndex].videoColorAdj = {
               ...colorDefaults,
@@ -7669,118 +7670,70 @@
         isDefault: true,
       },
       {
-        name: "Blockbuster Warm",
-        category: "cinematic",
-        gradient: "linear-gradient(135deg, #f59e0b, #3b82f6)",
-        tag: "Hollywood",
-        adj: { brightness: 105, contrast: 118, saturation: 114, sharpness: 1.5, hue: -5 },
-        isDefault: true,
-      },
-      {
-        name: "Teal & Orange",
-        category: "cinematic",
-        gradient: "linear-gradient(135deg, #06b6d4, #f97316)",
-        tag: "Iconic",
-        adj: { brightness: 104, contrast: 124, saturation: 128, sharpness: 2.0, hue: 12 },
-        isDefault: true,
-      },
-      {
-        name: "Cyberpunk 2077",
-        category: "aesthetic",
-        gradient: "linear-gradient(135deg, #ec4899, #06b6d4)",
-        tag: "Neon",
-        adj: { brightness: 108, contrast: 130, saturation: 142, sharpness: 2.0, hue: -18 },
-        isDefault: true,
-      },
-      {
-        name: "Vivid HDR Pop",
-        category: "cinematic",
-        gradient: "linear-gradient(135deg, #8b5cf6, #3b82f6)",
-        tag: "Clarity",
-        adj: { brightness: 108, contrast: 126, saturation: 132, sharpness: 2.5, hue: 0 },
-        isDefault: true,
-      },
-      {
-        name: "Warm Espresso",
-        category: "aesthetic",
-        gradient: "linear-gradient(135deg, #78350f, #d97706)",
-        tag: "Coffee",
-        adj: { brightness: 99, contrast: 108, saturation: 92, sharpness: 1.0, hue: -10 },
-        isDefault: true,
-      },
-      {
-        name: "Cold Nordic",
-        category: "moody",
-        gradient: "linear-gradient(135deg, #38bdf8, #64748b)",
-        tag: "Icy Blue",
-        adj: { brightness: 102, contrast: 115, saturation: 85, sharpness: 1.5, hue: 16 },
-        isDefault: true,
-      },
-      {
         name: "K-Drama Glow",
-        category: "aesthetic",
+        category: "romance",
         gradient: "linear-gradient(135deg, #f472b6, #fb7185)",
-        tag: "Airy Pastel",
-        adj: { brightness: 112, contrast: 104, saturation: 118, sharpness: 0.5, hue: -4 },
+        tag: "Soft Romance",
+        adj: { brightness: 110, contrast: 105, saturation: 112, sharpness: 0.5, hue: -4 },
         isDefault: true,
       },
       {
-        name: "Kodak Portra 400",
-        category: "vintage",
-        gradient: "linear-gradient(135deg, #fbbf24, #b45309)",
-        tag: "35mm Film",
-        adj: { brightness: 104, contrast: 110, saturation: 108, sharpness: 0.5, hue: -8 },
+        name: "C-Drama Palace",
+        category: "historical",
+        gradient: "linear-gradient(135deg, #f59e0b, #b45309)",
+        tag: "Royal Court",
+        adj: { brightness: 104, contrast: 116, saturation: 120, sharpness: 1.0, hue: -6 },
         isDefault: true,
       },
       {
-        name: "Film Noir",
-        category: "moody",
-        gradient: "linear-gradient(135deg, #f1f5f9, #020617)",
-        tag: "B&W Sharp",
-        adj: { brightness: 106, contrast: 136, saturation: 0, sharpness: 2.5, hue: 0 },
-        isDefault: true,
-      },
-      {
-        name: "Golden Hour",
-        category: "aesthetic",
-        gradient: "linear-gradient(135deg, #fb923c, #eab308)",
-        tag: "Sunset",
-        adj: { brightness: 106, contrast: 114, saturation: 135, sharpness: 1.5, hue: -12 },
-        isDefault: true,
-      },
-      {
-        name: "Emerald Matrix",
+        name: "Cinematic Drama",
         category: "cinematic",
-        gradient: "linear-gradient(135deg, #10b981, #06b6d4)",
-        tag: "Sci-Fi",
-        adj: { brightness: 102, contrast: 122, saturation: 110, sharpness: 1.5, hue: 28 },
+        gradient: "linear-gradient(135deg, #3b82f6, #1e293b)",
+        tag: "Film Master",
+        adj: { brightness: 102, contrast: 120, saturation: 110, sharpness: 1.5, hue: -2 },
         isDefault: true,
       },
       {
-        name: "Bleach Bypass",
-        category: "moody",
-        gradient: "linear-gradient(135deg, #94a3b8, #334155)",
-        tag: "Action",
-        adj: { brightness: 103, contrast: 140, saturation: 70, sharpness: 3.0, hue: 0 },
+        name: "Melodrama Tears",
+        category: "emotional",
+        gradient: "linear-gradient(135deg, #60a5fa, #475569)",
+        tag: "Sorrow & Tears",
+        adj: { brightness: 98, contrast: 114, saturation: 86, sharpness: 1.0, hue: 6 },
         isDefault: true,
       },
       {
-        name: "VHS Retro 80s",
-        category: "vintage",
-        gradient: "linear-gradient(135deg, #a855f7, #f43f5e)",
-        tag: "Nostalgia",
-        adj: { brightness: 102, contrast: 96, saturation: 122, sharpness: -0.5, hue: -15 },
+        name: "Golden Romance",
+        category: "romance",
+        gradient: "linear-gradient(135deg, #fb923c, #eab308)",
+        tag: "Golden Hour",
+        adj: { brightness: 106, contrast: 110, saturation: 126, sharpness: 0.5, hue: -10 },
         isDefault: true,
       },
       {
-        name: "Moonlight Mystery",
-        category: "moody",
-        gradient: "linear-gradient(135deg, #1e1b4b, #38bdf8)",
-        tag: "Midnight",
-        adj: { brightness: 94, contrast: 125, saturation: 88, sharpness: 1.5, hue: 20 },
+        name: "Wuxia Martial Arts",
+        category: "cinematic",
+        gradient: "linear-gradient(135deg, #ef4444, #991b1b)",
+        tag: "Action & Tense",
+        adj: { brightness: 103, contrast: 124, saturation: 116, sharpness: 2.0, hue: 0 },
         isDefault: true,
       },
     ];
+
+    const OLD_OBSOLETE_FILTER_NAMES = new Set([
+      "Blockbuster Warm",
+      "Teal & Orange",
+      "Cyberpunk 2077",
+      "Vivid HDR Pop",
+      "Warm Espresso",
+      "Cold Nordic",
+      "Kodak Portra 400",
+      "Film Noir",
+      "Golden Hour",
+      "Emerald Matrix",
+      "Bleach Bypass",
+      "VHS Retro 80s",
+      "Moonlight Mystery",
+    ]);
 
     function caLoadPresets() {
       try {
@@ -7788,7 +7741,9 @@
         if (!raw) return DEFAULT_COLOR_FILTERS;
         const saved = JSON.parse(raw);
         if (saved && Array.isArray(saved) && saved.length > 0) {
-          const custom = saved.filter(p => !p.isDefault);
+          const custom = saved.filter(
+            (p) => !p.isDefault && !OLD_OBSOLETE_FILTER_NAMES.has(p.name)
+          );
           return [...DEFAULT_COLOR_FILTERS, ...custom];
         }
         return DEFAULT_COLOR_FILTERS;
@@ -11049,20 +11004,25 @@
         const displayStyle = isSelected ? "flex" : "none";
         const handleStyle = isSelected ? "block" : "none";
 
+        const isNearTop = (parseFloat(box.y) || 0) < 14;
+        const toolbarPosClass = isNearTop ? "top-[calc(100%+12px)]" : "bottom-[calc(100%+12px)]";
+
         boxEl.innerHTML = `
-      <div class="blur-toolbar absolute -top-12 left-1/2 -translate-x-1/2 bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-lg shadow-xl px-3 py-2 items-center gap-3 cursor-default z-[90]" style="display: ${displayStyle}">
-        <div class="flex items-center gap-2">
-          <i data-lucide="droplet" class="w-4 h-4 text-indigo-400"></i>
-          <input type="range" class="blur-strength-input w-24 h-1.5 bg-[var(--border-light)] rounded-lg appearance-none cursor-pointer" style="accent-color: #6366f1" min="0" max="100" value="${box.strength}" data-id="${box.id}" />
-          <span class="text-xs font-mono text-[var(--text-secondary)] w-8 text-right">${box.strength}%</span>
+      <div class="blur-toolbar absolute ${toolbarPosClass} left-1/2 -translate-x-1/2 bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-xl shadow-2xl px-2.5 py-1.5 flex items-center gap-2.5 cursor-default z-[90] whitespace-nowrap select-none backdrop-blur-md" style="display: ${displayStyle}">
+        <div class="flex items-center gap-2 shrink-0">
+          <i data-lucide="droplet" class="w-3.5 h-3.5 text-indigo-400 shrink-0"></i>
+          <input type="range" class="blur-strength-input w-20 h-1.5 bg-[var(--border-light)] rounded-lg appearance-none cursor-pointer" style="accent-color: #6366f1" min="0" max="100" value="${box.strength}" data-id="${box.id}" />
+          <span class="text-xs font-mono text-[var(--text-secondary)] w-8 text-right tabular-nums shrink-0">${box.strength}%</span>
         </div>
-        <div class="w-px h-5 bg-[var(--border-color)]"></div>
-        <button class="btn-apply-blur-all-box flex items-center gap-1.5 text-[var(--text-muted)] hover:text-amber-400 transition-colors px-1.5 py-0.5 rounded hover:bg-[var(--bg-hover)]" data-id="${box.id}" title="Apply blur boxes to all project tabs">
-          <i data-lucide="layers" class="w-4 h-4"></i>
-          <span class="text-[10px] font-medium hidden sm:inline">All Tabs</span>
+        <div class="w-px h-4 bg-[var(--border-color)] shrink-0"></div>
+        <button class="btn-apply-blur-all-box flex items-center gap-1.5 text-[var(--text-muted)] hover:text-amber-400 transition-colors px-1.5 py-1 rounded hover:bg-[var(--bg-hover)] whitespace-nowrap shrink-0" data-id="${box.id}" title="Apply blur boxes to all project tabs">
+          <i data-lucide="layers" class="w-3.5 h-3.5 shrink-0"></i>
+          <span class="text-[10px] font-medium whitespace-nowrap">All Tabs</span>
         </button>
-        <div class="w-px h-5 bg-[var(--border-color)]"></div>
-        <button class="btn-remove-blur text-[var(--text-muted)] hover:text-red-500 transition-colors px-1 py-0.5 rounded hover:bg-[var(--bg-hover)]" data-id="${box.id}" title="Delete blur box"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+        <div class="w-px h-4 bg-[var(--border-color)] shrink-0"></div>
+        <button class="btn-remove-blur flex items-center justify-center text-[var(--text-muted)] hover:text-rose-400 transition-colors p-1 rounded hover:bg-[var(--bg-hover)] shrink-0" data-id="${box.id}" title="Delete blur box">
+          <i data-lucide="trash-2" class="w-3.5 h-3.5 shrink-0"></i>
+        </button>
       </div>
       
       <div class="blur-handle cursor-nw-resize absolute -top-2 -left-2 w-3.5 h-3.5 bg-white border-2 border-indigo-500 rounded-full z-50" style="display: ${handleStyle}" data-dir="nw" data-id="${box.id}"></div>
@@ -11209,8 +11169,8 @@
       if (sidebarBtn) {
         const origHTML = sidebarBtn.innerHTML;
         sidebarBtn.innerHTML = `
-          <i data-lucide="check" class="workspace-icon-glow w-5 h-5 text-emerald-400 transition-transform duration-300"></i>
-          <span class="text-xs font-medium text-emerald-400">Applied!</span>
+          <i data-lucide="check" class="w-4 h-4 text-emerald-400 shrink-0 transition-transform duration-300"></i>
+          <span class="text-xs font-semibold text-emerald-400 truncate">Applied!</span>
         `;
         if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: sidebarBtn });
         setTimeout(() => {
@@ -11359,6 +11319,16 @@
           boxEl.style.top = `${box.y}%`;
           boxEl.style.width = `${box.w}%`;
           boxEl.style.height = `${box.h}%`;
+          const tb = boxEl.querySelector(".blur-toolbar");
+          if (tb) {
+            if (box.y < 14) {
+              tb.classList.remove("bottom-[calc(100%+12px)]");
+              tb.classList.add("top-[calc(100%+12px)]");
+            } else {
+              tb.classList.remove("top-[calc(100%+12px)]");
+              tb.classList.add("bottom-[calc(100%+12px)]");
+            }
+          }
         }
       }
     });
@@ -15539,16 +15509,10 @@
     }
 
     if (savedMuteState && btnMuteAudio) {
-      // Big Workspace Button styling
-      btnMuteAudio.classList.add("bg-[var(--accent-primary)]", "bg-opacity-20", "border-[var(--accent-primary)]", "text-[var(--text-bright)]");
-      btnMuteAudio.classList.remove("bg-[var(--bg-hover)]", "border-[var(--border-light)]", "text-[var(--text-primary)]");
-
-      // THE FIX 1: Explicitly set the Big Button HTML so it shows the red mic-off!
+      btnMuteAudio.className = "group col-span-2 flex items-center justify-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all active:scale-[0.97] bg-rose-500/20 border border-rose-500/50 text-rose-300 shadow-sm";
       btnMuteAudio.innerHTML = `
-            <div class="animate-icon-pop flex items-center justify-center">
-                <i id="icon-workspace-mute" data-lucide="mic-off" class="w-5 h-5 text-red-400 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
-            </div>
-            <span class="text-xs font-medium">Audio Muted</span>
+            <i id="icon-workspace-mute" data-lucide="mic-off" class="w-4 h-4 text-rose-400 shrink-0 transition-transform duration-300 group-hover:scale-110"></i>
+            <span>Audio Muted</span>
         `;
 
       // Small toggle button HTML
@@ -22661,23 +22625,18 @@
         elHigh.style.color = "var(--text-secondary)";
       }
 
-      // 2. Update the large "Mute Audio" Workspace button
       if (isMuted || currentVolume === 0) {
-        btnMuteAudio.classList.remove("bg-[var(--bg-hover)]", "border-[var(--border-light)]", "text-[var(--text-primary)]");
-        btnMuteAudio.classList.add("bg-[var(--accent-primary)]", "bg-opacity-20", "border-[var(--accent-primary)]", "text-[var(--text-bright)]");
+        btnMuteAudio.className = "group col-span-2 flex items-center justify-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all active:scale-[0.97] bg-rose-500/20 border border-rose-500/50 text-rose-300 shadow-sm";
         btnMuteAudio.innerHTML = `
-            <div class="animate-icon-pop flex items-center justify-center">
-                <i id="icon-workspace-mute" data-lucide="mic-off" class="workspace-icon-glow w-5 h-5 text-red-400 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
-            </div>
-            <span class="text-xs font-medium">Audio Muted</span>
+            <i id="icon-workspace-mute" data-lucide="mic-off" class="w-4 h-4 text-rose-400 shrink-0 transition-transform duration-300 group-hover:scale-110"></i>
+            <span>Audio Muted</span>
         `;
       } else {
-        btnMuteAudio.classList.remove("bg-[var(--accent-primary)]", "bg-opacity-20", "border-[var(--accent-primary)]", "text-[var(--text-bright)]");
-        btnMuteAudio.classList.add("bg-[var(--bg-hover)]", "border-[var(--border-light)]", "text-[var(--text-primary)]");
+        btnMuteAudio.className = "group col-span-2 flex items-center justify-center gap-2.5 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-emerald-500/10 border border-[var(--border-light)] hover:border-emerald-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]";
         btnMuteAudio.innerHTML = `
-              <i id="icon-workspace-mute" data-lucide="mic" class="workspace-icon-glow w-5 h-5 text-emerald-500 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5 animate-icon-pop"></i>
-              <span class="text-xs font-medium">Mute Audio</span>
-          `;
+            <i id="icon-workspace-mute" data-lucide="mic" class="w-4 h-4 text-emerald-400 shrink-0 transition-transform duration-300 group-hover:scale-110"></i>
+            <span>Mute Original Video Audio</span>
+        `;
       }
 
       _lucideCreateIcons(); // Draw the new icons
@@ -23655,29 +23614,28 @@
       const btnIsolateBgm = document.getElementById("btn-isolate-bgm");
       if (!btnIsolateBgm) return;
 
-      // Reset base classes to strip out any stuck states
-      btnIsolateBgm.className = "group flex flex-col items-center justify-center gap-2 border p-3 rounded-xl transition-all duration-300 ease-out active:scale-[0.92] cursor-pointer";
+      const baseClasses = "group flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all active:scale-[0.97]";
 
       if (isIsolatingBgm) {
         // Active "Stop" State
-        btnIsolateBgm.classList.add("bg-red-600", "border-red-600", "text-white", "shadow-md", "shadow-red-900/20", "hover:-translate-y-1", "hover:shadow-lg", "hover:brightness-110");
+        btnIsolateBgm.className = `${baseClasses} bg-rose-600 border border-rose-600 text-white shadow-md shadow-rose-900/30 hover:brightness-110 cursor-pointer`;
         btnIsolateBgm.innerHTML = `
-            <i data-lucide="x-circle" class="w-5 h-5 animate-pulse"></i>
-            <span class="text-xs font-medium">Stop Isolating</span>
+            <i data-lucide="x-circle" class="w-4 h-4 text-white shrink-0 animate-pulse"></i>
+            <span class="truncate">Stop Isolating</span>
           `;
       } else if (!videoFile || projects[activeProjectIndex]?.isAudioOnly) {
         // Disabled State (No video loaded, or SRT Only tab)
-        btnIsolateBgm.classList.add("bg-[var(--bg-base)]", "border-[var(--border-light)]", "text-[var(--text-muted)]", "opacity-60", "cursor-not-allowed");
+        btnIsolateBgm.className = `${baseClasses} bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-muted)] opacity-60 cursor-not-allowed`;
         btnIsolateBgm.innerHTML = `
-            <i data-lucide="wand-2" class="w-5 h-5 opacity-50"></i>
-            <span class="text-xs font-medium">Isolate BGM</span>
+            <i data-lucide="wand-2" class="w-4 h-4 text-[var(--text-muted)] shrink-0 opacity-50"></i>
+            <span class="truncate">Isolate BGM</span>
           `;
       } else {
         // Ready / Idle State
-        btnIsolateBgm.classList.add("bg-[var(--bg-hover)]", "border-[var(--border-light)]", "hover:brightness-110", "hover:-translate-y-1", "hover:shadow-lg");
+        btnIsolateBgm.className = `${baseClasses} bg-[var(--bg-panel)] hover:bg-pink-500/10 border border-[var(--border-light)] hover:border-pink-500/40 text-[var(--text-primary)] cursor-pointer`;
         btnIsolateBgm.innerHTML = `
-            <i data-lucide="wand-2" class="w-5 h-5 text-pink-500 workspace-icon-glow transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
-            <span class="text-xs font-medium text-[var(--text-primary)]">Isolate BGM</span>
+            <i id="icon-isolate" data-lucide="wand-2" class="w-4 h-4 text-pink-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+            <span id="text-isolate" class="truncate">Isolate BGM</span>
           `;
       }
 
@@ -23693,29 +23651,30 @@
       const btnAll = document.getElementById("btn-isolate-bgm-all");
       if (!btnAll) return;
       const hasAnyVideo = Array.isArray(projects) && projects.some((p) => !p.isAudioOnly && (p.file || p.blobUrl));
+      const baseClasses = "group flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all active:scale-[0.97]";
 
       if (isIsolatingBgmAll) {
         btnAll.disabled = false;
-        btnAll.className = "group flex flex-col items-center justify-center gap-2 bg-red-600 border border-red-600 text-white shadow-md shadow-red-900/20 p-3 rounded-xl transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lg hover:brightness-110 active:scale-[0.92] cursor-pointer";
+        btnAll.className = `${baseClasses} bg-rose-600 border border-rose-600 text-white shadow-md shadow-rose-900/30 hover:brightness-110 cursor-pointer`;
         btnAll.innerHTML = `
-            <i data-lucide="x-circle" class="w-5 h-5 animate-pulse"></i>
-            <span class="text-xs font-medium">Stop All Tabs</span>
+            <i data-lucide="x-circle" class="w-4 h-4 text-white shrink-0 animate-pulse"></i>
+            <span class="truncate">Stop All Tabs</span>
           `;
         btnAll.title = "Stop BGM isolation for all project tabs";
       } else if (!hasAnyVideo) {
         btnAll.disabled = true;
-        btnAll.className = "group flex flex-col items-center justify-center gap-2 bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-muted)] opacity-60 p-3 rounded-xl transition-all duration-300 ease-out cursor-not-allowed";
+        btnAll.className = `${baseClasses} bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-muted)] opacity-60 cursor-not-allowed`;
         btnAll.innerHTML = `
-            <i data-lucide="layers" class="w-5 h-5 opacity-50"></i>
-            <span class="text-xs font-medium">Isolate All Tabs</span>
+            <i data-lucide="layers" class="w-4 h-4 text-[var(--text-muted)] shrink-0 opacity-50"></i>
+            <span class="truncate">Isolate All</span>
           `;
         btnAll.title = "Load videos in project tabs first to Isolate All Tabs";
       } else {
         btnAll.disabled = false;
-        btnAll.className = "group flex flex-col items-center justify-center gap-2 bg-[var(--bg-hover)] hover:brightness-110 border border-[var(--border-light)] p-3 rounded-xl transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.92] cursor-pointer";
+        btnAll.className = `${baseClasses} bg-[var(--bg-panel)] hover:bg-pink-500/10 border border-[var(--border-light)] hover:border-pink-500/40 text-[var(--text-primary)] cursor-pointer`;
         btnAll.innerHTML = `
-            <i data-lucide="layers" class="w-5 h-5 text-pink-400 workspace-icon-glow transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
-            <span class="text-xs font-medium">Isolate All Tabs</span>
+            <i id="icon-isolate-all" data-lucide="layers" class="w-4 h-4 text-pink-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+            <span id="text-isolate-all" class="truncate">Isolate All</span>
           `;
         btnAll.title = "Isolate BGM for ALL open project tabs";
       }
@@ -24040,25 +23999,19 @@
       mainVideo.muted = isOriginalAudioMuted;
 
       if (isOriginalAudioMuted) {
-        // Apply 'Active' styling (Red, accented background)
-        btnMuteAudio.classList.remove("bg-[var(--bg-hover)]", "border-[var(--border-light)]", "text-[var(--text-primary)]");
-        btnMuteAudio.classList.add("bg-[var(--accent-primary)]", "bg-opacity-20", "border-[var(--accent-primary)]", "text-[var(--text-bright)]");
+        btnMuteAudio.className = "group col-span-2 flex items-center justify-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all active:scale-[0.97] bg-rose-500/20 border border-rose-500/50 text-rose-300 shadow-sm";
         btnMuteAudio.innerHTML = `
-            <div class="animate-icon-pop flex items-center justify-center">
-                <i id="icon-workspace-mute" data-lucide="mic-off" class="w-5 h-5 text-red-400 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
-            </div>
-            <span class="text-xs font-medium">Audio Muted</span>
+            <i id="icon-workspace-mute" data-lucide="mic-off" class="w-4 h-4 text-rose-400 shrink-0 transition-transform duration-300 group-hover:scale-110"></i>
+            <span>Audio Muted</span>
         `;
       } else {
-        // Revert to 'Inactive' styling (Default)
-        btnMuteAudio.classList.remove("bg-[var(--accent-primary)]", "bg-opacity-20", "border-[var(--accent-primary)]", "text-[var(--text-bright)]");
-        btnMuteAudio.classList.add("bg-[var(--bg-hover)]", "border-[var(--border-light)]", "text-[var(--text-primary)]");
+        btnMuteAudio.className = "group col-span-2 flex items-center justify-center gap-2.5 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-emerald-500/10 border border-[var(--border-light)] hover:border-emerald-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]";
         btnMuteAudio.innerHTML = `
-                        <i data-lucide="mic" class="w-5 h-5 text-emerald-500 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
-                        <span class="text-xs font-medium">Mute Audio</span>
-                    `;
+            <i id="icon-workspace-mute" data-lucide="mic" class="w-4 h-4 text-emerald-400 shrink-0 transition-transform duration-300 group-hover:scale-110"></i>
+            <span>Mute Original Video Audio</span>
+        `;
       }
-      _lucideCreateIcons();
+      if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: btnMuteAudio });
 
       isMuted = isOriginalAudioMuted;
       updateMuteState();
