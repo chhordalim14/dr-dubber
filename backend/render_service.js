@@ -334,6 +334,30 @@ function buildFreeTextAssFile(freeTexts, canvasW, canvasH, videoDuration, tempDi
     return assPath;
 }
 
+/**
+ * Builds a chain of valid FFmpeg atempo filters.
+ * FFmpeg's atempo filter strictly requires values between 0.5 and 2.0.
+ * To achieve speeds outside this range (e.g. 2.5x or 0.35x), filters must be chained.
+ */
+function buildAtempoFilterChain(speed) {
+    const filters = [];
+    let remaining = Math.max(0.25, Math.min(4.0, parseFloat(speed) || 1.0));
+    if (Math.abs(remaining - 1.0) <= 0.01) return [];
+
+    while (remaining > 2.0) {
+        filters.push('atempo=2.0');
+        remaining /= 2.0;
+    }
+    while (remaining < 0.5) {
+        filters.push('atempo=0.5');
+        remaining /= 0.5;
+    }
+    if (Math.abs(remaining - 1.0) > 0.01) {
+        filters.push(`atempo=${remaining.toFixed(4)}`);
+    }
+    return filters;
+}
+
 function buildClipAudioFilters(item, voiceVolume) {
     const rawStart = item.start !== undefined ? item.start : (item.audioStart !== undefined ? item.audioStart : (item.textStart !== undefined ? item.textStart : (item.startTime || 0)));
     const startSec = Math.max(0, parseTimeToSeconds(rawStart));
@@ -357,9 +381,12 @@ function buildClipAudioFilters(item, voiceVolume) {
         }
     }
 
-    // 2. Speed (atempo)
+    // 2. Speed (atempo multi-stage time-stretching)
     if (Math.abs(speed - 1.0) > 0.01) {
-        afParts.push(`atempo=${speed.toFixed(3)}`);
+        const atempoFilters = buildAtempoFilterChain(speed);
+        if (atempoFilters.length > 0) {
+            afParts.push(...atempoFilters);
+        }
     }
 
     // 3. Pitch shifting (semitones: -12 to +12)
@@ -901,37 +928,48 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         const isMuted = isOriginalAudioMuted !== undefined ? isOriginalAudioMuted : muteOriginal;
         const includeOrigAudio = !isMuted && sourceHasAudio;
 
+        const isDucking = (duckingEnabled === true || duckingEnabled === 'true' || duckingEnabled === 1 || duckingEnabled === '1');
+
         if (dialogueInputIndex >= 0) {
+            let sidechainParams = 'threshold=0.08:ratio=7:attack=15:release=350';
+            if (duckingDepth === 'light') {
+                sidechainParams = 'threshold=0.12:ratio=4:attack=25:release=400';
+            } else if (duckingDepth === 'deep') {
+                sidechainParams = 'threshold=0.04:ratio=12:attack=10:release=300';
+            }
+
             if (bgmInputIndex >= 0) {
-                if (duckingEnabled) {
-                    let sidechainParams = 'threshold=0.08:ratio=7:attack=15:release=350';
-                    if (duckingDepth === 'light') {
-                        sidechainParams = 'threshold=0.12:ratio=4:attack=25:release=400';
-                    } else if (duckingDepth === 'deep') {
-                        sidechainParams = 'threshold=0.04:ratio=12:attack=10:release=300';
-                    }
-                    filterComplex.push(`[${bgmInputIndex}:a]${bgmFilterChain}[bgm_vol]`);
+                filterComplex.push(`[${bgmInputIndex}:a]${bgmFilterChain}[bgm_vol]`);
+                let bgmFinalTag = '[bgm_vol]';
+
+                if (isDucking) {
                     filterComplex.push(`[bgm_vol][${dialogueInputIndex}:a]sidechaincompress=${sidechainParams}[bgm_ducked]`);
                     filterComplex.push(`[bgm_ducked]equalizer=f=1100:t=q:w=1.5:g=-6[bgm_clean]`);
-                    if (includeOrigAudio) {
-                        filterComplex.push(`[0:a]volume=1.0[orig_a]`);
-                        filterComplex.push(`[bgm_clean][${dialogueInputIndex}:a][orig_a]amix=inputs=3:normalize=0:duration=longest[final_audio]`);
-                    } else {
-                        filterComplex.push(`[bgm_clean][${dialogueInputIndex}:a]amix=inputs=2:normalize=0:duration=longest[final_audio]`);
+                    bgmFinalTag = '[bgm_clean]';
+                }
+
+                if (includeOrigAudio) {
+                    filterComplex.push(`[0:a]volume=1.0[orig_vol]`);
+                    let origFinalTag = '[orig_vol]';
+                    if (isDucking) {
+                        filterComplex.push(`[orig_vol][${dialogueInputIndex}:a]sidechaincompress=${sidechainParams}[orig_ducked]`);
+                        filterComplex.push(`[orig_ducked]equalizer=f=1100:t=q:w=1.5:g=-6[orig_clean]`);
+                        origFinalTag = '[orig_clean]';
                     }
+                    filterComplex.push(`${bgmFinalTag}${origFinalTag}[${dialogueInputIndex}:a]amix=inputs=3:normalize=0:duration=longest[final_audio]`);
                 } else {
-                    filterComplex.push(`[${bgmInputIndex}:a]${bgmFilterChain}[bgm_vol]`);
-                    if (includeOrigAudio) {
-                        filterComplex.push(`[0:a]volume=1.0[orig_a]`);
-                        filterComplex.push(`[bgm_vol][${dialogueInputIndex}:a][orig_a]amix=inputs=3:normalize=0:duration=longest[final_audio]`);
-                    } else {
-                        filterComplex.push(`[bgm_vol][${dialogueInputIndex}:a]amix=inputs=2:normalize=0:duration=longest[final_audio]`);
-                    }
+                    filterComplex.push(`${bgmFinalTag}[${dialogueInputIndex}:a]amix=inputs=2:normalize=0:duration=longest[final_audio]`);
                 }
             } else {
                 if (includeOrigAudio) {
-                    filterComplex.push(`[0:a]volume=1.0[orig_a]`);
-                    filterComplex.push(`[${dialogueInputIndex}:a][orig_a]amix=inputs=2:normalize=0:duration=longest[final_audio]`);
+                    filterComplex.push(`[0:a]volume=1.0[orig_vol]`);
+                    let origFinalTag = '[orig_vol]';
+                    if (isDucking) {
+                        filterComplex.push(`[orig_vol][${dialogueInputIndex}:a]sidechaincompress=${sidechainParams}[orig_ducked]`);
+                        filterComplex.push(`[orig_ducked]equalizer=f=1100:t=q:w=1.5:g=-6[orig_clean]`);
+                        origFinalTag = '[orig_clean]';
+                    }
+                    filterComplex.push(`${origFinalTag}[${dialogueInputIndex}:a]amix=inputs=2:normalize=0:duration=longest[final_audio]`);
                 } else {
                     filterComplex.push(`[${dialogueInputIndex}:a]anull[final_audio]`);
                 }
