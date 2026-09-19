@@ -1890,6 +1890,28 @@ function getEmotionProsody(emotion, basePitch, baseVolume, baseSpeed, baseRate) 
     return { pitch: finalPitch, volume: finalVolume, rate: rateStr };
 }
 
+// ── GLOBAL TTS CONCURRENCY REGULATOR ─────────────────────────────────────────
+// Protects Microsoft Edge-TTS from connection flooding across multi-tab generation.
+// Allows up to 3 concurrent active syntheses with an 80ms launch stagger.
+const MAX_CONCURRENT_TTS = 3;
+let activeTtsCount = 0;
+const ttsQueue = [];
+
+function processNextTts() {
+    if (activeTtsCount >= MAX_CONCURRENT_TTS || ttsQueue.length === 0) return;
+    const task = ttsQueue.shift();
+    activeTtsCount++;
+    task(() => {
+        activeTtsCount--;
+        setTimeout(processNextTts, 80);
+    });
+}
+
+function queueTtsTask(task) {
+    ttsQueue.push(task);
+    processNextTts();
+}
+
 // 5. Neural Speech Generation with Emotional Acting & High-Speed Cache (Edge-TTS + Khmer)
 app.post('/api/generate-audio', (req, res) => {
     const {
@@ -1972,60 +1994,91 @@ app.post('/api/generate-audio', (req, res) => {
     const outFile = resolveAudioOutputFile(tempPath, index);
     const pyScript = getPythonScriptPath('tts_generator.py');
 
-    const child = spawn(PYTHON_CMD, [
-        pyScript,
-        '--text', text,
-        '--voice', voice,
-        '--rate', prosody.rate,
-        '--pitch', prosody.pitch,
-        '--volume', prosody.volume,
-        '--output', outFile
-    ], { env: PYTHON_ENV });
-    trackProcess(child);
+    let isAborted = false;
+    let child = null;
 
-    let output = '';
-    let stderr = '';
-    const stdoutDecoder = new StringDecoder('utf8');
-    const stderrDecoder = new StringDecoder('utf8');
-    child.stdout.on('data', d => output += stdoutDecoder.write(d));
-    child.stderr.on('data', d => stderr += stderrDecoder.write(d));
-    child.on('error', (err) => {
-        console.error('[TTS Error]', err);
-        if (!res.headersSent) res.status(500).json({ success: false, error: err.message });
-    });
-    child.on('close', (code) => {
-        // Node can emit both 'error' and 'close' for the same spawn failure
-        // (e.g. ENOENT); without this guard the second handler tries to send
-        // a second response and crashes the whole backend with ERR_HTTP_HEADERS_SENT.
-        if (res.headersSent) return;
-        try {
-            if (!output.trim()) {
-                console.error(`[TTS Failed] Code ${code}, Stderr: ${stderr}`);
-                return res.status(500).json({ success: false, error: stderr.trim() || `TTS process exited with code ${code}` });
+    res.on('close', () => {
+        if (!res.writableEnded) {
+            isAborted = true;
+            if (child && !child.killed) {
+                try { child.kill(); } catch (_) {}
             }
-            const data = JSON.parse(output);
-            if (data.success) {
-                const freshUrl = `/api/audio?path=${encodeURIComponent(outFile)}`;
-                setTtsCache(cacheKey, {
-                    file: outFile,
-                    duration: data.duration || 0,
-                    size: data.size || 0,
-                    url: freshUrl
-                });
-
-                res.json({
-                    success: true,
-                    file: outFile,
-                    duration: data.duration || 0,
-                    url: freshUrl
-                });
-            } else {
-                res.status(500).json({ success: false, error: data.error || 'TTS error' });
-            }
-        } catch (e) {
-            console.error('[TTS Parse Error]', e.message, 'Output:', output, 'Stderr:', stderr);
-            res.status(500).json({ success: false, error: output.trim() || stderr.trim() || e.message });
         }
+    });
+
+    queueTtsTask((onTtsDone) => {
+        if (isAborted || res.headersSent) {
+            onTtsDone();
+            return;
+        }
+
+        child = spawn(PYTHON_CMD, [
+            pyScript,
+            '--text', text,
+            '--voice', voice,
+            '--rate', prosody.rate,
+            '--pitch', prosody.pitch,
+            '--volume', prosody.volume,
+            '--output', outFile
+        ], { env: PYTHON_ENV });
+        trackProcess(child);
+
+        let output = '';
+        let stderr = '';
+        const stdoutDecoder = new StringDecoder('utf8');
+        const stderrDecoder = new StringDecoder('utf8');
+        child.stdout.on('data', d => output += stdoutDecoder.write(d));
+        child.stderr.on('data', d => stderr += stderrDecoder.write(d));
+
+        let doneReported = false;
+        const completeTts = () => {
+            if (!doneReported) {
+                doneReported = true;
+                onTtsDone();
+            }
+        };
+
+        child.on('error', (err) => {
+            completeTts();
+            console.error('[TTS Error]', err);
+            if (!res.headersSent) res.status(500).json({ success: false, error: err.message });
+        });
+
+        child.on('close', (code) => {
+            completeTts();
+            // Node can emit both 'error' and 'close' for the same spawn failure
+            // (e.g. ENOENT); without this guard the second handler tries to send
+            // a second response and crashes the whole backend with ERR_HTTP_HEADERS_SENT.
+            if (res.headersSent) return;
+            try {
+                if (!output.trim()) {
+                    console.error(`[TTS Failed] Code ${code}, Stderr: ${stderr}`);
+                    return res.status(500).json({ success: false, error: stderr.trim() || `TTS process exited with code ${code}` });
+                }
+                const data = JSON.parse(output);
+                if (data.success) {
+                    const freshUrl = `/api/audio?path=${encodeURIComponent(outFile)}`;
+                    setTtsCache(cacheKey, {
+                        file: outFile,
+                        duration: data.duration || 0,
+                        size: data.size || 0,
+                        url: freshUrl
+                    });
+
+                    res.json({
+                        success: true,
+                        file: outFile,
+                        duration: data.duration || 0,
+                        url: freshUrl
+                    });
+                } else {
+                    res.status(500).json({ success: false, error: data.error || 'TTS error' });
+                }
+            } catch (e) {
+                console.error('[TTS Parse Error]', e.message, 'Output:', output, 'Stderr:', stderr);
+                res.status(500).json({ success: false, error: output.trim() || stderr.trim() || e.message });
+            }
+        });
     });
 });
 

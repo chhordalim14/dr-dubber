@@ -174,35 +174,63 @@ async def _generate_speech_core(text: str, voice: str, rate: str, pitch: str, vo
         if not clean_text:
             return {"success": False, "error": "Empty text after sanitization"}
 
-        communicate = edge_tts.Communicate(
-            text=clean_text,
-            voice=voice,
-            rate=rate_str,
-            pitch=pitch_str,
-            volume=vol_str
-        )
+        max_attempts = 3
+        last_error = ""
 
-        # Without a timeout, a network stall or throttling from Microsoft's
-        # endpoint hangs this coroutine forever; the Node caller's
-        # child.on('close') would never fire and the HTTP request (or, in a
-        # batch, every other item queued behind it) would hang indefinitely.
-        try:
-            await asyncio.wait_for(communicate.save(output_path), timeout=TTS_TIMEOUT_SECONDS)
-        except asyncio.TimeoutError:
-            return {"success": False, "error": f"TTS request timed out after {TTS_TIMEOUT_SECONDS}s"}
+        for attempt in range(1, max_attempts + 1):
+            # Clean up any partial or 0-byte file from previous failed attempt
+            if os.path.exists(output_path):
+                try:
+                    os.remove(output_path)
+                except Exception:
+                    pass
 
-        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-            duration = get_audio_duration(output_path)
-            return {
-                "success": True,
-                "file": output_path,
-                "size": os.path.getsize(output_path),
-                "duration": duration
-            }
-        else:
-            return {"success": False, "error": "Generated audio file is empty"}
+            try:
+                communicate = edge_tts.Communicate(
+                    text=clean_text,
+                    voice=voice,
+                    rate=rate_str,
+                    pitch=pitch_str,
+                    volume=vol_str
+                )
+
+                # Guard against hanging coroutine on network stall / throttling
+                await asyncio.wait_for(communicate.save(output_path), timeout=TTS_TIMEOUT_SECONDS)
+
+                if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                    duration = get_audio_duration(output_path)
+                    return {
+                        "success": True,
+                        "file": output_path,
+                        "size": os.path.getsize(output_path),
+                        "duration": duration
+                    }
+                else:
+                    last_error = "Generated audio file is empty"
+            except asyncio.TimeoutError:
+                last_error = f"TTS request timed out after {TTS_TIMEOUT_SECONDS}s"
+            except Exception as e:
+                last_error = str(e)
+
+            if attempt < max_attempts:
+                # Exponential backoff with small sleep before retry
+                await asyncio.sleep(0.4 * attempt)
+
+        # Ensure no corrupt 0-byte file lingers on disk
+        if os.path.exists(output_path) and os.path.getsize(output_path) == 0:
+            try:
+                os.remove(output_path)
+            except Exception:
+                pass
+
+        return {"success": False, "error": last_error or "Generated audio file is empty"}
 
     except Exception as e:
+        if os.path.exists(output_path) and os.path.getsize(output_path) == 0:
+            try:
+                os.remove(output_path)
+            except Exception:
+                pass
         return {"success": False, "error": str(e)}
 
 async def generate_speech(text: str, voice: str, rate: str, pitch: str, volume: str, output_path: str):

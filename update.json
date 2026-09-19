@@ -1,6 +1,6 @@
 {
-  "version": "1.3.1",
-  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.3.1/DR.Dubber.Pro.Setup.1.3.1.exe",
+  "version": "1.3.4",
+  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.3.4/DR.Dubber.Pro.Setup.1.3.4.exe",
   "mac_link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.2.1/DR.Dubber.Pro-1.2.1-arm64.dmg",
-  "notes": "v1.3.1 Release:\n- Smart Audio Auto-Fit: Sync audio duration to subtitle slot with multi-stage atempo\n- Intelligent Auto-Ducking: Universal BGM and original video audio sidechain compression in render & preview"
+  "notes": "v1.3.4 Release:\n- Fixed Generate All Tabs: Protected Edge-TTS from connection flooding with a global concurrency queue (MAX_CONCURRENT_TTS=3) and automatic retry engine\n- Fixed Track A1 Audio Overlap: Synchronized audioStart and audioEnd to textStart in Auto-Fit and duration snapping, eliminating negative intervals and orange orphan audio piles\n- Fixed Multi-Tab State: Preserved background audio generation progress during project tab switching\n- Auto-repair timing sanitizer for existing drifted or inverted subtitles"
 }
