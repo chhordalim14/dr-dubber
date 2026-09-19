@@ -1759,6 +1759,31 @@
               <i data-lucide="music" class="w-4 h-4 text-purple-400 shrink-0 group-hover:scale-110 transition-transform"></i>
               <span>Load Background Music (BGM)</span>
             </button>
+
+            <!-- Studio Auto-Ducking Card in Deck 2 -->
+            <div class="col-span-2 flex flex-col gap-2 p-2.5 rounded-xl bg-[var(--bg-panel)] border border-[var(--border-light)] mt-0.5 shadow-sm">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-1.5">
+                  <i data-lucide="sliders" class="w-3.5 h-3.5 text-cyan-400"></i>
+                  <span class="text-xs font-semibold text-[var(--text-primary)]">Auto-Ducking (BGM & Video)</span>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                  <input type="checkbox" id="deck-toggle-ducking" class="sr-only peer" checked
+                    onchange="syncDuckingToggle(this.checked)" />
+                  <div class="w-8 h-4.5 bg-[var(--border-light)] rounded-full peer peer-checked:bg-cyan-500 transition-colors duration-200"></div>
+                  <div class="absolute left-0.5 top-0.5 w-3.5 h-3.5 bg-white rounded-full shadow transition-transform duration-200 peer-checked:translate-x-3.5"></div>
+                </label>
+              </div>
+              <p class="text-[10px] text-[var(--text-muted)] leading-tight -mt-0.5">Smoothly lowers background sound when dialogue is spoken.</p>
+              <div class="grid grid-cols-3 gap-1 pt-0.5" id="deck-ducking-depth-container">
+                <button type="button" onclick="setDuckingDepth('light')" id="deck-duck-depth-light"
+                  class="deck-duck-btn h-6 rounded-md text-[10px] font-semibold border border-[var(--border-light)] text-[var(--text-secondary)] hover:border-cyan-400/50 transition-all">Light (-8dB)</button>
+                <button type="button" onclick="setDuckingDepth('standard')" id="deck-duck-depth-standard"
+                  class="deck-duck-btn h-6 rounded-md text-[10px] font-semibold border border-cyan-400 bg-cyan-400/15 text-cyan-300 transition-all">Standard (-14dB)</button>
+                <button type="button" onclick="setDuckingDepth('deep')" id="deck-duck-depth-deep"
+                  class="deck-duck-btn h-6 rounded-md text-[10px] font-semibold border border-[var(--border-light)] text-[var(--text-secondary)] hover:border-cyan-400/50 transition-all">Deep (-20dB)</button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -2168,6 +2193,13 @@
               title="When ON: after Generate Audio / Stop, each subtitle's end time snaps to match its own audio's end time.">
               <i id="icon-match-audio-end" data-lucide="scissors" class="w-3.5 h-3.5 shrink-0"></i>
               <span id="text-match-audio-end" class="hidden sm:inline">Sync End: OFF</span>
+            </button>
+
+            <button id="btn-fit-duration"
+              class="group h-8 px-2.5 sm:px-3 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 hover:border-cyan-500/60 text-cyan-400 hover:text-cyan-300 shadow-sm active:scale-[0.95]"
+              title="Fit Audio to Subtitle Slot: Automatically adjusts speech speed (atempo) so audio matches the exact subtitle start-to-end duration.">
+              <i id="icon-fit-duration" data-lucide="shrink" class="w-3.5 h-3.5 text-cyan-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+              <span class="hidden sm:inline" id="text-fit-duration">Fit Audio Slot</span>
             </button>
 
             <div class="hidden sm:block h-4 w-px bg-[var(--border-color)]"></div>
@@ -14044,6 +14076,8 @@
     window.setDuckingDepth = (depth) => {
       currentDuckingDepth = depth;
       localStorage.setItem("drDubberDuckingDepth", depth);
+
+      // Sync render modal buttons
       document.querySelectorAll(".duck-depth-btn").forEach((btn) => {
         btn.className = "duck-depth-btn h-7 rounded-lg text-[11px] font-semibold border border-[var(--border-light)] text-[var(--text-secondary)] hover:border-cyan-400/50 transition-all";
       });
@@ -14051,17 +14085,50 @@
       if (activeBtn) {
         activeBtn.className = "duck-depth-btn h-7 rounded-lg text-[11px] font-semibold border border-cyan-400 bg-cyan-400/15 text-cyan-300 transition-all";
       }
+
+      // Sync Deck 2 buttons
+      document.querySelectorAll(".deck-duck-btn").forEach((btn) => {
+        btn.className = "deck-duck-btn h-6 rounded-md text-[10px] font-semibold border border-[var(--border-light)] text-[var(--text-secondary)] hover:border-cyan-400/50 transition-all";
+      });
+      const deckActiveBtn = document.getElementById(`deck-duck-depth-${depth}`);
+      if (deckActiveBtn) {
+        deckActiveBtn.className = "deck-duck-btn h-6 rounded-md text-[10px] font-semibold border border-cyan-400 bg-cyan-400/15 text-cyan-300 transition-all";
+      }
     };
 
     window.toggleRenderDucking = (enabled) => {
       currentDuckingEnabled = enabled;
       localStorage.setItem("drDubberDuckingEnabled", enabled ? "true" : "false");
+
+      const mToggle = document.getElementById("toggle-render-ducking");
+      if (mToggle && mToggle.checked !== enabled) mToggle.checked = enabled;
+
+      const dToggle = document.getElementById("deck-toggle-ducking");
+      if (dToggle && dToggle.checked !== enabled) dToggle.checked = enabled;
+
       const container = document.getElementById("ducking-depth-container");
       if (container) {
         container.style.opacity = enabled ? "1" : "0.4";
         container.style.pointerEvents = enabled ? "auto" : "none";
       }
+
+      const deckContainer = document.getElementById("deck-ducking-depth-container");
+      if (deckContainer) {
+        deckContainer.style.opacity = enabled ? "1" : "0.4";
+        deckContainer.style.pointerEvents = enabled ? "auto" : "none";
+      }
     };
+
+    window.syncDuckingToggle = (enabled) => {
+      window.toggleRenderDucking(enabled);
+    };
+
+    // Initialize ducking UI states on load
+    setTimeout(() => {
+      window.setDuckingDepth(currentDuckingDepth);
+      window.toggleRenderDucking(currentDuckingEnabled);
+      if (typeof _lucideCreateIcons === "function") _lucideCreateIcons();
+    }, 100);
 
     window.setSubStylePreset = (preset) => {
       currentSubtitlePreset = preset;
@@ -20501,19 +20568,28 @@
       sortedSubs.forEach((sub, index) => {
         if (sub.audioStatus === "ready" && sub.baseAudioDuration) {
           const nextSub = sortedSubs[index + 1];
-          const currentStartTime = parseFloat(sub.textStart);
-          let maxAllowedDuration;
+          const currentStartTime = parseFloat(sub.textStart || 0);
+          const currentEndTime = parseFloat(sub.textEnd || sub.end || 0);
+          const slotDuration = currentEndTime > currentStartTime ? (currentEndTime - currentStartTime) : Infinity;
+          let maxCollisionDuration;
 
           if (nextSub) {
-            const nextStartTime = parseFloat(nextSub.textStart);
-            maxAllowedDuration = nextStartTime - currentStartTime + currentOverlapMargin;
+            const nextStartTime = parseFloat(nextSub.textStart || 0);
+            maxCollisionDuration = nextStartTime - currentStartTime + currentOverlapMargin;
           } else {
-            maxAllowedDuration = projDuration - currentStartTime;
+            maxCollisionDuration = projDuration - currentStartTime;
+          }
+
+          // Allowed duration combines slot constraint (if valid) and collision prevention
+          let maxAllowedDuration = maxCollisionDuration;
+          if (slotDuration > 0.2 && slotDuration !== Infinity) {
+            const slotWithMargin = slotDuration + Math.max(0, currentOverlapMargin);
+            maxAllowedDuration = Math.min(maxCollisionDuration > 0.1 ? maxCollisionDuration : Infinity, slotWithMargin);
           }
 
           const currentVisualDuration = sub.baseAudioDuration / (sub.speed || 1.0);
 
-          if (currentVisualDuration > maxAllowedDuration && maxAllowedDuration > 0.1) {
+          if (currentVisualDuration > maxAllowedDuration && maxAllowedDuration > 0.1 && maxAllowedDuration !== Infinity) {
             let requiredSpeed = sub.baseAudioDuration / maxAllowedDuration;
             requiredSpeed = Math.max(0.5, Math.min(2.5, requiredSpeed));
 
@@ -20566,6 +20642,52 @@
 
       return optimizedCount;
     }
+
+    // ── FIT AUDIO TO EXACT SUBTITLE SLOT DURATION ─────────────────────────
+    function fitAllSubtitlesDuration(targetSubs = subtitles) {
+      if (!targetSubs || targetSubs.length === 0) {
+        showToast("No subtitles found to fit.", "info");
+        return 0;
+      }
+      let count = 0;
+      const originalSubsSnapshot = JSON.parse(JSON.stringify(targetSubs));
+      const sorted = [...targetSubs].sort((a, b) => parseFloat(a.textStart || 0) - parseFloat(b.textStart || 0));
+
+      targetSubs.forEach((sub) => {
+        if (sub.audioStatus === "ready" && sub.baseAudioDuration) {
+          const tStart = parseFloat(sub.textStart || 0);
+          const tEnd = parseFloat(sub.textEnd || 0);
+          const slot = tEnd - tStart;
+          if (slot > 0.2) {
+            // Find distance to following subtitle to guarantee no collision
+            const nextSub = sorted.find(s => parseFloat(s.textStart || 0) > tStart);
+            const nextStart = nextSub ? parseFloat(nextSub.textStart || 0) : Infinity;
+            const maxCollision = nextStart > tStart ? (nextStart - tStart) : Infinity;
+            const targetDuration = Math.min(slot, maxCollision > 0.1 ? maxCollision : slot);
+
+            let targetSpeed = sub.baseAudioDuration / targetDuration;
+            targetSpeed = Math.max(0.70, Math.min(2.2, Math.round(targetSpeed * 100) / 100));
+
+            if (Math.abs((sub.speed || 1.0) - targetSpeed) > 0.01) {
+              sub.speed = targetSpeed;
+              sub.audioEnd = (tStart + sub.baseAudioDuration / targetSpeed).toFixed(2);
+              count++;
+            }
+          }
+        }
+      });
+
+      if (count > 0) {
+        saveStateToPast(originalSubsSnapshot, bgmTrack, detachedAudios);
+        renderSubtitles();
+        updateContextualControls();
+        showToast(`Fitted ${count} audio clips to exact subtitle durations! 🎯`, "success");
+      } else {
+        showToast("All audio clips already match their subtitle slots!", "info");
+      }
+      return count;
+    }
+    window.fitAllSubtitlesDuration = fitAllSubtitlesDuration;
 
     const applyAutoFitCore = (showToastNotification = true) => {
       if ((subtitles.length === 0 && detachedAudios.length === 0) || autoFitState === 0) return 0;
@@ -20625,6 +20747,23 @@
         } else {
           showToast("Auto-Fit Disabled", "info");
         }
+      });
+    }
+
+    // 4. Fit Duration Button Listener
+    const globalBtnFitDuration = document.getElementById("btn-fit-duration");
+    if (globalBtnFitDuration) {
+      globalBtnFitDuration.addEventListener("click", () => {
+        globalBtnFitDuration.animate(
+          [
+            { transform: "scale(1)", offset: 0 },
+            { transform: "scale(0.88)", offset: 0.3 },
+            { transform: "scale(1.06)", offset: 0.6 },
+            { transform: "scale(1)", offset: 1 },
+          ],
+          { duration: 350, easing: "ease-out" }
+        );
+        fitAllSubtitlesDuration();
       });
     }
 
@@ -22373,16 +22512,55 @@
           Object.values(activeAudios).forEach((audio) => audio && !audio.paused && audio.pause());
         }
 
-        // 3. A2 Track (BGM) Sync with Smart Audio Ducking
+        // 3. Studio Auto-Ducking & BGM Sync
+        let isVoiceSpeaking = false;
+        if (isPlaying && subtitles && subtitles.length > 0) {
+          for (let i = 0; i < subtitles.length; i++) {
+            const s = subtitles[i];
+            if (s.audioStatus === "ready") {
+              const sStart = parseFloat(s.audioStart || s.textStart || 0);
+              const sEnd = parseFloat(s.audioEnd || s.textEnd || 0);
+              if (currentTime >= sStart - 0.04 && currentTime <= sEnd + 0.04) {
+                isVoiceSpeaking = true;
+                break;
+              }
+            }
+          }
+        }
+
+        const duckingEnabled = typeof isRenderDuckingEnabled === "function" ? isRenderDuckingEnabled() : true;
+        const duckingDepth = typeof getRenderDuckingDepth === "function" ? getRenderDuckingDepth() : "standard";
+        // Light ~ -8dB (0.40), Standard ~ -14dB (0.20), Deep ~ -20dB (0.10)
+        const targetDuckingLevel = !duckingEnabled ? 1.0 : (duckingDepth === "light" ? 0.40 : (duckingDepth === "deep" ? 0.10 : 0.20));
+
+        // Smooth continuous ducking envelope (attack ~120ms, release ~350ms)
+        const targetEnvelope = (isVoiceSpeaking && duckingEnabled) ? targetDuckingLevel : 1.0;
+        if (typeof window._previewDuckEnvelope === "undefined") window._previewDuckEnvelope = 1.0;
+        if (typeof window._lastPreviewDuckTime === "undefined") window._lastPreviewDuckTime = performance.now();
+        const nowDuckTime = performance.now();
+        const dtDuck = Math.min(0.1, Math.max(0.001, (nowDuckTime - window._lastPreviewDuckTime) / 1000));
+        window._lastPreviewDuckTime = nowDuckTime;
+
+        const lerpSpeed = targetEnvelope < window._previewDuckEnvelope ? 8.5 : 3.0; // Fast attack, smooth release
+        window._previewDuckEnvelope += (targetEnvelope - window._previewDuckEnvelope) * Math.min(1.0, dtDuck * lerpSpeed);
+
+        // Smoothly duck original video audio in preview if unmuted and ducking is enabled
+        if (mainVideo && !isOriginalAudioMuted && !mainVideo.muted && mainVideo.readyState >= 2) {
+          const userVol = parseFloat(localStorage.getItem("user-volume") || "1.0") || 1.0;
+          const targetVideoVol = Math.max(0, Math.min(1.0, userVol * (duckingEnabled ? window._previewDuckEnvelope : 1.0)));
+          if (Math.abs(mainVideo.volume - targetVideoVol) > 0.015) {
+            mainVideo.volume = targetVideoVol;
+          }
+        }
+
+        // BGM Track Sync & Smooth Ducking
         if (bgmTrack && bgmTrack.src) {
           if (!bgmAudio) {
             bgmAudio = new Audio(bgmTrack.src);
             bgmAudio.preload = "auto";
           }
 
-          // --- Real-time fade envelope & Smart Audio Ducking ---
           let fadeMult = 1.0;
-          let duckMult = 1.0;
           if (!bgmTrack.isMuted) {
             const offset = currentTime - (bgmTrack.start || 0);
             const fi = bgmTrack.fadeIn || 0;
@@ -22392,26 +22570,9 @@
             } else if (fo > 0 && offset > bgmTrack.duration - fo) {
               fadeMult = Math.max(0, (bgmTrack.duration - offset) / fo);
             }
-
-            // Check if any dubbed dialogue audio is currently speaking
-            let isVoiceSpeaking = false;
-            for (let i = 0; i < subtitles.length; i++) {
-              const s = subtitles[i];
-              if (s.audioStatus === "ready") {
-                const sStart = parseFloat(s.audioStart || s.textStart || 0);
-                const sEnd = parseFloat(s.audioEnd || s.textEnd || 0);
-                if (currentTime >= sStart - 0.05 && currentTime <= sEnd + 0.05) {
-                  isVoiceSpeaking = true;
-                  break;
-                }
-              }
-            }
-            if (isVoiceSpeaking) {
-              duckMult = 0.25; // Smooth cinematic ducking to 25%
-            }
           }
 
-          const targetVolume = bgmTrack.isMuted ? 0 : Math.min(1.0, (bgmTrack.volume ?? 0.5) * fadeMult * duckMult);
+          const targetVolume = bgmTrack.isMuted ? 0 : Math.min(1.0, (bgmTrack.volume ?? 0.5) * fadeMult * window._previewDuckEnvelope);
           if (Math.abs(bgmAudio.volume - targetVolume) > 0.01) {
             bgmAudio.volume = targetVolume;
           }

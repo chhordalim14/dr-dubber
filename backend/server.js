@@ -2561,6 +2561,10 @@ app.post('/api/render', upload.any(), (req, res) => {
         videoScaleX: renderOpts.videoScaleX,
         videoScaleY: renderOpts.videoScaleY,
         encoder: renderOpts.encoder || (renderOpts.renderEngine === 'cpu' ? 'libx264' : 'auto'),
+        duckingEnabled: renderOpts.duckingEnabled !== undefined
+            ? (renderOpts.duckingEnabled === true || renderOpts.duckingEnabled === 'true' || renderOpts.duckingEnabled === 1 || renderOpts.duckingEnabled === '1')
+            : true,
+        duckingDepth: renderOpts.duckingDepth || 'standard',
         outputPath
     },
     (progress, eta) => { },
