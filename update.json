@@ -1,6 +1,6 @@
 {
-  "version": "1.2.9",
-  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.2.9/DR.Dubber.Pro.Setup.1.2.9.exe",
+  "version": "1.3.0",
+  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.3.0/DR.Dubber.Pro.Setup.1.3.0.exe",
   "mac_link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.2.1/DR.Dubber.Pro-1.2.1-arm64.dmg",
-  "notes": "v1.2.9 Release:\n- Fixed \"Add All to Queue\" crashing with \"projVidW is not defined\" for every project"
+  "notes": "v1.3.0 Release:\n- Enhanced AI vocal separator with multi-engine support and fallback\n- Render pipeline optimizations and hardware acceleration support\n- UI and workflow enhancements for dubbing and batch rendering"
 }
