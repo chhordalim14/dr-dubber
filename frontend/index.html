@@ -1695,7 +1695,7 @@
             <i id="lottie-workspace-tools" class="w-3.5 h-3.5 lottie-icon text-[var(--accent-text)] shrink-0"></i>
             Studio Workflow
           </h2>
-          <span class="text-[10px] font-mono text-slate-400 bg-white/[0.05] px-1.5 py-0.5 rounded border border-white/[0.08]">v1.3.1 Pro</span>
+          <span id="badge-app-version" class="text-[10px] font-mono text-slate-400 bg-white/[0.05] px-1.5 py-0.5 rounded border border-white/[0.08]">v1.3.2 Pro</span>
         </div>
 
         <!-- Deck 1: Project Setup (Video & Subtitles) -->
@@ -2277,6 +2277,12 @@
                   <button id="btn-mute-a1"
                     class="pointer-events-auto hover:text-[var(--text-bright)] text-[var(--text-muted)] transition-colors p-1 -m-1 rounded hover:bg-white/[0.06]">
                     <i id="icon-mute-a1" data-lucide="volume-2" class="w-3.5 h-3.5"></i>
+                  </button>
+                  <button id="btn-clean-detached-a1"
+                    title="Clean Detached / Orphan Audio Clips"
+                    class="pointer-events-auto hidden items-center gap-1 text-amber-300 hover:text-amber-200 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/30 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ml-0.5">
+                    <i data-lucide="sparkles" class="w-3 h-3"></i>
+                    <span id="label-detached-count">0</span>
                   </button>
                   <button id="btn-delete-a1"
                     class="pointer-events-auto hover:text-rose-400 text-[var(--text-muted)] transition-colors ml-0.5 p-1 -m-1 rounded hover:bg-white/[0.06]">
@@ -6628,18 +6634,23 @@
         p.isTranscribing = false;
       }
 
-      const ownsGenerating = isGeneratingAudio && p.generateAbortController === generateAbortController;
-      if (ownsGenerating) {
+      const isCurrentActive = projects[activeProjectIndex] === p;
+      const hasLiveGen = p._cancelGenRef && !p._cancelGenRef.cancelled;
+      const ownsGenerating = isGeneratingAudio && (isCurrentActive || p.generateAbortController === generateAbortController);
+      if (ownsGenerating || hasLiveGen || p._isBackgroundGenerating) {
         p.isGeneratingAudio = true;
-        p.generateAbortController = generateAbortController;
-      } else if (!p._isBackgroundGenerating) {
-        p.isGeneratingAudio = false;
-      }
-      if (!isGeneratingAudio) {
+        if (generateAbortController && (ownsGenerating || isCurrentActive)) {
+          p.generateAbortController = generateAbortController;
+        }
+      } else if (!isGeneratingAudioAll) {
         p.isGeneratingAudio = false;
       }
 
-      p.cancelGeneration = cancelGeneration;
+      if (hasLiveGen || p._isBackgroundGenerating) {
+        p.cancelGeneration = !!(p._cancelGenRef && p._cancelGenRef.cancelled);
+      } else if (isCurrentActive) {
+        p.cancelGeneration = cancelGeneration;
+      }
       p.isIsolatingBgm = isIsolatingBgm;
       p.isolateAbortController = isolateAbortController;
       // Note: isRendering/renderAbortController are local inside the render block,
@@ -8180,9 +8191,28 @@
         document.getElementById("video-black-backdrop").classList.add("hidden");
       }
 
-      // ── 3. Restore core data ──
-      subtitles = p.subtitles.map((s) => ({ ...s }));
-      detachedAudios = (p.detachedAudios || []).map((a) => ({ ...a }));
+      // ── 3. Restore core data with self-healing for corrupted intervals ──
+      subtitles = (p.subtitles || []).map((s) => {
+        const copy = { ...s };
+        if (copy.audioStatus === "ready" && copy.baseAudioDuration) {
+          const tStart = parseFloat(copy.textStart || 0);
+          const aStart = parseFloat(copy.audioStart);
+          const aEnd = parseFloat(copy.audioEnd);
+          if (isNaN(aStart) || isNaN(aEnd) || aStart >= aEnd || aStart < 0) {
+            const spd = copy.speed || 1.0;
+            copy.audioStart = tStart.toFixed(2);
+            copy.audioEnd = (tStart + copy.baseAudioDuration / spd).toFixed(2);
+          }
+        }
+        return copy;
+      });
+      p.subtitles = subtitles.map((s) => ({ ...s }));
+      detachedAudios = (p.detachedAudios || []).filter((a) => {
+        const start = parseFloat(a.audioStart);
+        const end = parseFloat(a.audioEnd);
+        return !isNaN(start) && !isNaN(end) && end > start;
+      }).map((a) => ({ ...a }));
+      p.detachedAudios = detachedAudios.map((a) => ({ ...a }));
       pastStates = (p.pastStates || []).slice();
       freeTexts = p.freeTexts.map((t) => ({ ...t }));
       window.imageOverlays = p.imageOverlays.map((i) => ({ ...i }));
@@ -18966,23 +18996,70 @@
       return Math.min(aEnd, tEnd) - Math.max(aStart, tStart) > 0;
     };
 
-    // If sub's existing audio has drifted away from its own text (no longer "belongs" to it),
-    // preserve it as an independent clip instead of letting regenerate overwrite/delete it.
+    // Previously preserved drifted audio into detachedAudios on regenerate,
+    // which caused duplicate "ghost" orange clips directly underneath newly generated purple clips.
+    // Cleanly overwrite the subtitle's audio without spawning orphan duplicates.
     const spinOffOrphanAudioIfNeeded = (sub) => {
-      if (!sub.audioUrl || isAudioOwnedByOwnText(sub)) return;
-      detachedAudios.push({
-        id: `orphan_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-        url: sub.audioUrl,
-        file: sub.file,
-        audioStart: sub.audioStart,
-        audioEnd: sub.audioEnd,
-        speed: sub.speed || 1.0,
-        volume: sub.volume ?? 1.0,
-        reverb: sub.reverb || null,
-        baseAudioDuration: sub.baseAudioDuration,
-        text: sub.text,
-        originSubId: sub.id,
+      return;
+    };
+
+    const deleteSingleDetachedClip = (id) => {
+      saveStateToPast();
+      [id, `detached-${id}`].forEach((k) => {
+        if (activeAudios[k]) {
+          activeAudios[k].pause();
+          if (typeof window.releaseAudioChain === "function") window.releaseAudioChain(activeAudios[k]);
+          activeAudios[k].src = "";
+          delete activeAudios[k];
+        }
       });
+      if (typeof window.teardownReverbGraph === "function") {
+        window.teardownReverbGraph(id);
+      }
+      detachedAudios = detachedAudios.filter((d) => d.id !== id);
+      selectedItems = selectedItems.filter((k) => k !== `detached-${id}`);
+      const proj = projects[activeProjectIndex];
+      if (proj) {
+        proj.detachedAudios = detachedAudios.map((x) => ({ ...x }));
+      }
+      renderSubtitles();
+      updateContextualControls();
+      showToast("Detached audio clip deleted", "info");
+    };
+
+    const purgeAllDetachedClips = async () => {
+      if (!detachedAudios || detachedAudios.length === 0) return;
+      const count = detachedAudios.length;
+      const confirmed = await customConfirm(
+        `Remove ${count} detached / orphan audio clip(s) from Track A1? Subtitle speech audios will remain intact.`,
+        "Clean Detached Audio",
+        "Clean Clips"
+      );
+      if (confirmed) {
+        saveStateToPast();
+        detachedAudios.forEach((a) => {
+          [a.id, `detached-${a.id}`].forEach((k) => {
+            if (activeAudios[k]) {
+              activeAudios[k].pause();
+              if (typeof window.releaseAudioChain === "function") window.releaseAudioChain(activeAudios[k]);
+              activeAudios[k].src = "";
+              delete activeAudios[k];
+            }
+          });
+          if (typeof window.teardownReverbGraph === "function") {
+            window.teardownReverbGraph(a.id);
+          }
+        });
+        detachedAudios = [];
+        const proj = projects[activeProjectIndex];
+        if (proj) {
+          proj.detachedAudios = [];
+        }
+        selectedItems = selectedItems.filter((k) => !k.startsWith("detached-"));
+        renderSubtitles();
+        updateContextualControls();
+        showToast(`Cleaned ${count} detached clip(s)`, "success");
+      }
     };
 
     // --- RENDER UI HELPER ---
@@ -19702,9 +19779,17 @@
           }
 
           // Apply Selection Outline
-          if (selectedItems.includes(`audio-${sub.id}`) && sub.audioStatus === "ready") {
+          const isA1Selected = selectedItems.includes(`audio-${sub.id}`);
+          if (isA1Selected && sub.audioStatus === "ready") {
             a1Block.classList.add("ring-2", "ring-green-400", "z-20", "shadow-lg");
           }
+
+          a1Block.addEventListener("mouseenter", () => {
+            a1Block.style.zIndex = "30";
+          });
+          a1Block.addEventListener("mouseleave", () => {
+            a1Block.style.zIndex = isA1Selected ? "20" : "10";
+          });
 
           // Add A1 track resize handle
           if (index === subtitles.length - 1) {
@@ -19750,7 +19835,27 @@
         block.style.bottom = "4px";
 
         // ADDED: Expose the physical file path for detached clips
-        block.title = `Path: ${a.file || "N/A"}\nDetached audio: ${a.text || ""}`;
+        block.title = `Path: ${a.file || "N/A"}\nDetached audio: ${a.text || ""}\n(Right-click to delete)`;
+
+        block.addEventListener("mouseenter", () => {
+          block.style.zIndex = "35";
+        });
+        block.addEventListener("mouseleave", () => {
+          block.style.zIndex = isSelected ? "20" : "10";
+        });
+
+        block.addEventListener("contextmenu", async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const confirmed = await customConfirm(
+            `Delete detached audio clip "${a.text || "Clip"}"?`,
+            "Delete Detached Audio",
+            "Yes, Delete"
+          );
+          if (confirmed) {
+            deleteSingleDetachedClip(a.id);
+          }
+        });
 
         block.innerHTML = `
             <i data-lucide="audio-lines" class="w-3 h-3 mr-1 opacity-80 shrink-0"></i>
@@ -19786,13 +19891,27 @@
 
         block.querySelector(".detached-audio-delete").addEventListener("click", (e) => {
           e.stopPropagation();
-          detachedAudios = detachedAudios.filter((d) => d.id !== a.id);
-          selectedItems = selectedItems.filter((k) => k !== `detached-${a.id}`);
-          renderSubtitles();
+          deleteSingleDetachedClip(a.id);
         });
 
         trackA1.appendChild(block);
       });
+
+      // Update Track A1 header clean detached badge button
+      const btnCleanDetachedA1 = document.getElementById("btn-clean-detached-a1");
+      const labelDetachedCountA1 = document.getElementById("label-detached-count");
+      if (btnCleanDetachedA1 && labelDetachedCountA1) {
+        if (detachedAudios && detachedAudios.length > 0) {
+          btnCleanDetachedA1.classList.remove("hidden");
+          btnCleanDetachedA1.classList.add("inline-flex");
+          labelDetachedCountA1.textContent = detachedAudios.length;
+        } else {
+          btnCleanDetachedA1.classList.add("hidden");
+          btnCleanDetachedA1.classList.remove("inline-flex");
+          labelDetachedCountA1.textContent = "0";
+        }
+      }
+
       _lucideCreateIcons({ root: trackA1 });
 
       if (masterCheckbox) {
@@ -19988,8 +20107,28 @@
       showToast("Clip split.", "success");
     };
 
+    // A1 Action: Clean detached / orphan audio clips
+    const btnCleanDetachedA1 = document.getElementById("btn-clean-detached-a1");
+    if (btnCleanDetachedA1) {
+      btnCleanDetachedA1.addEventListener("click", () => {
+        purgeAllDetachedClips();
+      });
+    }
+
     // A1 Action: Clear all generated audio
     document.getElementById("btn-delete-a1").addEventListener("click", async () => {
+      if (detachedAudios && detachedAudios.length > 0 && subtitles.some((s) => s.audioUrl)) {
+        const cleanDetachedOnly = await customConfirm(
+          `Track A1 contains ${detachedAudios.length} detached / orphan clip(s) as well as generated subtitle speech.\n\nDo you want to clear ONLY the ${detachedAudios.length} detached clip(s)?`,
+          "Clear Track A1",
+          "Clean Detached Only"
+        );
+        if (cleanDetachedOnly) {
+          purgeAllDetachedClips();
+          return;
+        }
+      }
+
       const confirmed = await customConfirm("Clear all generated audio from the timeline?", "Clear Audio Track", "Yes, Clear");
       if (confirmed) {
         saveStateToPast();
@@ -20600,8 +20739,18 @@
               let finalEnd = currentStartTime + sub.baseAudioDuration / requiredSpeed;
               if (finalEnd > projDuration) finalEnd = projDuration;
 
+              subsArray[realIndex].audioStart = currentStartTime.toFixed(2);
               subsArray[realIndex].audioEnd = finalEnd.toFixed(2);
               optimizedCount++;
+            }
+          } else {
+            const realIndex = subsArray.findIndex((s) => s.id === sub.id);
+            if (realIndex > -1) {
+              const spd = subsArray[realIndex].speed || 1.0;
+              let finalEnd = currentStartTime + sub.baseAudioDuration / spd;
+              if (finalEnd > projDuration) finalEnd = projDuration;
+              subsArray[realIndex].audioStart = currentStartTime.toFixed(2);
+              subsArray[realIndex].audioEnd = finalEnd.toFixed(2);
             }
           }
         }
@@ -20668,11 +20817,10 @@
             let targetSpeed = sub.baseAudioDuration / targetDuration;
             targetSpeed = Math.max(0.70, Math.min(2.2, Math.round(targetSpeed * 100) / 100));
 
-            if (Math.abs((sub.speed || 1.0) - targetSpeed) > 0.01) {
-              sub.speed = targetSpeed;
-              sub.audioEnd = (tStart + sub.baseAudioDuration / targetSpeed).toFixed(2);
-              count++;
-            }
+            sub.speed = targetSpeed;
+            sub.audioStart = tStart.toFixed(2);
+            sub.audioEnd = (tStart + sub.baseAudioDuration / targetSpeed).toFixed(2);
+            count++;
           }
         }
       });
@@ -20810,9 +20958,22 @@
                 proj.subtitles[realIdx].speed = requiredSpeed;
                 let finalEnd = startTime + sub.baseAudioDuration / requiredSpeed;
                 if (finalEnd > projDuration) finalEnd = projDuration;
+                proj.subtitles[realIdx].audioStart = startTime.toFixed(2);
                 proj.subtitles[realIdx].audioEnd = finalEnd.toFixed(2);
                 changed = true;
                 console.log(`[Audit] Auto-Fit fixed sub ${sub.id} on tab ${projIdx}`);
+              }
+            } else {
+              const realIdx = proj.subtitles.findIndex((s) => s.id === sub.id);
+              if (realIdx > -1) {
+                const spd = proj.subtitles[realIdx].speed || 1.0;
+                let finalEnd = startTime + sub.baseAudioDuration / spd;
+                if (finalEnd > projDuration) finalEnd = projDuration;
+                if (proj.subtitles[realIdx].audioStart !== startTime.toFixed(2) || proj.subtitles[realIdx].audioEnd !== finalEnd.toFixed(2)) {
+                  proj.subtitles[realIdx].audioStart = startTime.toFixed(2);
+                  proj.subtitles[realIdx].audioEnd = finalEnd.toFixed(2);
+                  changed = true;
+                }
               }
             }
           });
@@ -21100,8 +21261,18 @@
                     projSubs[realIdx].speed = requiredSpeed;
                     let finalEnd = startTime + sub.baseAudioDuration / requiredSpeed;
                     if (finalEnd > projDuration) finalEnd = projDuration;
+                    projSubs[realIdx].audioStart = startTime.toFixed(2);
                     projSubs[realIdx].audioEnd = finalEnd.toFixed(2);
                     optimizedCount++;
+                  }
+                } else {
+                  const realIdx = projSubs.findIndex((s) => s.id === sub.id);
+                  if (realIdx > -1) {
+                    const spd = projSubs[realIdx].speed || 1.0;
+                    let finalEnd = startTime + sub.baseAudioDuration / spd;
+                    if (finalEnd > projDuration) finalEnd = projDuration;
+                    projSubs[realIdx].audioStart = startTime.toFixed(2);
+                    projSubs[realIdx].audioEnd = finalEnd.toFixed(2);
                   }
                 }
               }
@@ -21463,7 +21634,7 @@
               const safeIndex = targetSubs.findIndex((s) => s.id === subId);
               if (safeIndex > -1) {
                 spinOffOrphanAudioIfNeeded(targetSubs[safeIndex]);
-                const startTime = isAudioOwnedByOwnText(targetSubs[safeIndex]) ? parseFloat(targetSubs[safeIndex].audioStart || targetSubs[safeIndex].textStart) : parseFloat(targetSubs[safeIndex].textStart);
+                const startTime = parseFloat(targetSubs[safeIndex].textStart || 0);
                 targetSubs[safeIndex].audioStatus = "ready";
                 targetSubs[safeIndex].audioUrl = freshUrl;
                 targetSubs[safeIndex].file = data.file;
@@ -21471,7 +21642,7 @@
                 if (!targetSubs[safeIndex].speed) targetSubs[safeIndex].speed = 1.0;
                 if (data.duration && data.duration > 0) {
                   targetSubs[safeIndex].baseAudioDuration = data.duration;
-                  targetSubs[safeIndex].audioEnd = (startTime + data.duration).toFixed(2);
+                  targetSubs[safeIndex].audioEnd = (startTime + data.duration / (targetSubs[safeIndex].speed || 1.0)).toFixed(2);
                 } else if (!targetSubs[safeIndex].audioEnd) {
                   targetSubs[safeIndex].audioEnd = targetSubs[safeIndex].textEnd;
                 }
@@ -21522,9 +21693,11 @@
                       resolveMetaPromise();
                       return;
                     }
-                    const startTime = parseFloat(targetSubs[idx].audioStart || targetSubs[idx].textStart);
-                    let finalSpeed = 1.0;
-                    const timeRemainingInVideo = (targetProject.duration || duration) - startTime;
+                    const startTime = parseFloat(targetSubs[idx].textStart || targetSubs[idx].audioStart || 0);
+                    targetSubs[idx].audioStart = startTime.toFixed(2);
+                    let finalSpeed = targetSubs[idx].speed || 1.0;
+                    const safeProjDur = targetProject.duration > 0 ? targetProject.duration : (duration > 0 ? duration : Infinity);
+                    const timeRemainingInVideo = safeProjDur - startTime;
                     const expectedVisualDuration = durationVal / finalSpeed;
                     if (expectedVisualDuration > timeRemainingInVideo && timeRemainingInVideo > 0.1) {
                       let requiredSpeed = durationVal / timeRemainingInVideo;
@@ -21533,7 +21706,7 @@
                     targetSubs[idx].baseAudioDuration = durationVal;
                     targetSubs[idx].speed = finalSpeed;
                     let calculatedEnd = startTime + durationVal / finalSpeed;
-                    if (calculatedEnd > (targetProject.duration || duration)) calculatedEnd = targetProject.duration || duration;
+                    if (calculatedEnd > safeProjDur) calculatedEnd = safeProjDur;
                     targetSubs[idx].audioEnd = calculatedEnd.toFixed(2);
 
                     if (projects[activeProjectIndex] === targetProject) {
@@ -21673,8 +21846,18 @@
                   targetProject.subtitles[realIdx].speed = requiredSpeed;
                   let finalEnd = startTime + sub.baseAudioDuration / requiredSpeed;
                   if (finalEnd > projDuration) finalEnd = projDuration;
+                  targetProject.subtitles[realIdx].audioStart = startTime.toFixed(2);
                   targetProject.subtitles[realIdx].audioEnd = finalEnd.toFixed(2);
                   optimizedCount++;
+                }
+              } else {
+                const realIdx = targetProject.subtitles.findIndex((s) => s.id === sub.id);
+                if (realIdx > -1) {
+                  const spd = targetProject.subtitles[realIdx].speed || 1.0;
+                  let finalEnd = startTime + sub.baseAudioDuration / spd;
+                  if (finalEnd > projDuration) finalEnd = projDuration;
+                  targetProject.subtitles[realIdx].audioStart = startTime.toFixed(2);
+                  targetProject.subtitles[realIdx].audioEnd = finalEnd.toFixed(2);
                 }
               }
             }
@@ -21820,31 +22003,48 @@
       });
       if (typeof renderProjectTabs === "function") renderProjectTabs();
 
-      // 🚀 Concurrency Worker Pool: 4 tabs processed in parallel
-      const poolSize = 4;
+      // 🚀 Concurrency Worker Pool: 2 tabs processed in parallel (with global backend TTS queue safety)
+      const poolSize = 2;
       let activeIdx = 0;
       let succeededCount = 0;
+      let totalTabsProcessed = 0;
 
       const runWorker = async () => {
         while (activeIdx < eligibleProjects.length) {
           if (!isGeneratingAudioAll || cancelGeneration) break;
           const p = eligibleProjects[activeIdx++];
           let ids = null;
-          if (p === projects[activeProjectIndex]) {
-            const selectedSubIds = [...new Set(selectedItems.filter((id) => id.startsWith("text-") || id.startsWith("audio-")).map((id) => id.split("-").slice(1).join("-")))];
-            ids = selectedSubIds.length > 0 ? selectedSubIds : p.subtitles.filter((s) => s.audioStatus === "idle" || s.audioStatus === "error").map((s) => s.id);
-          } else if (p._selectedIds && p._selectedIds.length > 0) {
+
+          if (p._selectedIds && p._selectedIds.length > 0) {
             ids = p._selectedIds;
+            p._selectedIds = null;
           } else {
-            const pending = p.subtitles.filter((s) => s.audioStatus === "idle" || s.audioStatus === "error");
-            ids = pending.length > 0 ? pending.map((s) => s.id) : p.subtitles.map((s) => s.id);
+            // Find all pending subtitles needing audio (idle, error, or missing file)
+            const pending = (p.subtitles || []).filter((s) => s.audioStatus === "idle" || s.audioStatus === "error" || !s.file);
+            if (pending.length > 0) {
+              ids = pending.map((s) => s.id);
+            } else {
+              // If tab has no pending subtitles and all are ready, skip it unless every tab is already ready
+              const anyPendingAcrossProjects = eligibleProjects.some((proj) =>
+                (proj.subtitles || []).some((s) => s.audioStatus === "idle" || s.audioStatus === "error" || !s.file)
+              );
+              if (anyPendingAcrossProjects) {
+                // Tab is already 100% complete!
+                continue;
+              } else {
+                ids = p.subtitles.map((s) => s.id);
+              }
+            }
           }
 
-          if (!ids || ids.length === 0) ids = p.subtitles.map((s) => s.id);
+          if (!ids || ids.length === 0) continue;
 
           try {
-            await generateStandardAudioForProject(p, ids, true);
-            succeededCount++;
+            totalTabsProcessed++;
+            const res = await generateStandardAudioForProject(p, ids, true);
+            if (res && res.success) {
+              succeededCount++;
+            }
           } catch (e) {
             console.error("Audio generation error for tab:", e);
           }
@@ -21858,8 +22058,11 @@
       updateGenerateAllButtonState();
       updateGenerateButtonState();
       renderProjectTabs();
+      if (typeof auditAllProjectsPostGeneration === "function") {
+        auditAllProjectsPostGeneration();
+      }
       if (succeededCount > 0) {
-        showToast(`🎉 Completed audio generation for all ${succeededCount} of ${eligibleProjects.length} project tab(s)!`, "success");
+        showToast(`🎉 Completed audio generation for ${succeededCount} of ${totalTabsProcessed || eligibleProjects.length} project tab(s)!`, "success");
       }
     }
 
@@ -22019,7 +22222,7 @@
                         resolveVoxMeta();
                         return;
                       }
-                      const startTime = parseFloat(proj.subtitles[ii].audioStart || proj.subtitles[ii].textStart);
+                      const startTime = parseFloat(proj.subtitles[ii].textStart || proj.subtitles[ii].audioStart || 0);
                       let spd = 1.0;
                       const safeProjDur = proj.duration > 0 ? proj.duration : Infinity;
                       const remaining = safeProjDur - startTime;
@@ -22028,6 +22231,7 @@
                       proj.subtitles[ii].speed = spd;
                       let end = startTime + dur / spd;
                       if (end > safeProjDur) end = safeProjDur;
+                      proj.subtitles[ii].audioStart = startTime.toFixed(2);
                       proj.subtitles[ii].audioEnd = end.toFixed(2);
 
                       if (projects[activeProjectIndex] === proj) {
@@ -26390,14 +26594,16 @@
     // built. Read the real version from Electron (package.json) instead;
     // falls back to this literal only when running outside Electron (e.g.
     // a plain browser during development).
-    let CURRENT_APP_VERSION = "1.3.1";
+    let CURRENT_APP_VERSION = "1.3.4";
     const aboutAppVersionDisplay = document.getElementById("about-app-version");
+    const badgeAppVersionDisplay = document.getElementById("badge-app-version");
     if (aboutAppVersionDisplay) aboutAppVersionDisplay.textContent = `Version ${CURRENT_APP_VERSION}`;
     if (window.electronAPI && window.electronAPI.getAppVersion) {
       window.electronAPI.getAppVersion().then((v) => {
         if (!v) return;
         CURRENT_APP_VERSION = v;
         if (aboutAppVersionDisplay) aboutAppVersionDisplay.textContent = `Version ${CURRENT_APP_VERSION}`;
+        if (badgeAppVersionDisplay) badgeAppVersionDisplay.textContent = `v${CURRENT_APP_VERSION} Pro`;
       }).catch(() => { });
     }
 

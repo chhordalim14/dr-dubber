@@ -44,6 +44,8 @@ function hasSubtitlesFilter() {
 // "auto" then picked h264_nvenc and every render failed at runtime with
 // "Terminating thread with return code -1 (Operation not permitted)" /
 // "Nothing was written into output file".
+const codecByKey = { nvenc: 'h264_nvenc', qsv: 'h264_qsv', amf: 'h264_amf', mf: 'h264_mf', videotoolbox: 'h264_videotoolbox' };
+
 function canEncodeWith(codec) {
     return new Promise((resolve) => {
         let settled = false;
@@ -54,10 +56,11 @@ function canEncodeWith(codec) {
         };
         let p;
         try {
+            // Test with realistic parameters to ensure encoder works with standard dimensions and yuv420p
             p = spawn(getFFmpegBinary(), [
                 '-hide_banner', '-loglevel', 'error',
-                '-f', 'lavfi', '-i', 'color=black:s=64x64',
-                '-frames:v', '1', '-c:v', codec, '-f', 'null', '-'
+                '-f', 'lavfi', '-i', 'color=black:s=640x360:r=25',
+                '-frames:v', '1', '-c:v', codec, '-pix_fmt', 'yuv420p', '-f', 'null', '-'
             ], { windowsHide: true });
         } catch (e) {
             return finish(false);
@@ -87,7 +90,6 @@ async function detectAvailableEncoders() {
         return _detectedEncoders;
     }
 
-    const codecByKey = { nvenc: 'h264_nvenc', qsv: 'h264_qsv', amf: 'h264_amf', mf: 'h264_mf', videotoolbox: 'h264_videotoolbox' };
     const verified = { ...compiled };
     for (const [key, codec] of Object.entries(codecByKey)) {
         if (compiled[key]) verified[key] = await canEncodeWith(codec);
@@ -423,8 +425,34 @@ function buildClipAudioFilters(item, voiceVolume) {
 /**
  * Fast Dialogue Stem Pre-Assembly.
  * Combines all subtitle audio cues into a single master PCM dialogue track in a lightning-fast pass.
- * This prevents passing 100-500 inputs into the main video render filter graph.
+ * For large cue lists (e.g. 100-1000 items), cues are assembled in batches of 40 to prevent exceeding
+ * Windows CreateProcess 32KB command line limits (spawn ENAMETOOLONG).
  */
+async function assembleDialogueStemBatch(items, outPath, voiceVolume) {
+    const args = ['-y'];
+    const filterParts = [];
+    const streamNames = [];
+
+    items.forEach((sub, i) => {
+        const aPath = sub.file || sub.audioPath;
+        args.push('-i', aPath);
+        const afParts = buildClipAudioFilters(sub, voiceVolume);
+        filterParts.push(`[${i}:a]${afParts.join(',')}[a${i}]`);
+        streamNames.push(`[a${i}]`);
+    });
+
+    filterParts.push(`${streamNames.join('')}amix=inputs=${items.length}:normalize=0:duration=longest[aout]`);
+    args.push('-filter_complex', filterParts.join(';'));
+    args.push('-map', '[aout]', '-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2', outPath);
+
+    await new Promise((resolve, reject) => {
+        const p = spawn(getFFmpegBinary(), args, { windowsHide: true });
+        p.on('close', code => (code === 0 && fs.existsSync(outPath)) ? resolve() : reject(new Error(`Stem batch exit code ${code}`)));
+        p.on('error', reject);
+    });
+    return fs.existsSync(outPath) ? outPath : null;
+}
+
 async function assembleDialogueStem(validSubs, tempDir, voiceVolume = 1.0) {
     if (!validSubs || validSubs.length === 0) return null;
     const stemPath = path.join(tempDir, 'dialogue_stem.wav');
@@ -460,27 +488,37 @@ async function assembleDialogueStem(validSubs, tempDir, voiceVolume = 1.0) {
         return fs.existsSync(stemPath) ? stemPath : null;
     }
 
+    const CHUNK_SIZE = 40;
+    if (existing.length <= CHUNK_SIZE) {
+        return assembleDialogueStemBatch(existing, stemPath, voiceVolume);
+    }
+
+    // Chunk into intermediate mixes to prevent exceeding Windows 32KB command-line limit
+    const chunkFiles = [];
+    for (let c = 0; c < existing.length; c += CHUNK_SIZE) {
+        const chunk = existing.slice(c, c + CHUNK_SIZE);
+        const chunkPath = path.join(tempDir, `dialogue_chunk_${Math.floor(c / CHUNK_SIZE)}.wav`);
+        await assembleDialogueStemBatch(chunk, chunkPath, voiceVolume);
+        if (fs.existsSync(chunkPath)) {
+            chunkFiles.push(chunkPath);
+        }
+    }
+
+    if (chunkFiles.length === 0) return null;
+    if (chunkFiles.length === 1) {
+        fs.renameSync(chunkFiles[0], stemPath);
+        return stemPath;
+    }
+
+    // Mix the intermediate chunks together
     const args = ['-y'];
-    const filterParts = [];
-    const streamNames = [];
-
-    existing.forEach((sub, i) => {
-        const aPath = sub.file || sub.audioPath;
-        args.push('-i', aPath);
-        const afParts = buildClipAudioFilters(sub, voiceVolume);
-
-        filterParts.push(`[${i}:a]${afParts.join(',')}[a${i}]`);
-        streamNames.push(`[a${i}]`);
-    });
-
-    filterParts.push(`${streamNames.join('')}amix=inputs=${existing.length}:normalize=0:duration=longest[aout]`);
-
-    args.push('-filter_complex', filterParts.join(';'));
+    chunkFiles.forEach(cp => args.push('-i', cp));
+    args.push('-filter_complex', `amix=inputs=${chunkFiles.length}:normalize=0:duration=longest[aout]`);
     args.push('-map', '[aout]', '-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2', stemPath);
 
     await new Promise((resolve, reject) => {
         const p = spawn(getFFmpegBinary(), args, { windowsHide: true });
-        p.on('close', code => (code === 0 && fs.existsSync(stemPath)) ? resolve() : reject(new Error(`Stem exit code ${code}`)));
+        p.on('close', code => (code === 0 && fs.existsSync(stemPath)) ? resolve() : reject(new Error(`Mix chunks exit code ${code}`)));
         p.on('error', reject);
     });
 
@@ -612,7 +650,6 @@ async function applyEncoderSettings(args, encoderPreference, targetW, targetH) {
     if (chosen === 'auto') {
         if (encoders.nvenc) chosen = 'h264_nvenc';
         else if (encoders.qsv) chosen = 'h264_qsv';
-        else if (encoders.mf && process.platform === 'win32') chosen = 'h264_mf';
         else if (encoders.amf) chosen = 'h264_amf';
         else if (encoders.videotoolbox && process.platform === 'darwin') chosen = 'h264_videotoolbox';
         else chosen = 'libx264';
@@ -636,8 +673,10 @@ async function applyEncoderSettings(args, encoderPreference, targetW, targetH) {
     } else if (chosen === 'h264_videotoolbox' && encoders.videotoolbox) {
         args.push('-c:v', 'h264_videotoolbox', '-b:v', bitrate);
     } else {
+        chosen = 'libx264';
         args.push('-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'fastdecode', '-crf', '20');
     }
+    return chosen;
 }
 
 async function renderVideo(options, onProgress, onComplete, onError) {
@@ -787,27 +826,34 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             }
 
             if (dIndex >= 0 && bIndex >= 0) {
+                // sidechaincompress stops as soon as its shorter input reaches EOF, so if dialogue
+                // ends before the BGM/video does, the ducked output (and the final mix) would be cut
+                // short. Pad the sidechain-control copy out to the full export duration first.
                 const fComplex = [
+                    `[${dIndex}:a]asplit=2[d_sc_raw][d_mix]`,
+                    `[d_sc_raw]apad=whole_dur=${videoDuration.toFixed(3)}[d_sc]`,
                     `[${bIndex}:a]${bgmFilterChain}[bgm_vol]`,
-                    `[bgm_vol][${dIndex}:a]sidechaincompress=threshold=0.08:ratio=7:attack=15:release=350[bgm_ducked]`,
+                    `[bgm_vol][d_sc]sidechaincompress=threshold=0.08:ratio=7:attack=15:release=350[bgm_ducked]`,
                     `[bgm_ducked]equalizer=f=1100:t=q:w=1.5:g=-6[bgm_clean]`,
-                    `[bgm_clean][${dIndex}:a]amix=inputs=2:normalize=0:duration=longest[final_audio]`
+                    `[bgm_clean][d_mix]amix=inputs=2:normalize=0:duration=longest[final_audio]`,
+                    `[final_audio]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[clean_audio]`
                 ];
                 args.push('-filter_complex', fComplex.join(';'));
-                args.push('-map', '[final_audio]');
+                args.push('-map', '[clean_audio]');
             } else if (dIndex >= 0) {
-                args.push('-map', `${dIndex}:a`);
+                args.push('-filter_complex', `[${dIndex}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[clean_audio]`);
+                args.push('-map', '[clean_audio]');
             } else if (bIndex >= 0) {
-                args.push('-af', bgmFilterChain);
-                args.push('-map', `${bIndex}:a`);
+                args.push('-filter_complex', `[${bIndex}:a]${bgmFilterChain},aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[clean_audio]`);
+                args.push('-map', '[clean_audio]');
             } else {
                 throw new Error('No audio track or BGM found to export.');
             }
 
             if (audioFormat === 'wav') {
-                args.push('-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2');
+                args.push('-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2', '-channel_layout', 'stereo');
             } else {
-                args.push('-c:a', 'libmp3lame', '-b:a', '192k', '-ar', '44100', '-ac', '2');
+                args.push('-c:a', 'libmp3lame', '-b:a', '192k', '-ar', '44100', '-ac', '2', '-channel_layout', 'stereo');
             }
 
             if (effectiveVideoDuration && effectiveVideoDuration > 0) {
@@ -943,33 +989,48 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                 let bgmFinalTag = '[bgm_vol]';
 
                 if (isDucking) {
-                    filterComplex.push(`[bgm_vol][${dialogueInputIndex}:a]sidechaincompress=${sidechainParams}[bgm_ducked]`);
-                    filterComplex.push(`[bgm_ducked]equalizer=f=1100:t=q:w=1.5:g=-6[bgm_clean]`);
-                    bgmFinalTag = '[bgm_clean]';
-                }
+                    // Pad the sidechain-control split(s) to the full export duration so
+                    // sidechaincompress doesn't stop early when dialogue ends before the video does.
+                    if (includeOrigAudio) {
+                        filterComplex.push(`[${dialogueInputIndex}:a]asplit=3[d_sc1_raw][d_sc2_raw][d_mix]`);
+                        filterComplex.push(`[d_sc1_raw]apad=whole_dur=${videoDuration.toFixed(3)}[d_sc1]`);
+                        filterComplex.push(`[d_sc2_raw]apad=whole_dur=${videoDuration.toFixed(3)}[d_sc2]`);
+                        filterComplex.push(`[bgm_vol][d_sc1]sidechaincompress=${sidechainParams}[bgm_ducked]`);
+                        filterComplex.push(`[bgm_ducked]equalizer=f=1100:t=q:w=1.5:g=-6[bgm_clean]`);
+                        bgmFinalTag = '[bgm_clean]';
 
-                if (includeOrigAudio) {
-                    filterComplex.push(`[0:a]volume=1.0[orig_vol]`);
-                    let origFinalTag = '[orig_vol]';
-                    if (isDucking) {
-                        filterComplex.push(`[orig_vol][${dialogueInputIndex}:a]sidechaincompress=${sidechainParams}[orig_ducked]`);
+                        filterComplex.push(`[0:a]volume=1.0[orig_vol]`);
+                        filterComplex.push(`[orig_vol][d_sc2]sidechaincompress=${sidechainParams}[orig_ducked]`);
                         filterComplex.push(`[orig_ducked]equalizer=f=1100:t=q:w=1.5:g=-6[orig_clean]`);
-                        origFinalTag = '[orig_clean]';
+                        filterComplex.push(`${bgmFinalTag}[orig_clean][d_mix]amix=inputs=3:normalize=0:duration=longest[final_audio]`);
+                    } else {
+                        filterComplex.push(`[${dialogueInputIndex}:a]asplit=2[d_sc1_raw][d_mix]`);
+                        filterComplex.push(`[d_sc1_raw]apad=whole_dur=${videoDuration.toFixed(3)}[d_sc1]`);
+                        filterComplex.push(`[bgm_vol][d_sc1]sidechaincompress=${sidechainParams}[bgm_ducked]`);
+                        filterComplex.push(`[bgm_ducked]equalizer=f=1100:t=q:w=1.5:g=-6[bgm_clean]`);
+                        bgmFinalTag = '[bgm_clean]';
+                        filterComplex.push(`${bgmFinalTag}[d_mix]amix=inputs=2:normalize=0:duration=longest[final_audio]`);
                     }
-                    filterComplex.push(`${bgmFinalTag}${origFinalTag}[${dialogueInputIndex}:a]amix=inputs=3:normalize=0:duration=longest[final_audio]`);
                 } else {
-                    filterComplex.push(`${bgmFinalTag}[${dialogueInputIndex}:a]amix=inputs=2:normalize=0:duration=longest[final_audio]`);
+                    if (includeOrigAudio) {
+                        filterComplex.push(`[0:a]volume=1.0[orig_vol]`);
+                        filterComplex.push(`${bgmFinalTag}[orig_vol][${dialogueInputIndex}:a]amix=inputs=3:normalize=0:duration=longest[final_audio]`);
+                    } else {
+                        filterComplex.push(`${bgmFinalTag}[${dialogueInputIndex}:a]amix=inputs=2:normalize=0:duration=longest[final_audio]`);
+                    }
                 }
             } else {
                 if (includeOrigAudio) {
                     filterComplex.push(`[0:a]volume=1.0[orig_vol]`);
-                    let origFinalTag = '[orig_vol]';
                     if (isDucking) {
-                        filterComplex.push(`[orig_vol][${dialogueInputIndex}:a]sidechaincompress=${sidechainParams}[orig_ducked]`);
+                        filterComplex.push(`[${dialogueInputIndex}:a]asplit=2[d_sc1_raw][d_mix]`);
+                        filterComplex.push(`[d_sc1_raw]apad=whole_dur=${videoDuration.toFixed(3)}[d_sc1]`);
+                        filterComplex.push(`[orig_vol][d_sc1]sidechaincompress=${sidechainParams}[orig_ducked]`);
                         filterComplex.push(`[orig_ducked]equalizer=f=1100:t=q:w=1.5:g=-6[orig_clean]`);
-                        origFinalTag = '[orig_clean]';
+                        filterComplex.push(`[orig_clean][d_mix]amix=inputs=2:normalize=0:duration=longest[final_audio]`);
+                    } else {
+                        filterComplex.push(`[orig_vol][${dialogueInputIndex}:a]amix=inputs=2:normalize=0:duration=longest[final_audio]`);
                     }
-                    filterComplex.push(`${origFinalTag}[${dialogueInputIndex}:a]amix=inputs=2:normalize=0:duration=longest[final_audio]`);
                 } else {
                     filterComplex.push(`[${dialogueInputIndex}:a]anull[final_audio]`);
                 }
@@ -987,9 +1048,12 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                 filterComplex.push(`[0:a]volume=1.0[final_audio]`);
             } else {
                 // No dialogue, no BGM, original audio muted or missing — generate silent audio stream
-                filterComplex.push(`aevalsrc=0:d=${videoDuration}[final_audio]`);
+                filterComplex.push(`aevalsrc=0:c=stereo:s=44100:d=${videoDuration}[final_audio]`);
             }
         }
+
+        // Standardize audio stream format to guaranteed 44.1kHz stereo fltp
+        filterComplex.push(`[final_audio]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[clean_audio]`);
 
         // Video Filters: Color Filters, Presets, Flips, User Crop, Scaling & Subtitle Burning
         let videoInTag = '0:v';
@@ -1128,8 +1192,14 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             if (by % 2 !== 0) by = Math.max(0, by - 1);
             // Match the editor preview's scale (frontend uses backdropFilter blur(strength/100*40)px)
             // so the exported blur strength matches what the user sees while editing.
-            let radius = Math.max(1, Math.min(40, Math.round((parseFloat(box.strength) || 0) / 100 * 40)));
-            radius = Math.min(radius, Math.max(1, Math.floor(Math.min(bw, bh) / 2)));
+            let rawRadius = Math.max(1, Math.min(40, Math.round((parseFloat(box.strength) || 0) / 100 * 40)));
+            // Boxblur in FFmpeg strictly requires radius to not exceed floor(min(dim) / 2) for luma
+            // and floor(min(dim) / 4) for chroma in YUV420p. Exceeding throws:
+            // "Invalid chroma_param radius value ... Failed to evaluate filter params: -22"
+            const maxLumaR = Math.max(0, Math.floor(Math.min(bw, bh) / 2) - 1);
+            const maxChromaR = Math.max(0, Math.floor(Math.min(bw, bh) / 4) - 1);
+            const lumaR = Math.max(0, Math.min(rawRadius, maxLumaR));
+            const chromaR = Math.max(0, Math.min(rawRadius, maxChromaR));
 
             const mainTag = `blur_main_${bIdx}`;
             const srcTag = `blur_src_${bIdx}`;
@@ -1139,7 +1209,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
 
             filterComplex.push(`[${currentVideoTag}]split=2[${mainTag}][${srcTag}]`);
             filterComplex.push(`[${srcTag}]crop=${bw}:${bh}:${bx}:${by}[${cropTag}]`);
-            filterComplex.push(`[${cropTag}]boxblur=${radius}:2[${blurredTag}]`);
+            filterComplex.push(`[${cropTag}]boxblur=${lumaR}:2:${chromaR}:2[${blurredTag}]`);
             filterComplex.push(`[${mainTag}][${blurredTag}]overlay=${bx}:${by}[${outTag}]`);
             currentVideoTag = outTag;
         });
@@ -1361,24 +1431,27 @@ async function renderVideo(options, onProgress, onComplete, onError) {
 
         args.push('-filter_complex', filterComplex.join(';'));
         args.push('-map', `[${finalVideoTag}]`);
-        args.push('-map', '[final_audio]');
+        args.push('-map', '[clean_audio]');
         if (softSrtInputIndex >= 0) {
             args.push('-map', `${softSrtInputIndex}:s?`);
             args.push('-c:s', 'mov_text');
         }
 
         // Hardware-Accelerated Video Encoder Configuration
-        await applyEncoderSettings(args, encoder, targetW, targetH);
+        const chosenEncoder = await applyEncoderSettings(args, encoder, targetW, targetH);
 
         args.push('-c:a', 'aac');
         args.push('-b:a', '192k');
+        args.push('-ar', '44100');
+        args.push('-ac', '2');
+        args.push('-channel_layout', 'stereo');
         args.push('-pix_fmt', 'yuv420p');
         if (effectiveVideoDuration && effectiveVideoDuration > 0) {
             args.push('-t', effectiveVideoDuration.toFixed(3));
         }
         args.push(outputPath);
 
-        console.log(`[Render] Spawning FFmpeg to render: ${outputPath}`);
+        console.log(`[Render] Spawning FFmpeg to render (${chosenEncoder}): ${outputPath}`);
         const ffmpeg = spawn(getFFmpegBinary(), args, { windowsHide: true });
         activeRenderProcess = ffmpeg;
 
@@ -1418,9 +1491,32 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                 currentRenderJob.eta = '0s';
                 if (onComplete) onComplete(outputPath);
             } else {
+                // If a hardware encoder failed and this wasn't already a retry, and render was not cancelled,
+                // seamlessly fall back to the ultra-reliable CPU encoder (libx264)
+                if (chosenEncoder !== 'libx264' && !options._isRetry && currentRenderJob.status !== 'cancelled') {
+                    console.warn(`[Render Auto-Fallback] Hardware encoder "${chosenEncoder}" failed (exit code ${code}). Automatically retrying with CPU encoder (libx264)...`);
+                    if (_detectedEncoders) {
+                        for (const [k, c] of Object.entries(codecByKey)) {
+                            if (c === chosenEncoder) _detectedEncoders[k] = false;
+                        }
+                    }
+                    try { if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch (e) { }
+                    return renderVideo({
+                        ...options,
+                        encoder: 'libx264',
+                        _isRetry: true
+                    }, onProgress, onComplete, onError);
+                }
+
                 console.error(`[Render FFmpeg Error Code ${code}] Full stderr:\n`, fullStderr);
                 currentRenderJob.status = 'error';
-                currentRenderJob.error = `FFmpeg exited with code ${code}: ${fullStderr.slice(-400)}`;
+                const errLines = fullStderr
+                    .split('\n')
+                    .map(l => l.trim())
+                    .filter(l => l.includes('Error') || l.includes('Invalid') || l.includes('Failed') || l.includes('Unable') || l.includes('could not') || l.includes('Cannot'))
+                    .filter(l => !l.includes('Task finished with error code') && !l.includes('Terminating thread with return code'));
+                const errDetail = errLines.length > 0 ? errLines.slice(-3).join(' | ') : fullStderr.slice(-1500);
+                currentRenderJob.error = `FFmpeg exited with code ${code}: ${errDetail}`;
                 if (onError) onError(new Error(currentRenderJob.error));
             }
         });
@@ -1428,6 +1524,15 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         ffmpeg.on('error', (err) => {
             activeRenderProcess = null;
             cleanupTempDir();
+            if (chosenEncoder !== 'libx264' && !options._isRetry && currentRenderJob.status !== 'cancelled') {
+                console.warn(`[Render Auto-Fallback] Hardware encoder "${chosenEncoder}" process error: ${err.message}. Retrying with libx264...`);
+                try { if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch (e) { }
+                return renderVideo({
+                    ...options,
+                    encoder: 'libx264',
+                    _isRetry: true
+                }, onProgress, onComplete, onError);
+            }
             currentRenderJob.status = 'error';
             currentRenderJob.error = err.message;
             if (onError) onError(err);
