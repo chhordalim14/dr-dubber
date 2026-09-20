@@ -9459,6 +9459,8 @@
               }
 
               renderProjectTabs();
+              if (typeof updateGenerateAllButtonState === "function") updateGenerateAllButtonState();
+              if (typeof updateGenerateButtonState === "function") updateGenerateButtonState();
               success = true;
               Stats.inc(Stats.keys.lines, finalSubs.length);
               maybeAutoSaveSubtitles(targetProject, finalSubs);
@@ -9639,6 +9641,8 @@
               }
 
               renderProjectTabs();
+              if (typeof updateGenerateAllButtonState === "function") updateGenerateAllButtonState();
+              if (typeof updateGenerateButtonState === "function") updateGenerateButtonState();
               success = true;
               Stats.inc(Stats.keys.lines, formattedSubs.length);
               maybeAutoSaveSubtitles(targetProject, formattedSubs);
@@ -17331,7 +17335,10 @@
         subtitles = proj.subtitles.map((s) => ({ ...s }));
         detachedAudios = [];
         renderSubtitles();
+        if (typeof updateGenerateButtonState === "function") updateGenerateButtonState();
       }
+      if (typeof updateGenerateAllButtonState === "function") updateGenerateAllButtonState();
+      if (typeof renderProjectTabs === "function") renderProjectTabs();
     };
 
     // ── Read a File object with BOM-aware encoding detection ──
@@ -19934,6 +19941,10 @@
         _lucideCreateIcons({
           nodes: [...subtitleTableBody.querySelectorAll("[data-lucide]")],
         });
+
+      if (typeof updateGenerateAllButtonState === "function") {
+        updateGenerateAllButtonState();
+      }
     };
 
     // T1 Action: Clear all subtitles
@@ -19950,6 +19961,7 @@
         }
         renderSubtitles();
         updateContextualControls();
+        renderProjectTabs();
 
         showToast("Subtitle track cleared", "success");
       }
@@ -20441,7 +20453,7 @@
     let cancelGeneration = false;
     let generateAbortController = null;
 
-    const updateGenerateButtonState = () => {
+    function updateGenerateButtonState() {
       if (!btnGenerateAudio) return;
 
       const hasGenerateItems = selectedItems.some((id) => id.startsWith("text-") || id.startsWith("audio-"));
@@ -20523,11 +20535,12 @@
       // 3. Force Lucide to instantly draw the new icon!
       _lucideCreateIcons({ root: btnGenerateAudio });
       if (typeof updateGenerateAllButtonState === "function") updateGenerateAllButtonState();
-    };
+    }
+    window.updateGenerateButtonState = updateGenerateButtonState;
 
     let isGeneratingAudioAll = false;
 
-    const updateGenerateAllButtonState = () => {
+    function updateGenerateAllButtonState() {
       const btnAll = document.getElementById("btn-generate-audio-all");
       if (!btnAll) return;
 
@@ -20537,11 +20550,11 @@
       // stale right after adding a subtitle and would otherwise leave this button
       // (and "No subtitles found" on click) wrongly reporting none exist.
       const hasAnySubtitles =
-        Array.isArray(projects) &&
+        (Array.isArray(projects) &&
         projects.some((p) => {
           const subsForP = p === projects[activeProjectIndex] ? subtitles : p.subtitles;
           return subsForP && subsForP.length > 0;
-        });
+        })) || (Array.isArray(subtitles) && subtitles.length > 0);
 
       if (isAnyRunning) {
         btnAll.disabled = false;
@@ -20575,7 +20588,8 @@
       if (typeof lucide !== "undefined") {
         _lucideCreateIcons({ root: btnAll });
       }
-    };
+    }
+    window.updateGenerateAllButtonState = updateGenerateAllButtonState;
 
     // --- NATIVE PARTICLE BURST ENGINE ---
     const triggerParticleBurst = (buttonElement, colorClass) => {
@@ -26594,7 +26608,7 @@
     // built. Read the real version from Electron (package.json) instead;
     // falls back to this literal only when running outside Electron (e.g.
     // a plain browser during development).
-    let CURRENT_APP_VERSION = "1.3.4";
+    let CURRENT_APP_VERSION = "1.3.5";
     const aboutAppVersionDisplay = document.getElementById("about-app-version");
     const badgeAppVersionDisplay = document.getElementById("badge-app-version");
     if (aboutAppVersionDisplay) aboutAppVersionDisplay.textContent = `Version ${CURRENT_APP_VERSION}`;
