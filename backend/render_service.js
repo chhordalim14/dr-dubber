@@ -1069,8 +1069,11 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             }
         }
 
-        // Standardize audio stream format to guaranteed 44.1kHz stereo fltp
-        filterComplex.push(`[final_audio]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[clean_audio]`);
+        // Standardize audio stream format to guaranteed 44.1kHz stereo fltp, and pad with
+        // silence to the full video length: otherwise the audio track stops after the last
+        // voice clip (e.g. 8s of audio in a 4-minute video), which some players/sites mishandle.
+        const padToVideo = Number(videoDuration) > 0 ? `,apad=whole_dur=${Number(videoDuration).toFixed(3)}` : '';
+        filterComplex.push(`[final_audio]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo${padToVideo}[clean_audio]`);
 
         // Video Filters: Color Filters, Presets, Flips, User Crop, Scaling & Subtitle Burning
         let videoInTag = '0:v';

@@ -29,6 +29,7 @@
       "!backend/spleeter-env/**/*",
       "frontend/**/*",
       "assets/**/*",
+      "!assets/**/*.{mp4,mkv,mov,avi,webm,ts,flv,wmv}",
       "whisper_engine/**/*",
       "!whisper_engine/venv/**/*",
       "package.json"

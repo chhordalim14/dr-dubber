@@ -33,6 +33,7 @@ function createAudioRepair({ repairDir, getFFmpegBinary, getFFprobeBinary, track
     fs.mkdirSync(repairDir, { recursive: true });
     const analysisCache = new Map(); // key -> Promise<analysis>
     const repairJobs = new Map();    // key -> Promise<path|null>
+    const failedRepairs = new Set(); // keys whose repair failed: don't redo the expensive work
 
     const probeJson = (args) => new Promise((resolve, reject) => {
         execFile(getFFprobeBinary(), args, { timeout: 120000, maxBuffer: 256 * 1024 * 1024, windowsHide: true }, (err, stdout) => {
@@ -108,7 +109,11 @@ function createAudioRepair({ repairDir, getFFmpegBinary, getFFprobeBinary, track
         // Expected length of the repaired track: last packet + one frame at its real rate.
         const lastRate = AAC_RATES[smooth[smooth.length - 1]] || AAC_RATES[declared];
         const audioDuration = pts[pts.length - 1] - pts[0] + 1024 / lastRate;
-        return { drift: true, streamIndex: stream.index, declaredRate: AAC_RATES[declared], declaredIndex: declared, runs: bad, packetCount: pts.length, audioDuration, stretches };
+        // FFmpeg starts every input at the earliest stream; audio that begins later (a
+        // delayed-audio mux) must keep that lead-in, or it plays early against the video.
+        const fileStart = parseFloat(info.format && info.format.start_time) || 0;
+        const startOffset = Math.max(0, (parseFloat(stream.start_time) || pts[0] || 0) - fileStart);
+        return { drift: true, streamIndex: stream.index, declaredRate: AAC_RATES[declared], declaredIndex: declared, runs: bad, packetCount: pts.length, audioDuration, startOffset, stretches };
     }
 
     function analyze(filePath) {
@@ -176,6 +181,11 @@ function createAudioRepair({ repairDir, getFFmpegBinary, getFFprobeBinary, track
         const encoderDone = new Promise((resolve) => { encoder.on('close', resolve); encoder.on('error', () => resolve(-1)); });
         encoder.stdin.on('error', () => { });
         try {
+            if (analysis.startOffset > 0.005) {
+                // Silence for the audio's original lead-in (s16le stereo: 4 bytes per frame).
+                const silence = Buffer.alloc(Math.round(analysis.startOffset * 44100) * 4);
+                if (!encoder.stdin.write(silence)) await new Promise(r => encoder.stdin.once('drain', r));
+            }
             for (let i = 0; i < segments.length; i++) {
                 const segFile = `${outPath}.seg${i}.aac`;
                 fs.writeFileSync(segFile, buf.subarray(segments[i].from, segments[i].to));
@@ -200,7 +210,7 @@ function createAudioRepair({ repairDir, getFFmpegBinary, getFFprobeBinary, track
         const encCode = await encoderDone;
         if (encCode !== 0 || !fs.existsSync(m4aTmp)) throw new Error(`could not encode repaired audio (${encTail.split('\n').filter(Boolean).pop() || encCode})`);
         const got = parseFloat(await probeJson(['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', m4aTmp])) || 0;
-        if (Math.abs(got - analysis.audioDuration) > 1.0) {
+        if (Math.abs(got - (analysis.audioDuration + (analysis.startOffset || 0))) > 1.0) {
             fs.rm(m4aTmp, { force: true }, () => { });
             throw new Error(`repaired audio is ${got.toFixed(1)}s but the original track is ${analysis.audioDuration.toFixed(1)}s`);
         }
@@ -214,6 +224,7 @@ function createAudioRepair({ repairDir, getFFmpegBinary, getFFprobeBinary, track
         if (!analysis.drift) return { path: filePath, repaired: false };
         const key = fileKey(filePath);
         const outPath = path.join(repairDir, `${key}.m4a`);
+        if (failedRepairs.has(key)) return { path: filePath, repaired: false };
         if (!fs.existsSync(outPath)) {
             if (!repairJobs.has(key)) {
                 repairJobs.set(key, buildRepaired(filePath, analysis, outPath)
@@ -221,7 +232,7 @@ function createAudioRepair({ repairDir, getFFmpegBinary, getFFprobeBinary, track
                         console.log(`[AudioRepair] ${path.basename(filePath)}: audio switches format mid-file (${analysis.stretches.map(s => `${s.fromSec}-${s.toSec}s @${s.rate}Hz`).join(', ')}; declared ${analysis.declaredRate}Hz) - fixed ${patched} frames`);
                         return outPath;
                     })
-                    .catch((e) => { console.warn('[AudioRepair] repair failed, using original audio:', e.message); return null; })
+                    .catch((e) => { failedRepairs.add(key); console.warn('[AudioRepair] repair failed, using original audio:', e.message); return null; })
                     .finally(() => repairJobs.delete(key)));
             }
             const built = await repairJobs.get(key);
@@ -241,7 +252,13 @@ function createAudioRepair({ repairDir, getFFmpegBinary, getFFprobeBinary, track
         } catch (e) { return null; }
     }
 
-    return { analyze, getAudioSource, defaultAudioMap };
+    async function needsRepair(filePath) {
+        const a = await analyze(filePath);
+        if (!a.drift) return false;
+        try { return !failedRepairs.has(fileKey(filePath)); } catch (e) { return false; }
+    }
+
+    return { analyze, getAudioSource, defaultAudioMap, needsRepair };
 }
 
 module.exports = { createAudioRepair };

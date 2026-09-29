@@ -116,6 +116,10 @@ function createPreviewService({ previewDir, getFFmpegBinary, getFFprobeBinary, d
     async function runJob(job) {
         job.status = 'running';
         const partPath = job.outPath + '.part';
+        if (job.repairAudio) {
+            const fixed = await audioRepair.getAudioSource(job.filePath).catch(() => null);
+            job.fixedAudioPath = fixed && fixed.repaired ? fixed.path : null;
+        }
         let args = await buildArgs(job.filePath, job.media, job.action, partPath, job.fixedAudioPath);
         const attempt = (argv) => new Promise((resolve) => {
             const proc = spawn(getFFmpegBinary(), argv, { windowsHide: true });
@@ -167,17 +171,17 @@ function createPreviewService({ previewDir, getFFmpegBinary, getFFprobeBinary, d
         const media = describe(await probe(filePath));
         let p = plan(media, force);
         // Audio that switches AAC format mid-file plays as silence/noise in those stretches:
-        // preview with the repaired track (the video stream is still just copied).
-        const fixed = audioRepair && media.audio ? await audioRepair.getAudioSource(filePath).catch(() => null) : null;
-        const fixedAudioPath = fixed && fixed.repaired ? fixed.path : null;
-        if (fixedAudioPath && (p.action === 'none' || p.action === 'remux')) {
+        // preview with the repaired track (the video stream is still just copied). Only the
+        // quick check happens here; the repair itself runs inside the background job.
+        const repairAudio = !!(audioRepair && media.audio && await audioRepair.needsRepair(filePath).catch(() => false));
+        if (repairAudio && (p.action === 'none' || p.action === 'remux')) {
             p = { action: 'audio', reason: 'Damaged audio (the format changes part-way through)' };
         }
         const info = { hasVideo: !!media.video, hasAudio: !!media.audio, videoCodec: media.video && media.video.codec, audioCodec: media.audio && media.audio.codec, container: media.container };
         if (p.action === 'none') return { needsConversion: false, media: info };
         if (p.action === 'unsupported') return { needsConversion: false, unsupported: true, reason: p.reason, media: info };
 
-        const key = cacheKey(filePath, stat, p.action + (fixedAudioPath ? '+fixedaudio' : ''));
+        const key = cacheKey(filePath, stat, p.action + (repairAudio ? '+fixedaudio' : ''));
         const outPath = path.join(previewDir, `${key}${media.video ? '.mp4' : '.m4a'}`);
         const previewUrl = `/api/audio?path=${encodeURIComponent(outPath)}`;
         if (fs.existsSync(outPath)) {
@@ -190,7 +194,7 @@ function createPreviewService({ previewDir, getFFmpegBinary, getFFprobeBinary, d
             const j = jobs.get(existing);
             return { needsConversion: true, ready: false, jobId: j.id, action: j.action, reason: j.reason, media: info };
         }
-        const job = { id: crypto.randomUUID(), key, filePath, media, fixedAudioPath, action: p.action, reason: p.reason, outPath, previewUrl, status: 'queued', percent: 0, error: null, proc: null, cancelled: false, createdAt: Date.now() };
+        const job = { id: crypto.randomUUID(), key, filePath, media, repairAudio, fixedAudioPath: null, action: p.action, reason: p.reason, outPath, previewUrl, status: 'queued', percent: 0, error: null, proc: null, cancelled: false, createdAt: Date.now() };
         jobs.set(job.id, job);
         jobsByKey.set(key, job.id);
         queue.push(job);

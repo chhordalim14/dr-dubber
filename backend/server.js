@@ -1013,7 +1013,11 @@ async function fetchWithTimeout(url, options, parentSignal, timeoutMs) {
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, timeoutMs);
     try {
-        return await fetch(url, { ...options, signal: ctrl.signal });
+        // Read the body here too, so the timeout and the user's Stop also cover a slow or
+        // dropped body download (not just the headers).
+        const res = await fetch(url, { ...options, signal: ctrl.signal });
+        const text = await res.text();
+        return { ok: res.ok, status: res.status, text };
     } catch (e) {
         if (timedOut) {
             const err = new Error(`Gemini did not respond within ${Math.round(timeoutMs / 1000)}s`);
@@ -1067,7 +1071,15 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal) {
             }
 
             if (res.ok) {
-                const json = await res.json();
+                let json;
+                try { json = JSON.parse(res.text); } catch (e) {
+                    // Truncated/garbled body: same handling as a network blip.
+                    const msg = 'Gemini response was cut off. Check your internet connection.';
+                    console.warn(`[Gemini] ${m}: unreadable response body (${res.text.length} bytes)`);
+                    if (!primaryError) primaryError = { status: 503, code: 'NETWORK_ERROR', error: msg, message: msg };
+                    if (++networkFailures >= 2) return { success: false, ...primaryError };
+                    continue;
+                }
                 const cand = json?.candidates?.[0];
                 const text = (cand?.content?.parts || []).map(p => p.text || '').join('');
                 if (!text && (json?.promptFeedback?.blockReason || cand?.finishReason === 'SAFETY' || cand?.finishReason === 'PROHIBITED_CONTENT')) {
@@ -1078,7 +1090,8 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal) {
                 return { success: true, json, text, finishReason: cand?.finishReason, modelUsed: m };
             }
 
-            const errData = await res.json().catch(() => ({}));
+            let errData = {};
+            try { errData = JSON.parse(res.text); } catch (e) { }
             const errMsg = errData?.error?.message || `HTTP ${res.status}`;
             console.warn(`[Gemini] ${m} returned ${res.status}: ${errMsg}`);
 
@@ -1594,14 +1607,43 @@ async function silentFraction(file, start, dur, signal) {
     return dur > 0 ? Math.min(1, silent / dur) : 1;
 }
 
+// Keys Google rejected as invalid/expired are skipped for 10 minutes, so one bad key in
+// Settings can't fail a whole job (every chunk would otherwise hit it again).
+const invalidGeminiKeys = new Map(); // key -> time it was rejected
+function usableGeminiKeys(keys) {
+    const cutoff = Date.now() - 10 * 60 * 1000;
+    const ok = keys.filter(k => !(invalidGeminiKeys.get(k) > cutoff));
+    return ok.length ? ok : keys; // all bad: keep them so the user gets the real error
+}
+
+// One pass over the keys: success, or the most useful failure. Invalid keys and busy
+// keys move on to the next key; a real error (bad request, blocked content) stops here
+// because another key won't change it.
+async function tryKeysOnce(keys, call) {
+    let transientOut = null, lastOut = null;
+    for (const key of usableGeminiKeys(keys)) {
+        const out = await call(key);
+        if (out.ok) return out;
+        lastOut = out;
+        if (out.result && out.result.error === 'INVALID_API_KEY') {
+            invalidGeminiKeys.set(key, Date.now());
+            console.warn(`[Gemini] key …${String(key).slice(-4)} rejected (${out.result.message || 'invalid'}); skipping it`);
+            continue;
+        }
+        // A dead connection affects every key the same way: don't cycle through them.
+        if (out.result && out.result.code === 'NETWORK_ERROR') return out;
+        if (isTransientGeminiFailure(out.result)) { transientOut = out; continue; }
+        return out;
+    }
+    return transientOut || lastOut;
+}
+
 // Try each key, and wait/retry on "busy" like the main pass does.
 async function geminiWithKeys(keys, call, signal) {
     let out = null;
     for (let retry = 0; ; retry++) {
-        for (const key of keys) {
-            out = await call(key);
-            if (out.ok || !isTransientGeminiFailure(out.result)) return out;
-        }
+        out = await tryKeysOnce(keys, call);
+        if (out.ok || !isTransientGeminiFailure(out.result)) return out;
         if (retry >= Math.min(2, geminiRetryLimit(out.result))) return out;
         await sleepAbortable(GEMINI_RETRY_DELAYS_MS[retry], signal);
     }
@@ -1665,6 +1707,7 @@ async function repairTranscript({ cues, sourceFile, totalSec, keys, model, promp
             while (next < toCheck.length) {
                 if (signal && signal.aborted) return;
                 const w = toCheck[next++];
+                try {
                 const clipSec = w.end - w.start;
                 const clipFile = path.join(workDir, `gap_${Math.round(w.start * 1000)}.mp3`);
                 const { code } = await runFFmpegCapture(['-hide_banner', '-y', '-ss', w.start.toFixed(3), '-t', clipSec.toFixed(3), '-i', sourceFile,
@@ -1686,6 +1729,10 @@ async function repairTranscript({ cues, sourceFile, totalSec, keys, model, promp
                     cue._repaired = 'added';
                     cues.push(cue);
                     report.linesAdded++;
+                }
+                } catch (e) {
+                    if (e.name === 'AbortError') throw e;
+                    console.warn(`[Repair] gap ${w.start.toFixed(0)}-${w.end.toFixed(0)}s skipped:`, e.message);
                 }
             }
         };
@@ -1806,14 +1853,11 @@ app.post('/api/transcribe', async (req, res) => {
                 let out = transcribeCacheGet(cacheKey);
                 if (out) console.log(`[Transcribe] Chunk ${i + 1}/${chunks.length} reused from previous attempt`);
                 for (let retry = 0; !out || !out.ok; retry++) {
-                    for (const key of keys) {
-                        out = await transcribeClipWithGemini({
-                            apiKey: key, model, audioBase64: clipBase64, mimeType: clipMime, clipSec,
-                            promptOpts: { ...promptOpts, previousLines: laneCues.slice(-4) },
-                            signal: abortCtrl.signal
-                        });
-                        if (out.ok || !isTransientGeminiFailure(out.result)) break;
-                    }
+                    out = await tryKeysOnce(keys, (key) => transcribeClipWithGemini({
+                        apiKey: key, model, audioBase64: clipBase64, mimeType: clipMime, clipSec,
+                        promptOpts: { ...promptOpts, previousLines: laneCues.slice(-4) },
+                        signal: abortCtrl.signal
+                    }));
                     if (out.ok || failure || !isTransientGeminiFailure(out.result) || retry >= geminiRetryLimit(out.result)) break;
                     const wait = GEMINI_RETRY_DELAYS_MS[retry];
                     progress.note = `${out.result.code === 'NETWORK_ERROR' ? 'Connection problem' : 'Google is busy'} - retrying part ${i + 1} in ${wait / 1000}s (${retry + 1}/${geminiRetryLimit(out.result)})`;
@@ -1834,7 +1878,11 @@ app.post('/api/transcribe', async (req, res) => {
             }
         };
 
-        await Promise.all(Array.from({ length: laneCount }, (_, lane) => runLane(lane)));
+        // An unexpected error in one lane becomes the job's failure; the other lanes stop at
+        // their next chunk, and we only respond (and delete temp files) once all have stopped.
+        await Promise.all(Array.from({ length: laneCount }, (_, lane) => runLane(lane).catch((e) => {
+            if (e.name !== 'AbortError') failure = failure || { status: 500, error: e.message };
+        })));
         if (abortCtrl.signal.aborted) return res.json({ success: false, error: 'CANCELLED' });
         if (failure) return geminiFailureResponse(res, failure);
         const allCues = chunkCues.flat();
@@ -2114,10 +2162,11 @@ app.post('/api/translate-srt', async (req, res) => {
                 const attempt = async (idx) => {
                     let r = null;
                     for (let retry = 0; ; retry++) {
-                        for (const key of keys) {
-                            r = await translateBatch(key, idx, previousLines);
-                            if (r.success || !isTransientGeminiFailure(r)) break;
-                        }
+                        const out = await tryKeysOnce(keys, async (key) => {
+                            const res = await translateBatch(key, idx, previousLines);
+                            return res.success ? { ok: true, res } : { ok: false, result: res };
+                        });
+                        r = out.ok ? out.res : out.result;
                         if (r.success || failure || !isTransientGeminiFailure(r) || retry >= geminiRetryLimit(r)) return r;
                         const wait = GEMINI_RETRY_DELAYS_MS[retry];
                         console.warn(`[Translate] Google busy, retrying lines ${idx[0] + 1}-${idx[idx.length - 1] + 1} in ${wait / 1000}s: ${r.error}`);
@@ -2137,7 +2186,11 @@ app.post('/api/translate-srt', async (req, res) => {
             }
         };
 
-        await Promise.all(Array.from({ length: laneCount }, (_, lane) => runLane(lane)));
+        // An unexpected error in one lane becomes the job's failure; the other lanes stop at
+        // their next chunk, and we only respond (and delete temp files) once all have stopped.
+        await Promise.all(Array.from({ length: laneCount }, (_, lane) => runLane(lane).catch((e) => {
+            if (e.name !== 'AbortError') failure = failure || { status: 500, error: e.message };
+        })));
         if (abortCtrl.signal.aborted) return res.json({ success: false, error: 'CANCELLED' });
         if (failure) return geminiFailureResponse(res, failure);
 
@@ -3409,7 +3462,10 @@ app.post('/api/render', upload.any(), async (req, res) => {
             ? (renderOpts.duckingEnabled === true || renderOpts.duckingEnabled === 'true' || renderOpts.duckingEnabled === 1 || renderOpts.duckingEnabled === '1')
             : true,
         duckingDepth: renderOpts.duckingDepth || 'standard',
-        originalAudioPath: videoPath ? (await audioRepair.getAudioSource(videoPath).catch(() => ({ path: videoPath }))).path : null,
+        // Only when the video's own audio is actually mixed in (same rule as render_service):
+        // checking/repairing a 2-hour track for a muted or audio-only export is wasted time.
+        originalAudioPath: (videoPath && !isAudioOnly && !(renderOpts.isOriginalAudioMuted !== undefined ? renderOpts.isOriginalAudioMuted : (renderOpts.muteOriginal !== undefined ? renderOpts.muteOriginal : true)))
+            ? (await audioRepair.getAudioSource(videoPath).catch(() => ({ path: videoPath }))).path : null,
         outputPath
     },
     (progress, eta) => { },

@@ -247,10 +247,67 @@
       }
     }
 
+    /* Compositor-only (filter + opacity): animating background-position/box-shadow
+       forced a full repaint of the page ~60 times a second, even while idle. */
+    @keyframes titleAiHueShift {
+
+      0%,
+      100% {
+        filter: hue-rotate(0deg);
+      }
+
+      50% {
+        filter: hue-rotate(-55deg);
+      }
+    }
+
+    @keyframes titleAiGlowFade {
+
+      0%,
+      100% {
+        opacity: 0;
+      }
+
+      50% {
+        opacity: 1;
+      }
+    }
+
+    /* Plays a few cycles after start-up, then rests (an endless animation keeps the whole
+       page producing frames while idle); hovering replays it. */
     .title-ai-btn-idle {
-      animation:
-        titleAiGradientShift 4s ease infinite,
-        titleAiIdleGlow 2.4s ease-in-out infinite;
+      animation: titleAiHueShift 4s ease 3;
+      will-change: filter;
+    }
+
+    .title-ai-btn-idle:hover {
+      animation: titleAiHueShift 4s ease infinite;
+    }
+
+    .title-ai-btn-idle::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: 9999px;
+      box-shadow: 0 0 14px 3px rgba(168, 85, 247, 0.55);
+      opacity: 0;
+      pointer-events: none;
+      animation: titleAiGlowFade 2.4s ease-in-out 5;
+      will-change: opacity;
+    }
+
+    .title-ai-btn-idle:hover::after {
+      animation: titleAiGlowFade 2.4s ease-in-out infinite;
+    }
+
+    /* Badge shimmer: a few sweeps, then rest; replay on hover. */
+    .shimmer-rest {
+      animation: update-shimmer 2.8s ease 4;
+      will-change: transform;
+    }
+
+    *:hover > .shimmer-rest {
+      animation: update-shimmer 2.8s ease infinite;
     }
 
     #gemini-model-list::-webkit-scrollbar {
@@ -1186,8 +1243,8 @@
                     inset 0 1px 0 rgba(255, 255, 255, 0.1);
                 ">
               <!-- Shimmer sweep -->
-              <span class="absolute inset-0 opacity-40"
-                style="background: linear-gradient(105deg, transparent 40%, rgba(255, 255, 255, 0.25) 50%, transparent 60%); animation: update-shimmer 2.8s ease infinite"></span>
+              <span class="absolute inset-0 opacity-40 shimmer-rest"
+                style="background: linear-gradient(105deg, transparent 40%, rgba(255, 255, 255, 0.25) 50%, transparent 60%)"></span>
               <!-- Diamond icon -->
               <svg viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg"
                 class="relative w-2.5 h-2.5 shrink-0">
@@ -4509,8 +4566,8 @@
                           inset 0 1px 0 rgba(255, 255, 255, 0.1);
                       ">
                     <!-- Shimmer sweep -->
-                    <span class="absolute inset-0 opacity-40"
-                      style="background: linear-gradient(105deg, transparent 40%, rgba(255, 255, 255, 0.25) 50%, transparent 60%); animation: update-shimmer 2.8s ease infinite"></span>
+                    <span class="absolute inset-0 opacity-40 shimmer-rest"
+                      style="background: linear-gradient(105deg, transparent 40%, rgba(255, 255, 255, 0.25) 50%, transparent 60%)"></span>
                     <!-- Diamond icon -->
                     <svg viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg"
                       class="relative w-2.5 h-2.5 shrink-0">
@@ -9528,6 +9585,7 @@
               console.error(`Error translating with API Key ${keyIdx + 1}:`, err);
               lastErrorType = err.message || "UNKNOWN_ERROR";
               lastErrorMessage = err.toString();
+              break; // the server already tried every key (see the transcribe loop above)
             }
           }
 
@@ -9727,8 +9785,10 @@
               console.error(`Error with API Key ${keyIdx + 1}:`, err);
               lastErrorType = err.message || "UNKNOWN_ERROR";
               lastErrorMessage = err.toString();
-              // The server already rotated through every key before reporting a rate limit.
-              if (lastErrorType === "RATE_LIMIT_EXCEEDED") break;
+              // The server already rotates through every key (skipping invalid ones) and
+              // retries when Google is busy, so re-sending the whole job per key would just
+              // repeat the same failure N times.
+              break;
             }
           }
 
@@ -20826,7 +20886,9 @@
         return h ? `${h}:${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}` : `${m}:${String(r).padStart(2, "0")}`;
       };
       const pathJoin = (dir, name) => (dir.includes("\\") ? `${dir}\\${name}` : `${dir}/${name}`);
-      const epLabel = (f) => (f.episode !== null && f.episode !== undefined ? `EP${f.episode}` : f.name);
+      // File names come from disk: escape before any innerHTML.
+      const esc = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+      const epLabel = (f) => esc(f.episode !== null && f.episode !== undefined ? `EP${f.episode}` : f.name);
       let scan = null, parts = [], outDir = "", jobId = null, results = null;
 
       // Greedy grouping by target length; a tiny last part is merged into the one before.
@@ -20857,7 +20919,7 @@
           const row = document.createElement("div");
           row.className = "flex items-center gap-3 px-3 py-2 rounded-lg bg-[var(--bg-base)] border border-[var(--border-color)] text-xs";
           const pct = st ? st.percent || 0 : 0;
-          const state = !st ? "" : st.status === "done" ? `<span class="text-emerald-400">✓ done${st.videoMode === "converted" ? " (video converted)" : ""}</span>` : st.status === "error" ? `<span class="text-red-400" title="${(st.error || "").replace(/"/g, "&quot;")}">failed</span>` : st.status === "running" ? `<span class="text-sky-400">${pct}%</span>` : st.status === "cancelled" ? `<span class="text-[var(--text-muted)]">stopped</span>` : `<span class="text-[var(--text-muted)]">waiting</span>`;
+          const state = !st ? "" : st.status === "done" ? `<span class="text-emerald-400">✓ done${st.videoMode === "converted" ? " (video converted)" : ""}</span>` : st.status === "error" ? `<span class="text-red-400" title="${esc(st.error)}">failed</span>` : st.status === "running" ? `<span class="text-sky-400">${pct}%</span>` : st.status === "cancelled" ? `<span class="text-[var(--text-muted)]">stopped</span>` : `<span class="text-[var(--text-muted)]">waiting</span>`;
           row.innerHTML = `<span class="font-semibold w-14 shrink-0">Part ${i + 1}</span>
             <span class="truncate flex-1">${epLabel(p[0])} – ${epLabel(p[p.length - 1])} · ${p.length} episodes</span>
             <span class="font-mono text-[var(--text-secondary)] shrink-0">${fmtDur(dur)}</span>
@@ -20925,7 +20987,7 @@
           if (!usable) throw new Error("No video files found in this folder.");
           $("je-stats").textContent = `${usable} episodes · ${fmtDur(r.totalDuration)} total`;
           const warn = $("je-warnings");
-          warn.innerHTML = r.warnings.map((w) => `⚠ ${w}`).join("<br>");
+          warn.innerHTML = r.warnings.map((w) => `⚠ ${esc(w)}`).join("<br>");
           warn.classList.toggle("hidden", !r.warnings.length);
           $("je-name").value = r.seriesName;
           outDir = pathJoin(res.path, "DR Dubber Joined");
@@ -23229,23 +23291,85 @@
     let _lastSubId = null;
     let _lastBgmSeekTime = 0;
 
+    let _loopLastTime = -1;
+    let _loopLastWidth = -1;
+    let _lastFillPct = -1;
+    let _lastPlayheadPx = -1;
+    // Anything else that writes the progress bar/playhead must call this so the loop redraws.
+    window.__invalidatePlayhead = () => { _lastFillPct = -1; _lastPlayheadPx = -1; };
+
+    // Time index over the subtitles for the per-frame loop: entries sorted by start plus
+    // the longest duration, so a frame only looks at lines near the playhead instead of
+    // scanning all of them (4000 lines x 60fps). Rebuilt when the list changes, and every
+    // 0.5s to pick up in-place edits such as dragging a block.
+    const _timeIdx = { subs: null, len: -1, builtAt: 0, text: null, audio: null, idSet: new Set() };
+    const buildTimeIndex = () => {
+      const mk = (getStart, getEnd) => {
+        const arr = [];
+        subtitles.forEach((s, i) => {
+          const start = getStart(s), end = getEnd(s);
+          if (isFinite(start) && isFinite(end)) arr.push({ s, i, start, end });
+        });
+        arr.sort((a, b) => a.start - b.start);
+        let maxDur = 0;
+        arr.forEach((e) => { if (e.end - e.start > maxDur) maxDur = e.end - e.start; });
+        return { arr, maxDur };
+      };
+      _timeIdx.text = mk((s) => parseFloat(s.textStart), (s) => parseFloat(s.textEnd));
+      _timeIdx.audio = mk(
+        (s) => parseFloat(s.audioStart || s.textStart || 0),
+        (s) => { const st = parseFloat(s.audioStart || s.textStart || 0); return parseFloat(s.audioEnd || s.textEnd || (st + (s.baseAudioDuration || 2.0))); },
+      );
+      _timeIdx.idSet = new Set(subtitles.map((s) => String(s.id)));
+      _timeIdx.subs = subtitles;
+      _timeIdx.len = subtitles.length;
+      _timeIdx.builtAt = performance.now();
+    };
+    const timeIndex = () => {
+      if (_timeIdx.subs !== subtitles || _timeIdx.len !== subtitles.length || performance.now() - _timeIdx.builtAt > 500) buildTimeIndex();
+      return _timeIdx;
+    };
+    // Entries whose [start - before, end + after] contains t.
+    const entriesAt = (idx, t, before = 0, after = 0) => {
+      const arr = idx.arr;
+      let lo = 0, hi = arr.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (arr[mid].start - before <= t) lo = mid + 1; else hi = mid;
+      }
+      const out = [];
+      const floor = t - idx.maxDur - after - before;
+      for (let k = lo - 1; k >= 0 && arr[k].start >= floor; k--) {
+        const e = arr[k];
+        if (t >= e.start - before && t <= e.end + after) out.push(e);
+      }
+      return out;
+    };
+
     const smoothVisualLoop = () => {
       if (document.hidden) {
         requestAnimationFrame(smoothVisualLoop);
         return;
       }
       renderFrameCount++;
+      // Paused and nothing moved: the per-frame work (scanning every subtitle, positioning
+      // the playhead) would give the same result, so only re-check every 8th frame.
+      const _idle = mainVideo.paused && !(typeof isScrubbingPlayhead !== "undefined" && isScrubbingPlayhead) && !(typeof draggingState !== "undefined" && draggingState && draggingState.isDragging);
+      if (_idle && mainVideo.currentTime === _loopLastTime && _timelineContentWidthCache === _loopLastWidth && renderFrameCount % 8 !== 0) {
+        requestAnimationFrame(smoothVisualLoop);
+        return;
+      }
+      _loopLastTime = mainVideo.currentTime;
+      _loopLastWidth = _timelineContentWidthCache;
 
       // Update subtitle on frame if active subtitle or chunk index changed
       if (mainVideo.src && subtitles && subtitles.length > 0) {
         const ct = mainVideo.currentTime;
+        // Same rule as before (the first line in list order that covers ct), via the index.
         let activeSub = null;
-        for (let i = 0; i < subtitles.length; i++) {
-          const s = subtitles[i];
-          if (ct >= parseFloat(s.textStart) && ct <= parseFloat(s.textEnd)) {
-            activeSub = s;
-            break;
-          }
+        let activeIdx = Infinity;
+        for (const e of entriesAt(timeIndex().text, ct)) {
+          if (e.i < activeIdx) { activeIdx = e.i; activeSub = e.s; }
         }
 
         let activeId = null;
@@ -23266,11 +23390,19 @@
         const currentTime = mainVideo.currentTime;
         const progressPercent = (currentTime / duration) * 100;
 
-        // 1. Visual Sync — GPU-composited playhead
-        progressBarFill.style.width = `${progressPercent}%`;
-        const playheadPx = (progressPercent / 100) * _timelineContentWidthCache;
-        timelinePlayhead.style.transform = `translateX(${playheadPx}px)`;
-        timelinePlayhead.style.left = "0";
+        // 1. Visual Sync — GPU-composited playhead. Only write when it visibly moves:
+        //    every style write (even the same value) costs a style/layout pass.
+        const fillPct = Math.round(progressPercent * 20) / 20;
+        if (fillPct !== _lastFillPct) {
+          progressBarFill.style.width = `${fillPct}%`;
+          _lastFillPct = fillPct;
+        }
+        const playheadPx = Math.round((progressPercent / 100) * _timelineContentWidthCache * 2) / 2;
+        if (playheadPx !== _lastPlayheadPx) {
+          timelinePlayhead.style.transform = `translateX(${playheadPx}px)`;
+          if (_lastPlayheadPx === -1) timelinePlayhead.style.left = "0";
+          _lastPlayheadPx = playheadPx;
+        }
 
         if (isPlaying || (typeof isScrubbingPlayhead !== "undefined" && isScrubbingPlayhead)) {
           scrollToPlayhead();
@@ -23283,7 +23415,18 @@
 
         // 2. A1 Track (Generated Voices) Sync
         if (isPlaying) {
-          subtitles.forEach((sub) => {
+          // Only lines under the playhead can start a voice; any voice still playing for a
+          // line the playhead has left is paused (what the per-line else-branch did).
+          const _aIdx = timeIndex();
+          const _activeEntries = entriesAt(_aIdx.audio, currentTime, 0.05, 0.15);
+          const _activeIds = new Set(_activeEntries.map((e) => String(e.s.id)));
+          for (const id in activeAudios) {
+            if (_aIdx.idSet.has(id) && !_activeIds.has(id)) {
+              const a = activeAudios[id];
+              if (a && !a.paused) a.pause();
+            }
+          }
+          _activeEntries.map((e) => e.s).forEach((sub) => {
             const start = parseFloat(sub.audioStart || sub.textStart || 0);
             const end = parseFloat(sub.audioEnd || sub.textEnd || (start + (sub.baseAudioDuration || 2.0)));
             const isActive = currentTime >= (start - 0.05) && currentTime <= (end + 0.15);
@@ -25342,6 +25485,7 @@
           currentTimeDisplay.textContent = "00:00.00";
           durationDisplay.textContent = "00:00.00";
           progressBarFill.style.width = "0%";
+        if (typeof window.__invalidatePlayhead === "function") window.__invalidatePlayhead();
 
           const _lottiePlay = document.getElementById("lottie-play-icon");
           const _lottiePause = document.getElementById("lottie-pause-icon");
@@ -28198,6 +28342,7 @@
         currentTimeDisplay.textContent = "00:00.00";
         durationDisplay.textContent = "00:00.00";
         progressBarFill.style.width = "0%";
+        if (typeof window.__invalidatePlayhead === "function") window.__invalidatePlayhead();
         const _lottiePlay = document.getElementById("lottie-play-icon");
         const _lottiePause = document.getElementById("lottie-pause-icon");
         if (_lottiePlay) _lottiePlay.classList.remove("hidden");
@@ -29728,13 +29873,15 @@
 
         // No btnId = always-on infinite loop (e.g. workspace-tools heading icon)
         if (!config.btnId) {
-          lottie.loadAnimation({
+          const idleAnim = lottie.loadAnimation({
             container: container,
             renderer: "svg",
-            loop: true,
+            loop: 3,
             autoplay: true,
             path: config.path,
           });
+          idleAnim.setSubframe(false);
+          (container.parentElement || container).addEventListener("mouseenter", () => idleAnim.goToAndPlay(0, true));
           return;
         }
 
@@ -29765,13 +29912,15 @@
       // video-title icon: loops forever automatically, no hover needed
       const videoTitleContainer = document.getElementById("lottie-video-title");
       if (videoTitleContainer) {
-        lottie.loadAnimation({
+        const titleAnim = lottie.loadAnimation({
           container: videoTitleContainer,
           renderer: "svg",
-          loop: true,
+          loop: 3,
           autoplay: true,
           path: "assets/animations/video-title.json",
         });
+        titleAnim.setSubframe(false);
+        (videoTitleContainer.parentElement || videoTitleContainer).addEventListener("mouseenter", () => titleAnim.goToAndPlay(0, true));
       }
     });
 
