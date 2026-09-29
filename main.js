@@ -539,7 +539,7 @@ ipcMain.handle('whisper:checkFolder', async (event, folderPath) => {
     };
 });
 
-ipcMain.handle('whisper:transcribe', async (event, { id, whisperFolder, audioPath, videoPath, model, device, language }) => {
+ipcMain.handle('whisper:transcribe', async (event, { id, whisperFolder, audioPath, videoPath, model, device, language, beamSize }) => {
     if (!whisperFolder || !fs.existsSync(whisperFolder)) {
         return { success: false, error: 'Whisper folder not found' };
     }
@@ -560,6 +560,7 @@ ipcMain.handle('whisper:transcribe', async (event, { id, whisperFolder, audioPat
         if (model) args.push('--model', model);
         if (device) args.push('--device', device);
         if (language && String(language).toLowerCase() !== 'auto') args.push('--language', language);
+        if (beamSize) args.push('--beam_size', String(beamSize));
 
         try {
             // Force UTF-8 I/O: transcribe.py prints non-ASCII transcript text

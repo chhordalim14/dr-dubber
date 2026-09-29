@@ -1040,6 +1040,7 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal) {
     let sawRateLimit = false;
     let sawOverload = false;
     let networkFailures = 0;
+    let rateLimitMsg = '';
 
     for (let idx = 0; idx < candidateModels.length; idx++) {
         const m = candidateModels[idx];
@@ -1107,6 +1108,7 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal) {
             if (res.status === 404) break; // model gone/renamed: next model, not worth reporting
             if (res.status === 429) {
                 sawRateLimit = true;
+                if (!rateLimitMsg) rateLimitMsg = errMsg;
                 await new Promise(r => setTimeout(r, 1500));
                 break;
             }
@@ -1127,7 +1129,15 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal) {
     }
 
     if (sawRateLimit && !sawOverload && (!primaryError || primaryError.code === 'NETWORK_ERROR')) {
-        return { success: false, status: 429, error: 'RATE_LIMIT_EXCEEDED', message: 'All Gemini models are rate-limited for this key.' };
+        // Google's per-day quota (free tier: as low as 20 requests/day/model) reads as the
+        // same HTTP 429 as a per-minute burst limit, but it won't clear in seconds - it won't
+        // clear until the daily window rolls over. Flag it so the caller stops burning more
+        // requests (across every model, every retry) on a key that's done for the day.
+        const isDailyQuota = /per\s*-?day|daily quota|requests per day/i.test(rateLimitMsg);
+        return {
+            success: false, status: 429, error: 'RATE_LIMIT_EXCEEDED', isDailyQuota,
+            message: isDailyQuota ? `Daily free-tier quota used up for this key. ${rateLimitMsg}` : 'All Gemini models are rate-limited for this key.'
+        };
     }
     return { success: false, ...(primaryError || { status: 500, error: 'No usable Gemini model for this API key.', message: 'No usable Gemini model for this API key.' }) };
 }
@@ -1263,7 +1273,11 @@ const KHMER_DUBBING_RULES = `💎 ULTRA-CONCISE & READABLE KHMER DUBBING RULES (
 // episode's JSON can overflow the output token limit - chunking fixes all three.
 const TRANSCRIBE_CHUNK_TARGET_SEC = 180;
 const TRANSCRIBE_SINGLE_MAX_SEC = 240;
-const TRANSCRIBE_MAX_LANES = 4;
+// Actual lane count is still min()'d against keyPool.length elsewhere, so this is just
+// a ceiling. It used to be 4, which silently capped throughput (and daily-quota spread)
+// at 4 keys no matter how many a user added in Settings - raised so adding keys actually
+// helps both speed and quota headroom.
+const TRANSCRIBE_MAX_LANES = 12;
 const transcribeProgress = new Map(); // requestId -> { done, total }
 const TRANSCRIBE_SPEAKERS = ['Hero', 'Heroine', 'Father', 'Mother', 'Villain', 'Queen', 'Elder', 'Child', 'Male', 'Female'];
 const TRANSCRIBE_EMOTIONS = ['Neutral', 'Angry', 'Sad', 'Whisper', 'Excited', 'Royal', 'Romantic', 'Fear'];
@@ -1515,7 +1529,10 @@ function isTransientGeminiFailure(result) {
 }
 const GEMINI_RETRY_DELAYS_MS = [5000, 15000, 30000, 60000];
 // Busy/rate-limited Google usually clears within a minute; a dead connection doesn't.
+// A per-day quota won't clear all session either - retrying (up to 4 models x every
+// key, repeated with backoff) just burns more of that key's daily allowance for nothing.
 function geminiRetryLimit(result) {
+    if (result && result.isDailyQuota) return 0;
     return result && result.code === 'NETWORK_ERROR' ? 1 : GEMINI_RETRY_DELAYS_MS.length;
 }
 
@@ -1551,7 +1568,8 @@ function geminiFailureResponse(res, result) {
     return res.status(result.status || 500).json({
         success: false,
         error: code || result.error || result.message || 'GENERATION_FAILED',
-        message: result.message || result.error
+        message: result.message || result.error,
+        isDailyQuota: !!result.isDailyQuota
     });
 }
 
@@ -1610,10 +1628,30 @@ async function silentFraction(file, start, dur, signal) {
 // Keys Google rejected as invalid/expired are skipped for 10 minutes, so one bad key in
 // Settings can't fail a whole job (every chunk would otherwise hit it again).
 const invalidGeminiKeys = new Map(); // key -> time it was rejected
+// Keys that just got a 429 are skipped for a cooldown too. Without this, every
+// concurrent lane/chunk/retry keeps trying that same key first (it's always first in
+// its own rotation) and piling fresh requests onto a key that's already over quota,
+// instead of going straight to a key that isn't. This is what actually gets chunk 1
+// off key 1 and onto key 2 quickly when there are multiple keys in play.
+//
+// A per-day quota getting hit needs a much longer cooldown than a per-minute burst:
+// it reads as the same 429, but it won't clear for hours, and retrying it anyway just
+// burns more of that key's already-exhausted daily allowance for nothing (each retry
+// tries up to 4 models, up to 5 times, and that's per chunk).
+const rateLimitedGeminiKeys = new Map(); // key -> cooldown-until timestamp
+const RATE_LIMIT_COOLDOWN_MS = 20 * 1000;
+const DAILY_QUOTA_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 function usableGeminiKeys(keys) {
-    const cutoff = Date.now() - 10 * 60 * 1000;
-    const ok = keys.filter(k => !(invalidGeminiKeys.get(k) > cutoff));
-    return ok.length ? ok : keys; // all bad: keep them so the user gets the real error
+    const invalidCutoff = Date.now() - 10 * 60 * 1000;
+    const notInvalid = keys.filter(k => !(invalidGeminiKeys.get(k) > invalidCutoff));
+    const now = Date.now();
+    const notRateLimited = notInvalid.filter(k => !(rateLimitedGeminiKeys.get(k) > now));
+    // Prefer a key that's neither invalid nor cooling down; fall back to "just not
+    // invalid" if every key is currently cooling down (so we still retry rather than
+    // stall); fall back to the raw list if every key is rejected outright, so the user
+    // gets the real error instead of an empty pool.
+    if (notRateLimited.length) return notRateLimited;
+    return notInvalid.length ? notInvalid : keys;
 }
 
 // One pass over the keys: success, or the most useful failure. Invalid keys and busy
@@ -1632,7 +1670,15 @@ async function tryKeysOnce(keys, call) {
         }
         // A dead connection affects every key the same way: don't cycle through them.
         if (out.result && out.result.code === 'NETWORK_ERROR') return out;
-        if (isTransientGeminiFailure(out.result)) { transientOut = out; continue; }
+        if (isTransientGeminiFailure(out.result)) {
+            if (out.result.error === 'RATE_LIMIT_EXCEEDED') {
+                const daily = !!out.result.isDailyQuota;
+                rateLimitedGeminiKeys.set(key, Date.now() + (daily ? DAILY_QUOTA_COOLDOWN_MS : RATE_LIMIT_COOLDOWN_MS));
+                console.warn(`[Gemini] key …${String(key).slice(-4)} ${daily ? 'hit its daily quota; parking it for hours' : 'rate-limited; moving to next key'}`);
+            }
+            transientOut = out;
+            continue;
+        }
         return out;
     }
     return transientOut || lastOut;

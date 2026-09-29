@@ -9524,6 +9524,11 @@
               whisperFolder,
               audioPath: extractData.file,
               videoPath: targetProject.videoFilePath || null,
+              // Balanced local settings: medium model (large-v3 is far more accurate but,
+              // with no GPU, can take hours on a long video) + beam_size 2 (a mild accuracy
+              // bump over the 1 = greedy default, without beam_size 5's much heavier cost).
+              model: "medium",
+              beamSize: 2,
             });
 
             targetProject.whisperJobId = null;
@@ -9594,7 +9599,7 @@
               const genData = await translateRes.json();
               if (!genData.success) {
                 const errorText = genData.error || "";
-                if (errorText === "RATE_LIMIT_EXCEEDED" || translateRes.status === 429) throw new Error("RATE_LIMIT_EXCEEDED");
+                if (errorText === "RATE_LIMIT_EXCEEDED" || translateRes.status === 429) throw new Error(genData.isDailyQuota ? "DAILY_QUOTA_EXCEEDED" : "RATE_LIMIT_EXCEEDED");
                 if (errorText === "INVALID_API_KEY") throw new Error("INVALID_API_KEY");
                 throw new Error(`GENERATION_FAILED|${errorText}`);
               }
@@ -9670,6 +9675,9 @@
             let toastOptions = {};
             if (lastErrorType === "RATE_LIMIT_EXCEEDED") {
               userFriendlyMessage = "All API Keys hit rate limits. Please wait a minute.";
+              toastOptions = { linkUrl: "https://t.me/daidubberpro_official/151", linkText: "ចុចទីនេះ អានបន្ថែម" };
+            } else if (lastErrorType === "DAILY_QUOTA_EXCEEDED") {
+              userFriendlyMessage = "All API Keys have used up their free daily quota with Google. This won't clear by waiting a minute - it resets after a few hours, or add more keys / upgrade your Google AI plan.";
               toastOptions = { linkUrl: "https://t.me/daidubberpro_official/151", linkText: "ចុចទីនេះ អានបន្ថែម" };
             } else if (lastErrorType === "INVALID_API_KEY") {
               userFriendlyMessage = "Your Gemini API Keys are invalid. Please update them in Settings.";
@@ -9751,7 +9759,7 @@
               const genData = await transcribeRes.json();
               if (!genData.success) {
                 const errorText = genData.error || "";
-                if (errorText === "RATE_LIMIT_EXCEEDED" || transcribeRes.status === 429) throw new Error("RATE_LIMIT_EXCEEDED");
+                if (errorText === "RATE_LIMIT_EXCEEDED" || transcribeRes.status === 429) throw new Error(genData.isDailyQuota ? "DAILY_QUOTA_EXCEEDED" : "RATE_LIMIT_EXCEEDED");
                 if (errorText === "INVALID_API_KEY") throw new Error("INVALID_API_KEY");
                 throw new Error(`GENERATION_FAILED|${errorText}`);
               }
@@ -9874,6 +9882,9 @@
 
             if (lastErrorType === "RATE_LIMIT_EXCEEDED") {
               userFriendlyMessage = "All API Keys have hit their Google Rate Limits! Please wait a minute and try again.";
+              toastOptions = { linkUrl: "https://t.me/daidubberpro_official/151", linkText: "ចុចទីនេះ អានបន្ថែម" };
+            } else if (lastErrorType === "DAILY_QUOTA_EXCEEDED") {
+              userFriendlyMessage = "All API Keys have used up their free daily quota with Google. This won't clear by waiting a minute - it resets after a few hours, or add more keys / upgrade your Google AI plan.";
               toastOptions = { linkUrl: "https://t.me/daidubberpro_official/151", linkText: "ចុចទីនេះ អានបន្ថែម" };
             } else if (lastErrorType === "INVALID_API_KEY") {
               userFriendlyMessage = "Your Gemini API Keys are invalid or expired. Please update them in Settings.";
