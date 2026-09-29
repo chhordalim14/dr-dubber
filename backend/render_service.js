@@ -61,7 +61,7 @@ function canEncodeWith(codec) {
                 '-hide_banner', '-loglevel', 'error',
                 '-f', 'lavfi', '-i', 'color=black:s=640x360:r=25',
                 '-frames:v', '1', '-c:v', codec, '-pix_fmt', 'yuv420p', '-f', 'null', '-'
-            ], { windowsHide: true });
+            ], { windowsHide: true, stdio: ['ignore', 'ignore', 'ignore'] });
         } catch (e) {
             return finish(false);
         }
@@ -446,7 +446,7 @@ async function assembleDialogueStemBatch(items, outPath, voiceVolume) {
     args.push('-map', '[aout]', '-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2', outPath);
 
     await new Promise((resolve, reject) => {
-        const p = spawn(getFFmpegBinary(), args, { windowsHide: true });
+        const p = spawn(getFFmpegBinary(), args, { windowsHide: true, stdio: ['ignore', 'ignore', 'ignore'] });
         p.on('close', code => (code === 0 && fs.existsSync(outPath)) ? resolve() : reject(new Error(`Stem batch exit code ${code}`)));
         p.on('error', reject);
     });
@@ -481,7 +481,7 @@ async function assembleDialogueStem(validSubs, tempDir, voiceVolume = 1.0) {
             stemPath
         ];
         await new Promise((resolve, reject) => {
-            const p = spawn(getFFmpegBinary(), args, { windowsHide: true });
+            const p = spawn(getFFmpegBinary(), args, { windowsHide: true, stdio: ['ignore', 'ignore', 'ignore'] });
             p.on('close', code => (code === 0 && fs.existsSync(stemPath)) ? resolve() : reject(new Error(`Stem exit code ${code}`)));
             p.on('error', reject);
         });
@@ -493,31 +493,41 @@ async function assembleDialogueStem(validSubs, tempDir, voiceVolume = 1.0) {
         return assembleDialogueStemBatch(existing, stemPath, voiceVolume);
     }
 
-    // Chunk into intermediate mixes to prevent exceeding Windows 32KB command-line limit
+    // Chunk into intermediate mixes to prevent exceeding Windows 32KB command-line limit.
+    // Each chunk is rendered relative to its own first clip, so it is only as long as
+    // its ~40 clips (about a minute) instead of the whole video. Full-length chunks cost
+    // ~60GB of temp disk on a 2-hour drama; these cost a few hundred MB.
+    const clipStartSec = (item) => {
+        const raw = item.start !== undefined ? item.start : (item.audioStart !== undefined ? item.audioStart : (item.textStart !== undefined ? item.textStart : (item.startTime || 0)));
+        return Math.max(0, parseTimeToSeconds(raw));
+    };
+    const ordered = [...existing].sort((a, b) => clipStartSec(a) - clipStartSec(b));
     const chunkFiles = [];
-    for (let c = 0; c < existing.length; c += CHUNK_SIZE) {
-        const chunk = existing.slice(c, c + CHUNK_SIZE);
+    for (let c = 0; c < ordered.length; c += CHUNK_SIZE) {
+        const chunk = ordered.slice(c, c + CHUNK_SIZE);
+        const offsetSec = clipStartSec(chunk[0]);
+        const shifted = chunk.map(item => ({ ...item, start: clipStartSec(item) - offsetSec }));
         const chunkPath = path.join(tempDir, `dialogue_chunk_${Math.floor(c / CHUNK_SIZE)}.wav`);
-        await assembleDialogueStemBatch(chunk, chunkPath, voiceVolume);
+        await assembleDialogueStemBatch(shifted, chunkPath, voiceVolume);
         if (fs.existsSync(chunkPath)) {
-            chunkFiles.push(chunkPath);
+            chunkFiles.push({ path: chunkPath, offsetMs: Math.round(offsetSec * 1000) });
         }
     }
 
     if (chunkFiles.length === 0) return null;
-    if (chunkFiles.length === 1) {
-        fs.renameSync(chunkFiles[0], stemPath);
-        return stemPath;
-    }
 
-    // Mix the intermediate chunks together
+    // Mix the intermediate chunks together, each placed back at its timeline offset
     const args = ['-y'];
-    chunkFiles.forEach(cp => args.push('-i', cp));
-    args.push('-filter_complex', `amix=inputs=${chunkFiles.length}:normalize=0:duration=longest[aout]`);
+    chunkFiles.forEach(cf => args.push('-i', cf.path));
+    const placed = chunkFiles.map((cf, i) => `[${i}:a]adelay=${cf.offsetMs}|${cf.offsetMs}[c${i}]`);
+    const mixIn = chunkFiles.map((_, i) => `[c${i}]`).join('');
+    args.push('-filter_complex', chunkFiles.length === 1
+        ? placed[0].replace(/\[c0\]$/, '[aout]')
+        : `${placed.join(';')};${mixIn}amix=inputs=${chunkFiles.length}:normalize=0:duration=longest[aout]`);
     args.push('-map', '[aout]', '-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2', stemPath);
 
     await new Promise((resolve, reject) => {
-        const p = spawn(getFFmpegBinary(), args, { windowsHide: true });
+        const p = spawn(getFFmpegBinary(), args, { windowsHide: true, stdio: ['ignore', 'ignore', 'ignore'] });
         p.on('close', code => (code === 0 && fs.existsSync(stemPath)) ? resolve() : reject(new Error(`Mix chunks exit code ${code}`)));
         p.on('error', reject);
     });
@@ -698,6 +708,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         duckingDepth = 'standard', // 'light' | 'standard' | 'deep'
         muteOriginal = true,
         isOriginalAudioMuted,
+        originalAudioPath, // repaired copy of the video's own audio (see audio_repair.js)
         burnSubtitles = true,
         subtitlePreset = 'classic', // 'classic' | 'tiktok_pop' | 'neon_cyan' | 'royal_gold'
         subtitleFont = 'Kantumruy Pro',
@@ -973,6 +984,12 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         const sourceHasAudio = videoPath ? await videoHasAudio(videoPath) : false;
         const isMuted = isOriginalAudioMuted !== undefined ? isOriginalAudioMuted : muteOriginal;
         const includeOrigAudio = !isMuted && sourceHasAudio;
+        // When the video's own audio track was repaired, mix that copy instead of [0:a].
+        let origAudioIn = '[0:a]';
+        if (includeOrigAudio && originalAudioPath && originalAudioPath !== videoPath && fs.existsSync(originalAudioPath)) {
+            args.push('-i', originalAudioPath);
+            origAudioIn = `[${nextInputIndex++}:a]`;
+        }
 
         const isDucking = (duckingEnabled === true || duckingEnabled === 'true' || duckingEnabled === 1 || duckingEnabled === '1');
 
@@ -999,7 +1016,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                         filterComplex.push(`[bgm_ducked]equalizer=f=1100:t=q:w=1.5:g=-6[bgm_clean]`);
                         bgmFinalTag = '[bgm_clean]';
 
-                        filterComplex.push(`[0:a]volume=1.0[orig_vol]`);
+                        filterComplex.push(`${origAudioIn}volume=1.0[orig_vol]`);
                         filterComplex.push(`[orig_vol][d_sc2]sidechaincompress=${sidechainParams}[orig_ducked]`);
                         filterComplex.push(`[orig_ducked]equalizer=f=1100:t=q:w=1.5:g=-6[orig_clean]`);
                         filterComplex.push(`${bgmFinalTag}[orig_clean][d_mix]amix=inputs=3:normalize=0:duration=longest[final_audio]`);
@@ -1013,7 +1030,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                     }
                 } else {
                     if (includeOrigAudio) {
-                        filterComplex.push(`[0:a]volume=1.0[orig_vol]`);
+                        filterComplex.push(`${origAudioIn}volume=1.0[orig_vol]`);
                         filterComplex.push(`${bgmFinalTag}[orig_vol][${dialogueInputIndex}:a]amix=inputs=3:normalize=0:duration=longest[final_audio]`);
                     } else {
                         filterComplex.push(`${bgmFinalTag}[${dialogueInputIndex}:a]amix=inputs=2:normalize=0:duration=longest[final_audio]`);
@@ -1021,7 +1038,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                 }
             } else {
                 if (includeOrigAudio) {
-                    filterComplex.push(`[0:a]volume=1.0[orig_vol]`);
+                    filterComplex.push(`${origAudioIn}volume=1.0[orig_vol]`);
                     if (isDucking) {
                         filterComplex.push(`[${dialogueInputIndex}:a]asplit=2[d_sc1_raw][d_mix]`);
                         filterComplex.push(`[d_sc1_raw]apad=whole_dur=${videoDuration.toFixed(3)}[d_sc1]`);
@@ -1038,14 +1055,14 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         } else if (bgmInputIndex >= 0) {
             if (includeOrigAudio) {
                 filterComplex.push(`[${bgmInputIndex}:a]${bgmFilterChain}[bgm_vol]`);
-                filterComplex.push(`[0:a]volume=1.0[orig_a]`);
+                filterComplex.push(`${origAudioIn}volume=1.0[orig_a]`);
                 filterComplex.push(`[bgm_vol][orig_a]amix=inputs=2:normalize=0:duration=longest[final_audio]`);
             } else {
                 filterComplex.push(`[${bgmInputIndex}:a]${bgmFilterChain}[final_audio]`);
             }
         } else {
             if (includeOrigAudio) {
-                filterComplex.push(`[0:a]volume=1.0[final_audio]`);
+                filterComplex.push(`${origAudioIn}volume=1.0[final_audio]`);
             } else {
                 // No dialogue, no BGM, original audio muted or missing — generate silent audio stream
                 filterComplex.push(`aevalsrc=0:c=stereo:s=44100:d=${videoDuration}[final_audio]`);

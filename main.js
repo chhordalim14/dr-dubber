@@ -6,6 +6,12 @@ const http = require('http');
 const crypto = require('crypto');
 const { spawn, exec } = require('child_process');
 
+// Prefer IPv4 for all Node-side network calls (Gemini, TTS tunnels, updates).
+// Electron 28 ships Node 18, whose fetch() connects to the first DNS answer only
+// (no Happy Eyeballs). On networks with broken IPv6, Google's AAAA records come
+// first and every request dies with "fetch failed / ENETUNREACH".
+try { require('dns').setDefaultResultOrder('ipv4first'); } catch (e) {}
+
 // Auto-detect and add FFmpeg to PATH across the entire app
 try { require('./backend/ffmpeg_env'); } catch (e) {}
 
@@ -443,7 +449,7 @@ async function clearDirContents(dir, protectedPaths = new Set()) {
 // These caches genuinely grow without bound (TTS output cache, extracted/separated
 // audio) since nothing else ever prunes them, so unlike the fake stubs before,
 // size/clear here are real operations against real disk usage.
-const CACHE_DIRS = [AUDIO_CACHE_DIR, path.join(STORAGE_BASE, 'separated'), path.join(STORAGE_BASE, 'uploads')];
+const CACHE_DIRS = [AUDIO_CACHE_DIR, path.join(STORAGE_BASE, 'separated'), path.join(STORAGE_BASE, 'uploads'), path.join(STORAGE_BASE, 'preview_cache'), path.join(STORAGE_BASE, 'audio_repair')];
 
 ipcMain.handle('app:getHardwareSpecs', async () => {
     return {

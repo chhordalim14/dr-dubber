@@ -1705,7 +1705,7 @@
             <span>1. Project Setup</span>
           </div>
           <div class="grid grid-cols-2 gap-2">
-            <input type="file" id="video-upload" accept="video/*" class="hidden" />
+            <input type="file" id="video-upload" accept="video/*,audio/*,.mkv,.avi,.wmv,.flv,.ts,.m2ts,.mts,.mpg,.mpeg,.vob,.rmvb,.rm,.3gp,.webm,.mov,.m4v,.divx,.ogv,.mxf,.asf,.f4v,.wma,.ac3,.dts,.aiff,.mka" class="hidden" />
             <button id="btn-load-video"
               class="group flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-sky-500/10 border border-[var(--border-light)] hover:border-sky-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
               <i data-lucide="film" class="w-4 h-4 text-sky-400 shrink-0 group-hover:scale-110 transition-transform"></i>
@@ -1717,6 +1717,12 @@
               class="group flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-indigo-500/10 border border-[var(--border-light)] hover:border-indigo-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
               <i data-lucide="file-down" class="w-4 h-4 text-indigo-400 shrink-0 group-hover:scale-110 transition-transform"></i>
               <span class="truncate">Import SRT</span>
+            </button>
+
+            <button id="btn-join-episodes" title="Join many short episodes into ~1 hour parts to dub"
+              class="col-span-2 group flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-emerald-500/10 border border-[var(--border-light)] hover:border-emerald-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
+              <i data-lucide="layers" class="w-4 h-4 text-emerald-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+              <span class="truncate">Join Episodes</span>
             </button>
           </div>
         </div>
@@ -1746,14 +1752,14 @@
               <span>Mute Original Video Audio</span>
             </button>
 
-            <input type="file" id="a1-audio-upload" accept="audio/*" class="hidden" multiple />
+            <input type="file" id="a1-audio-upload" accept="audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg,.oga,.opus,.wma,.ac3,.eac3,.dts,.aif,.aiff,.caf,.mp2,.mka,.amr,.ape,.wv,.alac,.ra,.mid" class="hidden" multiple />
             <button id="btn-load-a1-audio"
               class="group col-span-2 flex items-center justify-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-amber-500/10 border border-[var(--border-light)] hover:border-amber-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
               <i data-lucide="audio-waveform" class="w-4 h-4 text-amber-400 shrink-0 group-hover:scale-110 transition-transform"></i>
               <span>Load A1 Dubbed Audio (Multiple)</span>
             </button>
 
-            <input type="file" id="bgm-upload" accept="audio/*" class="hidden" />
+            <input type="file" id="bgm-upload" accept="audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg,.oga,.opus,.wma,.ac3,.eac3,.dts,.aif,.aiff,.caf,.mp2,.mka,.amr,.ape,.wv,.alac,.ra,.mid" class="hidden" />
             <button id="btn-load-bgm"
               class="group col-span-2 flex items-center justify-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-purple-500/10 border border-[var(--border-light)] hover:border-purple-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
               <i data-lucide="music" class="w-4 h-4 text-purple-400 shrink-0 group-hover:scale-110 transition-transform"></i>
@@ -1869,6 +1875,13 @@
                 title="Find & Replace (Ctrl+H)">
                 <i data-lucide="search-code" class="w-3.5 h-3.5 group-hover:scale-110 transition-transform"></i>
                 <span>Find &amp; Replace</span>
+              </button>
+
+              <button id="btn-fix-missing"
+                class="group h-7 px-2.5 rounded-md text-xs font-medium flex items-center gap-1.5 text-[var(--text-secondary)] hover:text-sky-400 hover:bg-sky-500/10 transition-all shrink-0"
+                title="Fix Missing: re-transcribe only stretches with no subtitles and re-translate only lines without Khmer">
+                <i data-lucide="scan-search" class="w-3.5 h-3.5 group-hover:scale-110 transition-transform"></i>
+                <span id="text-fix-missing">Fix Missing</span>
               </button>
 
               <div class="h-3.5 w-px bg-[var(--border-color)] mx-1 shrink-0"></div>
@@ -3171,6 +3184,47 @@
         <button id="btn-confirm-action"
           class="bg-red-500 text-white px-6 py-2 rounded-lg text-sm font-medium shadow-md hover:shadow-lg hover:bg-red-600 transition-all duration-300 ease-out hover:-translate-y-0.5 active:scale-[0.95]">Yes,
           Delete</button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- Join Episodes: many short episodes -> ~1 hour parts -->
+  <div id="modal-join-episodes"
+    class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[998] hidden modal-bg-enter">
+    <div class="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-2xl w-[680px] max-w-[94vw] max-h-[88vh] shadow-2xl flex flex-col overflow-hidden text-[var(--text-primary)] animate-modal-center"
+      onclick="event.stopPropagation()">
+      <div class="flex justify-between items-center p-4 border-b border-[var(--border-color)] bg-emerald-500/10">
+        <h2 class="text-emerald-400 font-bold flex items-center gap-2"><i data-lucide="layers" class="w-5 h-5"></i> Join Episodes</h2>
+        <button id="je-close" class="text-[var(--text-secondary)] hover:text-[var(--text-bright)] transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+      <div class="p-5 flex flex-col gap-4 overflow-y-auto custom-scrollbar">
+        <p class="text-xs text-[var(--text-secondary)] leading-relaxed">Pick the folder with the downloaded episodes. They are sorted by episode number and joined into parts of about the length you choose, with the audio made uniform so nothing breaks at the joins.</p>
+        <div class="flex items-center gap-2">
+          <button id="je-pick" class="shrink-0 whitespace-nowrap px-3 py-2 rounded-lg text-xs font-semibold bg-emerald-600 text-white hover:brightness-110 active:scale-[0.97] transition-all flex items-center gap-1.5"><i data-lucide="folder-open" class="w-4 h-4"></i> Choose Folder</button>
+          <span id="je-folder" class="text-xs text-[var(--text-muted)] truncate font-mono">No folder selected</span>
+        </div>
+        <div id="je-summary" class="hidden flex-col gap-3">
+          <div id="je-stats" class="text-sm font-semibold"></div>
+          <div id="je-warnings" class="hidden text-xs text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded-lg p-2.5 leading-relaxed"></div>
+          <div class="grid grid-cols-3 gap-3 text-xs">
+            <label class="flex flex-col gap-1"><span class="text-[var(--text-secondary)]">Minutes per part</span>
+              <input id="je-minutes" type="number" min="5" max="180" step="5" value="60" class="bg-[var(--bg-base)] border border-[var(--border-light)] rounded-md px-2 py-1.5 outline-none focus:border-emerald-500"></label>
+            <label class="flex flex-col gap-1 col-span-2"><span class="text-[var(--text-secondary)]">File name</span>
+              <input id="je-name" type="text" class="bg-[var(--bg-base)] border border-[var(--border-light)] rounded-md px-2 py-1.5 outline-none focus:border-emerald-500 font-khmer"></label>
+          </div>
+          <div class="flex items-center gap-2 text-xs">
+            <span class="text-[var(--text-secondary)] shrink-0">Save to</span>
+            <span id="je-out" class="truncate font-mono text-[var(--text-muted)]"></span>
+            <button id="je-out-pick" class="ml-auto shrink-0 px-2 py-1 rounded-md border border-[var(--border-light)] hover:bg-[var(--bg-hover)]">Change</button>
+          </div>
+          <div id="je-parts" class="flex flex-col gap-1.5 max-h-[260px] overflow-y-auto custom-scrollbar pr-1"></div>
+        </div>
+      </div>
+      <div class="p-4 border-t border-[var(--border-color)] bg-[var(--bg-base)] flex justify-end gap-3 shrink-0">
+        <button id="je-open" class="hidden px-4 py-2 rounded-lg text-sm font-medium border border-[var(--border-light)] hover:bg-[var(--bg-hover)]">Open Folder</button>
+        <button id="je-load" class="hidden px-4 py-2 rounded-lg text-sm font-medium border border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/10">Load into Dubber</button>
+        <button id="je-start" disabled class="bg-emerald-600 text-white px-6 py-2 rounded-lg text-sm font-medium shadow-md hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed transition-all active:scale-[0.95]">Join</button>
       </div>
     </div>
   </div>
@@ -8143,6 +8197,7 @@
       // ── 1. Swap video ──
       _isRestoringTab = true;
       mainVideo.src = p.previewBlobUrl || p.blobUrl || "";
+      if (typeof window.__setPreviewBadge === "function") window.__setPreviewBadge(p, p._previewBadgeText);
 
       if (p.blobUrl) {
         if (p.isAudioOnly) {
@@ -9250,16 +9305,18 @@
       try {
         let extractData = null;
 
+        // Declared at this level (not inside the extract block) because the
+        // Gemini transcribe request further down sends them too.
+        const localVideoPath = targetProject.videoFilePath || (targetProject.file && targetProject.file.path);
+        const vidName = targetProject.file?.name || targetProject.name || "video";
+        const projIdx = projects.indexOf(targetProject);
+        const partIdx = projIdx >= 0 ? projIdx + 1 : 1;
+        const customFolderPath = localStorage.getItem("aiDubberAutoSaveSrtCustomPath") || "";
+
         if (!reuseExistingWhisperSrt) {
           if (projects[activeProjectIndex] === targetProject) showToast("Extracting audio via Node server...", "info");
 
-          const localVideoPath = targetProject.videoFilePath || (targetProject.file && targetProject.file.path);
           let extractRes;
-
-          const vidName = targetProject.file?.name || targetProject.name || "video";
-          const projIdx = projects.indexOf(targetProject);
-          const partIdx = projIdx >= 0 ? projIdx + 1 : 1;
-          const customFolderPath = localStorage.getItem("aiDubberAutoSaveSrtCustomPath") || "";
 
           if (localVideoPath && typeof localVideoPath === "string") {
             extractRes = await fetch("http://localhost:3001/api/extract-audio", {
@@ -9394,6 +9451,7 @@
                   genre: activeDramaGenre || "historical",
                   glossary: typeof getDramaGlossaryDict === "function" ? getDramaGlossaryDict() : null,
                   apiKey: key,
+                  apiKeys: [...apiKeys.slice(keyIdx), ...apiKeys.slice(0, keyIdx)],
                   model: activeModel,
                   requestId: targetProject.geminiRequestId,
                 }),
@@ -9519,6 +9577,20 @@
             try {
               if (projects[activeProjectIndex] === targetProject) showToast(`Analyzing and Translating with AI (Key ${keyIdx + 1})...`, "info");
 
+              // Long videos are split into chunks on the server; show "Stop (3/20)" on the button.
+              let lastProgressNote = null; // toast each "Google is busy" note once
+              const progressTimer = setInterval(async () => {
+                try {
+                  const p = await (await fetch(`http://localhost:3001/api/transcribe-progress?requestId=${encodeURIComponent(targetProject.geminiRequestId || "")}`)).json();
+                  const label = document.getElementById("text-transcribe");
+                  if (p.success && p.total > 1 && label && projects[activeProjectIndex] === targetProject) label.textContent = `Stop (${p.done}/${p.total})`;
+                  if (p.success && p.note && p.note !== lastProgressNote && projects[activeProjectIndex] === targetProject) {
+                    lastProgressNote = p.note;
+                    showToast(p.note, "warning");
+                  }
+                } catch (e) { }
+              }, 2000);
+
               const transcribeRes = await fetch("http://localhost:3001/api/transcribe", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -9530,6 +9602,8 @@
                   genre: activeDramaGenre || "historical",
                   glossary: typeof getDramaGlossaryDict === "function" ? getDramaGlossaryDict() : null,
                   apiKey: key,
+                  // Every key, starting from this one: the server transcribes chunks in parallel, one lane per key.
+                  apiKeys: [...apiKeys.slice(keyIdx), ...apiKeys.slice(0, keyIdx)],
                   model: activeModel,
                   requestId: targetProject.geminiRequestId,
                   videoName: vidName,
@@ -9538,7 +9612,7 @@
                   sourceFilePath: localVideoPath,
                 }),
                 signal,
-              });
+              }).finally(() => clearInterval(progressTimer));
 
               const genData = await transcribeRes.json();
               if (!genData.success) {
@@ -9634,7 +9708,8 @@
                 subtitles = targetProject.subtitles.map((s) => ({ ...s }));
                 autoAssignVoxProfiles(subtitles);
                 renderSubtitles();
-                showToast("Transcription Complete!", "success");
+                const repairMsg = typeof window.describeRepair === "function" ? window.describeRepair(genData.repair) : "";
+                showToast(repairMsg ? `Transcription Complete! Auto-check ${repairMsg}.` : "Transcription Complete!", "success");
               } else {
                 autoAssignVoxProfiles(targetProject.subtitles);
                 showToast(`Transcription finished for "${targetProject.file?.name || 'project tab'}"!`, "success");
@@ -9652,6 +9727,8 @@
               console.error(`Error with API Key ${keyIdx + 1}:`, err);
               lastErrorType = err.message || "UNKNOWN_ERROR";
               lastErrorMessage = err.toString();
+              // The server already rotated through every key before reporting a rate limit.
+              if (lastErrorType === "RATE_LIMIT_EXCEEDED") break;
             }
           }
 
@@ -9699,6 +9776,148 @@
         renderProjectTabs();
       }
     }
+
+    // ── Fix Missing ─────────────────────────────────────────────────────────
+    // Repairs a finished transcript in place instead of regenerating a part: the backend
+    // re-transcribes only stretches (>= 20s, not silent) that have no subtitles, and
+    // re-translates only lines that have no Khmer. Fixed/added lines are left selected.
+    const describeRepair = (r) => {
+      if (!r) return "";
+      const bits = [];
+      if (r.linesAdded) bits.push(`recovered ${r.linesAdded} missed line${r.linesAdded > 1 ? "s" : ""}`);
+      if (r.retranslated) bits.push(`translated ${r.retranslated} line${r.retranslated > 1 ? "s" : ""} that had no Khmer`);
+      if (r.stillUntranslated) bits.push(`${r.stillUntranslated} still need a manual check`);
+      return bits.join(", ");
+    };
+    window.describeRepair = describeRepair;
+
+    const btnFixMissing = document.getElementById("btn-fix-missing");
+    btnFixMissing?.addEventListener("click", async () => {
+      const targetProject = projects[activeProjectIndex];
+      if (!targetProject || !subtitles.length) {
+        showToast("Transcribe or import subtitles first.", "warning");
+        return;
+      }
+      if (btnFixMissing.dataset.busy === "1") return;
+      const apiKeys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]").filter(Boolean);
+      if (!apiKeys.length) {
+        showToast("Please enter your Gemini API Key in Settings ➔ General.", "error");
+        return;
+      }
+      const label = document.getElementById("text-fix-missing");
+      const requestId = crypto.randomUUID();
+      btnFixMissing.dataset.busy = "1";
+      btnFixMissing.classList.add("opacity-60", "pointer-events-none");
+      if (label) label.textContent = "Checking…";
+      showToast("Checking for missing dialogue and untranslated lines…", "info");
+      let lastNote = null;
+      const noteTimer = setInterval(async () => {
+        try {
+          const p = await (await fetch(`http://localhost:3001/api/transcribe-progress?requestId=${requestId}`)).json();
+          if (p.success && p.note && p.note !== lastNote) {
+            lastNote = p.note;
+            showToast(p.note, "info");
+          }
+        } catch (e) { }
+      }, 1500);
+      try {
+        const res = await fetch("http://localhost:3001/api/repair-subtitles", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            subtitles: subtitles.map((s) => ({ id: s.id, start: parseFloat(s.textStart), end: parseFloat(s.textEnd), text: s.text, originalText: s.originalText || "", speaker: s.speaker, gender: s.gender, emotion: s.emotion })),
+            videoPath: targetProject.videoFilePath || null,
+            duration: targetProject.duration || duration,
+            genre: activeDramaGenre || "historical",
+            glossary: typeof getDramaGlossaryDict === "function" ? getDramaGlossaryDict() : null,
+            apiKey: apiKeys[0],
+            apiKeys,
+            model: localStorage.getItem("aiDubberModel") || "gemini-2.5-flash",
+            requestId,
+          }),
+        });
+        const data = await res.json();
+        if (!data.success) {
+          if (data.error !== "CANCELLED") showToast(data.error === "RATE_LIMIT_EXCEEDED" ? "All API keys are rate-limited. Try again in a minute." : `Fix Missing failed: ${data.message || data.error}`, "error");
+          return;
+        }
+        if (projects[activeProjectIndex] !== targetProject) targetProject.subtitles = targetProject.subtitles || [];
+        const list = projects[activeProjectIndex] === targetProject ? subtitles : targetProject.subtitles;
+        if (!data.updated.length && !data.added.length) {
+          showToast(data.report?.gapsSkipped ? `No untranslated lines found. ${data.report.gapsSkipped}` : "Nothing missing - every stretch of dialogue has a Khmer subtitle ✓", "success");
+          return;
+        }
+
+        saveStateToPast();
+        const changedIds = [];
+        const byId = new Map(list.map((s) => [String(s.id), s]));
+        data.updated.forEach((u) => {
+          const sub = byId.get(String(u.id));
+          if (!sub) return;
+          sub.text = u.text;
+          if (!sub.speaker && u.speaker) sub.speaker = u.speaker;
+          if (sub.audioStatus && sub.audioStatus !== "idle") {
+            // Voice was generated from the old (untranslated) text.
+            sub.audioStatus = "idle";
+            sub.audioUrl = null;
+            sub.file = null;
+            if (activeAudios[sub.id]) {
+              activeAudios[sub.id].pause();
+              if (typeof window.releaseAudioChain === "function") window.releaseAudioChain(activeAudios[sub.id]);
+              delete activeAudios[sub.id];
+            }
+          }
+          changedIds.push(sub.id);
+        });
+        const newSubs = data.added.map((a) => {
+          const character = typeof window.resolveCharacterKey === "function" ? window.resolveCharacterKey(a.speaker || a.gender || "Male") : a.gender === "Female" ? "Female" : "Male";
+          return {
+            id: crypto.randomUUID().substring(0, 8),
+            textStart: Number(a.start).toFixed(2),
+            textEnd: Number(a.end).toFixed(2),
+            audioStart: Number(a.start).toFixed(2),
+            audioEnd: Number(a.end).toFixed(2),
+            originalText: a.originalText || null,
+            speaker: a.speaker || character,
+            character,
+            emotion: a.emotion || "Neutral",
+            text: a.text || "",
+            voice: "KH Khmer",
+            gender: character,
+            status: "done",
+            audioStatus: "idle",
+            audioUrl: null,
+            baseAudioDuration: 0,
+            speed: 1.0,
+            volume: 1.0,
+          };
+        });
+        if (newSubs.length) {
+          if (typeof autoAssignVoxProfiles === "function") autoAssignVoxProfiles(newSubs);
+          list.push(...newSubs);
+          list.sort((a, b) => parseFloat(a.textStart) - parseFloat(b.textStart));
+          changedIds.push(...newSubs.map((s) => s.id));
+        }
+        if (projects[activeProjectIndex] === targetProject) {
+          targetProject.subtitles = subtitles.map((s) => ({ ...s }));
+          selectedItems = changedIds.flatMap((id) => [`text-${id}`, `audio-${id}`]);
+          renderSubtitles();
+          if (typeof updateGenerateButtonState === "function") updateGenerateButtonState();
+          if (typeof updateGenerateAllButtonState === "function") updateGenerateAllButtonState();
+        }
+        if (typeof saveCurrentProjectState === "function") saveCurrentProjectState();
+        maybeAutoSaveSubtitles(targetProject, targetProject.subtitles);
+        renderProjectTabs();
+        showToast(`Fix Missing: ${describeRepair(data.report)}. The ${changedIds.length} fixed line(s) are selected - press Generate to voice them.`, "success");
+      } catch (e) {
+        showToast(`Fix Missing failed: ${e.message}`, "error");
+      } finally {
+        clearInterval(noteTimer);
+        btnFixMissing.dataset.busy = "";
+        btnFixMissing.classList.remove("opacity-60", "pointer-events-none");
+        if (label) label.textContent = "Fix Missing";
+      }
+    });
 
     // ── Transcribe All Project Tabs Simultaneously (1-Click Parallel) ───────
     async function transcribeAllProjects() {
@@ -9951,7 +10170,13 @@
       // Protect any in-use preview proxy (Chromium-incompatible codec fallback) so
       // Clear Cache never deletes the file a currently-open tab is actively playing
       const fileUrlToPath = (fileUrl) => {
-        if (!fileUrl || !fileUrl.startsWith("file://")) return null;
+        if (!fileUrl) return null;
+        // Converted previews are served as /api/audio?path=<absolute path>
+        const apiMatch = String(fileUrl).match(/\/api\/audio\?path=([^&]+)/);
+        if (apiMatch) {
+          try { return decodeURIComponent(apiMatch[1]); } catch { return null; }
+        }
+        if (!fileUrl.startsWith("file://")) return null;
         try {
           let p = decodeURIComponent(fileUrl.replace(/^file:\/\//, ""));
           if (/^\/[A-Za-z]:/.test(p)) p = p.slice(1); // Windows: strip leading slash before drive letter
@@ -13784,6 +14009,7 @@
     var VOXCMP2_KEY = "voxcmp2_settings";
 
     function voxCmp2Load() {
+      if (window.__voxRenderCache) return window.__voxRenderCache;
       const raw = localStorage.getItem(VOXCMP2_KEY);
 
       if (raw) {
@@ -15803,6 +16029,7 @@
             textInput.classList.add("text-[var(--text-bright)]", "font-semibold");
           }
           if (lastAutoScrolledId !== activeId) {
+            rowWindowReveal(newRow);
             newRow.scrollIntoView({ behavior: "smooth", block: "nearest" });
             lastAutoScrolledId = activeId;
           }
@@ -15885,7 +16112,9 @@
 
     window.addEventListener("mouseup", () => {
       if (draggingState.isDragging) {
-        if (draggingState.action !== "resize-track") {
+        // A plain click (no mouse movement) changed nothing: skip the undo entry
+        // and the full re-render, which costs ~1s on long projects.
+        if (draggingState.action !== "resize-track" && draggingState.moved) {
           saveStateToPast(draggingState.subsSnapshot, draggingState.bgmSnapshot || bgmTrack);
           renderSubtitles();
         }
@@ -16649,6 +16878,7 @@
         const sub = subtitles[matchIndices[mi]];
         if (!sub) return;
         const row = document.querySelector(`tr[data-id="${sub.id}"]`);
+        rowWindowReveal(row);
         if (row) row.scrollIntoView({ block: "center", behavior: "smooth" });
       };
 
@@ -18356,6 +18586,7 @@
         return;
       }
 
+      const prevSelection = selectedItems.slice();
       let newSelected = [...selectedItems];
       let selectionChanged = false; // THE FIX: Track if selection actually changed!
 
@@ -18404,7 +18635,7 @@
           selectedItems = newSelected;
           lastTimelineItem = itemKey;
 
-          renderSubtitles();
+          refreshSelection(prevSelection);
           if (bgmTrack.src) renderTrackA2();
           updateContextualControls();
           return;
@@ -18430,7 +18661,7 @@
       };
 
       if (selectionChanged) {
-        renderSubtitles();
+        refreshSelection(prevSelection);
         if (bgmTrack.src) renderTrackA2();
         updateContextualControls();
       }
@@ -18458,6 +18689,7 @@
       }
 
       if (!draggingState.isDragging) return;
+      if (draggingState.startX !== undefined && e.clientX !== draggingState.startX) draggingState.moved = true;
 
       // --- DETACHED AUDIO MOVE / RESIZE (independent of the subtitle engine) ---
       if (draggingState.itemKey && draggingState.itemKey.startsWith("detached-")) {
@@ -19070,7 +19302,12 @@
     };
 
     // --- RENDER UI HELPER ---
-    const renderSubtitles = () => {
+    // renderSubtitles(onlyIds): pass a Set of subtitle ids to rebuild just those
+    // rows + timeline blocks in place (used for selection changes). Rebuilding all
+    // rows on every click froze the UI for seconds on 1-2 hour projects.
+    const renderSubtitles = (onlyIds = null) => {
+      const isPartial = onlyIds instanceof Set && onlyIds.size > 0 && subtitles.length > 0;
+      if (!isPartial) {
       // 1. Clear Table & Timeline items
       subtitleTableBody.innerHTML = "";
 
@@ -19078,6 +19315,7 @@
       trackT1.querySelectorAll(".subtitle-timeline-item").forEach((item) => item.remove());
       // Clear A1 blocks
       trackA1.querySelectorAll(".audio-timeline-item").forEach((item) => item.remove());
+      }
 
       // Use fragments to batch all DOM insertions — prevents N reflows on low-end hardware
       const tableFragment = document.createDocumentFragment();
@@ -19091,15 +19329,24 @@
                     <p>No subtitles available. Upload a video and import or transcribe.</p>
                 </td>
             </tr>`;
+        rowWindowReset();
         return;
       }
 
       // 2. Render Table Rows & Timeline Blocks
       const safeDuration = duration > 0 ? duration : Math.max(...subtitles.map((s) => parseFloat(s.textEnd))) + 10;
 
+      // Per-render caches. Each row used to re-parse the voice settings from
+      // localStorage and scan the whole selection list, which made every click
+      // take seconds once a project has 1000+ lines.
+      const selectedSet = new Set(selectedItems);
+      window.__voxRenderCache = null;
+      window.__voxRenderCache = typeof voxCmp2Load === "function" ? voxCmp2Load() : null;
+      try {
       subtitles.forEach((sub, index) => {
+        if (isPartial && !onlyIds.has(String(sub.id))) return;
         // --- CHECK SELECTION STATE ---
-        const isRowSelected = selectedItems.includes(`text-${sub.id}`) || selectedItems.includes(`audio-${sub.id}`);
+        const isRowSelected = selectedSet.has(`text-${sub.id}`) || selectedSet.has(`audio-${sub.id}`);
 
         // --- DYNAMIC HIGHLIGHT COLORS ---
         // THE FIX: Uses theme-aware variables instead of hardcoded white!
@@ -19180,6 +19427,7 @@
         // --- ROW CHECKBOX LOGIC ---
         const checkbox = tr.querySelector(".row-checkbox");
         checkbox.addEventListener("change", (e) => {
+          const prevSelected = selectedItems.slice();
           const isNowSelected = e.target.checked;
 
           const textTag = `text-${sub.id}`;
@@ -19193,7 +19441,7 @@
           }
 
           // Sync visual highlights instantly
-          renderSubtitles();
+          refreshSelection(prevSelected);
           if (typeof updateGenerateButtonState === "function") updateGenerateButtonState();
         });
 
@@ -19319,7 +19567,13 @@
         if (genderHidden && voxRowWrap && voxRowTrigger && voxRowLabel && voxRowPanel && voxRowList && voxRowChevron) {
           const isRowOpen = () => voxRowPanel.style.gridTemplateRows === "1fr";
 
+          let rowOptions = [];
+          let rowListBuilt = false;
           const openRowDropdown = () => {
+            if (!rowListBuilt) {
+              rowListBuilt = true;
+              buildVoxRowList(rowOptions.map((o) => ({ ...o, selected: o.value === genderHidden.value })));
+            }
             document.querySelectorAll(".vox-row-panel").forEach((p) => {
               if (p !== voxRowPanel) p.style.gridTemplateRows = "0fr";
             });
@@ -19380,6 +19634,7 @@
                 e.stopPropagation();
                 setVoxRowValue(opt.value, options);
                 closeRowDropdown();
+                rowListBuilt = false; // rebuild with the new checkmark next time it opens
               });
               voxRowList.appendChild(btn);
             });
@@ -19458,10 +19713,10 @@
               o.selected = o.value === targetProfileId;
             });
 
-            buildVoxRowList(profileOpts);
+            rowOptions = profileOpts;
             setVoxRowValue(targetProfileId, profileOpts);
 
-            const liveSubIdx = subtitles.findIndex((s) => s.id === sub.id);
+            const liveSubIdx = index;
             if (liveSubIdx > -1) {
               subtitles[liveSubIdx].gender = targetProfileId;
             }
@@ -19476,10 +19731,10 @@
               selected: p.id === charKey
             }));
 
-            buildVoxRowList(charOpts);
+            rowOptions = charOpts;
             setVoxRowValue(charKey, charOpts);
 
-            const liveSubIdx = subtitles.findIndex((s) => s.id === sub.id);
+            const liveSubIdx = index;
             if (liveSubIdx > -1) {
               subtitles[liveSubIdx].gender = charKey;
               subtitles[liveSubIdx].character = charKey;
@@ -19598,6 +19853,7 @@
           if (["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) return;
 
           const startTime = parseFloat(sub.textStart);
+          const prevSelected = selectedItems.slice();
 
           // 1. Move the video playhead
           if (mainVideo.src && duration > 0) {
@@ -19643,7 +19899,7 @@
           }
 
           // Sync visual highlights instantly across both Tracks & Table
-          renderSubtitles();
+          refreshSelection(prevSelected);
           updateGenerateButtonState();
 
           // 3. Scroll the timeline view
@@ -19688,7 +19944,7 @@
         });
 
         // Add T1 track resize handle (bottom edge)
-        if (index === subtitles.length - 1) {
+        if (!isPartial && index === subtitles.length - 1) {
           // Only add it once to the track itself
           const t1ResizeHandle = document.createElement("div");
           t1ResizeHandle.className = "absolute bottom-0 left-0 right-0 h-1 cursor-s-resize hover:bg-[var(--accent-primary)] z-40 transition-colors";
@@ -19799,7 +20055,7 @@
           });
 
           // Add A1 track resize handle
-          if (index === subtitles.length - 1) {
+          if (!isPartial && index === subtitles.length - 1) {
             const a1ResizeHandle = document.createElement("div");
             a1ResizeHandle.className = "absolute bottom-0 left-0 right-0 h-1 cursor-s-resize hover:bg-[var(--accent-primary)] z-40 transition-colors";
             a1ResizeHandle.addEventListener("mousedown", (e) => startDrag(e, null, "resize-track", "a1"));
@@ -19809,11 +20065,42 @@
           a1Fragment.appendChild(a1Block);
         }
       });
+      } finally {
+        window.__voxRenderCache = null;
+      }
+
+      if (isPartial) {
+        const newEls = [...tableFragment.children, ...t1Fragment.children, ...a1Fragment.children];
+        const olds = newEls.map((el) => (el.tagName === "TR" ? subtitleTableBody.querySelector(`tr[data-id="${CSS.escape(el.getAttribute("data-id") || "")}"]`) : el.id ? document.getElementById(el.id) : null));
+        // Anything we can't match 1:1 (block appeared/disappeared) -> safe full render.
+        const expectedOlds = [...onlyIds].reduce((n, id) => n + (document.getElementById(`ui-t1-${id}`) ? 1 : 0) + (document.getElementById(`ui-a1-${id}`) ? 1 : 0) + (subtitleTableBody.querySelector(`tr[data-id="${CSS.escape(id)}"]`) ? 1 : 0), 0);
+        if (olds.some((o) => !o) || expectedOlds !== newEls.length) return renderSubtitles();
+        // Table rows are restyled in place: inserting a <tr> makes the browser
+        // re-layout the whole table (~0.5s at 2000 rows). Timeline blocks are cheap to swap.
+        const selSetNow = new Set(selectedItems);
+        const iconNodes = newEls.filter((el) => el.tagName !== "TR").flatMap((el) => [...el.querySelectorAll("[data-lucide]")]);
+        newEls.forEach((el, i) => {
+          if (el.tagName === "TR") {
+            const id = el.getAttribute("data-id");
+            applyRowSelectionStyle(olds[i], selSetNow.has(`text-${id}`) || selSetNow.has(`audio-${id}`));
+          } else {
+            olds[i].replaceWith(el);
+          }
+        });
+        if (masterCheckbox && !masterCheckbox.disabled) {
+          const selSet = new Set(selectedItems);
+          masterCheckbox.checked = subtitles.every((s) => selSet.has(`text-${s.id}`));
+        }
+        if (window.lucide && iconNodes.length) _lucideCreateIcons({ nodes: iconNodes });
+        if (typeof updateGenerateAllButtonState === "function") updateGenerateAllButtonState();
+        return;
+      }
 
       // Flush all fragments to DOM in one shot — single reflow for entire render
       subtitleTableBody.appendChild(tableFragment);
       trackT1.appendChild(t1Fragment);
       trackA1.appendChild(a1Fragment);
+      rowWindowReset();
 
       // --- Render preserved orphan/detached audio clips — fully normal, draggable A1 blocks ---
       trackA1.querySelectorAll(".detached-audio-item").forEach((el) => el.remove());
@@ -19945,6 +20232,165 @@
       if (typeof updateGenerateAllButtonState === "function") {
         updateGenerateAllButtonState();
       }
+    };
+
+    // --- ROW WINDOWING (long projects) ---
+    // A 1-2 hour drama has 2000-4000 lines. Every <tr> stays in the DOM (so lookups by
+    // data-id and per-row handlers keep working), but rows far from the visible area get
+    // display:none and two spacer rows keep the scroll height. Hidden rows cost no
+    // style/layout/paint; with all rows laid out, playback and scrolling stuttered.
+    // Function declarations (hoisted) because renderSubtitles can run during startup.
+    var ROW_WINDOW_MIN_ROWS = 250;
+    var ROW_WINDOW_BUFFER = 30;
+    function rowWindowState() {
+      if (!window.__rowWindow) {
+        window.__rowWindow = { enabled: false, rows: [], heights: [], measured: [], tall: [], avgTall: 69, avgShort: 45, first: 0, last: -1, top: null, bottom: null, scroller: null, rafPending: false };
+      }
+      return window.__rowWindow;
+    }
+    function rowWindowHeight(st, i) {
+      return st.measured[i] ? st.heights[i] : st.tall[i] ? st.avgTall : st.avgShort;
+    }
+    function rowWindowReset() {
+      const st = rowWindowState();
+      const body = document.getElementById("subtitle-table-body");
+      if (!body) return;
+      if (!st.scroller) {
+        st.scroller = body.closest(".overflow-y-auto");
+        if (st.scroller) {
+          st.scroller.addEventListener("scroll", () => {
+            if (!st.enabled || st.rafPending) return;
+            st.rafPending = true;
+            requestAnimationFrame(() => {
+              st.rafPending = false;
+              rowWindowUpdate();
+            });
+          }, { passive: true });
+        }
+      }
+      body.querySelectorAll(":scope > tr.row-window-spacer").forEach((el) => el.remove());
+      st.rows = [...body.querySelectorAll(":scope > tr.subtitle-row")];
+      st.enabled = !!st.scroller && st.rows.length >= ROW_WINDOW_MIN_ROWS;
+      if (!st.enabled) {
+        st.rows.forEach((r) => (r.style.display = ""));
+        return;
+      }
+      const n = st.rows.length;
+      st.heights = new Array(n).fill(0);
+      st.measured = new Array(n).fill(false);
+      // Rows that show the original-language line above the Khmer text are taller.
+      st.tall = st.rows.map((r) => !!r.querySelector("td:nth-child(4) > div.font-mono"));
+      const makeSpacer = () => {
+        const tr = document.createElement("tr");
+        tr.className = "row-window-spacer";
+        tr.setAttribute("aria-hidden", "true");
+        tr.innerHTML = '<td colspan="6" style="padding:0;border:0;height:0"></td>';
+        return tr;
+      };
+      st.top = makeSpacer();
+      st.bottom = makeSpacer();
+      body.insertBefore(st.top, body.firstChild);
+      body.appendChild(st.bottom);
+      st.rows.forEach((r) => (r.style.display = "none"));
+      st.first = 0;
+      st.last = -1;
+      rowWindowUpdate();
+    }
+    function rowWindowUpdate() {
+      const st = rowWindowState();
+      if (!st.enabled || !st.top || !st.top.isConnected) return;
+      const n = st.rows.length;
+      const prefix = () => {
+        const pre = new Float64Array(n + 1);
+        for (let i = 0; i < n; i++) pre[i + 1] = pre[i] + rowWindowHeight(st, i);
+        return pre;
+      };
+      let pre = prefix();
+      const headH = st.top.offsetTop; // table header height above the first body row
+      const viewTop = st.scroller.scrollTop - headH;
+      const viewBottom = viewTop + st.scroller.clientHeight;
+      const firstAt = (y) => {
+        let lo = 0, hi = n - 1;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          if (pre[mid + 1] > y) hi = mid; else lo = mid + 1;
+        }
+        return lo;
+      };
+      const first = Math.max(0, firstAt(viewTop) - ROW_WINDOW_BUFFER);
+      const last = Math.min(n - 1, firstAt(viewBottom) + ROW_WINDOW_BUFFER);
+      if (first === st.first && last === st.last) { st.settle = 0; return; }
+      for (let i = st.first; i <= st.last; i++) if (i < first || i > last) st.rows[i].style.display = "none";
+      for (let i = first; i <= last; i++) if (i < st.first || i > st.last) st.rows[i].style.display = "";
+      st.first = first;
+      st.last = last;
+      // Measure newly shown rows (one layout of ~100 rows) and refine the estimates.
+      let changed = false, tallSum = 0, tallN = 0, shortSum = 0, shortN = 0;
+      for (let i = first; i <= last; i++) {
+        if (!st.measured[i]) {
+          st.heights[i] = st.rows[i].offsetHeight;
+          st.measured[i] = st.heights[i] > 0;
+          changed = true;
+        }
+        if (st.measured[i]) {
+          if (st.tall[i]) { tallSum += st.heights[i]; tallN++; } else { shortSum += st.heights[i]; shortN++; }
+        }
+      }
+      if (tallN) st.avgTall = tallSum / tallN;
+      if (shortN) st.avgShort = shortSum / shortN;
+      if (changed) pre = prefix();
+      st.top.firstChild.style.height = `${pre[first]}px`;
+      st.bottom.firstChild.style.height = `${pre[n] - pre[last + 1]}px`;
+      // Real heights replaced estimates, so the scroll height moved: settle on the next
+      // frame (e.g. after jumping to the end, the last rows must actually be shown).
+      if (changed && (st.settle = (st.settle || 0) + 1) <= 4) requestAnimationFrame(rowWindowUpdate);
+      else if (!changed) st.settle = 0;
+    }
+    // Call before scrollIntoView on a row: a hidden row has no box to scroll to.
+    function rowWindowReveal(tr) {
+      const st = rowWindowState();
+      if (!st.enabled || !tr || tr.style.display !== "none") return;
+      const i = st.rows.indexOf(tr);
+      if (i < 0) return;
+      let offset = 0;
+      for (let k = 0; k < i; k++) offset += rowWindowHeight(st, k);
+      st.scroller.scrollTop = st.top.offsetTop + offset - st.scroller.clientHeight / 2;
+      rowWindowUpdate();
+    }
+
+    // Must mirror the selected/unselected classes used in renderSubtitles' row template.
+    const ROW_SELECTION_CLASSES = [
+      [null, ["bg-[var(--bg-hover)]", "border-[var(--accent-primary)]"], ["border-transparent"]],
+      ["td:nth-child(2), td:nth-child(3)", ["text-[var(--accent-text)]", "font-semibold"], ["text-[var(--text-secondary)]"]],
+      [".subtitle-text-input", ["text-[var(--text-bright)]"], ["text-[var(--text-primary)]"]],
+      ["td:last-child > span", ["text-[var(--text-primary)]", "font-semibold"], ["text-[var(--text-muted)]"]],
+      ["td:last-child .animate-spin", ["text-[var(--accent-primary)]"], ["text-[var(--accent-text)]"]],
+      [".btn-play-tts", ["bg-[var(--accent-primary)]/[0.15]", "text-[var(--accent-primary)]", "border-[var(--accent-primary)]/30", "hover:bg-[var(--accent-primary)]/20"], ["bg-[var(--bg-hover)]", "text-[var(--accent-text)]", "border-[var(--border-light)]", "hover:brightness-110"]],
+    ];
+    const applyRowSelectionStyle = (tr, isSelected) => {
+      if (!tr) return;
+      for (const [sel, on, off] of ROW_SELECTION_CLASSES) {
+        const els = sel ? tr.querySelectorAll(sel) : [tr];
+        els.forEach((el) => {
+          el.classList.remove(...(isSelected ? off : on));
+          el.classList.add(...(isSelected ? on : off));
+        });
+      }
+      const cb = tr.querySelector(".row-checkbox");
+      if (cb) cb.checked = isSelected;
+    };
+
+    // Re-render only the rows whose selection state changed since `prevSelected`.
+    const refreshSelection = (prevSelected) => {
+      const before = new Set(prevSelected || []);
+      const after = new Set(selectedItems);
+      if ([...before, ...after].some((k) => String(k).startsWith("detached-"))) return renderSubtitles();
+      const changed = new Set();
+      for (const k of before) if (!after.has(k)) changed.add(String(k).replace(/^(text|audio)-/, ""));
+      for (const k of after) if (!before.has(k)) changed.add(String(k).replace(/^(text|audio)-/, ""));
+      if (changed.size === 0) return;
+      if (changed.size > 300) return renderSubtitles();
+      renderSubtitles(changed);
     };
 
     // T1 Action: Clear all subtitles
@@ -20232,52 +20678,323 @@
       }
     };
 
-    async function applyPreviewProxyInBackground(proj, filePath) {
+    // Any-format playback. The backend probes the file; if Chromium can't play it
+    // (AVI/WMV/TS/FLV/MPG, AC3/DTS/TrueHD/WMA audio, ProRes/MPEG-2/Xvid video...) it
+    // builds a playable preview copy. Export and transcription keep using the original.
+    const swapToPreview = (proj, previewUrl) => {
+      const url = previewUrl.startsWith("http") ? previewUrl : `http://localhost:3001${previewUrl}`;
+      proj.previewBlobUrl = url;
+      if (projects[activeProjectIndex] === proj && mainVideo) {
+        const resumeTime = mainVideo.currentTime || 0;
+        const wasPlaying = !mainVideo.paused;
+        mainVideo.src = url;
+        mainVideo.addEventListener(
+          "loadedmetadata",
+          function restorePreviewTime() {
+            mainVideo.currentTime = resumeTime;
+            if (wasPlaying) mainVideo.play().catch(() => {});
+          },
+          { once: true },
+        );
+      }
+    };
+
+    const setPreviewBadge = (proj, text) => {
+      proj._previewBadgeText = text || null;
+      if (projects[activeProjectIndex] !== proj) return;
+      let badge = document.getElementById("preview-convert-badge");
+      if (!text) {
+        if (badge) badge.remove();
+        return;
+      }
+      if (!badge) {
+        badge = document.createElement("div");
+        badge.id = "preview-convert-badge";
+        badge.className = "absolute left-2 top-2 z-40 px-2 py-1 rounded-md text-[11px] font-medium bg-black/70 text-white pointer-events-none";
+        mainVideo.parentElement?.appendChild(badge);
+      }
+      badge.textContent = text;
+    };
+
+    window.__setPreviewBadge = setPreviewBadge;
+
+    async function applyPreviewProxyInBackground(proj, filePath, force = null) {
+      if (!force) proj._previewPending = true;
       try {
         const checkRes = await fetch("http://localhost:3001/api/check-video-preview", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ filePath }),
+          body: JSON.stringify({ filePath, force }),
         });
         const checkData = await checkRes.json();
-        if (checkData.success && checkData.needsConversion && checkData.previewUrl) {
-          proj.previewBlobUrl = checkData.previewUrl;
-          if (projects[activeProjectIndex] === proj && mainVideo) {
-            const resumeTime = mainVideo.currentTime || 0;
-            mainVideo.src = checkData.previewUrl;
-            mainVideo.addEventListener(
-              "loadedmetadata",
-              function restorePreviewTime() {
-                mainVideo.currentTime = resumeTime;
-                mainVideo.removeEventListener("loadedmetadata", restorePreviewTime);
-              },
-              { once: true },
-            );
-          }
-        } else if (checkData.success && checkData.replaced) {
-          // File was fixed/remuxed IN PLACE — same path, new bytes on disk.
-          // Browsers won't reload a <video> if the src string is unchanged,
-          // so bust the cache by re-deriving the file:// URL with a fresh
-          // timestamp query param, forcing it to actually re-read the file.
-          const freshUrl = proj.blobUrl.split("?")[0] + "?t=" + Date.now();
-          proj.blobUrl = freshUrl;
-          if (projects[activeProjectIndex] === proj && mainVideo) {
-            const resumeTime = mainVideo.currentTime || 0;
-            mainVideo.src = freshUrl;
-            mainVideo.addEventListener(
-              "loadedmetadata",
-              function restoreReplacedTime() {
-                mainVideo.currentTime = resumeTime;
-                mainVideo.removeEventListener("loadedmetadata", restoreReplacedTime);
-              },
-              { once: true },
-            );
-          }
+        if (!force) proj._previewPending = false;
+        if (!checkData.success) {
+          if (checkData.error && force) showToast(`Cannot preview this file: ${checkData.error}`, "error");
+          return;
         }
+        proj._mediaInfo = checkData.media || null;
+        if (checkData.unsupported) {
+          showToast(`This file has no playable audio or video (${checkData.reason}).`, "error");
+          return;
+        }
+        if (!checkData.needsConversion) {
+          // The player failed while we were still checking: now act on it.
+          const pendingForce = !force && proj._pendingForce;
+          proj._pendingForce = null;
+          if (pendingForce) requestForcedPreview(proj, pendingForce);
+          return;
+        }
+        proj._pendingForce = null;
+        if (checkData.ready && checkData.previewUrl) {
+          swapToPreview(proj, checkData.previewUrl);
+          return;
+        }
+
+        const label = checkData.action === "video" ? "Converting video for preview" : /damaged/i.test(checkData.reason || "") ? "Repairing damaged audio for preview" : checkData.action === "audio" ? `Converting ${checkData.reason} for preview` : "Preparing preview";
+        if (projects[activeProjectIndex] === proj) {
+          showToast(`${checkData.reason} can't play directly - making a playable preview. Export still uses the original file.`, "info");
+        }
+        setPreviewBadge(proj, `${label}…`);
+        proj._previewJobId = checkData.jobId;
+        while (proj._previewJobId === checkData.jobId) {
+          await new Promise((r) => setTimeout(r, 1000));
+          if (!projects.includes(proj)) {
+            fetch("http://localhost:3001/api/cancel-preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jobId: checkData.jobId }) }).catch(() => {});
+            return;
+          }
+          const st = await (await fetch(`http://localhost:3001/api/preview-status?jobId=${encodeURIComponent(checkData.jobId)}`)).json();
+          if (!st.success || st.status === "error" || st.status === "cancelled") {
+            setPreviewBadge(proj, null);
+            if (st.status !== "cancelled") showToast(`Preview conversion failed${st.error ? `: ${st.error}` : ""}. Export still works from the original file.`, "error");
+            break;
+          }
+          if (st.status === "done" && st.previewUrl) {
+            setPreviewBadge(proj, null);
+            swapToPreview(proj, st.previewUrl);
+            if (projects[activeProjectIndex] === proj) showToast("Preview ready ✓", "success");
+            break;
+          }
+          setPreviewBadge(proj, `${label}… ${st.percent || 0}%`);
+        }
+        proj._previewJobId = null;
       } catch (e) {
+        if (!force) proj._previewPending = false;
+        setPreviewBadge(proj, null);
         console.warn("[Preview Check] Skipped, backend unreachable:", e.message);
       }
     }
+
+    // Safety net: if the player still can't decode the original (e.g. HEVC on a PC
+    // without GPU decode, a codec variant we assumed was fine), convert it once.
+    const requestForcedPreview = (proj, what) => {
+      if (!proj || !proj.videoFilePath || proj.previewBlobUrl || proj._previewJobId || proj._forcedPreview) return;
+      // The initial format check is still running and will usually convert anyway.
+      if (proj._previewPending) {
+        proj._pendingForce = proj._pendingForce || what;
+        return;
+      }
+      proj._forcedPreview = what;
+      console.warn(`[Preview] Player could not decode ${what} - converting.`);
+      applyPreviewProxyInBackground(proj, proj.videoFilePath, what);
+    };
+    mainVideo.addEventListener("error", () => {
+      const proj = projects[activeProjectIndex];
+      const err = mainVideo.error;
+      // Only real decode/format errors on this project's original file (clearing src also fires "error").
+      if (!proj || proj.previewBlobUrl || !err || err.code === MediaError.MEDIA_ERR_ABORTED) return;
+      if (!proj.blobUrl || !mainVideo.currentSrc || !mainVideo.currentSrc.startsWith(proj.blobUrl.split("?t=")[0])) return;
+      requestForcedPreview(proj, "video");
+    });
+    mainVideo.addEventListener("playing", () => {
+      const proj = projects[activeProjectIndex];
+      if (!proj || proj.previewBlobUrl || proj._forcedPreview || !proj._mediaInfo) return;
+      const startedAt = mainVideo.currentTime;
+      setTimeout(() => {
+        if (projects[activeProjectIndex] !== proj || mainVideo.paused || mainVideo.currentTime - startedAt < 0.8) return;
+        if (proj._mediaInfo.hasVideo && mainVideo.webkitVideoDecodedByteCount === 0) requestForcedPreview(proj, "video");
+        else if (proj._mediaInfo.hasAudio && mainVideo.webkitAudioDecodedByteCount === 0) requestForcedPreview(proj, "audio");
+      }, 1500);
+    });
+
+    // ── Join Episodes ──────────────────────────────────────────────────────
+    (() => {
+      const $ = (id) => document.getElementById(id);
+      const modal = $("modal-join-episodes");
+      if (!modal) return;
+      const fmtDur = (sec) => {
+        const s = Math.round(sec || 0), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+        return h ? `${h}:${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}` : `${m}:${String(r).padStart(2, "0")}`;
+      };
+      const pathJoin = (dir, name) => (dir.includes("\\") ? `${dir}\\${name}` : `${dir}/${name}`);
+      const epLabel = (f) => (f.episode !== null && f.episode !== undefined ? `EP${f.episode}` : f.name);
+      let scan = null, parts = [], outDir = "", jobId = null, results = null;
+
+      // Greedy grouping by target length; a tiny last part is merged into the one before.
+      const planParts = () => {
+        const target = Math.max(5, parseFloat($("je-minutes").value) || 60) * 60;
+        const files = (scan?.files || []).filter((f) => !f.error);
+        const out = [];
+        let cur = [], dur = 0;
+        for (const f of files) {
+          if (cur.length && (dur + f.duration > target * 1.08 || cur.length >= 80)) { out.push(cur); cur = []; dur = 0; }
+          cur.push(f); dur += f.duration;
+        }
+        if (cur.length) out.push(cur);
+        if (out.length > 1) {
+          const last = out[out.length - 1], lastDur = last.reduce((s, f) => s + f.duration, 0);
+          const prev = out[out.length - 2];
+          if (lastDur < target * 0.35 && prev.length + last.length <= 80) out.splice(out.length - 2, 2, prev.concat(last));
+        }
+        return out;
+      };
+
+      const renderParts = (status) => {
+        const box = $("je-parts");
+        box.innerHTML = "";
+        parts.forEach((p, i) => {
+          const dur = p.reduce((s, f) => s + f.duration, 0);
+          const st = status?.parts?.[i];
+          const row = document.createElement("div");
+          row.className = "flex items-center gap-3 px-3 py-2 rounded-lg bg-[var(--bg-base)] border border-[var(--border-color)] text-xs";
+          const pct = st ? st.percent || 0 : 0;
+          const state = !st ? "" : st.status === "done" ? `<span class="text-emerald-400">✓ done${st.videoMode === "converted" ? " (video converted)" : ""}</span>` : st.status === "error" ? `<span class="text-red-400" title="${(st.error || "").replace(/"/g, "&quot;")}">failed</span>` : st.status === "running" ? `<span class="text-sky-400">${pct}%</span>` : st.status === "cancelled" ? `<span class="text-[var(--text-muted)]">stopped</span>` : `<span class="text-[var(--text-muted)]">waiting</span>`;
+          row.innerHTML = `<span class="font-semibold w-14 shrink-0">Part ${i + 1}</span>
+            <span class="truncate flex-1">${epLabel(p[0])} – ${epLabel(p[p.length - 1])} · ${p.length} episodes</span>
+            <span class="font-mono text-[var(--text-secondary)] shrink-0">${fmtDur(dur)}</span>
+            <span class="w-40 text-right shrink-0">${state}</span>`;
+          if (st && st.status === "running") {
+            const bar = document.createElement("div");
+            bar.className = "h-1 rounded bg-sky-500/70 transition-all";
+            bar.style.width = `${pct}%`;
+            const wrap = document.createElement("div");
+            wrap.className = "w-full";
+            wrap.appendChild(bar);
+            const outer = document.createElement("div");
+            outer.className = "flex flex-col gap-1";
+            outer.appendChild(row);
+            outer.appendChild(wrap);
+            box.appendChild(outer);
+          } else box.appendChild(row);
+        });
+        $("je-start").textContent = jobId ? "Stop" : `Join ${parts.length} part${parts.length === 1 ? "" : "s"}`;
+        $("je-start").disabled = !jobId && (!parts.length || !!results);
+      };
+
+      const refreshPlan = () => {
+        if (!scan || jobId || results) return;
+        parts = planParts();
+        renderParts(null);
+      };
+
+      const open = () => {
+        modal.classList.remove("hidden");
+        if (window.lucide) _lucideCreateIcons({ root: modal });
+      };
+      const close = () => {
+        if (jobId) { showToast("Joining continues in the background. Reopen Join Episodes to see progress.", "info"); }
+        modal.classList.add("hidden");
+      };
+
+      $("btn-join-episodes")?.addEventListener("click", open);
+      $("je-close").addEventListener("click", close);
+      modal.addEventListener("click", close);
+      $("je-minutes").addEventListener("input", refreshPlan);
+      $("je-minutes").addEventListener("change", (e) => {
+        e.target.value = String(Math.min(180, Math.max(5, Math.round(parseFloat(e.target.value) || 60))));
+        refreshPlan();
+      });
+
+      $("je-pick").addEventListener("click", async () => {
+        if (jobId) return;
+        const res = await window.electronAPI?.selectFolder?.({ title: "Choose the folder with the episodes", defaultPath: localStorage.getItem("lastPath:joinEpisodes") || "" });
+        if (!res || res.canceled || !res.path) return;
+        localStorage.setItem("lastPath:joinEpisodes", res.path);
+        $("je-folder").textContent = res.path;
+        $("je-stats").textContent = "Reading episodes…";
+        $("je-summary").classList.remove("hidden");
+        $("je-summary").classList.add("flex");
+        $("je-parts").innerHTML = "";
+        results = null;
+        $("je-open").classList.add("hidden");
+        $("je-load").classList.add("hidden");
+        try {
+          const r = await (await fetch("http://localhost:3001/api/episodes/scan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ folder: res.path }) })).json();
+          if (!r.success) throw new Error(r.error);
+          scan = r;
+          const usable = r.files.filter((f) => !f.error).length;
+          if (!usable) throw new Error("No video files found in this folder.");
+          $("je-stats").textContent = `${usable} episodes · ${fmtDur(r.totalDuration)} total`;
+          const warn = $("je-warnings");
+          warn.innerHTML = r.warnings.map((w) => `⚠ ${w}`).join("<br>");
+          warn.classList.toggle("hidden", !r.warnings.length);
+          $("je-name").value = r.seriesName;
+          outDir = pathJoin(res.path, "DR Dubber Joined");
+          $("je-out").textContent = outDir;
+          refreshPlan();
+        } catch (e) {
+          $("je-stats").textContent = `Could not read the folder: ${e.message}`;
+          scan = null;
+          parts = [];
+          renderParts(null);
+        }
+      });
+
+      $("je-out-pick").addEventListener("click", async () => {
+        if (jobId) return;
+        const res = await window.electronAPI?.selectFolder?.({ title: "Save joined parts to", defaultPath: outDir });
+        if (res && !res.canceled && res.path) { outDir = res.path; $("je-out").textContent = outDir; }
+      });
+
+      $("je-start").addEventListener("click", async () => {
+        if (jobId) {
+          await fetch("http://localhost:3001/api/episodes/cancel", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jobId }) }).catch(() => {});
+          return;
+        }
+        if (!parts.length) return;
+        const r = await (await fetch("http://localhost:3001/api/episodes/join", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ parts: parts.map((p) => p.map((f) => f.path)), outDir, seriesName: $("je-name").value || scan.seriesName }),
+        })).json();
+        if (!r.success) { showToast(`Join failed: ${r.error}`, "error"); return; }
+        jobId = r.jobId;
+        renderParts({ parts: [] });
+        let st = null;
+        while (jobId) {
+          await new Promise((res) => setTimeout(res, 1000));
+          st = await (await fetch(`http://localhost:3001/api/episodes/status?jobId=${encodeURIComponent(jobId)}`)).json().catch(() => null);
+          if (!st || !st.success) break;
+          renderParts(st);
+          if (st.status !== "running") break;
+        }
+        jobId = null;
+        results = st;
+        renderParts(st);
+        const done = (st?.parts || []).filter((p) => p.status === "done");
+        if (done.length) {
+          $("je-open").classList.remove("hidden");
+          $("je-load").classList.remove("hidden");
+        }
+        const failed = (st?.parts || []).filter((p) => p.status === "error");
+        const repaired = st?.repairedEpisodes?.length ? ` Repaired damaged audio in ${st.repairedEpisodes.length} episode(s).` : "";
+        if (st?.status === "cancelled") showToast("Joining stopped.", "info");
+        else if (failed.length) showToast(`${done.length} part(s) joined, ${failed.length} failed: ${failed[0].error}`, "error");
+        else showToast(`Joined ${done.length} part(s) ✓ Each part has an _episodes.txt with episode start times.${repaired}`, "success");
+      });
+
+      $("je-open").addEventListener("click", () => {
+        window.electronAPI?.openExternal?.("file://" + encodeURI(outDir.replace(/\\/g, "/")));
+      });
+
+      $("je-load").addEventListener("click", () => {
+        const done = (results?.parts || []).filter((p) => p.status === "done");
+        if (!done.length) return;
+        loadVideoFiles(done.map((p) => {
+          const name = p.outPath.split(/[\\/]/).pop();
+          return { name, path: p.outPath, url: `http://localhost:3001/api/audio?path=${encodeURIComponent(p.outPath)}` };
+        }));
+        modal.classList.add("hidden");
+      });
+    })();
 
     async function loadVideoFiles(files) {
       const remaining = 9 - projects.length;
@@ -20313,13 +21030,16 @@
         const proj = createEmptyProjectState(isElectronFile ? { name: f.name } : f);
         proj.blobUrl = blobUrl;
         proj.previewBlobUrl = null;
-        // Keep the real on-disk path so we can save the Whisper .srt next to the video
-        proj.videoFilePath = isElectronFile && f.path ? f.path : null;
+        // Keep the real on-disk path so we can save the Whisper .srt next to the video.
+        // Electron also exposes .path on File objects from the file input, so those get
+        // the same any-format preview and path-based (no-upload) transcription/export.
+        const diskPath = typeof f.path === "string" && f.path ? f.path : null;
+        proj.videoFilePath = diskPath;
 
-        // Fire-and-forget — never blocks the load. Self-heals to a proxy a
-        // moment later if the codec/audio profile turns out to be incompatible.
-        if (isElectronFile && f.path) {
-          applyPreviewProxyInBackground(proj, f.path);
+        // Fire-and-forget — never blocks the load. Swaps to a playable preview copy
+        // if the container/codec can't play directly.
+        if (diskPath) {
+          applyPreviewProxyInBackground(proj, diskPath);
         }
 
         proj.videoFileName = (f.name || "video").replace(/\.[^/.]+$/, "") + "_subtitles.srt";
@@ -23403,9 +24123,10 @@
       }
     });
 
-    document.getElementById("a1-audio-upload").addEventListener("change", function (e) {
-      const files = Array.from(e.target.files);
-      if (!files.length) return;
+    document.getElementById("a1-audio-upload").addEventListener("change", async function (e) {
+      const rawFiles = Array.from(e.target.files);
+      if (!rawFiles.length) return;
+      const rawFirstPath = rawFiles[0].path || null;
 
       if (!subtitles || subtitles.length === 0) {
         showToast("Add subtitles to T1 first before loading A1 audio.", "warning");
@@ -23413,9 +24134,12 @@
         return;
       }
 
+      // Unplayable formats come back converted to .m4a (see ensurePlayableAudioFile).
+      const files = await Promise.all(rawFiles.map(ensurePlayableAudioFile));
+
       // Save last used path for web-input fallback (Electron path saved in click handler)
       const firstFile = files[0];
-      const diskPath = firstFile.path || null;
+      const diskPath = rawFirstPath;
       if (diskPath) {
         const dir = diskPath.includes("\\") ? diskPath.substring(0, diskPath.lastIndexOf("\\")) : diskPath.substring(0, diskPath.lastIndexOf("/"));
         localStorage.setItem(LS_A1_LAST_PATH, dir);
@@ -23846,9 +24570,41 @@
 
     // Handle BGM File Upload
     // Handle BGM File Upload (CONCURRENCY FIX)
-    bgmUploadInput.addEventListener("change", (e) => {
-      const file = e.target.files[0];
-      if (!file || activeProjectIndex === -1) return;
+    // Returns a File the browser can decode. Audio it can't (WMA/AC3/E-AC3/DTS/AIFF/ALAC/
+    // MP2/AMR...) is converted by the backend and handed back as an AAC .m4a File, so the
+    // BGM/A1 code paths (blob URLs, uploads on export) work unchanged.
+    async function ensurePlayableAudioFile(file) {
+      const diskPath = file && typeof file.path === "string" && file.path ? file.path : null;
+      if (!diskPath) return file;
+      try {
+        const post = (url, body) => fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then((r) => r.json());
+        const r = await post("http://localhost:3001/api/check-video-preview", { filePath: diskPath });
+        if (!r.success || !r.needsConversion) return file;
+        let url = r.previewUrl;
+        if (!r.ready) {
+          showToast(`Converting ${r.reason} of "${file.name}" so it can play…`, "info");
+          for (;;) {
+            await new Promise((res) => setTimeout(res, 500));
+            const st = await (await fetch(`http://localhost:3001/api/preview-status?jobId=${encodeURIComponent(r.jobId)}`)).json();
+            if (st.status === "done") { url = st.previewUrl; break; }
+            if (!st.success || st.status === "error" || st.status === "cancelled") {
+              showToast(`Could not convert "${file.name}"${st.error ? `: ${st.error}` : ""}`, "error");
+              return file;
+            }
+          }
+        }
+        const blob = await (await fetch(`http://localhost:3001${url}`)).blob();
+        return new File([blob], file.name.replace(/\.[^.]+$/, "") + ".m4a", { type: "audio/mp4" });
+      } catch (e) {
+        console.warn("[Audio convert] skipped:", e.message);
+        return file;
+      }
+    }
+
+    bgmUploadInput.addEventListener("change", async (e) => {
+      if (!e.target.files[0] || activeProjectIndex === -1) return;
+      const file = await ensurePlayableAudioFile(e.target.files[0]);
+      if (activeProjectIndex === -1) return;
 
       const targetProject = projects[activeProjectIndex]; // Lock the specific project
 
@@ -23859,8 +24615,10 @@
 
       const src = URL.createObjectURL(file);
       const tempAudio = new Audio(src);
+      tempAudio.onerror = () => showToast(`"${file.name}" can't be played as background music.`, "error");
 
       tempAudio.onloadedmetadata = () => {
+        tempAudio.onerror = null; // clearing src below fires a harmless error event
         const videoDuration = typeof duration !== "undefined" && duration > 0 ? duration : Infinity;
         targetProject.bgmTrack = {
           src,
@@ -25957,7 +26715,20 @@
             _lucideCreateIcons();
           }, 10);
         };
-        document.getElementById("btn-open-title-ai")?.addEventListener("click", openTitleAiDrawer);
+        document.getElementById("btn-open-title-ai")?.addEventListener("click", () => {
+          const row = document.getElementById("title-ai-project-row");
+          const note = document.getElementById("title-ai-project-note");
+          const n = Array.isArray(subtitles) ? subtitles.filter((s) => (s.text || s.originalText)).length : 0;
+          if (row && note) {
+            row.classList.toggle("hidden", !n);
+            row.classList.toggle("flex", !!n);
+            note.textContent = `Read the story from the open project (${n} lines)`;
+          }
+          const input = document.getElementById("title-ai-input");
+          const proj = projects[activeProjectIndex];
+          if (input && !input.value && proj?.file?.name) input.placeholder = proj.file.name.replace(/\.[^.]+$/, "");
+          openTitleAiDrawer();
+        });
 
         const renderTitleAiFileList = () => {
           const wrap = document.getElementById("title-ai-file-list");
@@ -26006,6 +26777,11 @@
           lines.push(`Original Title: ${titleAiOriginalTitle}`);
           lines.push(`Generated: ${new Date().toLocaleString()}`);
           lines.push("");
+          if (window.__titleAiSynopsis) {
+            lines.push("Synopsis:");
+            lines.push(window.__titleAiSynopsis);
+            lines.push("");
+          }
 
           titleAiSuggestions.forEach((s, idx) => {
             lines.push(`${idx + 1}. ${s.khmerTitle || ""}${s.englishTitle ? ` (${s.englishTitle})` : ""}`);
@@ -26045,8 +26821,10 @@
           const exportBtn = document.getElementById("btn-title-ai-export");
           exportBtn.classList.add("hidden");
 
-          if (!originalTitle) {
-            showToast("សូមបញ្ចូលចំណងជើងរឿងដើម (Please enter the original movie title)", "error");
+          const useProject = document.getElementById("title-ai-use-project")?.checked !== false;
+          const projectSubtitles = useProject && Array.isArray(subtitles) ? subtitles.filter((s) => s.text || s.originalText).map((s) => ({ originalText: s.originalText || "", text: s.text || "" })) : [];
+          if (!originalTitle && !titleAiFiles.length && !projectSubtitles.length) {
+            showToast("សូមបញ្ចូលចំណងជើងរឿងដើម ឬ subtitle (Enter the original title, or open a project / add subtitle files)", "error");
             return;
           }
 
@@ -26089,29 +26867,30 @@
               subtitlesContent = (await Promise.all(readPromises)).join("\n\n");
             }
 
-            const activeModel = localStorage.getItem("aiDubberModel") || "gemini-3.8-flash";
+            const activeModel = localStorage.getItem("aiDubberModel") || "gemini-2.5-flash";
+            const keys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]").filter(Boolean);
+            if (!keys.length) throw new Error("Please enter your Gemini API Key in Settings ➔ General.");
             let suggestions = null;
+            let synopsis = "";
             let lastErrorType = "";
-
-            for (let i = 0; i < apiKeys.length; i++) {
-              const key = apiKeys[i];
-              try {
-                const res = await fetch("http://localhost:3001/api/suggest-movie-title", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ originalTitle, subtitlesContent, apiKey: key, model: activeModel }),
-                });
-                const data = await res.json();
-                if (!data.success) {
-                  if (data.error === "QUOTA_ZERO") throw new Error("QUOTA_ZERO");
-                  throw new Error(data.error || "TITLE_SUGGEST_FAILED");
-                }
-                suggestions = data.data;
-                break;
-              } catch (err) {
-                lastErrorType = err.message || "UNKNOWN_ERROR";
-                if (lastErrorType === "QUOTA_ZERO") break;
-              }
+            try {
+              // The server rotates through every key itself (and waits/retries if Google is busy).
+              const res = await fetch("http://localhost:3001/api/suggest-movie-title", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  originalTitle, subtitlesContent, projectSubtitles,
+                  genre: typeof activeDramaGenre !== "undefined" ? activeDramaGenre : "historical",
+                  glossary: typeof getDramaGlossaryDict === "function" ? getDramaGlossaryDict() : null,
+                  apiKey: keys[0], apiKeys: keys, model: activeModel, count: 8,
+                }),
+              });
+              const data = await res.json();
+              if (!data.success) throw new Error(data.error === "RATE_LIMIT_EXCEEDED" ? "All API keys are rate-limited - try again in a minute." : data.error === "INVALID_API_KEY" ? "API key is invalid - check Settings." : data.message || data.error || "TITLE_SUGGEST_FAILED");
+              suggestions = data.data;
+              synopsis = data.synopsis || "";
+            } catch (err) {
+              lastErrorType = err.message || "UNKNOWN_ERROR";
             }
 
             if (!Array.isArray(suggestions) || suggestions.length === 0) {
@@ -26120,10 +26899,23 @@
 
             resultsEl.innerHTML = "";
             titleAiSuggestions = suggestions;
-            titleAiOriginalTitle = originalTitle;
+            titleAiOriginalTitle = originalTitle || (projects[activeProjectIndex]?.file?.name || "").replace(/\.[^.]+$/, "");
+            window.__titleAiSynopsis = synopsis;
+            if (synopsis) {
+              const syn = document.createElement("div");
+              syn.className = "p-3 rounded-xl border border-[var(--accent-primary)]/30 bg-[var(--accent-primary)]/5 flex flex-col gap-1.5";
+              syn.innerHTML = `<div class="flex items-center justify-between"><span class="text-[10px] font-bold text-[var(--accent-primary)] tracking-wide">SYNOPSIS · សេចក្ដីសង្ខេប</span>
+                  <button class="title-ai-syn-copy text-[10px] px-1.5 py-0.5 rounded hover:bg-[var(--accent-primary)]/15 text-[var(--text-secondary)]">Copy</button></div>
+                <p class="font-khmer text-xs text-[var(--text-primary)] leading-relaxed"></p>`;
+              syn.querySelector("p").textContent = synopsis;
+              syn.querySelector(".title-ai-syn-copy").addEventListener("click", () => navigator.clipboard.writeText(synopsis).then(() => showToast("Copied to clipboard", "success")));
+              resultsEl.appendChild(syn);
+            }
             exportBtn.classList.remove("hidden");
             exportBtn.classList.add("flex");
-            suggestions.forEach((s, idx) => {
+            const esc = (v) => String(v || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+            suggestions.forEach((raw, idx) => {
+              const s = { ...raw, khmerTitle: esc(raw.khmerTitle), englishTitle: esc(raw.englishTitle), vibe: esc(raw.vibe), reasoning: esc(raw.reasoning) };
               const card = document.createElement("div");
               card.className = "title-ai-card group relative p-3 rounded-xl border border-[var(--border-light)] bg-[var(--bg-base)] flex flex-col gap-1 hover:border-[var(--accent-primary)]";
               card.style.opacity = "0";
@@ -26145,7 +26937,7 @@
               const copyBtn = card.querySelector(".title-ai-copy-btn");
               copyBtn.addEventListener("click", (e) => {
                 e.stopPropagation();
-                navigator.clipboard.writeText(s.khmerTitle || "").then(() => {
+                navigator.clipboard.writeText(raw.khmerTitle || "").then(() => {
                   const icon = copyBtn.querySelector("i, svg");
 
                   copyBtn.classList.add("scale-125");
@@ -29789,9 +30581,9 @@
 
     <div class="flex-1 overflow-y-auto custom-scrollbar p-4 flex flex-col gap-4">
       <div class="flex flex-col gap-1.5">
-        <label class="text-[11px] font-semibold text-[var(--text-secondary)]">ORIGINAL MOVIE TITLE *
+        <label class="text-[11px] font-semibold text-[var(--text-secondary)]">ORIGINAL MOVIE TITLE (OPTIONAL)
           (ចំណងជើងរឿងដើម)</label>
-        <input id="title-ai-input" type="text" placeholder="e.g. Avatar: The Way of Water"
+        <input id="title-ai-input" type="text" placeholder="e.g. 闪婚老公是豪门 / Flash Marriage with a Billionaire"
           class="w-full h-9 px-3 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)] text-sm text-[var(--text-primary)] focus:border-[var(--accent-primary)] outline-none" />
       </div>
 
@@ -29805,6 +30597,10 @@
           <span class="text-[10px] text-[var(--text-muted)]">Select 1 or more subtitle files to analyze dialogue</span>
         </div>
         <input type="file" id="title-ai-file-input" accept=".srt,.vtt" class="hidden" multiple />
+        <label id="title-ai-project-row" class="hidden items-center gap-2 text-[11px] text-[var(--text-secondary)] cursor-pointer select-none">
+          <input id="title-ai-use-project" type="checkbox" checked class="w-3.5 h-3.5" style="accent-color: var(--accent-primary)">
+          <span id="title-ai-project-note"></span>
+        </label>
         <div id="title-ai-file-list" class="flex flex-col gap-1 max-h-[172px] overflow-y-auto custom-scrollbar pr-1">
         </div>
       </div>

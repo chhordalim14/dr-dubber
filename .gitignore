@@ -57,3 +57,5 @@ yarn-error.log*
 ehthumbs.db
 Thumbs.db
 C:\\*
+storage/preview_cache/
+storage/audio_repair/
