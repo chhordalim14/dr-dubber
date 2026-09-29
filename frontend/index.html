@@ -2272,6 +2272,14 @@
               <span class="hidden sm:inline" id="text-fit-duration">Fit Audio Slot</span>
             </button>
 
+            <button id="btn-fix-fast-audio"
+              class="group h-8 px-2.5 sm:px-3 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 hover:border-amber-500/60 text-amber-400 hover:text-amber-300 shadow-sm active:scale-[0.95]"
+              title="Refactor Fast Audio: Scan & shorten dialogue where audio is sped up (2x, 3x) to restore natural 1.0x speed with AI.">
+              <i id="icon-fix-fast-audio" data-lucide="gauge" class="w-3.5 h-3.5 text-amber-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+              <span class="hidden sm:inline" id="text-fix-fast-audio">Fix Fast Audio</span>
+              <span id="badge-fast-subs-count" class="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">0</span>
+            </button>
+
             <div class="hidden sm:block h-4 w-px bg-[var(--border-color)]"></div>
 
             <!-- Generate Audio Single & All -->
@@ -3153,6 +3161,74 @@
         <button id="btn-confirm-edit-sub"
           class="bg-[var(--accent-primary)] text-white px-6 py-2 rounded-lg text-sm font-medium hover:brightness-110 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-lg active:scale-[0.95]">Save
           All Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── REFACTOR LONG SUBTITLES & FIX FAST AUDIO MODAL ── -->
+  <div id="modal-fix-fast-audio"
+    class="fixed inset-0 bg-black/75 backdrop-blur-md flex items-center justify-center z-[260] hidden opacity-0 transition-opacity duration-300"
+    onclick="closeFixFastAudioModal()">
+    <div
+      class="bg-[var(--bg-panel)] border border-[var(--border-light)] rounded-2xl w-[860px] max-w-[94vw] max-h-[88vh] shadow-2xl flex flex-col overflow-hidden text-[var(--text-primary)] transform scale-95 transition-transform duration-300"
+      onclick="event.stopPropagation()">
+      <!-- Header -->
+      <div class="shrink-0 flex justify-between items-center px-5 py-4 border-b border-[var(--border-color)] bg-[var(--bg-base)]">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-sm shrink-0">
+            <i data-lucide="gauge" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <div class="flex items-center gap-2">
+              <h2 class="text-[var(--text-bright)] font-bold text-base">Refactor Long Subtitles (Fix Fast Audio)</h2>
+              <span id="fast-modal-badge" class="px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">0 Lines</span>
+            </div>
+            <p class="text-xs text-[var(--text-secondary)] mt-0.5">Shorten dialogue that overflows its slot so speech returns to natural 1.0x tempo.</p>
+          </div>
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          <button id="btn-fast-condense-all"
+            class="h-8 px-3 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 shadow-sm shadow-amber-500/20 active:scale-[0.95] disabled:opacity-60 disabled:cursor-not-allowed"
+            title="Automatically rewrite all fast lines with Gemini to fit their slots">
+            <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+            <span>AI Shorten All</span>
+          </button>
+          <button id="btn-fast-revoice-all"
+            class="h-8 px-3 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm shadow-indigo-600/30 active:scale-[0.95] disabled:opacity-60 disabled:cursor-not-allowed"
+            title="Apply every shortened line and re-voice it at natural 1.0x speed (undoable)">
+            <i data-lucide="audio-lines" class="w-3.5 h-3.5"></i>
+            <span>Re-Voice All (1.0x)</span>
+          </button>
+          <button id="btn-close-fast-audio-modal" onclick="closeFixFastAudioModal()"
+            class="text-[var(--text-secondary)] hover:text-red-400 transition-all p-1.5 rounded-lg hover:bg-[var(--bg-hover)] ml-1">
+            <i data-lucide="x" class="w-5 h-5"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Filter / Legend Bar -->
+      <div class="shrink-0 px-5 py-2.5 bg-[var(--bg-panel)] border-b border-[var(--border-color)] flex items-center justify-between text-xs">
+        <div class="flex items-center gap-2">
+          <span class="text-[var(--text-secondary)]">Showing:</span>
+          <span id="fast-modal-filter-summary" class="font-medium text-[var(--text-primary)]">Lines needing ≥ 1.15x speed to fit their slot</span>
+        </div>
+        <div class="flex items-center gap-3 text-[11px] text-[var(--text-muted)]">
+          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-red-400 inline-block"></span> ≥ 1.8x (Critical)</span>
+          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-amber-400 inline-block"></span> 1.15x – 1.8x (Fast)</span>
+          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-400 inline-block"></span> ~ = estimated (no audio yet)</span>
+        </div>
+      </div>
+
+      <!-- Subtitle List Container -->
+      <div id="fast-audio-list" class="p-5 flex flex-col gap-3.5 flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+        <!-- Dynamic Cards rendered here -->
+      </div>
+
+      <!-- Footer -->
+      <div class="shrink-0 px-5 py-3 border-t border-[var(--border-color)] bg-[var(--bg-base)] flex justify-between items-center text-xs text-[var(--text-muted)]">
+        <span id="fast-modal-summary">Target: keep speech under 1.15x for natural sounding voices. All changes can be undone.</span>
+        <button onclick="closeFixFastAudioModal()"
+          class="px-4 py-1.5 rounded-lg border border-[var(--border-light)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-all font-medium">Done</button>
       </div>
     </div>
   </div>
@@ -20153,6 +20229,7 @@
         }
         if (window.lucide && iconNodes.length) _lucideCreateIcons({ nodes: iconNodes });
         if (typeof updateGenerateAllButtonState === "function") updateGenerateAllButtonState();
+        if (typeof updateFastAudioBadge === "function") updateFastAudioBadge();
         return;
       }
 
@@ -20291,6 +20368,9 @@
 
       if (typeof updateGenerateAllButtonState === "function") {
         updateGenerateAllButtonState();
+      }
+      if (typeof updateFastAudioBadge === "function") {
+        updateFastAudioBadge();
       }
     };
 
@@ -21711,6 +21791,625 @@
       });
     }
 
+    // ── 5. REFACTOR LONG SUBTITLES & FIX FAST AUDIO ENGINE ──────────────
+    // A line is "fast" when its voice needs >= FAST_SPEED_THRESHOLD playback speed to fit its text slot.
+    // Works on the live `subtitles` array (source of truth for the active project). Detection runs on
+    // every renderSubtitles(), so it stays O(n) with no sorting.
+    const FAST_SPEED_THRESHOLD = 1.15;
+    const FAST_SPEED_CRITICAL = 1.8;
+    const FAST_MAX_SPEED = 2.5;          // same ceiling as the timeline resize handles
+    const FAST_FIT_TOLERANCE = 0.1;      // seconds a 1.0x voice may run past its slot end
+    const FAST_EST_CHARS_PER_SEC = 12;   // natural pace estimate for lines without audio yet
+    const FAST_CONDENSE_CHUNK = 40;      // lines per Gemini request in "AI Shorten All"
+
+    const fastEscapeHtml = (str) => String(str ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+    const fastByStart = (a, b) => (parseFloat(a.textStart) || 0) - (parseFloat(b.textStart) || 0);
+    const findLiveSub = (id) => subtitles.find((s) => String(s.id) === String(id));
+    const getFastCard = (id) => document.querySelector(`#fast-audio-list [data-fast-card="${CSS.escape(String(id))}"]`);
+    const getFastProjectDuration = (proj) => (proj && proj.duration > 0 ? proj.duration : duration > 0 ? duration : Infinity);
+
+    const fastDrafts = new Map(); // String(subId) -> { text, from } — `from` is the sub.text the draft was made from
+    let fastDraftsProject = null;
+    let fastRevoiceBusy = false;
+    let fastCondenseEpoch = 0; // bumped on modal close to abandon in-flight "Shorten All" chunks
+    let fastModalHideTimer = null;
+    const fastCondenseRequestIds = new Set();
+
+    // Count base characters only (drops combining marks/spaces) so Khmer vowel signs don't inflate the estimate.
+    const fastSpokenLength = (text) => String(text || "").replace(/[\p{M}\s​-‍]/gu, "").length;
+
+    function analyzeSubPace(sub) {
+      const tStart = parseFloat(sub.textStart) || 0;
+      const tEnd = parseFloat(sub.textEnd) || 0;
+      const slot = Math.max(0.1, tEnd - tStart);
+      // Audio normally starts with its text; if it was dragged inside the slot, fit to what's left of it.
+      const rawAStart = parseFloat(sub.audioStart);
+      const aStart = Number.isFinite(rawAStart) && rawAStart >= tStart && rawAStart < tEnd ? rawAStart : tStart;
+      const fitDur = Math.max(0.1, tEnd - aStart);
+      const baseDur = parseFloat(sub.baseAudioDuration) || 0;
+      const hasAudio = sub.audioStatus === "ready" && baseDur > 0;
+      const playSpeed = parseFloat(sub.speed) || 1.0;
+      const speechDur = hasAudio ? baseDur : fastSpokenLength(sub.text) / FAST_EST_CHARS_PER_SEC;
+      // With audio: the audible speed, or the speed it would need to end inside its slot. Without: an estimate.
+      const effectiveSpeed = hasAudio ? Math.max(playSpeed, baseDur / fitDur) : speechDur / fitDur;
+      return { tStart, tEnd, aStart, slot, fitDur, baseDur, hasAudio, speechDur, effectiveSpeed, overflow: Math.max(0, speechDur - fitDur) };
+    }
+
+    function isFastSub(sub) {
+      if (!sub || !String(sub.text || "").trim() || sub.audioStatus === "generating") return false;
+      return analyzeSubPace(sub).effectiveSpeed >= FAST_SPEED_THRESHOLD;
+    }
+
+    function getFastSubtitles(subs = subtitles) {
+      return (subs || []).filter(isFastSub);
+    }
+
+    // Start time of the following line for each id (or the project end), so fixes never collide with it.
+    function buildFastNextStartMap(subs, projDur) {
+      const sorted = [...subs].sort(fastByStart);
+      const map = new Map();
+      sorted.forEach((s, i) => map.set(String(s.id), sorted[i + 1] ? parseFloat(sorted[i + 1].textStart) || 0 : projDur));
+      return map;
+    }
+
+    // New text end that makes room for the speech, limited by the next line. null when there's no useful room.
+    function getFastExtendEnd(pace, nextStart) {
+      const wanted = pace.aStart + pace.speechDur + 0.05;
+      const newEnd = Math.min(nextStart - 0.05, wanted);
+      return newEnd - pace.tEnd >= 0.2 ? newEnd : null;
+    }
+
+    // Plays the voice at 1.0x when it fits (small overrun allowed, never into the next line),
+    // otherwise speeds it up just enough to end with its slot.
+    function refitFastSubSpeed(sub, nextStart = Infinity) {
+      const pace = analyzeSubPace(sub);
+      if (!pace.hasAudio) return;
+      const nextRoom = Math.max(0.1, nextStart - pace.aStart);
+      const fitsAtNatural = pace.baseDur <= Math.min(pace.fitDur + FAST_FIT_TOLERANCE, nextRoom);
+      const targetDur = Math.min(pace.fitDur, nextRoom);
+      const speed = fitsAtNatural ? 1.0 : Math.min(FAST_MAX_SPEED, Math.max(1.0, Math.ceil((pace.baseDur / targetDur) * 100) / 100));
+      sub.speed = speed;
+      sub.audioStart = pace.aStart.toFixed(2);
+      sub.audioEnd = (pace.aStart + pace.baseDur / speed).toFixed(2);
+      if (activeAudios[sub.id]) activeAudios[sub.id].playbackRate = speed;
+    }
+
+    // ── Drafts (shortened text not yet applied) ──
+    function syncFastDraftsProject() {
+      const proj = projects[activeProjectIndex] || null;
+      if (proj !== fastDraftsProject) {
+        fastDrafts.clear();
+        fastDraftsProject = proj;
+      }
+    }
+
+    function getFastDraft(sub) {
+      const d = fastDrafts.get(String(sub.id));
+      if (!d) return null;
+      if (d.from !== sub.text) { // line was edited elsewhere — the draft is stale
+        fastDrafts.delete(String(sub.id));
+        return null;
+      }
+      return d.text;
+    }
+
+    function setFastDraft(sub, text) {
+      if (text === sub.text) fastDrafts.delete(String(sub.id));
+      else fastDrafts.set(String(sub.id), { text, from: sub.text });
+    }
+
+    // ── Toolbar badge ──
+    function updateFastAudioBadge() {
+      const badge = document.getElementById("badge-fast-subs-count");
+      const btn = document.getElementById("btn-fix-fast-audio");
+      if (!badge || !btn) return;
+
+      const count = getFastSubtitles().length;
+      if (badge.dataset.count === String(count)) return; // called on every render; skip DOM churn
+      badge.dataset.count = String(count);
+      badge.textContent = count;
+      if (count > 0) {
+        badge.className = "px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-red-500/25 text-red-300 border border-red-500/40 animate-pulse";
+        btn.title = `${count} fast subtitle(s) detected! Click to refactor and restore 1.0x speed.`;
+      } else {
+        badge.className = "px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30";
+        btn.title = "All subtitles have natural 1.0x speaking speed.";
+      }
+    }
+    window.updateFastAudioBadge = updateFastAudioBadge;
+
+    // ── Modal ──
+    function openFixFastAudioModal() {
+      const modal = document.getElementById("modal-fix-fast-audio");
+      if (!modal) return;
+      if (!projects[activeProjectIndex]) {
+        showToast("Open a project first.", "info");
+        return;
+      }
+      clearTimeout(fastModalHideTimer);
+      syncFastDraftsProject();
+      renderFastAudioList();
+      setFastBusyUI(fastRevoiceBusy);
+      modal.classList.remove("hidden");
+      requestAnimationFrame(() => {
+        modal.classList.remove("opacity-0");
+        modal.firstElementChild?.classList.remove("scale-95");
+        modal.firstElementChild?.classList.add("scale-100");
+      });
+    }
+    window.openFixFastAudioModal = openFixFastAudioModal;
+
+    function closeFixFastAudioModal() {
+      const modal = document.getElementById("modal-fix-fast-audio");
+      if (!modal || modal.classList.contains("hidden")) return;
+      cancelFastCondenseRequests();
+      modal.classList.add("opacity-0");
+      modal.firstElementChild?.classList.remove("scale-100");
+      modal.firstElementChild?.classList.add("scale-95");
+      clearTimeout(fastModalHideTimer);
+      fastModalHideTimer = setTimeout(() => modal.classList.add("hidden"), 250);
+      updateFastAudioBadge();
+    }
+    window.closeFixFastAudioModal = closeFixFastAudioModal;
+
+    const isFastModalOpen = () => {
+      const modal = document.getElementById("modal-fix-fast-audio");
+      return !!modal && !modal.classList.contains("hidden") && !modal.classList.contains("opacity-0");
+    };
+
+    function setFastButtonLoading(btn, loading, label = "", iconSize = "w-3 h-3") {
+      if (!btn) return;
+      if (loading) {
+        if (btn.dataset.idleHtml === undefined) btn.dataset.idleHtml = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = `<i data-lucide="loader-2" class="${iconSize} animate-spin"></i><span>${fastEscapeHtml(label)}</span>`;
+        if (window.lucide) _lucideCreateIcons({ root: btn });
+      } else {
+        btn.disabled = false;
+        if (btn.dataset.idleHtml !== undefined) {
+          btn.innerHTML = btn.dataset.idleHtml;
+          delete btn.dataset.idleHtml;
+        }
+      }
+    }
+
+    // While re-voicing, block every other re-voice/extend action (the generator is not re-entrant).
+    function setFastBusyUI(busy) {
+      document.querySelectorAll('#modal-fix-fast-audio [data-fast-action="apply"], #modal-fix-fast-audio [data-fast-action="extend"], #btn-fast-revoice-all')
+        .forEach((b) => { if (b.dataset.idleHtml === undefined) b.disabled = busy; });
+    }
+
+    function renderFastAudioList() {
+      const container = document.getElementById("fast-audio-list");
+      const badge = document.getElementById("fast-modal-badge");
+      if (!container) return;
+
+      const proj = projects[activeProjectIndex];
+      const fastList = getFastSubtitles().sort(fastByStart);
+
+      if (badge) {
+        badge.textContent = `${fastList.length} Fast ${fastList.length === 1 ? "Line" : "Lines"}`;
+        badge.className = fastList.length > 0
+          ? "px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30"
+          : "px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30";
+      }
+
+      if (fastList.length === 0) {
+        container.innerHTML = `
+          <div class="py-16 flex flex-col items-center justify-center text-center">
+            <div class="w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 mb-3 shadow-lg shadow-emerald-500/10">
+              <i data-lucide="check-circle-2" class="w-7 h-7"></i>
+            </div>
+            <h3 class="text-sm font-semibold text-[var(--text-bright)]">All Subtitles Have Natural Speed!</h3>
+            <p class="text-xs text-[var(--text-secondary)] mt-1 max-w-sm">No lines need more than ${FAST_SPEED_THRESHOLD.toFixed(2)}x to fit their slot. Your dubbing pace is comfortable and natural.</p>
+          </div>
+        `;
+        if (window.lucide) _lucideCreateIcons({ root: container });
+        return;
+      }
+
+      const scrollTop = container.scrollTop;
+      const nextStartById = buildFastNextStartMap(subtitles, getFastProjectDuration(proj));
+
+      container.innerHTML = fastList.map((sub) => {
+        const id = String(sub.id);
+        const idAttr = fastEscapeHtml(id);
+        const pace = analyzeSubPace(sub);
+        const speed = pace.effectiveSpeed;
+        const speedText = `${pace.hasAudio ? "" : "~"}${speed.toFixed(2)}x`;
+
+        let speedBadgeClass = "bg-amber-500/20 text-amber-300 border-amber-500/40";
+        let speedLabel = `${speedText} (Fast${pace.hasAudio ? "" : ", est."})`;
+        let speedIcon = "gauge";
+        if (speed >= FAST_SPEED_CRITICAL) {
+          speedBadgeClass = "bg-red-500/20 text-red-300 border-red-500/40 animate-pulse";
+          speedLabel = `${speedText} (Very Fast${pace.hasAudio ? "" : ", est."})`;
+          speedIcon = "zap";
+        }
+
+        const extendEnd = getFastExtendEnd(pace, nextStartById.get(id) ?? Infinity);
+        const extendAmount = extendEnd != null ? extendEnd - pace.tEnd : 0;
+        const extendFitsAll = extendEnd != null && extendEnd >= pace.aStart + pace.speechDur;
+        const draftText = getFastDraft(sub) ?? sub.text;
+        const hasDraft = draftText !== sub.text;
+        const maxSyllables = Math.max(2, Math.round(pace.fitDur * 3.5)); // mirrors the backend prompt target
+
+        return `
+          <div data-fast-card="${idAttr}" class="bg-[var(--bg-base)] border border-[var(--border-color)] hover:border-[var(--border-light)] rounded-xl p-4 transition-all flex flex-col gap-3 shadow-sm">
+            <div class="flex items-center justify-between gap-3 text-xs">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="font-bold text-[var(--text-bright)] px-2 py-0.5 rounded bg-[var(--bg-panel)] border border-[var(--border-color)]">#${idAttr}</span>
+                <span class="font-mono text-[var(--text-secondary)] text-[11px]">${formatTime(pace.tStart)} ➔ ${formatTime(pace.tEnd)}</span>
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-cyan-500/10 text-cyan-300 border border-cyan-500/25">Slot: ${pace.slot.toFixed(2)}s</span>
+                <span class="text-[10px] text-[var(--text-muted)]">${pace.hasAudio ? "Speech" : "Est. speech"}: ${pace.speechDur.toFixed(2)}s (${pace.overflow > 0 ? `+${pace.overflow.toFixed(2)}s overflow` : "fits"})</span>
+              </div>
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 border shrink-0 ${speedBadgeClass}">
+                <i data-lucide="${speedIcon}" class="w-3 h-3"></i>
+                <span>${speedLabel}</span>
+              </span>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+              <div class="flex flex-col gap-1">
+                <span class="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">Current (${sub.text.length} chars)</span>
+                <div class="p-2.5 rounded-lg bg-[var(--bg-panel)] border border-[var(--border-color)] text-[var(--text-secondary)] select-all leading-relaxed font-sans max-h-24 overflow-y-auto custom-scrollbar whitespace-pre-wrap">${fastEscapeHtml(sub.text)}</div>
+              </div>
+
+              <div class="flex flex-col gap-1">
+                <div class="flex items-center justify-between text-[10px]">
+                  <span class="font-semibold text-amber-400 uppercase tracking-wider flex items-center gap-1">
+                    <i data-lucide="sparkles" class="w-2.5 h-2.5"></i>
+                    Shortened (Target: ≤ ${maxSyllables} syllables)
+                  </span>
+                  <span data-fast-count class="text-[var(--text-muted)]">${draftText.length} chars</span>
+                </div>
+                <textarea data-fast-input="${idAttr}" rows="2"
+                  class="w-full p-2.5 rounded-lg bg-[var(--bg-panel)] border ${hasDraft ? "border-amber-400/60" : "border-amber-500/30"} focus:border-amber-400 focus:ring-1 focus:ring-amber-400/40 text-[var(--text-bright)] resize-none font-sans text-xs leading-relaxed custom-scrollbar transition-all"
+                  placeholder="Click 'AI Shorten' or write concise dialogue here...">${fastEscapeHtml(draftText)}</textarea>
+              </div>
+            </div>
+
+            <div class="flex items-center justify-between pt-1 border-t border-[var(--border-color)] text-xs flex-wrap gap-2">
+              <div class="flex items-center gap-2">
+                <button data-fast-action="condense"
+                  class="px-2.5 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 transition-all bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 active:scale-95 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">
+                  <i data-lucide="sparkles" class="w-3 h-3 text-amber-400"></i>
+                  <span>AI Shorten</span>
+                </button>
+                ${extendEnd != null ? `
+                <button data-fast-action="extend"
+                  class="px-2.5 py-1 rounded-lg text-[11px] font-medium flex items-center gap-1.5 transition-all bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Extend the subtitle end by +${extendAmount.toFixed(1)}s into the silence before the next line${extendFitsAll ? "" : " (not enough room to fit it fully)"}">
+                  <i data-lucide="arrow-right-to-line" class="w-3 h-3 text-cyan-400"></i>
+                  <span>Extend Slot (+${extendAmount.toFixed(1)}s${extendFitsAll ? "" : ", partial"})</span>
+                </button>` : ""}
+              </div>
+              <button data-fast-action="apply"
+                class="px-3 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 transition-all bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm shadow-indigo-600/30 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed">
+                <i data-lucide="audio-lines" class="w-3 h-3"></i>
+                <span>Apply & Re-Voice (1.0x)</span>
+              </button>
+            </div>
+          </div>
+        `;
+      }).join("");
+
+      if (window.lucide) _lucideCreateIcons({ root: container });
+      container.scrollTop = scrollTop;
+      setFastBusyUI(fastRevoiceBusy);
+    }
+
+    // ── AI shortening ──
+    function getFastGeminiConfig() {
+      let keys = [];
+      try { keys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]"); } catch (_) { keys = []; }
+      keys = (Array.isArray(keys) ? keys : []).map((k) => String(k || "").trim()).filter(Boolean);
+      return { keys, model: localStorage.getItem("aiDubberModel") || "gemini-2.5-flash" };
+    }
+
+    // Returns [{ id, condensedText }] or null (error already toasted, or cancelled).
+    async function requestFastCondense(subs) {
+      const { keys, model } = getFastGeminiConfig();
+      if (keys.length === 0) {
+        showToast("Please add at least one Gemini API Key in Settings.", "error");
+        return null;
+      }
+      const proj = projects[activeProjectIndex];
+      const requestId = `condense_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      fastCondenseRequestIds.add(requestId);
+      try {
+        const res = await fetch("http://localhost:3001/api/condense-fast-subtitles", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            subtitles: subs.map((s) => {
+              const pace = analyzeSubPace(s);
+              return { id: String(s.id), text: s.text, slotDuration: pace.fitDur, speed: pace.effectiveSpeed, originalText: s.originalText || "" };
+            }),
+            apiKey: keys[0],
+            apiKeys: keys,
+            model,
+            genre: activeDramaGenre || "historical",
+            targetLanguage: (proj && proj.targetLanguage) || targetLanguage,
+            glossary: typeof getDramaGlossaryDict === "function" ? getDramaGlossaryDict() : null,
+            requestId,
+          }),
+        });
+        const data = await res.json().catch(() => ({ success: false, message: `Server error (${res.status})` }));
+        if (data.error === "CANCELLED") return null;
+        if (!data.success || !Array.isArray(data.results)) {
+          showToast(data.message || data.error || "Failed to shorten text.", "error");
+          return null;
+        }
+        return data.results;
+      } catch (err) {
+        console.error("AI Condense Error:", err);
+        showToast("Could not reach the local server to shorten dialogue.", "error");
+        return null;
+      } finally {
+        fastCondenseRequestIds.delete(requestId);
+      }
+    }
+
+    function cancelFastCondenseRequests() {
+      fastCondenseEpoch++;
+      fastCondenseRequestIds.forEach((requestId) => {
+        fetch("http://localhost:3001/api/cancel-transcribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ requestId }),
+        }).catch(() => { });
+      });
+      fastCondenseRequestIds.clear();
+    }
+
+    // Stores AI results as drafts and updates any visible textareas. Returns how many lines were updated.
+    function applyFastCondenseResults(results) {
+      let updated = 0;
+      results.forEach((r) => {
+        const sub = findLiveSub(r.id);
+        const text = String(r.condensedText || "").trim();
+        if (!sub || !text) return;
+        setFastDraft(sub, text);
+        updated++;
+        const card = getFastCard(sub.id);
+        const textarea = card?.querySelector("[data-fast-input]");
+        if (textarea) {
+          textarea.value = text;
+          textarea.classList.add("ring-2", "ring-amber-400", "bg-amber-500/10");
+          setTimeout(() => textarea.classList.remove("ring-2", "ring-amber-400", "bg-amber-500/10"), 1200);
+        }
+        const countEl = card?.querySelector("[data-fast-count]");
+        if (countEl) countEl.textContent = `${text.length} chars`;
+      });
+      return updated;
+    }
+
+    async function condenseSingleFastSub(subId) {
+      const sub = findLiveSub(subId);
+      if (!sub) return;
+      const btn = getFastCard(subId)?.querySelector('[data-fast-action="condense"]');
+      setFastButtonLoading(btn, true, "Shortening...");
+      try {
+        const results = await requestFastCondense([sub]);
+        if (!results) return;
+        if (applyFastCondenseResults(results) > 0) showToast(`✓ Shortened line #${sub.id}!`, "success");
+        else showToast("AI returned no usable text for this line. Try again or edit it manually.", "error");
+      } finally {
+        setFastButtonLoading(btn, false);
+      }
+    }
+    window.condenseSingleFastSub = condenseSingleFastSub;
+
+    async function condenseAllFastSubtitles() {
+      const fastList = getFastSubtitles().sort(fastByStart);
+      if (fastList.length === 0) {
+        showToast("No fast subtitles found to shorten.", "info");
+        return;
+      }
+      if (getFastGeminiConfig().keys.length === 0) {
+        showToast("Please add at least one Gemini API Key in Settings.", "error");
+        return;
+      }
+
+      const btn = document.getElementById("btn-fast-condense-all");
+      const epoch = fastCondenseEpoch;
+      let updated = 0;
+      let failedChunks = 0;
+      try {
+        for (let i = 0; i < fastList.length; i += FAST_CONDENSE_CHUNK) {
+          setFastButtonLoading(btn, true, `Shortening ${Math.min(i + FAST_CONDENSE_CHUNK, fastList.length)}/${fastList.length}...`, "w-3.5 h-3.5");
+          const results = await requestFastCondense(fastList.slice(i, i + FAST_CONDENSE_CHUNK));
+          if (epoch !== fastCondenseEpoch) return; // modal closed — abandoned
+          if (results) updated += applyFastCondenseResults(results);
+          else failedChunks++;
+        }
+        if (updated > 0) {
+          const missed = fastList.length - updated;
+          showToast(`✓ AI shortened ${updated} line(s)${missed > 0 ? `, ${missed} not shortened` : ""}. Review, then click "Re-Voice All".`, missed > 0 ? "info" : "success");
+        } else if (failedChunks === 0) {
+          showToast("AI returned no usable text. Try again or edit lines manually.", "error");
+        }
+      } finally {
+        setFastButtonLoading(btn, false);
+      }
+    }
+    window.condenseAllFastSubtitles = condenseAllFastSubtitles;
+
+    // ── Timeline changes ──
+    function extendSlotForSub(subId) {
+      if (fastRevoiceBusy) return;
+      const sub = findLiveSub(subId);
+      if (!sub) return;
+      const nextStart = buildFastNextStartMap(subtitles, getFastProjectDuration(projects[activeProjectIndex])).get(String(sub.id)) ?? Infinity;
+      const pace = analyzeSubPace(sub);
+      const newEnd = getFastExtendEnd(pace, nextStart);
+      if (newEnd == null) {
+        showToast("No free space after this line to extend into.", "info");
+        renderFastAudioList();
+        return;
+      }
+
+      saveStateToPast();
+      sub.textEnd = newEnd.toFixed(2);
+      refitFastSubSpeed(sub, nextStart);
+      saveCurrentProjectState();
+      renderSubtitles();
+      updateContextualControls();
+
+      showToast(`↔️ Extended line #${sub.id} by +${(newEnd - pace.tEnd).toFixed(1)}s`, "success");
+      renderFastAudioList();
+    }
+    window.extendSlotForSub = extendSlotForSub;
+
+    // Applies drafts to the given lines, re-voices them at natural pace, then re-fits their playback speed.
+    async function revoiceFastSubs(ids, { all = false } = {}) {
+      const proj = projects[activeProjectIndex];
+      if (!proj || ids.length === 0) return;
+      if (fastRevoiceBusy || isGeneratingAudio || isGeneratingAudioAll || proj.isGeneratingAudio) {
+        showToast("Audio generation is already running. Please wait for it to finish.", "info");
+        return;
+      }
+
+      const targets = [];
+      for (const id of ids) {
+        const sub = findLiveSub(id);
+        if (!sub) continue;
+        const text = String(getFastDraft(sub) ?? sub.text ?? "").trim();
+        if (!text) {
+          if (!all) showToast("Dialogue text cannot be empty.", "error");
+          continue;
+        }
+        if (!all && text === String(sub.text).trim() && sub.audioStatus === "ready") {
+          showToast("Shorten or edit the line first — re-voicing the same text won't change its length.", "info");
+          return;
+        }
+        targets.push({ id: sub.id, text });
+      }
+      if (targets.length === 0) return;
+
+      const singleBtn = all ? null : getFastCard(ids[0])?.querySelector('[data-fast-action="apply"]');
+      const allBtn = document.getElementById("btn-fast-revoice-all");
+      fastRevoiceBusy = true;
+      setFastButtonLoading(all ? allBtn : singleBtn, true, all ? `Re-voicing ${targets.length} line(s)...` : "Generating...", all ? "w-3.5 h-3.5" : "w-3 h-3");
+      setFastBusyUI(true);
+
+      // Sync live → project, then change only the project's copy. generateStandardAudioForProject reads the
+      // project copy and snapshots the still-untouched live array for undo, so one Ctrl+Z restores the
+      // original text and audio. It syncs the project copy back into `subtitles` when done.
+      saveCurrentProjectState();
+      const restoreDrafts = [];
+      targets.forEach(({ id, text }) => {
+        const s = proj.subtitles.find((x) => String(x.id) === String(id));
+        if (!s) return;
+        restoreDrafts.push({ id, text, from: s.text });
+        s.text = text;
+        s.speed = 1.0;
+        s.audioStatus = "idle";
+        fastDrafts.delete(String(id));
+      });
+
+      try {
+        const result = await generateStandardAudioForProject(proj, targets.map((t) => t.id));
+        if (!result || !result.success) throw new Error((result && result.error) || "Audio generation failed");
+
+        const nextStartById = buildFastNextStartMap(proj.subtitles, getFastProjectDuration(proj));
+        let fixed = 0, stillFast = 0, failed = 0;
+        targets.forEach(({ id }) => {
+          const s = proj.subtitles.find((x) => String(x.id) === String(id));
+          if (!s || s.audioStatus !== "ready" || !(parseFloat(s.baseAudioDuration) > 0)) { failed++; return; }
+          refitFastSubSpeed(s, nextStartById.get(String(id)) ?? Infinity);
+          if (analyzeSubPace(s).effectiveSpeed >= FAST_SPEED_THRESHOLD) stillFast++;
+          else fixed++;
+        });
+
+        saveProjectStateDirectly(proj);
+        if (projects[activeProjectIndex] === proj) {
+          subtitles = proj.subtitles.map((s) => ({ ...s }));
+          renderSubtitles();
+          updateContextualControls();
+        }
+
+        const parts = [];
+        if (fixed) parts.push(`${fixed} now natural`);
+        if (stillFast) parts.push(`${stillFast} still fast — shorten more or extend the slot`);
+        if (failed) parts.push(`${failed} failed to generate`);
+        const label = all ? `Re-voiced ${targets.length} line(s)` : `Line #${targets[0].id}`;
+        showToast(`${label}: ${parts.join(", ") || "done"}.`, failed || stillFast ? "info" : "success");
+      } catch (err) {
+        console.error("Re-voice error:", err);
+        // Put the project copy back in sync with the live array and keep the user's shortened text as drafts.
+        if (projects[activeProjectIndex] === proj) proj.subtitles = subtitles.map((s) => ({ ...s }));
+        restoreDrafts.forEach(({ id, text }) => {
+          const live = findLiveSub(id);
+          if (live && live.text !== text) fastDrafts.set(String(id), { text, from: live.text });
+        });
+        showToast(`Failed to re-generate audio: ${err.message}`, "error");
+      } finally {
+        fastRevoiceBusy = false;
+        setFastButtonLoading(all ? allBtn : singleBtn, false);
+        setFastBusyUI(false);
+        if (isFastModalOpen()) renderFastAudioList();
+        updateFastAudioBadge();
+      }
+    }
+
+    function applyAndRevoiceSingleSub(subId) {
+      return revoiceFastSubs([subId]);
+    }
+    window.applyAndRevoiceSingleSub = applyAndRevoiceSingleSub;
+
+    function applyAndRevoiceAllFastSubtitles() {
+      const ids = getFastSubtitles()
+        .sort(fastByStart)
+        .filter((s) => {
+          const draft = getFastDraft(s);
+          return draft != null && draft.trim() && draft.trim() !== String(s.text).trim();
+        })
+        .map((s) => s.id);
+      if (ids.length === 0) {
+        showToast('Shorten some lines first ("AI Shorten All" or edit the text), then re-voice.', "info");
+        return;
+      }
+      return revoiceFastSubs(ids, { all: true });
+    }
+    window.applyAndRevoiceAllFastSubtitles = applyAndRevoiceAllFastSubtitles;
+
+    // ── Wiring ──
+    document.getElementById("btn-fix-fast-audio")?.addEventListener("click", openFixFastAudioModal);
+    document.getElementById("btn-fast-condense-all")?.addEventListener("click", condenseAllFastSubtitles);
+    document.getElementById("btn-fast-revoice-all")?.addEventListener("click", applyAndRevoiceAllFastSubtitles);
+
+    const fastAudioListEl = document.getElementById("fast-audio-list");
+    if (fastAudioListEl) {
+      fastAudioListEl.addEventListener("input", (e) => {
+        const textarea = e.target.closest("[data-fast-input]");
+        if (!textarea) return;
+        const sub = findLiveSub(textarea.dataset.fastInput);
+        if (!sub) return;
+        setFastDraft(sub, textarea.value);
+        const countEl = textarea.closest("[data-fast-card]")?.querySelector("[data-fast-count]");
+        if (countEl) countEl.textContent = `${textarea.value.length} chars`;
+      });
+      fastAudioListEl.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-fast-action]");
+        if (!btn || btn.disabled) return;
+        const id = btn.closest("[data-fast-card]")?.dataset.fastCard;
+        if (id === undefined) return;
+        const action = btn.dataset.fastAction;
+        if (action === "condense") condenseSingleFastSub(id);
+        else if (action === "extend") extendSlotForSub(id);
+        else if (action === "apply") applyAndRevoiceSingleSub(id);
+      });
+    }
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && isFastModalOpen()) {
+        e.stopPropagation();
+        closeFixFastAudioModal();
+      }
+    });
+
     // ── BACKGROUND-SAFE PROJECT SAVER ────────────────────────────────────
     function saveProjectStateDirectly(proj) {
       if (!proj) return;
@@ -22402,7 +23101,7 @@
                 tempPath: targetProject.tempAudioPath || tempAudioPath,
                 profile: matchedProfile || null,
                 index: sub.id,
-                speed: sub.speed || 1.0,
+                speed: 1.0, // synthesize at natural pace; clip speed is applied via playbackRate/atempo
                 emotion: sub.emotion || "Neutral",
                 signal: jobAbortController.signal,
               });
@@ -22953,7 +23652,7 @@
                 tempPath: proj.tempAudioPath || tempAudioPath,
                 profile: matchedProfile || null,
                 index: sub.id,
-                speed: sub.speed || 1.0,
+                speed: 1.0, // synthesize at natural pace; clip speed is applied via playbackRate/atempo
                 signal: jobAbortController.signal,
               });
 

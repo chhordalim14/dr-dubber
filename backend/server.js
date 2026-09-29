@@ -2461,6 +2461,142 @@ ${JSON.stringify(inputLines, null, 2)}`;
     }
 });
 
+// 4e. Smart AI Subtitle Condenser (Refactor long dialogue lines to fit slot duration at 1.0x speed)
+app.post('/api/condense-fast-subtitles', async (req, res) => {
+    const {
+        subtitles: rawSubtitles = [],
+        targetLanguage = 'Khmer',
+        genre = 'historical',
+        glossary,
+        apiKey,
+        apiKeys,
+        model = 'gemini-2.5-flash',
+        requestId
+    } = req.body || {};
+
+    const subtitles = (Array.isArray(rawSubtitles) ? rawSubtitles : [])
+        .filter(s => s && s.id !== undefined && String(s.text || '').trim());
+    if (subtitles.length === 0) {
+        return res.status(400).json({ success: false, error: 'No subtitles provided to condense.' });
+    }
+
+    const keyPool = [apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])]
+        .map(k => String(k || '').trim())
+        .filter((k, i, a) => k && a.indexOf(k) === i);
+
+    if (keyPool.length === 0) {
+        return res.status(400).json({ success: false, error: 'INVALID_API_KEY', message: 'Gemini API key is required in Settings.' });
+    }
+
+    const abortCtrl = new AbortController();
+    if (requestId) activeTranscribeRequests.set(requestId, abortCtrl);
+
+    try {
+        // ~3.5 spoken syllables per second is a relaxed dubbing pace.
+        const linesData = subtitles.map((s) => {
+            const slot = Math.max(0.3, parseFloat(s.slotDuration) || 1.5);
+            const speed = parseFloat(s.speed) || 1.0;
+            return {
+                id: String(s.id),
+                text: String(s.text).trim(),
+                slotSeconds: Number(slot.toFixed(2)),
+                currentSpeed: `${speed.toFixed(2)}x`,
+                maxSyllables: Math.max(2, Math.round(slot * 3.5)),
+                ...(s.originalText ? { sourceText: String(s.originalText) } : {})
+            };
+        });
+
+        const isKhmer = /khmer|^km/i.test(String(targetLanguage));
+        const registerGuidance = isKhmer ? getKhmerDramaRegisterGuidance(genre || 'historical') : '';
+        const glossaryHint = glossary
+            ? `\n\nGLOSSARY (keep these names/terms exactly as given):\n${typeof glossary === 'string' ? glossary : JSON.stringify(glossary, null, 2)}`
+            : '';
+
+        const prompt = `You are a master film/TV dubbing script adapter and dialogue doctor.
+The following ${targetLanguage} dubbing lines are too long for their time slot, so the voice has to be sped up (currentSpeed) and sounds rushed.
+
+YOUR TASK:
+Rewrite each line ("text") into SHORT, NATURAL spoken dialogue that fits within its "slotSeconds" at a relaxed, natural 1.0x speaking pace.
+
+STRICT DUBBING CONSTRAINTS:
+1. Stay within each line's "maxSyllables" spoken syllables. Shorter is fine; never exceed it.
+2. Keep the exact emotional tone, dramatic intent, speaker register and key plot facts. It must sound like authentic, natural film/TV dialogue.
+3. Remove redundant pronouns, filler particles, formal padding and verbose structures.
+4. Write in ${targetLanguage} (the same language as "text"). "sourceText", when present, is the original-language line for meaning reference only.${registerGuidance}${glossaryHint}
+
+LINES TO CONDENSE:
+${JSON.stringify(linesData, null, 2)}
+
+OUTPUT FORMAT:
+Return ONLY a JSON array with one object per input line: [{ "id": "<same id>", "condensedText": "<shortened line>" }]`;
+
+        const payload = {
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            generationConfig: {
+                responseMimeType: 'application/json',
+                responseSchema: {
+                    type: 'ARRAY',
+                    items: {
+                        type: 'OBJECT',
+                        properties: {
+                            id: { type: 'STRING' },
+                            condensedText: { type: 'STRING' }
+                        },
+                        required: ['id', 'condensedText']
+                    }
+                }
+            }
+        };
+
+        // Rotate through keys: a bad or rate-limited key falls through to the next one.
+        let result = null;
+        for (const k of keyPool) {
+            result = await executeGeminiGenerate(k, model, payload, abortCtrl.signal);
+            if (result.success) break;
+        }
+
+        if (!result || !result.success) {
+            return res.status(result?.status || 500).json({
+                success: false,
+                error: result?.error || 'CONDENSE_FAILED',
+                message: result?.message || 'Failed to condense dialogue with Gemini'
+            });
+        }
+
+        let parsed;
+        try {
+            parsed = JSON.parse(result.text);
+        } catch (pe) {
+            return res.status(502).json({ success: false, error: 'JSON_PARSE_ERROR', message: 'Gemini returned malformed JSON.' });
+        }
+        if (!Array.isArray(parsed)) {
+            return res.status(502).json({ success: false, error: 'JSON_PARSE_ERROR', message: 'Gemini did not return a list of lines.' });
+        }
+
+        // Keep only well-formed items for ids we actually asked about (first answer per id wins).
+        const requestedIds = new Set(linesData.map(l => l.id));
+        const seen = new Set();
+        const results = [];
+        for (const item of parsed) {
+            const id = item && String(item.id);
+            let text = item && typeof item.condensedText === 'string' ? item.condensedText.trim() : '';
+            if (!id || !text || !requestedIds.has(id) || seen.has(id)) continue;
+            if (isKhmer) text = sanitizeKhmerDialogue(text);
+            if (glossary) text = applyGlossary(text, glossary);
+            if (!text) continue;
+            seen.add(id);
+            results.push({ id, condensedText: text });
+        }
+
+        res.json({ success: true, results, count: results.length });
+    } catch (e) {
+        if (e.name === 'AbortError') return res.json({ success: false, error: 'CANCELLED' });
+        res.status(500).json({ success: false, error: e.message });
+    } finally {
+        if (requestId) activeTranscribeRequests.delete(requestId);
+    }
+});
+
 app.get('/api/transcribe-progress', (req, res) => {
     const p = transcribeProgress.get(String(req.query.requestId || ''));
     res.json(p ? { success: true, ...p } : { success: false });
@@ -2609,7 +2745,7 @@ function resolveCharacterPreset(identifier) {
 }
 
 // Helper: Calculate emotional prosody modifiers (Pitch, Rate, Volume) combined with character base prosody
-function getEmotionProsody(emotion, basePitch, baseVolume, baseSpeed, baseRate) {
+function getEmotionProsody(emotion, basePitch, baseVolume, _baseSpeed, baseRate) {
     let basePitchVal = 0;
     if (basePitch) {
         const pNum = parseFloat(String(basePitch).replace('Hz', '').trim());
@@ -2666,9 +2802,13 @@ function getEmotionProsody(emotion, basePitch, baseVolume, baseSpeed, baseRate) 
         if (!isNaN(rNum)) baseRateVal = rNum;
     }
 
-    const speedNum = typeof baseSpeed === 'number' ? baseSpeed : 1.0;
-    const totalSpeedPct = Math.round((speedNum - 1.0) * 100) + emotionRateOffset + baseRateVal;
-    const rateStr = totalSpeedPct >= 0 ? `+${totalSpeedPct}%` : `${totalSpeedPct}%`;
+    // Clip speed (_baseSpeed) is intentionally NOT baked into the TTS rate: the timeline applies it via
+    // audio.playbackRate (preview) and ffmpeg atempo (render), and baseAudioDuration is measured from
+    // this file. Baking it in as well would compound the speed (e.g. 1.5x → 2.25x audible).
+    // Only emotion/character rate shaping is applied here, clamped to a natural range.
+    const totalSpeedPct = emotionRateOffset + baseRateVal;
+    const clampedRatePct = Math.max(-30, Math.min(25, totalSpeedPct));
+    const rateStr = clampedRatePct >= 0 ? `+${clampedRatePct}%` : `${clampedRatePct}%`;
 
     return { pitch: finalPitch, volume: finalVolume, rate: rateStr };
 }
