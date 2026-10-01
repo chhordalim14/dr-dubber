@@ -13,6 +13,7 @@ const { ensureFFmpegInPath, getFFmpegBinary, getFFprobeBinary } = require('./ffm
 const { createPreviewService } = require('./media_preview');
 const { createAudioRepair } = require('./audio_repair');
 const { createEpisodeJoiner } = require('./episode_joiner');
+const { createVideoSplitter } = require('./video_splitter');
 const { renderVideo, cancelRender, getRenderProgress, detectAvailableEncoders } = require('./render_service');
 
 const app = express();
@@ -562,8 +563,9 @@ function getTranscribeDestinations(customFolder, sourceFilePath) {
     return destinations;
 }
 
+// One file per episode (no timestamp in the name): transcribing the episode again replaces it
+// instead of piling up copies.
 function saveTranscribeAudio(audioBufferOrPath, videoName, partIndex, customFolder, sourceFilePath) {
-    const timestamp = Date.now();
     let cleanBase = (videoName || 'video')
         .replace(/[/\\?%*:|"<>]/g, '_')
         .replace(/\.[^/.]+$/, '') // strip file extension
@@ -579,12 +581,12 @@ function saveTranscribeAudio(audioBufferOrPath, videoName, partIndex, customFold
     let partName;
     if (hasPartSuffix) {
         // Base name already has part information, do not append an additional part suffix
-        partName = `transcribe_${timestamp}_${cleanBase}.mp3`;
+        partName = `transcribe_${cleanBase}.mp3`;
     } else if (partIndex !== undefined && partIndex !== null && String(partIndex).trim() !== '') {
         const pIdx = String(partIndex).trim();
-        partName = `transcribe_${timestamp}_${cleanBase}_part${pIdx}.mp3`;
+        partName = `transcribe_${cleanBase}_part${pIdx}.mp3`;
     } else {
-        partName = `transcribe_${timestamp}_${cleanBase}.mp3`;
+        partName = `transcribe_${cleanBase}.mp3`;
     }
 
     const destinations = getTranscribeDestinations(customFolder, sourceFilePath);
@@ -934,12 +936,18 @@ function resolveGeminiModel(modelName) {
     if (!modelName || modelName === 'latest') return 'gemini-3.8-flash';
     const m = String(modelName).toLowerCase().trim();
     if (m === 'gemini-3.8-flash' || m.includes('3.8-flash') || m.includes('3.8')) return 'gemini-3.8-flash';
+    if (m.includes('3.5-transcribe') || m.includes('audio-specialist')) return 'gemini-3.5-transcribe';
     if (m === 'gemini-3.7-flash' || m.includes('3.7-flash') || m.includes('3.7')) return 'gemini-3.7-flash';
-    if (m.includes('2.5-flash') || m === 'gemini-2.5-flash') return 'gemini-2.5-flash';
+    if (m === 'gemini-3.6-flash' || m.includes('3.6-flash') || m.includes('3.6')) return 'gemini-3.6-flash';
+    if (m === 'gemini-3.5-flash-lite' || m.includes('3.5-flash-lite') || m.includes('3.5-lite')) return 'gemini-3.5-flash-lite';
+    if (m === 'gemini-3.5-flash' || m.includes('3.5-flash') || m.includes('3.5')) return 'gemini-3.5-flash';
     if (m === 'gemini-3.1-pro-preview' || m === 'gemini-3.1-pro' || m.includes('3.1-pro')) return 'gemini-3.1-pro-preview';
+    if (m === 'gemini-3.1-flash-lite' || m.includes('3.1-flash-lite') || m.includes('3.1-lite')) return 'gemini-3.1-flash-lite';
+    if (m === 'gemini-3.1-flash' || m.includes('3.1-flash') || m.includes('3.1')) return 'gemini-3.1-flash';
     if (m === 'gemini-2.5-pro' || m.includes('2.5-pro')) return 'gemini-2.5-pro';
+    if (m.includes('2.5-flash') || m === 'gemini-2.5-flash') return 'gemini-2.5-flash';
     if (m.includes('2.0-flash-lite') || m.includes('2.0-lite')) return 'gemini-2.0-flash-lite';
-    if (m === 'gemini-2.0-flash' || m.includes('2.0') || m.includes('flash')) return 'gemini-2.0-flash';
+    if (m === 'gemini-2.0-flash' || m.includes('2.0-flash') || m.includes('2.0')) return 'gemini-2.0-flash';
     if (m === 'gemini-1.5-pro' || m.includes('1.5-pro')) return 'gemini-1.5-pro';
     if (m === 'gemini-1.5-flash' || m.includes('1.5-flash')) return 'gemini-1.5-flash';
     return m;
@@ -975,13 +983,13 @@ async function listGeminiModels(apiKey, signal) {
 function rankGeminiFallbacks(available) {
     const parsed = [];
     for (const name of available) {
-        // Dated previews only ("-preview-09-2025"); skips -tts, -image, -live, -lite variants.
-        const m = name.match(/^gemini-(\d+(?:\.\d+)?)-(flash|pro)(?:-(latest|preview(?:-\d[\d-]*)?))?$/);
+        // Dated previews only ("-preview-09-2025"); skips -tts, -image, -live variants.
+        const m = name.match(/^gemini-(\d+(?:\.\d+)?)-(flash|pro|transcribe)(?:-(latest|preview(?:-\d[\d-]*)?))?$/);
         if (!m) continue;
         parsed.push({ name, version: parseFloat(m[1]), tier: m[2], tag: m[3] || '' });
     }
     parsed.sort((a, b) =>
-        (a.tier === 'flash' ? 0 : 1) - (b.tier === 'flash' ? 0 : 1) ||
+        (a.tier === 'flash' || a.tier === 'transcribe' ? 0 : 1) - (b.tier === 'flash' || b.tier === 'transcribe' ? 0 : 1) ||
         (a.tag ? 1 : 0) - (b.tag ? 1 : 0) ||
         b.version - a.version);
     return parsed.map(p => p.name);
@@ -991,7 +999,7 @@ async function getCandidateModels(apiKey, requestedModel, signal) {
     const primary = resolveGeminiModel(requestedModel);
     const available = await listGeminiModels(apiKey, signal);
     if (!available) {
-        return [primary, 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.5-pro']
+        return [primary, 'gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.5-pro']
             .filter((v, i, a) => a.indexOf(v) === i);
     }
     const ranked = rankGeminiFallbacks(available);
@@ -1000,7 +1008,15 @@ async function getCandidateModels(apiKey, requestedModel, signal) {
         geminiModelListCache.get(apiKey).warned = true;
         console.warn(`[Gemini] Model "${primary}" is not available for this key. Using: ${list[0] || 'none'}`);
     }
-    return list.filter((v, i, a) => a.indexOf(v) === i).slice(0, 4);
+    const unique = list.filter((v, i, a) => a.indexOf(v) === i);
+    const top = unique.slice(0, 4);
+    // Each model has its own daily allowance per key, and the ranking puts every Flash model
+    // first - so with many Flash models the Pro allowance was never reached. Always offer the
+    // newest Pro model as a fallback.
+    const bestPro = unique.filter(m => /-pro\b/.test(m))
+        .sort((a, b) => parseFloat((b.match(/gemini-(\d+(?:\.\d+)?)/) || [])[1] || 0) - parseFloat((a.match(/gemini-(\d+(?:\.\d+)?)/) || [])[1] || 0))[0];
+    if (bestPro && !top.includes(bestPro)) top.push(bestPro);
+    return top;
 }
 
 async function fetchWithTimeout(url, options, parentSignal, timeoutMs) {
@@ -1031,10 +1047,71 @@ async function fetchWithTimeout(url, options, parentSignal, timeoutMs) {
     }
 }
 
+// Models that answered "JSON mode is not enabled for this model": they get the request without
+// responseMimeType/responseSchema. Every prompt also asks for JSON in words, and the parsers
+// (parseJsonArrayLoose) read it from plain text.
+const geminiNoJsonModeModels = new Set();
+// ...and of those, the ones whose plain reply had no JSON at all (e.g. an audio "transcribe" model
+// answering with a bare transcript). They are skipped for JSON requests from then on.
+const geminiNoJsonOutputModels = new Set();
+const isJsonModeUnsupported = (msg) => /JSON mode is not enabled|response_?mime_?type|response_?schema/i.test(String(msg || ''));
+
+// The first JSON array/object in a model's free-text reply: the whole text, a ```json fence
+// anywhere, or a balanced [...] / {...} inside prose. Brackets in prose ("[Male]") don't parse
+// and are skipped. An array cut off mid-way (MAX_TOKENS) keeps its complete items. undefined
+// when there's none.
+function extractJsonValue(raw) {
+    const s = String(raw || '').trim();
+    const tryParse = (t) => { try { const v = JSON.parse(t); return v && typeof v === 'object' ? v : undefined; } catch (e) { return undefined; } };
+    let v = tryParse(s);
+    if (v !== undefined) return v;
+    for (const m of s.matchAll(/```(?:json|JSON)?\s*([\s\S]*?)```/g)) {
+        v = tryParse(m[1].trim());
+        if (v !== undefined) return v;
+    }
+    for (let start = 0; start < s.length; start++) {
+        const open = s[start];
+        if (open !== '[' && open !== '{') continue;
+        let depth = 0, inStr = false, esc = false, lastItemEnd = -1;
+        for (let i = start; i < s.length; i++) {
+            const c = s[i];
+            if (inStr) {
+                if (esc) esc = false;
+                else if (c === '\\') esc = true;
+                else if (c === '"') inStr = false;
+                continue;
+            }
+            if (c === '"') inStr = true;
+            else if (c === '[' || c === '{') depth++;
+            else if (c === ']' || c === '}') {
+                if (--depth === 0) {
+                    v = tryParse(s.slice(start, i + 1));
+                    if (v !== undefined) return v;
+                    break;
+                }
+                if (depth === 1 && c === '}') lastItemEnd = i;
+            }
+        }
+        if (depth > 0 && open === '[' && lastItemEnd > start) {
+            v = tryParse(s.slice(start, lastItemEnd + 1) + ']');
+            if (v !== undefined) return v;
+        }
+    }
+    return undefined;
+}
+
+// Daily/minute limits are per key AND per model: "key|model" -> { until, msg }. A model that hit
+// its limit is skipped until it resets, while the key's other models keep working.
+const geminiModelCooldowns = new Map();
+
 async function executeGeminiGenerate(apiKey, requestedModel, payload, signal) {
     apiKey = String(apiKey || '').trim();
     const candidateModels = await getCandidateModels(apiKey, requestedModel, signal);
     const body = JSON.stringify(payload);
+    const gen = payload && payload.generationConfig;
+    const plainBody = gen && (gen.responseMimeType || gen.responseSchema)
+        ? JSON.stringify({ ...payload, generationConfig: (({ responseMimeType, responseSchema, ...rest }) => rest)(gen) })
+        : body;
 
     let primaryError = null; // first meaningful error, reported to the user
     let sawRateLimit = false;
@@ -1044,6 +1121,13 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal) {
 
     for (let idx = 0; idx < candidateModels.length; idx++) {
         const m = candidateModels[idx];
+        if (plainBody !== body && geminiNoJsonOutputModels.has(m)) continue;
+        const cooldown = geminiModelCooldowns.get(`${apiKey}|${m}`);
+        if (cooldown && cooldown.until > Date.now()) {
+            sawRateLimit = true;
+            if (!rateLimitMsg) rateLimitMsg = cooldown.msg;
+            continue;
+        }
         // Transient server errors (500/503 "overloaded") get one retry on the same model.
         for (let attempt = 0; attempt < 2; attempt++) {
             if (signal && signal.aborted) {
@@ -1054,7 +1138,7 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal) {
                 res = await fetchWithTimeout(`${GEMINI_API_BASE}/models/${m}:generateContent?key=${apiKey}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body
+                    body: geminiNoJsonModeModels.has(m) ? plainBody : body
                 }, signal, GEMINI_ATTEMPT_TIMEOUT_MS);
             } catch (fetchErr) {
                 if (fetchErr.name === 'AbortError' && signal && signal.aborted) throw fetchErr;
@@ -1088,6 +1172,19 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal) {
                     if (!primaryError) primaryError = { status: 422, code: 'CONTENT_BLOCKED', error: `Gemini blocked this content (${reason}).`, message: `Gemini blocked this content (${reason}).` };
                     break; // try next model
                 }
+                if (geminiNoJsonModeModels.has(m) && plainBody !== body) {
+                    // Plain-mode reply to a JSON request: hand callers clean JSON, as JSON mode would.
+                    const value = extractJsonValue(text);
+                    if (value === undefined) {
+                        geminiNoJsonOutputModels.add(m);
+                        console.warn(`[Gemini] ${m} replied without JSON - skipping it for JSON requests from now on. Reply began: ${text.slice(0, 200)}`);
+                        if (!primaryError) primaryError = { status: 502, error: `${m} did not return the requested JSON.`, message: `${m} did not return the requested JSON. Reply began: ${text.slice(0, 160)}` };
+                        break; // next model
+                    }
+                    const clean = JSON.stringify(value);
+                    if (cand && cand.content) cand.content.parts = [{ text: clean }];
+                    return { success: true, json, text: clean, finishReason: cand?.finishReason, modelUsed: m };
+                }
                 return { success: true, json, text, finishReason: cand?.finishReason, modelUsed: m };
             }
 
@@ -1106,9 +1203,21 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal) {
                 return { success: false, status: 413, code: 'AUDIO_TOO_LARGE', error: `Audio is too large for Gemini: ${errMsg}`, message: errMsg };
             }
             if (res.status === 404) break; // model gone/renamed: next model, not worth reporting
+            if (res.status === 400 && isJsonModeUnsupported(errMsg)) {
+                if (plainBody !== body && !geminiNoJsonModeModels.has(m)) {
+                    geminiNoJsonModeModels.add(m);
+                    console.warn(`[Gemini] ${m} has no JSON mode - retrying it with plain-text JSON`);
+                    attempt--; // not a transient failure: don't use up the retry
+                    continue;
+                }
+                break; // model can't do this request: next model, and don't mask the real error (e.g. quota)
+            }
             if (res.status === 429) {
                 sawRateLimit = true;
                 if (!rateLimitMsg) rateLimitMsg = errMsg;
+                const daily = /per\s*-?day|daily quota|requests per day/i.test(errMsg);
+                geminiModelCooldowns.set(`${apiKey}|${m}`, { until: Date.now() + (daily ? DAILY_QUOTA_COOLDOWN_MS : RATE_LIMIT_COOLDOWN_MS), msg: errMsg });
+                if (daily) console.warn(`[Gemini] ${m} used up its daily quota on key …${apiKey.slice(-4)} - using the key's other models`);
                 await new Promise(r => setTimeout(r, 1500));
                 break;
             }
@@ -1273,13 +1382,17 @@ const KHMER_DUBBING_RULES = `💎 ULTRA-CONCISE & READABLE KHMER DUBBING RULES (
 // episode's JSON can overflow the output token limit - chunking fixes all three.
 const TRANSCRIBE_CHUNK_TARGET_SEC = 180;
 const TRANSCRIBE_SINGLE_MAX_SEC = 240;
+// "API Saver" (Settings): fewer, longer requests - Google's free tier counts requests per day.
+// 10 minutes of dialogue still fits the 32k output limit; a reply that gets cut off anyway is
+// caught by the gap check (see /api/transcribe).
+const SAVER_CHUNK_TARGET_SEC = 540;
+const SAVER_SINGLE_MAX_SEC = 600;
 // Actual lane count is still min()'d against keyPool.length elsewhere, so this is just
 // a ceiling. It used to be 4, which silently capped throughput (and daily-quota spread)
 // at 4 keys no matter how many a user added in Settings - raised so adding keys actually
 // helps both speed and quota headroom.
 const TRANSCRIBE_MAX_LANES = 12;
 const transcribeProgress = new Map(); // requestId -> { done, total }
-const TRANSCRIBE_SPEAKERS = ['Hero', 'Heroine', 'Father', 'Mother', 'Villain', 'Queen', 'Elder', 'Child', 'Male', 'Female'];
 const TRANSCRIBE_EMOTIONS = ['Neutral', 'Angry', 'Sad', 'Whisper', 'Excited', 'Royal', 'Romantic', 'Fear'];
 const TRANSCRIBE_RESPONSE_SCHEMA = {
     type: 'ARRAY',
@@ -1291,11 +1404,10 @@ const TRANSCRIBE_RESPONSE_SCHEMA = {
             originalText: { type: 'STRING' },
             text: { type: 'STRING' },
             gender: { type: 'STRING', enum: ['Male', 'Female'] },
-            speaker: { type: 'STRING', enum: TRANSCRIBE_SPEAKERS },
             emotion: { type: 'STRING', enum: TRANSCRIBE_EMOTIONS }
         },
-        required: ['start', 'end', 'originalText', 'text', 'gender', 'speaker'],
-        propertyOrdering: ['start', 'end', 'originalText', 'text', 'gender', 'speaker', 'emotion']
+        required: ['start', 'end', 'originalText', 'text', 'gender'],
+        propertyOrdering: ['start', 'end', 'originalText', 'text', 'gender', 'emotion']
     }
 };
 
@@ -1340,11 +1452,11 @@ async function detectSilences(file, signal) {
 
 // Cut near every TARGET seconds, snapped to the middle of the closest pause so we
 // never slice through a word.
-function planTranscribeChunks(totalSec, silences) {
+function planTranscribeChunks(totalSec, silences, { singleMax = TRANSCRIBE_SINGLE_MAX_SEC, target: targetSec = TRANSCRIBE_CHUNK_TARGET_SEC } = {}) {
     const chunks = [];
     let cursor = 0;
-    while (totalSec - cursor > TRANSCRIBE_SINGLE_MAX_SEC) {
-        const target = cursor + TRANSCRIBE_CHUNK_TARGET_SEC;
+    while (totalSec - cursor > singleMax) {
+        const target = cursor + targetSec;
         let best = null;
         for (const s of silences) {
             const mid = (s.start + s.end) / 2;
@@ -1380,23 +1492,16 @@ function formatTimestamp(sec) {
 
 // Accepts fenced JSON, {subtitles:[...]} wrappers, and arrays truncated by MAX_TOKENS.
 function parseJsonArrayLoose(raw) {
-    const s = String(raw || '').replace(/^\s*```(?:json)?/i, '').replace(/```\s*$/, '').trim();
-    try {
-        const v = JSON.parse(s);
-        if (Array.isArray(v)) return v;
-        if (v && Array.isArray(v.subtitles)) return v.subtitles;
-        return null;
-    } catch (e) { }
-    const open = s.indexOf('[');
-    const lastObj = s.lastIndexOf('}');
-    if (open < 0 || lastObj < open) return null;
-    try { return JSON.parse(s.slice(open, lastObj + 1) + ']'); } catch (e) { return null; }
+    const v = extractJsonValue(raw);
+    if (Array.isArray(v)) return v;
+    if (v && Array.isArray(v.subtitles)) return v.subtitles;
+    return null;
 }
 
 function buildTranscribePrompt({ clipSec, glossaryHint, genreGuidance, previousLines }) {
     const clipLen = clipSec > 0 ? clipSec.toFixed(1) : null;
     const contextHint = previousLines && previousLines.length
-        ? `\n\nPREVIOUS DIALOGUE (context only, for consistent names, pronouns and speaker roles; do NOT repeat these lines):\n${previousLines.map(l => `- [${l.speaker}] ${l.originalText || ''} => ${l.text}`).join('\n')}`
+        ? `\n\nPREVIOUS DIALOGUE (context only, for consistent names and pronouns; do NOT repeat these lines):\n${previousLines.map(l => `- [${l.gender || '?'}] ${l.originalText || ''} => ${l.text}`).join('\n')}`
         : '';
     return `You are an elite master film/TV dialogue adapter and dubbing director specializing in Asian and Chinese drama (C-Drama: 古装/宫斗/仙侠/武侠/现代甜宠/总裁/动作) localization into cinematic, natural, ultra-concise, and highly readable Khmer.
 
@@ -1418,19 +1523,8 @@ TIMESTAMPS & ACTING RULES:
    - Never invent, summarize, or skip dialogue. If the clip has no speech, return [].
    - "originalText" is the exact words spoken in the original language.
 
-3. Speaker & Character Role Detection:
-   - speaker: Strictly assign one of the 10 distinct character roles based on voice, age, identity, and pronouns. Keep the same role for the same voice throughout:
-     * "Hero" (Young male lead, protagonist, brave, e.g. "បង", "ខ្ញុំ")
-     * "Heroine" (Young female lead, sweet, emotional, e.g. "អូន", "នាងខ្ញុំ")
-     * "Father" (Mature male, dad, protector, elder family head, e.g. "ឪពុក", "ប៉ា", "ពុក")
-     * "Mother" (Mature female, mom, caring, maternal, e.g. "ម្តាយ", "ម៉ាក់", "ម៉ែ")
-     * "Villain" (Antagonist, evil boss, aggressive rival, cruel, e.g. "អញ", "ឯង")
-     * "Queen" (Empress, royal woman, cold/stern female authority, e.g. "ម្ចាស់ក្សត្រី", "ព្រះមេ")
-     * "Elder" (Old master, wise monk, grandfather, ancient teacher, e.g. "លោកតា", "គ្រូ")
-     * "Child" (Young kid, boy or girl, cute, playful, e.g. "កូន", "ក្មេង")
-     * "Male" (Neutral male, narrator, commoner, guard)
-     * "Female" (Neutral female, maid, servant, common woman)
-   - gender: "Male" or "Female" (Matching the speaker's voice).
+3. Speaker Gender & Emotion:
+   - gender: "Male" or "Female" - the gender of the voice actually speaking this line. Judge by the voice you hear, not by who is being talked about.
    - emotion: "Neutral", "Angry", "Sad", "Whisper", "Excited", "Royal", "Romantic", "Fear".${genreGuidance}
 
 4. Output Format:
@@ -1444,7 +1538,6 @@ SCHEMA:
     "originalText": "Original spoken dialogue",
     "text": "Short punchy Khmer translation",
     "gender": "Male",
-    "speaker": "Hero",
     "emotion": "Neutral"
   }
 ]`;
@@ -1475,12 +1568,13 @@ async function transcribeClipWithGemini({ apiKey, model, audioBase64, mimeType, 
         lastRaw = result.text || '';
         const items = parseJsonArrayLoose(lastRaw);
         if (items) {
-            if (result.finishReason === 'MAX_TOKENS') console.warn('[Transcribe] Output hit MAX_TOKENS; kept complete lines only.');
-            return { ok: true, items, raw: lastRaw, modelUsed: result.modelUsed };
+            const truncated = result.finishReason === 'MAX_TOKENS';
+            if (truncated) console.warn('[Transcribe] Output hit MAX_TOKENS; kept complete lines only.');
+            return { ok: true, items, raw: lastRaw, modelUsed: result.modelUsed, truncated };
         }
         console.error('[Transcribe] Unparseable Gemini output:', lastRaw.slice(0, 500));
     }
-    return { ok: false, result: { status: 502, error: 'Gemini returned an unreadable transcript. Please try again.' }, raw: lastRaw };
+    return { ok: false, result: { status: 502, error: 'Gemini returned an unreadable transcript. Please try again.', message: `Gemini returned an unreadable transcript. Please try again. Reply began: ${lastRaw.slice(0, 160)}` }, raw: lastRaw };
 }
 
 function normalizeClipCues(items, offsetSec, clipSec, glossary) {
@@ -1584,6 +1678,9 @@ const REPAIR_GAP_SEC = 20;
 const REPAIR_MAX_GAPS = 40;
 const REPAIR_WINDOW_MAX_SEC = 180;
 const REPAIR_TRANSLATE_BATCH = 40;
+// The gap double-check is an extra pass on top of a finished transcript: when Google is slow it
+// could add many minutes, so it stops starting new checks after this long (lines found so far stay).
+const REPAIR_GAP_BUDGET_MS = 2 * 60 * 1000;
 
 function cueNeedsTranslation(cue) {
     const text = String(cue.text || '').trim();
@@ -1745,13 +1842,21 @@ async function repairTranscript({ cues, sourceFile, totalSec, keys, model, promp
             if ((await silentFraction(sourceFile, w.start, w.end - w.start, signal)) > 0.85) continue;
             toCheck.push(w);
         }
-        if (progress && toCheck.length) progress.note = `Double-checking ${toCheck.length} stretch(es) with no subtitles for missed dialogue…`;
+        const setGapNote = () => {
+            if (progress && toCheck.length) progress.note = `Double-checking ${toCheck.length} stretch(es) with no subtitles for missed dialogue (${report.gapsChecked}/${toCheck.length})…`;
+        };
+        setGapNote();
         const existing = [...cues];
+        const budgetEnd = Date.now() + REPAIR_GAP_BUDGET_MS;
         let next = 0;
         const worker = async (lane) => {
             const laneKeys = [...keys.slice(lane), ...keys.slice(0, lane)];
             while (next < toCheck.length) {
                 if (signal && signal.aborted) return;
+                if (Date.now() > budgetEnd) {
+                    report.gapsSkippedForTime = toCheck.length - next;
+                    return;
+                }
                 const w = toCheck[next++];
                 try {
                 const clipSec = w.end - w.start;
@@ -1766,6 +1871,7 @@ async function repairTranscript({ cues, sourceFile, totalSec, keys, model, promp
                     promptOpts: { ...promptOpts, previousLines: before }, signal
                 }), signal);
                 report.gapsChecked++;
+                setGapNote();
                 if (!out.ok) continue;
                 for (const cue of normalizeClipCues(out.items, w.start, clipSec, glossary)) {
                     // Skip anything that overlaps a line we already have (window edges).
@@ -1801,6 +1907,7 @@ async function repairTranscript({ cues, sourceFile, totalSec, keys, model, promp
 app.post('/api/transcribe', async (req, res) => {
     const {
         audioBase64,
+        audioPath,
         mimeType = 'audio/mp3',
         duration,
         genre = 'historical',
@@ -1813,17 +1920,23 @@ app.post('/api/transcribe', async (req, res) => {
         videoName,
         partIndex,
         customFolder,
-        sourceFilePath
+        sourceFilePath,
+        apiSaver = false
     } = req.body;
 
-    if (!audioBase64) {
-        return res.status(400).json({ success: false, error: 'No audio data received.' });
+    if (!audioBase64 && !audioPath) {
+        return res.status(400).json({ success: false, error: 'No audio data or audio path received.' });
     }
 
+    // An audioPath is already on disk (e.g. the mp3 /api/extract-audio just saved), so it is
+    // neither read into memory nor saved again - it could be a full-length video.
+    const usePath = !!(audioPath && fs.existsSync(audioPath));
     let audioBuffer = null;
     try {
-        audioBuffer = Buffer.from(audioBase64, 'base64');
-        saveTranscribeAudio(audioBuffer, videoName, partIndex, customFolder, sourceFilePath);
+        if (!usePath && audioBase64) {
+            audioBuffer = Buffer.from(audioBase64, 'base64');
+            saveTranscribeAudio(audioBuffer, videoName, partIndex, customFolder, sourceFilePath);
+        }
     } catch (err) {
         console.warn('[Outputs] Error saving transcribe chunk:', err.message);
     }
@@ -1848,13 +1961,19 @@ app.post('/api/transcribe', async (req, res) => {
         };
 
         fs.mkdirSync(workDir, { recursive: true });
-        const ext = /wav/i.test(mimeType) ? '.wav' : /m4a|mp4|aac/i.test(mimeType) ? '.m4a' : /ogg|opus/i.test(mimeType) ? '.ogg' : '.mp3';
-        const inputFile = path.join(workDir, `input${ext}`);
-        fs.writeFileSync(inputFile, audioBuffer || Buffer.from(audioBase64, 'base64'));
+        let inputFile;
+        if (usePath) {
+            inputFile = audioPath;
+        } else {
+            const ext = /wav/i.test(mimeType) ? '.wav' : /m4a|mp4|aac/i.test(mimeType) ? '.m4a' : /ogg|opus/i.test(mimeType) ? '.ogg' : '.mp3';
+            inputFile = path.join(workDir, `input${ext}`);
+            fs.writeFileSync(inputFile, audioBuffer || Buffer.from(audioBase64, 'base64'));
+        }
 
         const totalSec = (await probeAudioDuration(inputFile)) || Number(duration) || 0;
-        const silences = totalSec > TRANSCRIBE_SINGLE_MAX_SEC ? await detectSilences(inputFile, abortCtrl.signal) : [];
-        const chunks = totalSec > 0 ? planTranscribeChunks(totalSec, silences) : [{ start: 0, end: 0 }];
+        const chunkPlan = apiSaver ? { singleMax: SAVER_SINGLE_MAX_SEC, target: SAVER_CHUNK_TARGET_SEC } : {};
+        const silences = totalSec > (chunkPlan.singleMax || TRANSCRIBE_SINGLE_MAX_SEC) ? await detectSilences(inputFile, abortCtrl.signal) : [];
+        const chunks = totalSec > 0 ? planTranscribeChunks(totalSec, silences, chunkPlan) : [{ start: 0, end: 0 }];
         console.log(`[Transcribe] ${totalSec.toFixed(1)}s audio -> ${chunks.length} chunk(s)`);
 
         // One lane per API key (max 4). Each lane takes a contiguous run of chunks
@@ -1868,14 +1987,18 @@ app.post('/api/transcribe', async (req, res) => {
         const progress = { done: 0, total: chunks.length };
         if (requestId) transcribeProgress.set(requestId, progress);
         let failure = null;
-        console.log(`[Transcribe] ${chunks.length} chunk(s) across ${laneCount} API key lane(s)`);
+        let anyTruncated = false;
+        console.log(`[Transcribe] ${chunks.length} chunk(s) across ${laneCount} API key lane(s)${apiSaver ? ' [API saver]' : ''}`);
 
         const cutClip = async (i) => {
             const chunk = chunks[i];
             const clipSec = chunk.end - chunk.start;
             // Speech-only 16kHz mono at 48kbps: tiny upload, same recognition quality.
-            if (!(chunks.length > 1 || audioBase64.length > 14 * 1024 * 1024) || !(totalSec > 0)) {
-                return { clipBase64: audioBase64, clipMime: mimeType || 'audio/mp3' };
+            // A file given by path is always cut: it may be a video, or too big to send as is.
+            if (!(chunks.length > 1 || usePath || audioBase64.length > 14 * 1024 * 1024) || !(totalSec > 0)) {
+                return usePath
+                    ? { clipBase64: fs.readFileSync(inputFile).toString('base64'), clipMime: mimeType || 'audio/mp3' }
+                    : { clipBase64: audioBase64, clipMime: mimeType || 'audio/mp3' };
             }
             const clipFile = path.join(workDir, `clip_${i}.mp3`);
             const { code } = await runFFmpegCapture(['-hide_banner', '-y', '-ss', chunk.start.toFixed(3), '-t', clipSec.toFixed(3),
@@ -1917,9 +2040,11 @@ app.post('/api/transcribe', async (req, res) => {
                     return;
                 }
                 rawParts[i] = out.raw;
+                if (out.truncated) anyTruncated = true;
                 chunkCues[i] = normalizeClipCues(out.items, chunk.start, clipSec, glossary);
                 laneCues = chunkCues[i].length ? chunkCues[i] : laneCues;
                 progress.done++;
+                if (progress.note && progress.note.includes(`retrying part ${i + 1} `)) progress.note = null; // that part went through
                 console.log(`[Transcribe] Chunk ${i + 1}/${chunks.length} (${chunk.start.toFixed(1)}-${chunk.end.toFixed(1)}s) -> ${chunkCues[i].length} lines via ${out.modelUsed} [lane ${lane + 1}]`);
             }
         };
@@ -1937,7 +2062,9 @@ app.post('/api/transcribe', async (req, res) => {
         try {
             repair = await repairTranscript({
                 cues: allCues, sourceFile: totalSec > 0 ? inputFile : null, totalSec, keys: keyPool, model,
-                promptOpts, glossary, workDir, signal: abortCtrl.signal, progress
+                promptOpts, glossary, workDir, signal: abortCtrl.signal, progress,
+                // API saver skips the missed-dialogue pass, unless a reply was cut off (its tail is a gap).
+                checkGaps: !apiSaver || anyTruncated
             });
         } catch (e) {
             if (e.name === 'AbortError' || abortCtrl.signal.aborted) throw e;
@@ -2043,7 +2170,7 @@ function parseSrtBlocksForTranslate(content) {
 
 function buildTranslatePrompt({ lines, glossaryHint, genreGuidance, previousLines }) {
     const contextHint = previousLines && previousLines.length
-        ? `\n\nPREVIOUS DIALOGUE (context only, for consistent names, pronouns and speaker roles; do NOT translate or output these):\n${previousLines.map(l => `- [${l.speaker || '?'}] ${l.source} => ${l.text}`).join('\n')}`
+        ? `\n\nPREVIOUS DIALOGUE (context only, for consistent names and pronouns; do NOT translate or output these):\n${previousLines.map(l => `- [${l.gender || '?'}] ${l.source} => ${l.text}`).join('\n')}`
         : '';
     return `You are an elite master film/TV dialogue adapter and dubbing director specializing in Asian and Chinese drama (C-Drama: 古装/宫斗/仙侠/武侠/现代甜宠/总裁/动作) localization into cinematic, natural, ultra-concise, and highly readable Khmer.
 
@@ -2059,19 +2186,8 @@ LINE MATCHING & EMOTION RULES:
    - Use the neighbouring lines as context, but translate each line on its own.
    - Keep each translation strictly 3 to 10 syllables (3 to 8 words).
 
-2. Character Role Tagging & Emotional Acting Detection:
-   - Assign one of the 10 character roles to "speaker" based on context, pronouns, and character relationships:
-     * "Hero" (Young male lead, protagonist, brave, e.g. "បង", "ខ្ញុំ")
-     * "Heroine" (Young female lead, sweet, emotional, e.g. "អូន", "នាងខ្ញុំ")
-     * "Father" (Mature male, dad, protector, elder family head, e.g. "ឪពុក", "ប៉ា", "ពុក")
-     * "Mother" (Mature female, mom, caring, maternal, e.g. "ម្តាយ", "ម៉ាក់", "ម៉ែ")
-     * "Villain" (Antagonist, evil boss, aggressive rival, cruel, e.g. "អញ", "ឯង")
-     * "Queen" (Empress, royal woman, cold/stern female authority, e.g. "ម្ចាស់ក្សត្រី", "ព្រះមេ")
-     * "Elder" (Old master, wise monk, grandfather, ancient teacher, e.g. "លោកតា", "គ្រូ")
-     * "Child" (Young kid, boy or girl, cute, playful, e.g. "កូន", "ក្មេង")
-     * "Male" (Neutral male, narrator, commoner, guard)
-     * "Female" (Neutral female, maid, servant, common woman)
-   - Assign "gender": "Male" or "Female" (Matching the character's gender).
+2. Speaker Gender & Emotional Acting Detection:
+   - Assign "gender": "Male" or "Female" - the gender of the character speaking the line, from context, pronouns and relationships.
    - Assign the dramatic emotion: "Neutral", "Angry", "Sad", "Whisper", "Excited", "Royal", "Romantic", "Fear".${genreGuidance}
 
 3. Output Format:
@@ -2080,7 +2196,6 @@ LINE MATCHING & EMOTION RULES:
   {
     "i": 0,
     "text": "Short Khmer translation",
-    "speaker": "Hero",
     "gender": "Male",
     "emotion": "Neutral"
   }
@@ -2097,12 +2212,11 @@ const TRANSLATE_RESPONSE_SCHEMA = {
         properties: {
             i: { type: 'INTEGER' },
             text: { type: 'STRING' },
-            speaker: { type: 'STRING', enum: TRANSCRIBE_SPEAKERS },
             gender: { type: 'STRING', enum: ['Male', 'Female'] },
             emotion: { type: 'STRING', enum: TRANSCRIBE_EMOTIONS }
         },
-        required: ['i', 'text', 'speaker', 'gender'],
-        propertyOrdering: ['i', 'text', 'speaker', 'gender', 'emotion']
+        required: ['i', 'text', 'gender'],
+        propertyOrdering: ['i', 'text', 'gender', 'emotion']
     }
 };
 
@@ -2202,7 +2316,7 @@ app.post('/api/translate-srt', async (req, res) => {
                 for (let i = start; i < Math.min(start + TRANSLATE_BATCH_SIZE, sourceLines.length); i++) indexes.push(i);
                 const previousLines = [];
                 for (let i = Math.max(0, start - 4); i < start; i++) {
-                    if (results[i]) previousLines.push({ source: sourceLines[i], text: results[i].text, speaker: results[i].speaker });
+                    if (results[i]) previousLines.push({ source: sourceLines[i], text: results[i].text, gender: results[i].gender });
                 }
 
                 const attempt = async (idx) => {
@@ -2252,6 +2366,123 @@ app.post('/api/translate-srt', async (req, res) => {
     } finally {
         if (requestId) activeTranscribeRequests.delete(requestId);
     }
+});
+
+// 4b. Khmer Movie Title Suggestions (DAI-Transcribe Suite)
+app.post('/api/suggest-movie-titles', async (req, res) => {
+    const {
+        title,
+        contextText,
+        genre = 'all',
+        apiKey,
+        apiKeys,
+        model = 'gemini-2.0-flash'
+    } = req.body;
+
+    if (!title || !title.trim()) {
+        return res.status(400).json({ success: false, error: 'Movie title is required.' });
+    }
+
+    const key = (apiKey && apiKey.trim()) || (Array.isArray(apiKeys) && apiKeys[0]);
+    if (!key) {
+        return res.status(400).json({ success: false, error: 'INVALID_API_KEY', message: 'Gemini API Key is required.' });
+    }
+
+    const abortCtrl = new AbortController();
+    try {
+        const prompt = `You are a master Cambodian film distributor, creative director, and localization expert specializing in translating foreign movie and drama titles into captivating, prestigious, and culturally resonant Khmer titles for Cambodian audiences and box office.
+
+ORIGINAL TITLE: "${title.trim()}"
+${genre ? `GENRE / REGISTER: ${genre}` : ''}
+${contextText ? `STORY CONTEXT / SUBTITLE SAMPLE / SYNOPSIS:\n${String(contextText).slice(0, 3000)}` : ''}
+
+TASK:
+Analyze the title, genre, and story context, and produce the top 10 catchy, authentic, and cinematic Khmer titles.
+Distribute them across styles:
+- 👑 រឿងបុរាណ / រាជវាំង / វីរបុរស (Royal & Epic)
+- 💖 ស្នេហាផ្អែមល្ហែម / មនោសញ្ចេតនា (Sweet Romance & Drama)
+- ⚔️ សកម្មភាព / កក្រើក / រំភើប (Action & Thriller)
+- ⚡ ចំណងជើងទាក់ទាញ / Viral (Catchy & Viral)
+- 🎭 ក្បួនភាពយន្តខ្មែរ (Classic Khmer Cinema Style)
+
+REQUIREMENTS:
+1. High-standard Khmer spelling and phonetic beauty. Use natural Khmer poetic rhythm.
+2. For each title, provide:
+   - "khmerTitle": The exact title in Khmer script (e.g. "វាសនានាគរាជមាស", "ស្នេហ៍ឆ្លងភព")
+   - "englishTranslation": Literal or meaning in English
+   - "category": One of "Royal & Epic", "Romance & Drama", "Action & Thriller", "Catchy & Viral", "Classic Cinema"
+   - "tagline": A short punchy promotional catchphrase in Khmer (ពាក្យស្លោក)
+   - "whyItWorks": Brief explanation (in English or Khmer) why this title sells well to Cambodian audiences.
+
+Output strictly valid JSON array of objects with the exact schema:
+[
+  {
+    "khmerTitle": "...",
+    "englishTranslation": "...",
+    "category": "...",
+    "tagline": "...",
+    "whyItWorks": "..."
+  }
+]`;
+
+        const payload = {
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            generationConfig: {
+                responseMimeType: 'application/json',
+                temperature: 0.7
+            }
+        };
+
+        const result = await executeGeminiGenerate(key, model, payload, abortCtrl.signal);
+        if (!result.success) return res.status(500).json(result);
+
+        const titles = parseJsonArrayLoose(result.text);
+        res.json({ success: true, titles: Array.isArray(titles) ? titles : [], rawText: result.text });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// 4c. Batch Save SRT Subtitle Files
+app.post('/api/batch-save-srts', (req, res) => {
+    const { items = [], customFolder } = req.body;
+    if (!Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ success: false, error: 'No subtitle files provided.' });
+    }
+
+    const savedFiles = [];
+    const errors = [];
+
+    items.forEach((item, idx) => {
+        try {
+            const { fileName, content, sourceFilePath } = item;
+            if (!content) return;
+
+            let cleanBase = (fileName || `subtitle_${idx + 1}`)
+                .replace(/[/\\?%*:|"<>]/g, '_')
+                .replace(/\.srt$/i, '');
+            const srtFileName = `${cleanBase}.srt`;
+
+            const destinations = getTranscribeDestinations(customFolder, sourceFilePath);
+            let savedPath = null;
+            destinations.forEach(targetDir => {
+                try {
+                    if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+                    const fullPath = path.join(targetDir, srtFileName);
+                    fs.writeFileSync(fullPath, content, 'utf8');
+                    if (!savedPath) savedPath = fullPath;
+                } catch (e) {
+                    console.warn('[BatchSave] Could not write to targetDir:', targetDir, e.message);
+                }
+            });
+
+            if (savedPath) savedFiles.push({ fileName: srtFileName, filePath: savedPath });
+        } catch (err) {
+            errors.push({ index: idx, error: err.message });
+        }
+    });
+
+    res.json({ success: true, savedCount: savedFiles.length, savedFiles, errors });
 });
 
 // 4c. Single Dialogue Line AI Rewriter (Shorten, Dramatic, Royal, Comedy)
@@ -2609,12 +2840,8 @@ Return ONLY a JSON array with one object per input line: [{ "id": "<same id>", "
             });
         }
 
-        let parsed;
-        try {
-            parsed = JSON.parse(result.text);
-        } catch (pe) {
-            return res.status(502).json({ success: false, error: 'JSON_PARSE_ERROR', message: 'Gemini returned malformed JSON.' });
-        }
+        // Loose: a model without JSON mode may wrap the array in a ```json fence.
+        const parsed = parseJsonArrayLoose(result.text);
         if (!Array.isArray(parsed)) {
             return res.status(502).json({ success: false, error: 'JSON_PARSE_ERROR', message: 'Gemini did not return a list of lines.' });
         }
@@ -3439,6 +3666,41 @@ app.get('/api/episodes/status', (req, res) => {
 
 app.post('/api/episodes/cancel', (req, res) => {
     res.json({ success: episodeJoiner.cancel(String((req.body || {}).jobId || '')) });
+});
+
+// Split Movie: one long movie -> ~30 minute parts, each dubbed as its own project.
+const videoSplitter = createVideoSplitter({ getFFmpegBinary, getFFprobeBinary, trackProcess });
+
+app.post('/api/split/inspect', async (req, res) => {
+    const file = resolveLocalFilePath((req.body || {}).file);
+    if (!file) return res.json({ success: false, error: 'File not found' });
+    try {
+        res.json({ success: true, ...(await videoSplitter.inspect(file)) });
+    } catch (e) {
+        res.json({ success: false, error: e.message });
+    }
+});
+
+app.post('/api/split/start', async (req, res) => {
+    const { file, outDir, partCount, baseName } = req.body || {};
+    const src = resolveLocalFilePath(file);
+    if (!src) return res.json({ success: false, error: 'File not found' });
+    if (!outDir) return res.json({ success: false, error: 'No output folder' });
+    try {
+        const jobId = await videoSplitter.start({ file: src, outDir, partCount, baseName });
+        res.json({ success: true, jobId });
+    } catch (e) {
+        res.json({ success: false, error: e.message });
+    }
+});
+
+app.get('/api/split/status', (req, res) => {
+    const st = videoSplitter.status(String(req.query.jobId || ''));
+    res.json(st ? { success: true, ...st } : { success: false, error: 'Unknown job' });
+});
+
+app.post('/api/split/cancel', (req, res) => {
+    res.json({ success: videoSplitter.cancel(String((req.body || {}).jobId || '')) });
 });
 
 app.get('/api/preview-status', (req, res) => {

@@ -1777,9 +1777,25 @@
             </button>
 
             <button id="btn-join-episodes" title="Join many short episodes into ~1 hour parts to dub"
-              class="col-span-2 group flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-emerald-500/10 border border-[var(--border-light)] hover:border-emerald-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
+              class="group flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-emerald-500/10 border border-[var(--border-light)] hover:border-emerald-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
               <i data-lucide="layers" class="w-4 h-4 text-emerald-400 shrink-0 group-hover:scale-110 transition-transform"></i>
               <span class="truncate">Join Episodes</span>
+            </button>
+
+            <button id="btn-split-movie" title="Split a long movie (2-3 hours) into parts, each dubbed as its own tab"
+              class="group flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-amber-500/10 border border-[var(--border-light)] hover:border-amber-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
+              <i data-lucide="scissors" class="w-4 h-4 text-amber-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+              <span class="truncate">Split Movie</span>
+            </button>
+
+            <!-- DAI-Transcribe Batch Studio Button -->
+            <button id="btn-open-daitranscribe-deck" title="Open DAI-Transcribe Batch Studio"
+              onclick="window.daiStudio && window.daiStudio.open('batch')"
+              class="col-span-2 group flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-xs font-bold text-white transition-all duration-300 ease-out hover:-translate-y-0.5 active:scale-[0.97] shadow-lg"
+              style="background: linear-gradient(135deg, #4f46e5, #7c3aed); box-shadow: 0 4px 18px rgba(99, 102, 241, 0.35)">
+              <i data-lucide="sparkles" class="w-4 h-4 text-indigo-200 transition-transform duration-300 group-hover:rotate-12 group-hover:scale-110"></i>
+              <span>DAI-Transcribe Studio (Batch)</span>
+              <span class="ml-1 px-1.5 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-wider bg-white/20 text-white border border-white/30">PRO</span>
             </button>
           </div>
         </div>
@@ -1966,7 +1982,7 @@
                   <button id="btn-refactor-all"
                     class="w-full text-left px-2.5 py-1.5 text-xs flex items-center gap-2 rounded-lg hover:bg-white/[0.08] text-slate-200 hover:text-emerald-400 cursor-pointer transition-colors">
                     <i data-lucide="layers" class="w-3.5 h-3.5 text-emerald-400 shrink-0"></i>
-                    <span class="font-semibold text-emerald-400">🌟 1-Click All 9 Tabs (In Order)</span>
+                    <span class="font-semibold text-emerald-400">🌟 1-Click All Tabs (In Order)</span>
                   </button>
 
                   <div class="my-1.5 border-t border-white/[0.08]"></div>
@@ -2249,6 +2265,22 @@
                 class="w-3.5 h-3.5 text-emerald-400 shrink-0 group-hover:scale-110 transition-transform"></i>
               <span class="hidden md:inline" id="text-transcribe-all">Transcribe All Tabs</span>
               <span class="md:hidden">All Tabs</span>
+            </button>
+
+            <button id="btn-dai-translate-all" title="Re-translate every tab's transcript with DAI Translate and write the Khmer back into each tab"
+              onclick="window.daiStudio && window.daiStudio.translateAllTabs()"
+              class="group h-8 px-2.5 sm:px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-white hover:border-indigo-500/50 shadow-sm active:scale-[0.95]">
+              <i data-lucide="languages" class="w-3.5 h-3.5 text-indigo-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+              <span class="hidden md:inline">DAI Translate All</span>
+            </button>
+
+            <!-- DAI-Transcribe Toolbar Shortcut -->
+            <button id="btn-open-daitranscribe-toolbar" title="Open DAI-Transcribe Batch Studio"
+              onclick="window.daiStudio && window.daiStudio.open('batch')"
+              class="group h-8 px-2.5 sm:px-3 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all bg-gradient-to-r from-indigo-500/20 to-purple-500/20 hover:from-indigo-500/35 hover:to-purple-500/35 border border-indigo-500/40 hover:border-indigo-400 text-indigo-200 hover:text-white shadow-sm active:scale-[0.95]">
+              <i data-lucide="sparkles" class="w-3.5 h-3.5 text-indigo-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+              <span class="hidden md:inline">DAI-Transcribe</span>
+              <span class="md:hidden">DAI</span>
             </button>
 
             <!-- Auto-Fit & Sync End -->
@@ -3362,6 +3394,708 @@
     </div>
   </div>
 
+  <div id="modal-split-movie"
+    class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[998] hidden modal-bg-enter">
+    <div class="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-2xl w-[640px] max-w-[94vw] max-h-[88vh] shadow-2xl flex flex-col overflow-hidden text-[var(--text-primary)] animate-modal-center"
+      onclick="event.stopPropagation()">
+      <div class="flex justify-between items-center p-4 border-b border-[var(--border-color)] bg-amber-500/10">
+        <h2 class="text-amber-400 font-bold flex items-center gap-2"><i data-lucide="scissors" class="w-5 h-5"></i> Split Movie</h2>
+        <button id="sm-close" class="text-[var(--text-secondary)] hover:text-[var(--text-bright)] transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+      <div class="p-5 flex flex-col gap-4 overflow-y-auto custom-scrollbar">
+        <p class="text-xs text-[var(--text-secondary)] leading-relaxed">Cut a long movie into parts that are transcribed, translated and dubbed as separate tabs. A part that hits the API quota doesn't lose the others, and you can finish the rest later. Cuts are made on a quiet moment, without re-encoding. When all parts are rendered, use <b>Join Episodes</b> on the render folder to get the full movie back.</p>
+        <div class="flex items-center gap-2">
+          <button id="sm-pick" class="shrink-0 whitespace-nowrap px-3 py-2 rounded-lg text-xs font-semibold bg-amber-600 text-white hover:brightness-110 active:scale-[0.97] transition-all flex items-center gap-1.5"><i data-lucide="film" class="w-4 h-4"></i> Choose Video</button>
+          <button id="sm-use-tab" class="hidden shrink-0 whitespace-nowrap px-3 py-2 rounded-lg text-xs font-semibold border border-[var(--border-light)] hover:bg-[var(--bg-hover)]">Use Current Tab</button>
+          <span id="sm-file" class="text-xs text-[var(--text-muted)] truncate font-mono">No video selected</span>
+        </div>
+        <div id="sm-summary" class="hidden flex-col gap-3">
+          <div id="sm-stats" class="text-sm font-semibold"></div>
+          <div class="grid grid-cols-3 gap-3 text-xs">
+            <label class="flex flex-col gap-1"><span class="text-[var(--text-secondary)]">Minutes per part</span>
+              <input id="sm-minutes" type="number" min="5" max="120" step="5" value="30" class="bg-[var(--bg-base)] border border-[var(--border-light)] rounded-md px-2 py-1.5 outline-none focus:border-amber-500"></label>
+            <label class="flex flex-col gap-1 col-span-2"><span class="text-[var(--text-secondary)]">File name</span>
+              <input id="sm-name" type="text" class="bg-[var(--bg-base)] border border-[var(--border-light)] rounded-md px-2 py-1.5 outline-none focus:border-amber-500 font-khmer"></label>
+          </div>
+          <div class="flex items-center gap-2 text-xs">
+            <span class="text-[var(--text-secondary)] shrink-0">Save to</span>
+            <span id="sm-out" class="truncate font-mono text-[var(--text-muted)]"></span>
+            <button id="sm-out-pick" class="ml-auto shrink-0 px-2 py-1 rounded-md border border-[var(--border-light)] hover:bg-[var(--bg-hover)]">Change</button>
+          </div>
+          <div id="sm-note" class="hidden text-xs text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded-lg p-2.5 leading-relaxed"></div>
+          <div id="sm-progress" class="hidden flex-col gap-1">
+            <div id="sm-progress-label" class="text-xs text-sky-400"></div>
+            <div class="w-full h-1 rounded bg-[var(--bg-base)]"><div id="sm-progress-bar" class="h-1 rounded bg-sky-500/70 transition-all" style="width:0%"></div></div>
+          </div>
+          <div id="sm-parts" class="flex flex-col gap-1.5 max-h-[260px] overflow-y-auto custom-scrollbar pr-1"></div>
+        </div>
+      </div>
+      <div class="p-4 border-t border-[var(--border-color)] bg-[var(--bg-base)] flex justify-end gap-3 shrink-0">
+        <button id="sm-open" class="hidden px-4 py-2 rounded-lg text-sm font-medium border border-[var(--border-light)] hover:bg-[var(--bg-hover)]">Open Folder</button>
+        <button id="sm-load" class="hidden px-4 py-2 rounded-lg text-sm font-medium border border-amber-500/50 text-amber-400 hover:bg-amber-500/10">Load into Dubber</button>
+        <button id="sm-start" disabled class="bg-amber-600 text-white px-6 py-2 rounded-lg text-sm font-medium shadow-md hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed transition-all active:scale-[0.95]">Split</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── DAI-TRANSCRIBE PRO STUDIO MODAL ── -->
+  <div id="modal-dai-transcribe"
+    class="fixed inset-0 bg-black/75 backdrop-blur-md flex items-center justify-center z-[990] hidden modal-bg-enter"
+    onclick="window.daiStudio && window.daiStudio.close()">
+    <div
+      class="bg-[var(--bg-panel)] border border-indigo-500/40 rounded-2xl w-[1180px] max-w-[97vw] h-[90vh] max-h-[900px] shadow-2xl flex flex-col overflow-hidden text-[var(--text-primary)] animate-modal-center"
+      onclick="event.stopPropagation()">
+
+      <!-- Studio Header -->
+      <div class="px-5 py-3.5 border-b border-[var(--border-color)] bg-gradient-to-r from-indigo-950/80 via-slate-900 to-purple-950/70 flex items-center justify-between shrink-0">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 p-0.5 shadow-lg shadow-indigo-500/30 flex items-center justify-center">
+            <div class="w-full h-full bg-slate-950/40 rounded-[10px] flex items-center justify-center backdrop-blur-sm">
+              <i data-lucide="sparkles" class="w-5 h-5 text-indigo-300"></i>
+            </div>
+          </div>
+          <div class="flex flex-col">
+            <div class="flex items-center gap-2">
+              <h2 class="text-base font-extrabold text-white tracking-wide">DAI-Transcribe Studio</h2>
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-sm">BATCH PRO</span>
+            </div>
+            <p class="text-xs text-indigo-200/70">Batch Audio/Video Transcriber, Subtitle Translator & Movie Title Localizer</p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <button id="dai-api-key-badge" type="button" title="Manage Gemini API Keys"
+            onclick="window.daiStudio && window.daiStudio.openApiKeyModal && window.daiStudio.openApiKeyModal()"
+            class="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-semibold bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 transition-all cursor-pointer shadow-sm active:scale-95">
+            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span>Gemini Active</span>
+            <i data-lucide="key" class="w-3 h-3 ml-0.5 opacity-80"></i>
+          </button>
+
+          <button id="dai-btn-close-modal"
+            class="p-2 rounded-xl text-[var(--text-secondary)] hover:text-white hover:bg-white/10 transition-colors">
+            <i data-lucide="x" class="w-5 h-5"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <div class="px-5 pt-3 pb-2 border-b border-[var(--border-color)] bg-[var(--bg-base)] flex items-center justify-between shrink-0">
+        <div class="flex items-center gap-2">
+          <button id="dai-tab-btn-batch"
+            class="dai-tab-btn active px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 border bg-indigo-500/20 border-indigo-500/50 text-indigo-300 shadow-md">
+            <i data-lucide="layers" class="w-4 h-4"></i>
+            <span>1. Batch Transcribe & Translate (Queue)</span>
+          </button>
+          <button id="dai-tab-btn-translator"
+            class="dai-tab-btn px-4 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 border border-transparent text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-hover)]">
+            <i data-lucide="file-text" class="w-4 h-4"></i>
+            <span>2. SRT / VTT Subtitle AI Translator</span>
+          </button>
+          <button id="dai-tab-btn-titles"
+            class="dai-tab-btn px-4 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 border border-transparent text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-hover)]">
+            <i data-lucide="clapperboard" class="w-4 h-4"></i>
+            <span>3. Khmer Movie Title Suggestions</span>
+          </button>
+        </div>
+
+        <button id="dai-btn-open-glossary"
+          class="px-3 py-1.5 rounded-lg text-xs font-semibold border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 transition-all flex items-center gap-1.5">
+          <i data-lucide="book-marked" class="w-3.5 h-3.5"></i>
+          <span>Character Glossary (ឈ្មោះតួអង្គ)</span>
+        </button>
+      </div>
+
+      <!-- Tab 1: Batch Transcribe & Translate (Queue) -->
+      <div id="dai-pane-batch" class="flex-1 flex flex-col overflow-hidden p-5 gap-4">
+        <!-- Configuration Bar -->
+        <div class="p-3 rounded-xl bg-[var(--bg-base)] border border-[var(--border-color)] flex flex-wrap items-center justify-between gap-3 shrink-0">
+          <div class="flex flex-wrap items-center gap-3">
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-semibold text-[var(--text-secondary)]">Drama Style:</span>
+              <select id="dai-genre-select"
+                class="bg-[var(--bg-panel)] border border-[var(--border-light)] text-xs text-[var(--text-primary)] rounded-lg px-2.5 py-1.5 outline-none focus:border-indigo-400 font-khmer cursor-pointer">
+                <option value="historical" selected>👑 រឿងបុរាណ / រាជវាំង / ទេវកថា (Ancient/Royal)</option>
+                <option value="modern">🏙️ សម័យ / ស្នេហាផ្អែមល្ហែម / CEO (Modern Romance)</option>
+                <option value="action">💥 សកម្មភាព / កងទ័ព / ឧក្រិដ្ឋ (Action/Crime)</option>
+                <option value="comedy">😂 កំប្លែង / កំប្លុកកំប្លែង (Comedy)</option>
+                <option value="neutral">🎭 ភាពយន្តទូទៅ (General Drama)</option>
+              </select>
+            </div>
+
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-semibold text-[var(--text-secondary)]">AI Model:</span>
+              <select id="dai-model-select"
+                class="bg-[var(--bg-panel)] border border-[var(--border-light)] text-xs text-[var(--text-primary)] rounded-lg px-2.5 py-1.5 outline-none focus:border-indigo-400 font-mono cursor-pointer">
+                <option value="gemini-3.8-flash" selected>Gemini 3.8 Flash (Latest)</option>
+                <option value="gemini-3.5-transcribe">Gemini 3.5 Transcribe (Audio Specialist)</option>
+                <option value="gemini-3.7-flash">Gemini 3.7 Flash</option>
+                <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
+                <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
+                <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash Lite</option>
+                <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro</option>
+                <option value="gemini-3.1-flash">Gemini 3.1 Flash</option>
+                <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite</option>
+                <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+                <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+              </select>
+            </div>
+
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-semibold text-[var(--text-secondary)]">Target:</span>
+              <span class="px-2 py-1 rounded-md text-xs font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">🇰🇭 Khmer</span>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2 text-xs">
+            <span class="text-[var(--text-muted)]">Save Folder:</span>
+            <span id="dai-output-folder-text" class="font-mono text-indigo-300 font-semibold truncate max-w-[220px]">Desktop ➔ transcribe output</span>
+            <button id="dai-btn-change-output" class="px-2 py-1 rounded text-[11px] font-medium border border-[var(--border-light)] hover:bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-white">Change</button>
+          </div>
+        </div>
+
+        <!-- Dropzone & Quick Buttons -->
+        <div id="dai-queue-dropzone"
+          class="border-2 border-dashed border-indigo-500/30 hover:border-indigo-400 bg-indigo-950/10 hover:bg-indigo-950/20 rounded-2xl p-4 flex items-center justify-between gap-4 transition-all cursor-pointer shrink-0">
+          <div class="flex items-center gap-3">
+            <div class="w-11 h-11 rounded-xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center shrink-0">
+              <i data-lucide="upload-cloud" class="w-6 h-6 text-indigo-300"></i>
+            </div>
+            <div>
+              <h4 class="text-xs font-bold text-white">Drag & Drop Media Files Here (MP4, MKV, MP3, WAV, etc.)</h4>
+              <p class="text-[11px] text-indigo-200/70">Multi-file batch transcription, subtitle generation, and Khmer dialogue translation</p>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2 shrink-0">
+            <input type="file" id="dai-hidden-file-input" accept="video/*,audio/*,.mkv,.avi,.wmv,.flv,.ts,.webm,.mov,.mp3,.wav,.m4a,.aac,.flac,.ogg,.opus,.srt,.vtt" class="hidden" multiple />
+            <button id="dai-btn-add-files" type="button"
+              class="px-3.5 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-md active:scale-95 transition-all flex items-center gap-1.5">
+              <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+              <span>+ Add Media Files</span>
+            </button>
+            <button id="dai-btn-add-tabs" type="button" title="Put every open Dubber tab's episode in the queue - Start Batch extracts the transcribe audio and makes the SRT, and Open All as Dubber Tabs sends each SRT back to its tab"
+              class="px-3.5 py-2 rounded-xl text-xs font-bold border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-200 shadow-sm active:scale-95 transition-all flex items-center gap-1.5">
+              <i data-lucide="layers" class="w-3.5 h-3.5"></i>
+              <span>+ Add All Dubber Tabs</span>
+            </button>
+            <button id="dai-btn-add-folder" type="button"
+              class="px-3.5 py-2 rounded-xl text-xs font-bold border border-indigo-500/40 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-200 shadow-sm active:scale-95 transition-all flex items-center gap-1.5">
+              <i data-lucide="folder" class="w-3.5 h-3.5"></i>
+              <span>+ Add Entire Folder</span>
+            </button>
+            <button id="dai-btn-clear-queue" type="button"
+              class="px-3 py-2 rounded-xl text-xs font-semibold text-[var(--text-muted)] hover:text-rose-400 hover:bg-rose-500/10 transition-all">
+              Clear Queue
+            </button>
+          </div>
+        </div>
+
+        <!-- Overall Progress & Queue Header -->
+        <div class="flex items-center justify-between text-xs shrink-0">
+          <div class="flex items-center gap-2">
+            <span id="dai-queue-count-badge" class="font-bold text-white font-mono">0 Files</span>
+            <span class="text-[var(--text-muted)]">|</span>
+            <span id="dai-queue-stats-summary" class="text-[var(--text-secondary)] font-mono">0 Done · 0 Running · 0 Pending</span>
+          </div>
+
+          <div class="flex items-center gap-2 w-48">
+            <div class="flex-1 h-1.5 rounded-full bg-[var(--bg-base)] border border-[var(--border-color)] overflow-hidden">
+              <div id="dai-overall-progress-bar" class="h-full bg-gradient-to-r from-indigo-500 to-emerald-400 transition-all duration-300" style="width: 0%"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Queue Table Container -->
+        <div class="flex-1 overflow-y-auto custom-scrollbar border border-[var(--border-color)] rounded-xl bg-[var(--bg-base)] flex flex-col">
+          <table class="w-full text-left border-collapse">
+            <thead class="sticky top-0 bg-[var(--bg-panel)] border-b border-[var(--border-color)] text-[11px] font-bold text-[var(--text-secondary)] uppercase tracking-wider z-10">
+              <tr>
+                <th class="px-3 py-2.5 text-center w-12">#</th>
+                <th class="px-3 py-2.5">Media File</th>
+                <th class="px-3 py-2.5 w-36">Duration / Size</th>
+                <th class="px-3 py-2.5 w-48">Status & Progress</th>
+                <th class="px-3 py-2.5 text-right w-44">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="dai-queue-list">
+              <!-- Dynamically populated rows -->
+            </tbody>
+          </table>
+
+          <div id="dai-queue-empty" class="flex-1 flex flex-col items-center justify-center p-8 text-center gap-2">
+            <div class="w-12 h-12 rounded-2xl bg-[var(--bg-hover)] border border-[var(--border-light)] flex items-center justify-center">
+              <i data-lucide="inbox" class="w-6 h-6 text-[var(--text-muted)]"></i>
+            </div>
+            <p class="text-xs font-semibold text-[var(--text-secondary)]">Queue is empty. Load audio or video files to get started.</p>
+            <p class="text-[11px] text-[var(--text-muted)]">Click "+ Add Media Files" or drag & drop video files above.</p>
+          </div>
+        </div>
+
+        <!-- Bottom Batch Footer Actions -->
+        <div class="pt-3 border-t border-[var(--border-color)] flex items-center justify-between shrink-0">
+          <div class="flex items-center gap-2">
+            <button id="dai-btn-export-all" type="button"
+              class="px-4 py-2 rounded-xl text-xs font-semibold border border-[var(--border-light)] hover:bg-[var(--bg-hover)] text-[var(--text-primary)] hover:text-white transition-all flex items-center gap-1.5">
+              <i data-lucide="archive" class="w-3.5 h-3.5 text-emerald-400"></i>
+              <span>Export All SRTs</span>
+            </button>
+            <button id="dai-btn-send-all-dubber" type="button"
+              class="px-4 py-2 rounded-xl text-xs font-bold border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 transition-all flex items-center gap-1.5">
+              <i data-lucide="layers" class="w-3.5 h-3.5"></i>
+              <span>Open All as Dubber Tabs</span>
+            </button>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <button id="dai-btn-start-batch" type="button" disabled
+              class="px-6 py-2.5 rounded-xl text-xs font-bold text-white shadow-xl active:scale-95 transition-all flex items-center gap-2 opacity-50 cursor-not-allowed"
+              style="background: linear-gradient(135deg, #4f46e5, #7c3aed); box-shadow: 0 4px 20px rgba(99, 102, 241, 0.4)">
+              <i data-lucide="play" class="w-4 h-4 fill-current"></i>
+              <span>Start Batch Transcribe</span>
+            </button>
+            <button id="dai-btn-stop-batch" type="button"
+              class="hidden px-6 py-2.5 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white shadow-xl active:scale-95 transition-all flex items-center gap-2">
+              <i data-lucide="square" class="w-4 h-4 fill-current"></i>
+              <span>Stop Batch</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 2: SRT / VTT Subtitle AI Translator (Large File Engine) -->
+      <div id="dai-pane-translator" class="flex-1 flex-col overflow-hidden p-5 gap-4 hidden">
+        <div class="p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/30 flex items-start gap-3 shrink-0">
+          <i data-lucide="zap" class="w-5 h-5 text-indigo-400 shrink-0 mt-0.5"></i>
+          <p class="text-xs text-indigo-200/90 leading-relaxed">
+            <strong>Large File Engine (300 to 1,000+ Segments)</strong>: Translates large existing subtitle files with intelligent auto-chunking, character glossary matching, timestamp shifting, overlap fixing, and streaming preview.
+          </p>
+        </div>
+
+        <div class="grid grid-cols-3 gap-4 flex-1 overflow-hidden">
+          <!-- Left Configuration & Input Area -->
+          <div class="flex flex-col gap-3 overflow-y-auto custom-scrollbar pr-1">
+            <div class="flex items-center gap-2">
+              <button id="dai-trans-mode-upload" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">File Upload</button>
+              <button id="dai-trans-mode-raw" class="px-3 py-1.5 rounded-lg text-xs font-semibold text-[var(--text-secondary)] hover:text-white border border-transparent">Raw Subtitle Text</button>
+              <button id="dai-trans-mode-tabs" class="px-3 py-1.5 rounded-lg text-xs font-semibold text-[var(--text-secondary)] hover:text-white border border-transparent">All Project Tabs</button>
+            </div>
+
+            <!-- Upload Area -->
+            <div id="dai-trans-upload-area" class="flex flex-col gap-2">
+              <div id="dai-trans-dropzone"
+                class="border-2 border-dashed border-indigo-500/30 hover:border-indigo-400 rounded-xl p-5 flex flex-col items-center justify-center text-center gap-2 bg-[var(--bg-base)] cursor-pointer transition-all">
+                <i data-lucide="file-up" class="w-8 h-8 text-indigo-400"></i>
+                <span id="dai-trans-file-label" class="text-xs font-semibold text-[var(--text-primary)]">Upload .srt or .vtt subtitle file</span>
+                <span class="text-[10px] text-[var(--text-muted)]">Recommended 300 to 600+ lines (UTF-8)</span>
+              </div>
+              <input type="file" id="dai-trans-file-input" accept=".srt,.vtt" class="hidden" />
+            </div>
+
+            <!-- Raw Area -->
+            <div id="dai-trans-raw-area" class="hidden flex-col gap-1.5 flex-1">
+              <label class="text-[11px] font-semibold text-[var(--text-secondary)]">Paste Raw Subtitle Lines:</label>
+              <textarea id="dai-trans-raw-input" rows="8" placeholder="1&#10;00:00:01,000 --> 00:00:04,000&#10;Hello world..."
+                class="w-full flex-1 p-2.5 rounded-xl border border-[var(--border-light)] bg-[var(--bg-base)] text-xs text-[var(--text-primary)] font-mono outline-none focus:border-indigo-400 custom-scrollbar"></textarea>
+            </div>
+
+            <!-- All Project Tabs: re-translate every tab's original-language transcript, write Khmer back -->
+            <div id="dai-trans-tabs-area" class="hidden flex-col gap-2">
+              <div class="flex items-center justify-between">
+                <span id="dai-trans-tabs-summary" class="text-[11px] font-semibold text-[var(--text-secondary)]">No project tabs loaded</span>
+                <button id="dai-trans-tabs-reload" type="button" class="text-[11px] text-indigo-300 hover:text-white hover:underline">Reload tabs</button>
+              </div>
+              <div id="dai-trans-tabs-list" class="flex flex-col gap-1.5 max-h-[260px] overflow-y-auto custom-scrollbar pr-1"></div>
+              <p class="text-[10px] text-[var(--text-muted)] leading-relaxed">Uses each tab's original-language lines (from Transcribe). Changed lines lose their old voice clip - Generate again after.</p>
+            </div>
+
+            <!-- Options -->
+            <div class="flex flex-col gap-2.5 pt-1 text-xs">
+              <label class="flex flex-col gap-1">
+                <span class="text-[var(--text-secondary)] font-medium">Drama Register:</span>
+                <select id="dai-trans-genre-select"
+                  class="bg-[var(--bg-base)] border border-[var(--border-light)] rounded-lg px-2.5 py-1.5 outline-none focus:border-indigo-400 font-khmer cursor-pointer">
+                  <option value="historical" selected>👑 រឿងបុរាណ / រាជវាំង (Ancient/Royal)</option>
+                  <option value="modern">🏙️ សម័យ / ស្នេហា / CEO (Modern Drama)</option>
+                  <option value="action">💥 សកម្មភាព / កងទ័ព (Action)</option>
+                  <option value="comedy">😂 កំប្លែង (Comedy)</option>
+                </select>
+              </label>
+
+              <label class="flex flex-col gap-1">
+                <span class="text-[var(--text-secondary)] font-medium">AI Model:</span>
+                <select id="dai-trans-model-select"
+                  class="bg-[var(--bg-base)] border border-[var(--border-light)] rounded-lg px-2.5 py-1.5 outline-none focus:border-indigo-400 font-mono cursor-pointer">
+                  <option value="gemini-3.8-flash" selected>Gemini 3.8 Flash (Latest)</option>
+                  <option value="gemini-3.5-transcribe">Gemini 3.5 Transcribe (Audio Specialist)</option>
+                  <option value="gemini-3.7-flash">Gemini 3.7 Flash</option>
+                  <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
+                  <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
+                  <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash Lite</option>
+                  <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro</option>
+                  <option value="gemini-3.1-flash">Gemini 3.1 Flash</option>
+                  <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite</option>
+                  <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                  <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                  <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+                  <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                  <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+                </select>
+              </label>
+
+              <label class="flex items-center gap-2 cursor-pointer pt-1">
+                <input id="dai-trans-chk-strip-html" type="checkbox" checked class="w-3.5 h-3.5 accent-indigo-500 rounded" />
+                <span class="text-[11px] text-[var(--text-secondary)] font-khmer">លុប HTML Tags (&lt;i&gt;, &lt;b&gt;, &lt;font&gt;) ចេញពី Subtitle</span>
+              </label>
+            </div>
+
+            <!-- Actions -->
+            <div class="flex items-center gap-2 pt-2">
+              <button id="dai-trans-btn-clear" type="button"
+                class="px-3 py-2 rounded-xl text-xs font-semibold border border-[var(--border-light)] hover:bg-[var(--bg-hover)] text-[var(--text-secondary)]">
+                Clear
+              </button>
+              <button id="dai-trans-btn-start" type="button"
+                class="flex-1 px-4 py-2 rounded-xl text-xs font-bold text-white shadow-md active:scale-95 transition-all flex items-center justify-center gap-1.5"
+                style="background: linear-gradient(135deg, #4f46e5, #7c3aed)">
+                <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+                <span>Translate Subtitle</span>
+              </button>
+              <button id="dai-trans-btn-stop" type="button"
+                class="hidden flex-1 px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 text-white shadow-md active:scale-95 transition-all flex items-center justify-center gap-1.5">
+                <i data-lucide="square" class="w-3.5 h-3.5"></i>
+                <span>Stop</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Right Results & Preview Area -->
+          <div class="col-span-2 flex flex-col border border-[var(--border-color)] rounded-xl bg-[var(--bg-base)] overflow-hidden">
+            <div class="p-3 border-b border-[var(--border-color)] bg-[var(--bg-panel)] flex items-center justify-between">
+              <span class="text-xs font-bold text-white">Live Translation Preview</span>
+              <span id="dai-trans-results-count" class="text-xs font-mono text-indigo-400 font-bold">0 Cues</span>
+            </div>
+
+            <!-- Progress Bar -->
+            <div id="dai-trans-progress-box" class="hidden px-4 py-2 bg-indigo-950/20 border-b border-indigo-500/20 flex flex-col gap-1">
+              <div class="flex items-center justify-between text-[11px]">
+                <span id="dai-trans-progress-label" class="text-indigo-300 font-semibold">Translating with Gemini...</span>
+              </div>
+              <div class="w-full h-1.5 rounded-full bg-[var(--bg-base)] overflow-hidden">
+                <div id="dai-trans-progress-bar" class="h-full bg-gradient-to-r from-indigo-500 to-cyan-400 transition-all duration-300" style="width: 20%"></div>
+              </div>
+            </div>
+
+            <div id="dai-trans-results-container" class="flex-1 overflow-y-auto custom-scrollbar p-0">
+              <table class="w-full text-left border-collapse">
+                <thead class="sticky top-0 bg-[var(--bg-panel)] border-b border-[var(--border-color)] text-[10px] font-bold text-[var(--text-muted)] uppercase">
+                  <tr>
+                    <th class="px-2 py-2 text-center w-10">#</th>
+                    <th class="px-2 py-2 w-32">Timecode</th>
+                    <th class="px-2 py-2">Khmer Translation</th>
+                  </tr>
+                </thead>
+                <tbody id="dai-trans-results-body">
+                  <!-- Populated dynamically -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 3: Khmer Movie Title Suggestions -->
+      <div id="dai-pane-titles" class="flex-1 flex-col overflow-hidden p-5 gap-4 hidden">
+        <div class="grid grid-cols-3 gap-5 flex-1 overflow-hidden">
+          <!-- Left Title Inputs -->
+          <div class="flex flex-col gap-3 overflow-y-auto custom-scrollbar pr-1">
+            <div class="flex flex-col gap-1.5">
+              <label class="text-xs font-bold text-[var(--text-primary)]">Original Movie Title (ចំណងជើងរឿងដើម):</label>
+              <input id="dai-titles-original-input" type="text" placeholder="e.g. Avatar: The Way of Water / 长相思"
+                class="w-full h-9 px-3 rounded-xl border border-[var(--border-light)] bg-[var(--bg-base)] text-xs text-[var(--text-primary)] focus:border-indigo-400 outline-none" />
+            </div>
+
+            <div class="flex flex-col gap-1.5">
+              <label class="text-xs font-bold text-[var(--text-primary)]">Story Context / Subtitle Files (Optional):</label>
+              <div id="dai-titles-dropzone"
+                class="border border-dashed border-[var(--border-light)] hover:border-indigo-400 rounded-xl p-3 flex flex-col items-center text-center gap-1 bg-[var(--bg-base)] cursor-pointer">
+                <i data-lucide="file-text" class="w-5 h-5 text-indigo-400"></i>
+                <span class="text-xs font-semibold text-[var(--text-secondary)]">Drop .srt / .vtt file to extract dialogue</span>
+              </div>
+              <input type="file" id="dai-titles-file-input" accept=".srt,.vtt" class="hidden" />
+
+              <textarea id="dai-titles-context-input" rows="5" placeholder="Or paste storyline summary, characters, plot points here..."
+                class="w-full p-2.5 rounded-xl border border-[var(--border-light)] bg-[var(--bg-base)] text-xs text-[var(--text-primary)] font-khmer outline-none focus:border-indigo-400 custom-scrollbar"></textarea>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2 text-xs">
+              <label class="flex flex-col gap-1">
+                <span class="text-[var(--text-secondary)] font-medium">Genre Style:</span>
+                <select id="dai-titles-genre-select"
+                  class="bg-[var(--bg-base)] border border-[var(--border-light)] rounded-lg px-2.5 py-1.5 outline-none focus:border-indigo-400 font-khmer cursor-pointer">
+                  <option value="all" selected>All Categories (ចម្រុះ)</option>
+                  <option value="royal">👑 Royal / Epic</option>
+                  <option value="romance">💖 Sweet Romance</option>
+                  <option value="action">⚔️ Action / Thriller</option>
+                  <option value="viral">⚡ Catchy / Viral</option>
+                </select>
+              </label>
+
+              <label class="flex flex-col gap-1">
+                <span class="text-[var(--text-secondary)] font-medium">AI Model:</span>
+                <select id="dai-titles-model-select"
+                  class="bg-[var(--bg-base)] border border-[var(--border-light)] rounded-lg px-2.5 py-1.5 outline-none focus:border-indigo-400 font-mono cursor-pointer">
+                  <option value="gemini-3.8-flash" selected>Gemini 3.8 Flash (Latest)</option>
+                  <option value="gemini-3.5-transcribe">Gemini 3.5 Transcribe (Audio Specialist)</option>
+                  <option value="gemini-3.7-flash">Gemini 3.7 Flash</option>
+                  <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
+                  <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
+                  <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash Lite</option>
+                  <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro</option>
+                  <option value="gemini-3.1-flash">Gemini 3.1 Flash</option>
+                  <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite</option>
+                  <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                  <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                  <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+                  <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                  <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="flex items-center gap-2 pt-2">
+              <button id="dai-titles-btn-clear" type="button"
+                class="px-3 py-2 rounded-xl text-xs font-semibold border border-[var(--border-light)] hover:bg-[var(--bg-hover)] text-[var(--text-secondary)]">
+                Clear
+              </button>
+              <button id="dai-titles-btn-suggest" type="button"
+                class="flex-1 px-4 py-2 rounded-xl text-xs font-bold text-white shadow-md active:scale-95 transition-all flex items-center justify-center gap-1.5"
+                style="background: linear-gradient(135deg, #4f46e5, #7c3aed)">
+                <i id="dai-titles-btn-icon" data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+                <span id="dai-titles-btn-label">✨ Analyze & Suggest Titles</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Right Suggestions Results Cards -->
+          <div class="col-span-2 flex flex-col border border-[var(--border-color)] rounded-xl bg-[var(--bg-base)] overflow-hidden">
+            <div class="p-3 border-b border-[var(--border-color)] bg-[var(--bg-panel)] flex items-center justify-between">
+              <span class="text-xs font-bold text-white">Top 10 Khmer Movie Title Suggestions</span>
+              <span class="text-[11px] text-[var(--text-muted)]">Click "Copy" or "Apply to Tab"</span>
+            </div>
+
+            <div id="dai-titles-results" class="flex-1 overflow-y-auto custom-scrollbar p-4 flex flex-col gap-3">
+              <div class="flex flex-col items-center justify-center h-full text-center gap-2 p-8">
+                <i data-lucide="sparkles" class="w-8 h-8 text-indigo-400/50"></i>
+                <p class="text-xs text-[var(--text-secondary)] font-semibold">Enter a movie title or context and click "Analyze & Suggest Titles"</p>
+                <p class="text-[11px] text-[var(--text-muted)]">AI will produce top 10 catchy, culturally resonant Khmer titles categorized by style.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── SUBTITLE PREVIEW & INLINE EDITOR MODAL ── -->
+  <div id="dai-preview-modal"
+    class="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-[995] hidden modal-bg-enter"
+    onclick="window.daiStudio && window.daiStudio.closePreviewModal && window.daiStudio.closePreviewModal()">
+    <div
+      class="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-2xl w-[960px] max-w-[95vw] h-[85vh] shadow-2xl flex flex-col overflow-hidden text-[var(--text-primary)] animate-modal-center"
+      onclick="event.stopPropagation()">
+      <div class="px-5 py-3.5 border-b border-[var(--border-color)] bg-[var(--bg-base)] flex items-center justify-between shrink-0">
+        <div class="flex items-center gap-2">
+          <i data-lucide="captions" class="w-5 h-5 text-indigo-400"></i>
+          <h3 id="dai-preview-title" class="text-sm font-bold text-white truncate max-w-[500px]">Subtitle Cue Editor</h3>
+          <span id="dai-preview-lines-count" class="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">0 Lines</span>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <input type="text" id="dai-preview-search-input" placeholder="Search dialogue..."
+            class="h-8 px-2.5 rounded-lg border border-[var(--border-light)] bg-[var(--bg-panel)] text-xs text-[var(--text-primary)] outline-none focus:border-indigo-400 w-48 font-khmer" />
+          <button id="dai-btn-close-preview" class="p-1.5 rounded-lg text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-hover)]">
+            <i data-lucide="x" class="w-4 h-4"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="flex-1 overflow-y-auto custom-scrollbar p-0">
+        <table class="w-full text-left border-collapse">
+          <thead class="sticky top-0 bg-[var(--bg-panel)] border-b border-[var(--border-color)] text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-wider z-10">
+            <tr>
+              <th class="px-2.5 py-2 text-center w-12">#</th>
+              <th class="px-2.5 py-2 w-36">Timecode</th>
+              <th class="px-2 py-2 w-24">Speaker</th>
+              <th class="px-2.5 py-2">Original Text</th>
+              <th class="px-2.5 py-2">Khmer Translation (Editable)</th>
+            </tr>
+          </thead>
+          <tbody id="dai-preview-table-body">
+            <!-- Dynamically populated rows -->
+          </tbody>
+        </table>
+      </div>
+
+      <div class="p-3 border-t border-[var(--border-color)] bg-[var(--bg-base)] flex items-center justify-between shrink-0">
+        <span class="text-[11px] text-[var(--text-muted)]">Changes are saved directly into the project tab & exported SRT.</span>
+        <div class="flex items-center gap-2">
+          <button onclick="window.daiStudio && window.daiStudio.closePreviewModal && window.daiStudio.closePreviewModal()"
+            class="px-4 py-2 rounded-xl text-xs font-semibold border border-[var(--border-light)] hover:bg-[var(--bg-hover)] text-[var(--text-secondary)]">
+            Cancel
+          </button>
+          <button id="dai-btn-save-preview-changes"
+            class="px-5 py-2 rounded-xl text-xs font-bold text-white shadow-md active:scale-95 transition-all flex items-center gap-1.5"
+            style="background: linear-gradient(135deg, #10b981, #059669)">
+            <i data-lucide="check" class="w-3.5 h-3.5"></i>
+            <span>Save & Apply Edits</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── GLOSSARY DICTIONARY MODAL ── -->
+  <div id="dai-glossary-modal"
+    class="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-[996] hidden modal-bg-enter"
+    onclick="window.daiStudio && window.daiStudio.closeGlossaryModal && window.daiStudio.closeGlossaryModal()">
+    <div
+      class="bg-[var(--bg-panel)] border border-indigo-500/40 rounded-2xl w-[600px] max-w-[95vw] shadow-2xl flex flex-col overflow-hidden text-[var(--text-primary)] animate-modal-center"
+      onclick="event.stopPropagation()">
+      <div class="px-5 py-3.5 border-b border-[var(--border-color)] bg-[var(--bg-base)] flex items-center justify-between shrink-0">
+        <div class="flex items-center gap-2">
+          <i data-lucide="book-marked" class="w-5 h-5 text-indigo-400"></i>
+          <h3 class="text-sm font-bold text-white font-khmer">វចនានុក្រមតួអង្គ & បរិបទ (Character Glossary)</h3>
+        </div>
+        <button id="dai-btn-close-glossary" class="p-1.5 rounded-lg text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-hover)]">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+      <div class="p-4 flex flex-col gap-3">
+        <div class="grid grid-cols-2 gap-2">
+          <input id="dai-glossary-orig-input" type="text" placeholder="Original Name (e.g. Lin Feng)"
+            class="h-9 px-3 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)] text-xs text-[var(--text-primary)] outline-none focus:border-indigo-400" />
+          <input id="dai-glossary-khmer-input" type="text" placeholder="Khmer Translation (e.g. លីនហ្វេង)"
+            class="h-9 px-3 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)] text-xs text-[var(--text-primary)] outline-none focus:border-indigo-400 font-khmer" />
+        </div>
+
+        <button id="dai-btn-add-glossary-item"
+          class="h-9 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center gap-1.5 transition-all active:scale-95 shadow-md">
+          <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+          <span>Add Character / Term</span>
+        </button>
+
+        <div class="border border-[var(--border-color)] rounded-xl overflow-hidden max-h-60 overflow-y-auto custom-scrollbar">
+          <table class="w-full text-left border-collapse text-xs">
+            <thead class="bg-[var(--bg-base)] border-b border-[var(--border-color)] text-[10px] text-[var(--text-muted)] uppercase">
+              <tr>
+                <th class="px-3 py-2 text-center w-10">#</th>
+                <th class="px-3 py-2">Original Term</th>
+                <th class="px-3 py-2">Khmer</th>
+                <th class="px-3 py-2 text-right w-12"></th>
+              </tr>
+            </thead>
+            <tbody id="dai-glossary-table-body">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── DAI API KEY MODAL ── -->
+  <div id="dai-apikey-modal"
+    class="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-[996] hidden modal-bg-enter"
+    onclick="window.daiStudio && window.daiStudio.closeApiKeyModal && window.daiStudio.closeApiKeyModal()">
+    <div
+      class="bg-[var(--bg-panel)] border border-indigo-500/40 rounded-2xl w-[580px] max-w-[95vw] shadow-2xl flex flex-col overflow-hidden text-[var(--text-primary)] animate-modal-center"
+      onclick="event.stopPropagation()">
+      <div class="px-5 py-3.5 border-b border-[var(--border-color)] bg-[var(--bg-base)] flex items-center justify-between shrink-0">
+        <div class="flex items-center gap-2.5">
+          <div class="w-7 h-7 rounded-lg bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+            <i data-lucide="key" class="w-4 h-4"></i>
+          </div>
+          <div>
+            <h3 class="text-sm font-bold text-white">Google Gemini API Keys Pool</h3>
+            <p class="text-[11px] text-[var(--text-muted)]">Configure API key(s) for batch transcription, subtitle translation & title generation</p>
+          </div>
+        </div>
+        <button id="dai-btn-close-apikey-modal" onclick="window.daiStudio && window.daiStudio.closeApiKeyModal && window.daiStudio.closeApiKeyModal()" class="p-1.5 rounded-lg text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-hover)]">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+      <div class="p-4 flex flex-col gap-4">
+        <!-- Info Alert -->
+        <div class="p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/25 flex items-start gap-2.5 text-xs text-indigo-200">
+          <i data-lucide="info" class="w-4 h-4 text-indigo-400 shrink-0 mt-0.5"></i>
+          <div class="leading-relaxed">
+            <span class="font-bold text-white">Multi-Key Load Balancing:</span> You can add multiple Gemini API keys. The studio automatically rotates requests across your key pool to prevent rate limits (RPM / TPM) and speed up large batch files.
+          </div>
+        </div>
+
+        <!-- Add Key Input -->
+        <div class="flex flex-col gap-1.5">
+          <label class="text-xs font-semibold text-[var(--text-secondary)]">Add Gemini API Key</label>
+          <div class="flex items-center gap-2">
+            <div class="relative flex-1">
+              <input id="dai-new-apikey-input" type="password" placeholder="AIzaSy..."
+                class="w-full h-9 pl-3 pr-16 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)] text-xs text-[var(--text-primary)] outline-none focus:border-indigo-400 font-mono" />
+              <div class="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                <button id="dai-btn-toggle-apikey-visibility" type="button" title="Toggle visibility"
+                  class="p-1 text-[var(--text-muted)] hover:text-white rounded">
+                  <i data-lucide="eye" class="w-3.5 h-3.5"></i>
+                </button>
+                <button id="dai-btn-paste-apikey" type="button" title="Paste from clipboard"
+                  class="p-1 text-[var(--text-muted)] hover:text-white rounded">
+                  <i data-lucide="clipboard-paste" class="w-3.5 h-3.5"></i>
+                </button>
+              </div>
+            </div>
+            <button id="dai-btn-add-apikey"
+              class="h-9 px-4 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center gap-1.5 transition-all active:scale-95 shadow-md shrink-0">
+              <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+              <span>Add Key</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Active Keys List -->
+        <div class="flex flex-col gap-1.5">
+          <div class="flex items-center justify-between text-xs font-semibold text-[var(--text-secondary)]">
+            <span>Configured Keys (<span id="dai-apikey-count">0</span>)</span>
+            <span class="text-[10px] text-emerald-400">Stored safely in local browser storage</span>
+          </div>
+
+          <div class="border border-[var(--border-color)] rounded-xl overflow-hidden max-h-52 overflow-y-auto custom-scrollbar bg-[var(--bg-base)]">
+            <div id="dai-apikey-list" class="divide-y divide-[var(--border-color)] text-xs">
+              <!-- Dynamically populated rows -->
+            </div>
+          </div>
+        </div>
+
+        <!-- External link & Settings button -->
+        <div class="pt-2 border-t border-[var(--border-color)] flex items-center justify-between text-xs">
+          <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer"
+            class="text-indigo-400 hover:text-indigo-300 underline flex items-center gap-1 text-[11px]">
+            <span>Get a Gemini API Key from Google AI Studio</span>
+            <i data-lucide="external-link" class="w-3 h-3"></i>
+          </a>
+          <button type="button" id="dai-btn-open-full-settings"
+            class="text-xs text-[var(--text-secondary)] hover:text-white flex items-center gap-1">
+            <i data-lucide="sliders" class="w-3.5 h-3.5"></i>
+            <span>All Preferences</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="modal-settings"
     class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[200] hidden opacity-0 transition-opacity duration-300"
     onclick="closeSettingsModal()">
@@ -3456,12 +4190,19 @@
               <!-- Hidden native select (still used by existing JS listeners) -->
               <select id="setting-ai-model" class="hidden">
                 <option value="gemini-3.8-flash" selected>Gemini 3.8 Flash</option>
+                <option value="gemini-3.5-transcribe">Gemini 3.5 Transcribe</option>
                 <option value="gemini-3.7-flash">Gemini 3.7 Flash</option>
-                <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-                <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+                <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
+                <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
+                <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash Lite</option>
                 <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro</option>
+                <option value="gemini-3.1-flash">Gemini 3.1 Flash</option>
+                <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite</option>
                 <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
                 <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
               </select>
 
               <!-- Custom Dropdown -->
@@ -3552,6 +4293,15 @@
               <p class="text-[11px] text-[var(--text-muted)] mt-1">Select the engine used for video transcription and
                 translation.</p>
             </div>
+
+            <!-- ── API Saver ── -->
+            <label for="setting-api-saver" class="flex items-start gap-3 pt-4 border-t border-[var(--border-color)] cursor-pointer">
+              <input id="setting-api-saver" type="checkbox" class="mt-1 w-4 h-4 accent-emerald-500 shrink-0 cursor-pointer" />
+              <span class="flex flex-col gap-1">
+                <span class="text-sm text-[var(--text-bright)] font-medium">API Saver mode</span>
+                <span class="text-[11px] text-[var(--text-muted)] leading-relaxed">Uses fewer Gemini requests so your free daily quota lasts for more episodes: one request per episode up to 10 minutes (instead of one per 3 minutes), and no extra "missed dialogue" check. Rarely, a line Gemini skips is not recovered. Applies to Transcribe and DAI-Transcribe Studio.</span>
+              </span>
+            </label>
 
             <!-- ── Transcription Engine ── -->
             <div class="flex flex-col gap-3 pt-4 border-t border-[var(--border-color)]">
@@ -4841,16 +5591,23 @@
                     Subtitles</span>
                 </div>
 
-                <button id="btn-open-daitranscribe" onclick="
-                      fireConfetti(event);
-                      openDaiTranscribe();
-                    "
-                  class="group mt-3 w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-bold text-white transition-all duration-300 ease-out hover:-translate-y-0.5 active:scale-[0.97] shadow-lg"
-                  style="background: linear-gradient(135deg, #6366f1, #4f46e5); box-shadow: 0 4px 20px rgba(99, 102, 241, 0.35)">
-                  <i data-lucide="external-link"
-                    class="w-4 h-4 transition-transform duration-300 group-hover:translate-x-0.5"></i>
-                  Open Website
-                </button>
+                <div class="flex flex-col gap-2 mt-3 w-full">
+                  <button id="btn-open-daitranscribe" onclick="
+                        fireConfetti(event);
+                        openDaiTranscribe();
+                      "
+                    class="group w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-bold text-white transition-all duration-300 ease-out hover:-translate-y-0.5 active:scale-[0.97] shadow-lg"
+                    style="background: linear-gradient(135deg, #6366f1, #4f46e5); box-shadow: 0 4px 20px rgba(99, 102, 241, 0.35)">
+                    <i data-lucide="sparkles"
+                      class="w-4 h-4 transition-transform duration-300 group-hover:rotate-12"></i>
+                    Launch DAI-Transcribe Studio
+                  </button>
+                  <button onclick="openDaiTranscribeWeb()"
+                    class="w-full text-center text-xs text-indigo-300/80 hover:text-white hover:underline transition-colors py-1 flex items-center justify-center gap-1">
+                    <i data-lucide="external-link" class="w-3 h-3"></i>
+                    <span>Open AI Studio Web Version</span>
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -5896,6 +6653,18 @@
       return "Male";
     };
 
+    // Voice for a line the AI transcribed or translated: only the default Male or Female voice.
+    // AI role guesses (Hero, Villain, Father...) aren't reliable - the same actor got different
+    // voices from line to line - so a role is only used to tell the gender when there is none.
+    // Roles picked by hand from the Role menu still work.
+    window.defaultVoiceFor = function (gender, role) {
+      const g = String(gender || "").trim().toLowerCase();
+      if (g === "female" || g.includes("ស្រី") || g.includes("នារី")) return "Female";
+      if (g === "male" || g.includes("ប្រុស") || g.includes("បុរស")) return "Male";
+      const preset = window.CHARACTER_PRESETS[window.resolveCharacterKey(role || gender)];
+      return preset && preset.gender === "Female" ? "Female" : "Male";
+    };
+
     // Initialize Lucide Icons
     _lucideCreateIcons();
 
@@ -6636,6 +7405,9 @@
       color: "#000000",
     };
     let projects = []; // array of project snapshot objects
+    // Batch actions (Transcribe/Refactor/Generate/Isolate All) process 1-2 tabs at a time, so
+    // more tabs don't mean more parallel API load - this is only a sanity cap.
+    const MAX_PROJECT_TABS = 20;
     let activeProjectIndex = 0;
     renderProjectTabs();
 
@@ -9013,10 +9785,17 @@
       }
     }
 
-    // ── Bonus: DAI-Transcribe website ──
+    // ── DAI-Transcribe Studio & Web ──
     function openDaiTranscribe() {
-      const url = "https://aistudio.google.com/apps/0d90c305-b9d1-42f0-a73c-b4facd481984?showAssistant=true&showPreview=true&fullscreenApplet=true";
+      if (window.daiStudio && typeof window.daiStudio.open === "function") {
+        window.daiStudio.open("batch");
+      } else {
+        openDaiTranscribeWeb();
+      }
+    }
 
+    function openDaiTranscribeWeb() {
+      const url = "https://aistudio.google.com/apps/0d90c305-b9d1-42f0-a73c-b4facd481984?showAssistant=true&showPreview=true&fullscreenApplet=true";
       if (window.electronAPI && window.electronAPI.openExternalUrl) {
         window.electronAPI.openExternalUrl(url);
       } else {
@@ -9608,17 +10387,7 @@
               const finalSubs = parsedSubs.map((sub, idx) => {
                 const tr = Array.isArray(translatedMap) ? translatedMap[idx] : null;
                 let khmerText = (tr && (tr.text || tr.dubbedText)) || sub.text;
-                let detectedChar = "Female";
-                if (tr && tr.speaker) {
-                  detectedChar = typeof window.resolveCharacterKey === "function" ? window.resolveCharacterKey(tr.speaker) : "Male";
-                } else if (tr && tr.character) {
-                  detectedChar = typeof window.resolveCharacterKey === "function" ? window.resolveCharacterKey(tr.character) : "Male";
-                } else if (sub.speaker) {
-                  detectedChar = typeof window.resolveCharacterKey === "function" ? window.resolveCharacterKey(sub.speaker) : "Male";
-                } else {
-                  let rawGender = (tr && tr.gender) || sub.gender || "Female";
-                  detectedChar = typeof window.resolveCharacterKey === "function" ? window.resolveCharacterKey(rawGender) : "Female";
-                }
+                const detectedChar = window.defaultVoiceFor((tr && tr.gender) || sub.gender, (tr && (tr.speaker || tr.character)) || sub.speaker);
 
                 return {
                   id: sub.id || crypto.randomUUID().substring(0, 8),
@@ -9627,7 +10396,7 @@
                   audioStart: sub.audioStart || sub.textStart,
                   audioEnd: sub.audioEnd || sub.textEnd,
                   originalText: sub.originalText || sub.text,
-                  speaker: (tr && tr.speaker) || sub.speaker || detectedChar,
+                  speaker: detectedChar,
                   character: detectedChar,
                   emotion: (tr && tr.emotion) || "Neutral",
                   text: khmerText,
@@ -9691,8 +10460,14 @@
           // Direct Gemini Audio Transcription
           if (projects[activeProjectIndex] === targetProject) showToast("Uploading and transcribing audio...", "info");
 
-          const audioFetchRes = await fetch(extractData.url || `/api/audio?path=${encodeURIComponent(extractData.file)}`, { signal });
-          const audioBlob = await audioFetchRes.blob();
+          // The server reads the extracted file by path: no upload, and no second saved copy of
+          // the audio for every API key tried. Uploading is only the fallback.
+          const audioPathOnServer = extractData.file || null;
+          let audioBlob = null;
+          if (!audioPathOnServer) {
+            const audioFetchRes = await fetch(extractData.url, { signal });
+            audioBlob = await audioFetchRes.blob();
+          }
 
           const blobToBase64 = (b) => {
             return new Promise((res, rej) => {
@@ -9706,7 +10481,7 @@
             });
           };
 
-          const audioBase64 = await blobToBase64(audioBlob);
+          const audioBase64 = audioBlob ? await blobToBase64(audioBlob) : null;
           const totalDur = (targetProject.duration || duration) > 0 ? (targetProject.duration || duration).toFixed(2) : 60;
           let activeModel = localStorage.getItem("aiDubberModel") || "gemini-3.8-flash";
           let lastErrorType = "UNKNOWN_ERROR";
@@ -9738,7 +10513,8 @@
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                   audioBase64: audioBase64,
-                  mimeType: audioBlob.type || "audio/mp3",
+                  audioPath: audioPathOnServer,
+                  mimeType: (audioBlob && audioBlob.type) || "audio/mp3",
                   duration: totalDur,
                   targetLanguage: targetProject.targetLanguage || targetLanguage,
                   genre: activeDramaGenre || "historical",
@@ -9752,6 +10528,7 @@
                   partIndex: partIdx,
                   customFolder: customFolderPath,
                   sourceFilePath: localVideoPath,
+                  apiSaver: localStorage.getItem("aiDubberApiSaver") === "true",
                 }),
                 signal,
               }).finally(() => clearInterval(progressTimer));
@@ -9811,16 +10588,7 @@
                 const endRaw = sub.end !== undefined ? sub.end : 0;
                 const textRaw = sub.text || "";
 
-                let detectedChar = "Male";
-                if (sub.speaker) {
-                  detectedChar = typeof window.resolveCharacterKey === "function" ? window.resolveCharacterKey(sub.speaker) : "Male";
-                } else if (sub.character) {
-                  detectedChar = typeof window.resolveCharacterKey === "function" ? window.resolveCharacterKey(sub.character) : "Male";
-                } else {
-                  const aiGender = (sub.gender || sub.voice || "").toLowerCase().trim();
-                  const isMaleTag = aiGender === "male" || aiGender.includes("ប្រុស") || aiGender.includes("បុរស");
-                  detectedChar = isMaleTag ? "Male" : "Female";
-                }
+                const detectedChar = window.defaultVoiceFor(sub.gender || sub.voice, sub.speaker || sub.character);
 
                 return {
                   id: crypto.randomUUID().substring(0, 8),
@@ -9829,7 +10597,7 @@
                   audioStart: parseAiTime(startRaw).toFixed(2),
                   audioEnd: parseAiTime(endRaw).toFixed(2),
                   originalText: sub.originalText || sub.original || null,
-                  speaker: sub.speaker || detectedChar,
+                  speaker: detectedChar,
                   character: detectedChar,
                   emotion: sub.emotion || "Neutral",
                   text: textRaw,
@@ -10017,7 +10785,7 @@
           changedIds.push(sub.id);
         });
         const newSubs = data.added.map((a) => {
-          const character = typeof window.resolveCharacterKey === "function" ? window.resolveCharacterKey(a.speaker || a.gender || "Male") : a.gender === "Female" ? "Female" : "Male";
+          const character = window.defaultVoiceFor(a.gender, a.speaker);
           return {
             id: crypto.randomUUID().substring(0, 8),
             textStart: Number(a.start).toFixed(2),
@@ -10025,7 +10793,7 @@
             audioStart: Number(a.start).toFixed(2),
             audioEnd: Number(a.end).toFixed(2),
             originalText: a.originalText || null,
-            speaker: a.speaker || character,
+            speaker: character,
             character,
             emotion: a.emotion || "Neutral",
             text: a.text || "",
@@ -14140,6 +14908,16 @@
       }
     }
 
+    // API Saver mode (saved as soon as it's toggled; read on every transcribe request)
+    const apiSaverToggle = document.getElementById("setting-api-saver");
+    if (apiSaverToggle) {
+      apiSaverToggle.checked = localStorage.getItem("aiDubberApiSaver") === "true";
+      apiSaverToggle.addEventListener("change", () => {
+        localStorage.setItem("aiDubberApiSaver", apiSaverToggle.checked ? "true" : "false");
+        showToast(apiSaverToggle.checked ? "API Saver ON: fewer Gemini requests per episode." : "API Saver OFF: full accuracy checks.", "info");
+      });
+    }
+
     // Load Whisper folder
     const savedWhisperFolder = localStorage.getItem("aiDubberWhisperFolder") || "";
     const whisperInput = document.getElementById("setting-whisper-folder");
@@ -17718,6 +18496,109 @@
       if (typeof renderProjectTabs === "function") renderProjectTabs();
     };
 
+    // For js/dai-transcribe-studio.js: the project state lives in this script's let/const
+    // bindings, which are not properties of window.
+    window.dubberBridge = {
+      tabCount: () => projects.length,
+      maxTabs: MAX_PROJECT_TABS,
+      // Opens the files as new tabs (same path as File > Open), returns the first new tab's index or -1.
+      openTabs: async (files) => {
+        const before = projects.length;
+        await loadVideoFiles(files);
+        return projects.length > before ? before : -1;
+      },
+      applySrt: (srtText, projIndex) => applySrtToProject(parseSrtText(srtText), projIndex),
+      // Open tabs for the "Load into which tab?" picker. `ref` is the project itself.
+      tabList: () => {
+        saveCurrentProjectState();
+        return projects.map((proj, i) => ({
+          ref: proj,
+          number: i + 1,
+          name: proj.tabTitle || (proj.file?.name || `Video ${i + 1}`).replace(/\.[^/.]+$/, ""),
+          path: proj.videoFilePath || null,
+          lines: proj.subtitles.length,
+          active: i === activeProjectIndex,
+        }));
+      },
+      // How well a file name matches a tab's video name, 0-100 (same scorer as the SRT import).
+      // "transcribe_<episode>.mp3" is the audio of <episode>, so that prefix is ignored.
+      matchScore: (fileName, tabName) => srtMatchScore(String(fileName || "").replace(/^transcribe_(\d+_)?/i, "").replace(/_[a-z0-9]{5}_audio(?=\.)/i, ""), String(tabName || "")),
+      // Puts subtitles into an existing tab and shows it. false if the tab was closed meanwhile.
+      applySrtToTab: (ref, srtText) => {
+        const idx = projects.indexOf(ref);
+        if (idx < 0) return false;
+        if (idx !== activeProjectIndex) switchProject(idx);
+        saveStateToPast();
+        applySrtToProject(parseSrtText(srtText), idx);
+        return true;
+      },
+      parseSrt: (srtText) => parseSrtText(srtText),
+      renameActiveTab: (name) => {
+        const proj = projects[activeProjectIndex];
+        if (!proj) return false;
+        proj.tabTitle = name;
+        renderProjectTabs();
+        return true;
+      },
+      // Every tab's original-language lines, for DAI Translate's "All Project Tabs" queue.
+      // `ref` is the project itself, so results still land in the right tab if tabs are closed meanwhile.
+      tabTranscripts: () => {
+        saveCurrentProjectState(); // the active tab's live edits live in `subtitles`
+        return projects.map((proj, i) => ({
+          ref: proj,
+          name: proj.tabTitle || (proj.file?.name || `Video ${i + 1}`).replace(/\.[^/.]+$/, ""),
+          total: proj.subtitles.length,
+          lines: proj.subtitles
+            .filter((s) => String(s.originalText || "").trim())
+            .map((s) => ({ id: s.id, textStart: s.textStart, textEnd: s.textEnd, source: String(s.originalText).trim() })),
+        }));
+      },
+      isTabBusy: (ref) => !!(ref && (ref.isTranscribing || ref.isGeneratingAudio || ref.isIsolatingBgm)),
+      // Writes translations ([{ id, text, gender, emotion }]) into a tab. A line whose text changes loses
+      // its old voice clip (it no longer matches). Returns how many lines changed, or -1 if the tab is gone.
+      applyTabTranslation: (ref, results) => {
+        const idx = projects.indexOf(ref);
+        if (idx < 0) return -1;
+        const isActive = idx === activeProjectIndex;
+        if (isActive) {
+          saveCurrentProjectState();
+          saveStateToPast();
+        }
+        const byId = new Map(results.map((r) => [String(r.id), r]));
+        let changed = 0;
+        ref.subtitles = ref.subtitles.map((s) => {
+          const tr = byId.get(String(s.id));
+          if (!tr || !String(tr.text || "").trim()) return s;
+          const next = { ...s, text: tr.text.trim(), emotion: tr.emotion || s.emotion || "Neutral" };
+          // A role picked by hand (Hero, Villain...) stays; the default Male/Female voice follows the new gender.
+          if (!s.character || /^(male|female)$/i.test(s.character)) {
+            const voiceChar = window.defaultVoiceFor(tr.gender || s.gender, null);
+            Object.assign(next, { speaker: voiceChar, character: voiceChar, gender: voiceChar });
+          }
+          if (next.text !== s.text) {
+            changed++;
+            Object.assign(next, { audioStatus: "idle", audioUrl: null, baseAudioDuration: 0, speed: 1.0, audioStart: s.textStart, audioEnd: s.textEnd });
+          }
+          return next;
+        });
+        autoAssignVoxProfiles(ref.subtitles);
+        if (isActive) {
+          subtitles = ref.subtitles.map((s) => ({ ...s }));
+          renderSubtitles();
+          updateGenerateButtonState();
+        }
+        updateGenerateAllButtonState();
+        renderProjectTabs();
+        maybeAutoSaveSubtitles(ref, ref.subtitles);
+        return changed;
+      },
+      // Re-read the key pool after another window/modal changed it in localStorage.
+      reloadApiKeys: () => {
+        try { apiKeys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]"); } catch (e) { }
+        renderApiKeys();
+      },
+    };
+
     // ── Read a File object with BOM-aware encoding detection ──
     const readSrtFile = (file) =>
       new Promise((resolve, reject) => {
@@ -17912,10 +18793,10 @@
         const manuallyChanged = new Set();
         const autoMatchCount = slots.filter((s) => s.fileIndex !== null).length;
 
-        // Extra slots: unassigned files can fill remaining project slots (max 9 total)
+        // Extra slots: unassigned files can fill remaining project slots (up to MAX_PROJECT_TABS)
         // remainSlots[fi] = true means that file index is queued to create a new SRT-Only tab
         const remainSlots = {};
-        const MAX_PROJECTS = 9;
+        const MAX_PROJECTS = MAX_PROJECT_TABS;
 
         const overlay = document.createElement("div");
         overlay.className = "fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm";
@@ -21149,16 +22030,197 @@
       });
     })();
 
+    // ── Split Movie ────────────────────────────────────────────────────────
+    (() => {
+      const $ = (id) => document.getElementById(id);
+      const modal = $("modal-split-movie");
+      if (!modal) return;
+      const API = "http://localhost:3001/api/split";
+      const post = async (url, body) => (await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json();
+      const fmtDur = (sec) => {
+        const s = Math.round(sec || 0), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+        return h ? `${h}:${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}` : `${m}:${String(r).padStart(2, "0")}`;
+      };
+      const dirOf = (p) => p.replace(/[\\/][^\\/]*$/, "");
+      const pathJoin = (dir, name) => (dir.includes("\\") ? `${dir}\\${name}` : `${dir}/${name}`);
+      const baseOf = (p) => p.split(/[\\/]/).pop().replace(/\.[^.]+$/, "");
+      const esc = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+      let src = null, outDir = "", jobId = null, results = null;
+
+      // Equal-length parts closest to the chosen length (2:05:00 at 30 min -> 4 x 31:15).
+      const partCount = () => {
+        if (!src) return 0;
+        const target = Math.max(5, parseFloat($("sm-minutes").value) || 30) * 60;
+        return Math.max(1, Math.min(40, Math.round(src.duration / target)));
+      };
+
+      const renderParts = () => {
+        const box = $("sm-parts");
+        box.innerHTML = "";
+        const planned = partCount();
+        const rows = results?.parts?.length
+          ? results.parts.map((p) => ({ start: p.start, duration: p.duration, name: p.outPath.split(/[\\/]/).pop(), quiet: p.quietCut }))
+          : Array.from({ length: planned }, (_, i) => ({ start: i * src.duration / planned, duration: src.duration / planned, approx: planned > 1 }));
+        rows.forEach((r, i) => {
+          const row = document.createElement("div");
+          row.className = "flex items-center gap-3 px-3 py-2 rounded-lg bg-[var(--bg-base)] border border-[var(--border-color)] text-xs";
+          const state = r.name ? `<span class="text-emerald-400 truncate" title="${esc(r.name)}">✓ ${esc(r.name)}</span>` : `<span class="text-[var(--text-muted)]">${r.approx ? "cut point chosen on split" : ""}</span>`;
+          row.innerHTML = `<span class="font-semibold w-14 shrink-0">Part ${i + 1}</span>
+            <span class="font-mono text-[var(--text-secondary)] shrink-0">${r.approx ? "≈ " : ""}${fmtDur(r.start)} – ${fmtDur(r.start + r.duration)}</span>
+            <span class="font-mono shrink-0">${fmtDur(r.duration)}</span>
+            <span class="flex-1 text-right min-w-0 flex justify-end">${state}</span>`;
+          box.appendChild(row);
+        });
+        const n = results?.parts?.length || partCount();
+        const free = MAX_PROJECT_TABS - projects.length;
+        const note = $("sm-note");
+        note.textContent = n > free ? `Only ${Math.max(0, free)} more tab${free === 1 ? "" : "s"} can be open (max ${MAX_PROJECT_TABS}). Use longer parts, or load the rest after closing finished tabs - every part is saved in the folder.` : "";
+        note.classList.toggle("hidden", !note.textContent);
+        $("sm-start").textContent = jobId ? "Stop" : results ? "Done ✓" : n > 1 ? `Split into ${n} parts` : "Split";
+        $("sm-start").disabled = !jobId && (!src || n < 2 || !!results);
+      };
+
+      const setProgress = (label, pct) => {
+        $("sm-progress").classList.toggle("hidden", label === null);
+        $("sm-progress").classList.toggle("flex", label !== null);
+        $("sm-progress-label").textContent = label || "";
+        $("sm-progress-bar").style.width = `${pct || 0}%`;
+      };
+
+      const choose = async (filePath) => {
+        if (jobId || !filePath) return;
+        $("sm-file").textContent = filePath;
+        $("sm-file").title = filePath;
+        $("sm-summary").classList.remove("hidden");
+        $("sm-summary").classList.add("flex");
+        $("sm-stats").textContent = "Reading video…";
+        $("sm-parts").innerHTML = "";
+        $("sm-open").classList.add("hidden");
+        $("sm-load").classList.add("hidden");
+        setProgress(null);
+        src = null;
+        results = null;
+        try {
+          const r = await post(`${API}/inspect`, { file: filePath });
+          if (!r.success) throw new Error(r.error);
+          src = r;
+          const v = r.video || {};
+          $("sm-stats").textContent = `${fmtDur(r.duration)} · ${v.width}×${v.height} ${String(v.codec || "").toUpperCase()}${r.audioTracks > 1 ? ` · ${r.audioTracks} audio tracks` : ""}`;
+          $("sm-name").value = baseOf(r.path);
+          outDir = pathJoin(dirOf(r.path), "DR Dubber Split");
+          $("sm-out").textContent = outDir;
+          renderParts();
+        } catch (e) {
+          $("sm-stats").textContent = `Could not read the video: ${e.message}`;
+          $("sm-start").disabled = true;
+        }
+      };
+
+      const currentTabPath = () => {
+        const p = projects[activeProjectIndex];
+        return p ? p.videoFilePath || (p.file && p.file.path) || null : null;
+      };
+
+      const open = () => {
+        $("sm-use-tab").classList.toggle("hidden", !currentTabPath() || !!jobId);
+        modal.classList.remove("hidden");
+        if (window.lucide) _lucideCreateIcons({ root: modal });
+      };
+      const close = () => {
+        if (jobId) showToast("Splitting continues in the background. Reopen Split Movie to see progress.", "info");
+        modal.classList.add("hidden");
+      };
+
+      $("btn-split-movie")?.addEventListener("click", open);
+      $("sm-close").addEventListener("click", close);
+      modal.addEventListener("click", close);
+      $("sm-minutes").addEventListener("input", () => { if (src && !jobId && !results) renderParts(); });
+      $("sm-minutes").addEventListener("change", (e) => {
+        e.target.value = String(Math.min(120, Math.max(5, Math.round(parseFloat(e.target.value) || 30))));
+        if (src && !jobId && !results) renderParts();
+      });
+
+      $("sm-pick").addEventListener("click", async () => {
+        if (jobId) return;
+        const res = await window.electronAPI?.openFile?.({
+          title: "Choose the movie to split",
+          defaultPath: localStorage.getItem("lastPath:splitMovie") || "",
+          filters: [
+            { name: "Video", extensions: ["mp4", "mkv", "mov", "m4v", "avi", "wmv", "flv", "ts", "m2ts", "mts", "webm", "mpg", "mpeg", "3gp", "vob", "rmvb", "rm", "asf", "f4v", "ogv", "divx"] },
+            { name: "All Files", extensions: ["*"] },
+          ],
+        });
+        if (!res || res.canceled || !res.filePath) return;
+        localStorage.setItem("lastPath:splitMovie", res.dirPath || dirOf(res.filePath));
+        choose(res.filePath);
+      });
+      $("sm-use-tab").addEventListener("click", () => choose(currentTabPath()));
+
+      $("sm-out-pick").addEventListener("click", async () => {
+        if (jobId) return;
+        const res = await window.electronAPI?.selectFolder?.({ title: "Save parts to", defaultPath: outDir });
+        if (res && !res.canceled && res.path) { outDir = res.path; $("sm-out").textContent = outDir; }
+      });
+
+      $("sm-start").addEventListener("click", async () => {
+        if (jobId) {
+          await post(`${API}/cancel`, { jobId }).catch(() => {});
+          return;
+        }
+        if (!src || partCount() < 2) return;
+        const r = await post(`${API}/start`, { file: src.path, outDir, partCount: partCount(), baseName: $("sm-name").value || baseOf(src.path) }).catch((e) => ({ success: false, error: e.message }));
+        if (!r.success) { showToast(`Split failed: ${r.error}`, "error"); return; }
+        jobId = r.jobId;
+        $("sm-use-tab").classList.add("hidden");
+        renderParts();
+        let st = null;
+        while (jobId) {
+          await new Promise((res) => setTimeout(res, 700));
+          st = await (await fetch(`${API}/status?jobId=${encodeURIComponent(jobId)}`)).json().catch(() => null);
+          if (!st || !st.success) break;
+          setProgress(st.phase === "analyzing" ? `Finding quiet cut points… ${st.percent}%` : `Splitting (no re-encode)… ${st.percent}%`, st.percent);
+          if (st.status !== "running") break;
+        }
+        jobId = null;
+        setProgress(null);
+        if (st?.status === "done") {
+          results = st;
+          renderParts();
+          $("sm-open").classList.remove("hidden");
+          $("sm-load").classList.remove("hidden");
+          const loud = st.parts.filter((p, i) => i > 0 && !p.quietCut).length;
+          showToast(`Split into ${st.parts.length} parts ✓${loud ? ` ${loud} cut(s) had no quiet moment nearby - check the line at the start of those parts.` : ""}`, "success");
+        } else {
+          renderParts();
+          if (st?.status === "cancelled") showToast("Splitting stopped.", "info");
+          else showToast(`Split failed: ${st?.error || "unknown error"}`, "error");
+        }
+      });
+
+      $("sm-open").addEventListener("click", () => {
+        window.electronAPI?.openExternal?.("file://" + encodeURI(outDir.replace(/\\/g, "/")));
+      });
+
+      $("sm-load").addEventListener("click", () => {
+        if (!results?.parts?.length) return;
+        loadVideoFiles(results.parts.map((p) => {
+          const name = p.outPath.split(/[\\/]/).pop();
+          return { name, path: p.outPath, url: `http://localhost:3001/api/audio?path=${encodeURIComponent(p.outPath)}` };
+        }));
+        modal.classList.add("hidden");
+      });
+    })();
+
     async function loadVideoFiles(files) {
-      const remaining = 9 - projects.length;
+      const remaining = MAX_PROJECT_TABS - projects.length;
       if (remaining <= 0) {
-        showToast("Maximum 9 videos per session. Close a tab first.", "error");
+        showToast(`Maximum ${MAX_PROJECT_TABS} videos per session. Close a tab first.`, "error");
         return;
       }
       const ignoredCount = files.length - remaining;
       files = files.slice(0, remaining);
       if (ignoredCount > 0) {
-        showToast(`Loaded ${remaining} video${remaining > 1 ? "s" : ""} — ${ignoredCount} ignored (max 9 tabs per session).`, "warning");
+        showToast(`Loaded ${remaining} video${remaining > 1 ? "s" : ""} — ${ignoredCount} ignored (max ${MAX_PROJECT_TABS} tabs per session).`, "warning");
       }
 
       // Save state of whatever is currently open before adding new tabs
@@ -28782,8 +29844,11 @@
 
       projects.forEach((proj, i) => {
         const isActive = i === activeProjectIndex;
-        const shortName = (proj.file?.name || `Video ${i + 1}`).replace(/\.[^/.]+$/, "");
-        const displayName = shortName.length > 18 ? shortName.slice(0, 16) + "…" : shortName;
+        // tabTitle: a name given in DAI-Transcribe Studio's "Apply to Tab" (no extension to strip).
+        const shortName = proj.tabTitle || (proj.file?.name || `Video ${i + 1}`).replace(/\.[^/.]+$/, "");
+        // Cut in the middle: episodes of one series share the start, the end ("_part02") tells them apart.
+        const cutName = shortName.length > 18 ? shortName.slice(0, 9) + "…" + shortName.slice(-8) : shortName;
+        const displayName = cutName.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
         const btn = document.createElement("button");
         btn.className = [
@@ -28791,12 +29856,13 @@
           "transition-colors duration-150 whitespace-nowrap",
           isActive ? "bg-[var(--accent-primary)]/15 text-[var(--accent-text)] font-semibold border-t-2 border-t-[var(--accent-primary)]" : "hover:bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-[var(--text-primary)] border-t-2 border-t-transparent",
         ].join(" ");
-        btn.title = proj.file?.name || `Video ${i + 1}`;
+        btn.title = proj.tabTitle ? `${proj.tabTitle} (${proj.file?.name || `Video ${i + 1}`})` : proj.file?.name || `Video ${i + 1}`;
         const isWorking = proj.isTranscribing || proj.isGeneratingAudio || proj.isIsolatingBgm;
         const dotClass = proj.subtitles.length > 0 ? "bg-emerald-400" : isWorking ? "bg-yellow-400 animate-pulse" : "bg-[var(--border-light)]";
 
         btn.innerHTML = `
   <span class="w-1.5 h-1.5 rounded-full shrink-0 ${dotClass}"></span>
+  <span class="font-mono opacity-60">${i + 1}</span>
   <span>${displayName}</span>
   ${isWorking ? '<span class="text-[9px] text-yellow-400 animate-pulse">●</span>' : ""}
   <span class="close-tab ml-1 opacity-40 hover:opacity-100 text-[10px] leading-none">✕</span>
@@ -31483,6 +32549,7 @@
       </button>
     </div>
   </div>
+  <script src="js/dai-transcribe-studio.js"></script>
 </body>
 
 </html>

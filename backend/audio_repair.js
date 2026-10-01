@@ -75,7 +75,8 @@ function createAudioRepair({ repairDir, getFFmpegBinary, getFFprobeBinary, track
         if (declared < 0 || declared >= AAC_RATES.length) return { drift: false };
 
         const csv = await probeJson(['-v', 'error', '-select_streams', String(stream.index), '-show_entries', 'packet=pts_time', '-of', 'csv=p=0', filePath]);
-        const pts = csv.split('\n').map(l => l.trim()).filter(Boolean).map(Number).filter(n => isFinite(n));
+        // A packet with side data (e.g. "skip samples" on trimmed pre-roll) prints as "-0.13,": take the first field.
+        const pts = csv.split('\n').map(l => l.trim()).filter(Boolean).map(l => parseFloat(l.split(',')[0])).filter(n => isFinite(n));
         if (pts.length < MIN_RUN_PACKETS * 2) return { drift: false };
 
         // Implied rate index per packet from the gap to the next packet, smoothed with a
@@ -113,7 +114,11 @@ function createAudioRepair({ repairDir, getFFmpegBinary, getFFprobeBinary, track
         // delayed-audio mux) must keep that lead-in, or it plays early against the video.
         const fileStart = parseFloat(info.format && info.format.start_time) || 0;
         const startOffset = Math.max(0, (parseFloat(stream.start_time) || pts[0] || 0) - fileStart);
-        return { drift: true, streamIndex: stream.index, declaredRate: AAC_RATES[declared], declaredIndex: declared, runs: bad, packetCount: pts.length, audioDuration, startOffset, stretches };
+        // Audio before the track's start (negative timestamps, hidden by the container's edit
+        // list) is pre-roll - e.g. every stream-copied cut that isn't the first part has some.
+        // Players don't play it, so the repaired track must drop it or it would play late.
+        const preRoll = Math.max(0, (parseFloat(stream.start_time) || 0) - pts[0]);
+        return { drift: true, streamIndex: stream.index, declaredRate: AAC_RATES[declared], declaredIndex: declared, runs: bad, packetCount: pts.length, audioDuration, startOffset, preRoll, stretches };
     }
 
     function analyze(filePath) {
@@ -180,6 +185,7 @@ function createAudioRepair({ repairDir, getFFmpegBinary, getFFprobeBinary, track
         encoder.stderr.on('data', (d) => { encTail = (encTail + d).slice(-2000); });
         const encoderDone = new Promise((resolve) => { encoder.on('close', resolve); encoder.on('error', () => resolve(-1)); });
         encoder.stdin.on('error', () => { });
+        let skipBytes = Math.round((analysis.preRoll || 0) * 44100) * 4; // s16le stereo: 4 bytes per frame
         try {
             if (analysis.startOffset > 0.005) {
                 // Silence for the audio's original lead-in (s16le stereo: 4 bytes per frame).
@@ -194,6 +200,12 @@ function createAudioRepair({ repairDir, getFFmpegBinary, getFFprobeBinary, track
                 if (trackProcess) trackProcess(dec);
                 await new Promise((resolve, reject) => {
                     dec.stdout.on('data', (chunk) => {
+                        if (skipBytes > 0) {
+                            const drop = Math.min(skipBytes, chunk.length);
+                            skipBytes -= drop;
+                            chunk = chunk.subarray(drop);
+                            if (!chunk.length) return;
+                        }
                         if (!encoder.stdin.write(chunk)) {
                             dec.stdout.pause();
                             encoder.stdin.once('drain', () => dec.stdout.resume());
@@ -210,7 +222,7 @@ function createAudioRepair({ repairDir, getFFmpegBinary, getFFprobeBinary, track
         const encCode = await encoderDone;
         if (encCode !== 0 || !fs.existsSync(m4aTmp)) throw new Error(`could not encode repaired audio (${encTail.split('\n').filter(Boolean).pop() || encCode})`);
         const got = parseFloat(await probeJson(['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', m4aTmp])) || 0;
-        if (Math.abs(got - (analysis.audioDuration + (analysis.startOffset || 0))) > 1.0) {
+        if (Math.abs(got - (analysis.audioDuration + (analysis.startOffset || 0) - (analysis.preRoll || 0))) > 1.0) {
             fs.rm(m4aTmp, { force: true }, () => { });
             throw new Error(`repaired audio is ${got.toFixed(1)}s but the original track is ${analysis.audioDuration.toFixed(1)}s`);
         }
