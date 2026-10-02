@@ -1100,9 +1100,52 @@ function extractJsonValue(raw) {
     return undefined;
 }
 
-// Daily/minute limits are per key AND per model: "key|model" -> { until, msg }. A model that hit
-// its limit is skipped until it resets, while the key's other models keep working.
+// Daily/minute limits are per key AND per model: "key|model" -> { until, daily, msg }. A model that
+// hit its limit is skipped until it resets, while the key's other models keep working.
 const geminiModelCooldowns = new Map();
+
+// Google's 429 body says exactly which limit was hit and how long to wait:
+//   details: [{ '@type': '...QuotaFailure', violations: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier' }] },
+//             { '@type': '...RetryInfo', retryDelay: '55s' }]
+// The message text doesn't always say "per day", so the details are read first.
+function parseGeminiQuotaError(errData, errMsg) {
+    const details = Array.isArray(errData?.error?.details) ? errData.error.details : [];
+    const quotaIds = [];
+    let retryMs = null;
+    for (const d of details) {
+        for (const v of (Array.isArray(d?.violations) ? d.violations : [])) if (v && v.quotaId) quotaIds.push(String(v.quotaId));
+        if (d && typeof d.retryDelay === 'string' && isFinite(parseFloat(d.retryDelay))) retryMs = Math.ceil(parseFloat(d.retryDelay) * 1000);
+    }
+    if (retryMs === null) {
+        const m = /retry in\s*([\d.]+)\s*s/i.exec(errMsg || '');
+        if (m) retryMs = Math.ceil(parseFloat(m[1]) * 1000);
+    }
+    // A daily limit can still come with a short retryDelay - it is wrong for it, the day wins.
+    const daily = quotaIds.some(id => /PerDay/i.test(id)) || /per\s*-?day|daily quota|requests per day/i.test(errMsg || '');
+    return { daily, retryMs, quotaIds };
+}
+
+// Google's daily quotas reset at midnight Pacific time.
+function msUntilPacificMidnight(now = Date.now()) {
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hourCycle: 'h23', hour: 'numeric', minute: 'numeric', second: 'numeric' })
+        .formatToParts(new Date(now));
+    const get = (t) => +((parts.find(p => p.type === t) || {}).value || 0);
+    const sinceMidnightMs = ((get('hour') % 24) * 3600 + get('minute') * 60 + get('second')) * 1000;
+    return Math.max(60 * 1000, 24 * 3600 * 1000 - sinceMidnightMs);
+}
+
+function quotaCooldownUntil(quota, now = Date.now()) {
+    if (quota.daily) return now + msUntilPacificMidnight(now) + 60 * 1000;
+    const wait = quota.retryMs != null ? quota.retryMs : RATE_LIMIT_COOLDOWN_MS;
+    return now + Math.min(2 * 60 * 1000, Math.max(5000, wait)) + 500;
+}
+
+function formatWait(ms) {
+    const min = Math.ceil(ms / 60000);
+    if (ms < 60 * 1000) return `${Math.max(1, Math.ceil(ms / 1000))}s`;
+    if (min < 60) return `${min} min`;
+    return `${Math.floor(min / 60)}h ${String(min % 60).padStart(2, '0')}m`;
+}
 
 async function executeGeminiGenerate(apiKey, requestedModel, payload, signal) {
     apiKey = String(apiKey || '').trim();
@@ -1118,6 +1161,8 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal) {
     let sawOverload = false;
     let networkFailures = 0;
     let rateLimitMsg = '';
+    let keyFreeAt = Infinity; // soonest time one of this key's rate-limited models is free again
+    let allDaily = true;      // every rate-limited model is out for the day (not just the minute)
 
     for (let idx = 0; idx < candidateModels.length; idx++) {
         const m = candidateModels[idx];
@@ -1126,6 +1171,8 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal) {
         if (cooldown && cooldown.until > Date.now()) {
             sawRateLimit = true;
             if (!rateLimitMsg) rateLimitMsg = cooldown.msg;
+            keyFreeAt = Math.min(keyFreeAt, cooldown.until);
+            allDaily = allDaily && !!cooldown.daily;
             continue;
         }
         // Transient server errors (500/503 "overloaded") get one retry on the same model.
@@ -1191,7 +1238,7 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal) {
             let errData = {};
             try { errData = JSON.parse(res.text); } catch (e) { }
             const errMsg = errData?.error?.message || `HTTP ${res.status}`;
-            console.warn(`[Gemini] ${m} returned ${res.status}: ${errMsg}`);
+            if (res.status !== 429) console.warn(`[Gemini] ${m} returned ${res.status}: ${errMsg}`); // 429 logs one short line below
 
             if (res.status === 400 && /API_KEY_INVALID|API key not valid|API key expired/i.test(errMsg)) {
                 return { success: false, status: 400, error: 'INVALID_API_KEY', message: errMsg };
@@ -1215,11 +1262,14 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal) {
             if (res.status === 429) {
                 sawRateLimit = true;
                 if (!rateLimitMsg) rateLimitMsg = errMsg;
-                const daily = /per\s*-?day|daily quota|requests per day/i.test(errMsg);
-                geminiModelCooldowns.set(`${apiKey}|${m}`, { until: Date.now() + (daily ? DAILY_QUOTA_COOLDOWN_MS : RATE_LIMIT_COOLDOWN_MS), msg: errMsg });
-                if (daily) console.warn(`[Gemini] ${m} used up its daily quota on key …${apiKey.slice(-4)} - using the key's other models`);
-                await new Promise(r => setTimeout(r, 1500));
-                break;
+                const quota = parseGeminiQuotaError(errData, errMsg);
+                const until = quotaCooldownUntil(quota);
+                geminiModelCooldowns.set(`${apiKey}|${m}`, { until, daily: quota.daily, msg: errMsg });
+                keyFreeAt = Math.min(keyFreeAt, until);
+                allDaily = allDaily && quota.daily;
+                console.warn(`[Gemini] ${m} on key …${apiKey.slice(-4)}: ${quota.daily ? 'daily quota used up' : 'per-minute limit'}` +
+                    ` (${quota.quotaIds[0] || 'quota'}) - skipping it for ${formatWait(until - Date.now())}`);
+                break; // the key's other models have their own limits
             }
             // 503 "high demand" / overloaded: switch straight to the next model. The caller
             // backs off and retries if every model is busy.
@@ -1242,10 +1292,13 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal) {
         // same HTTP 429 as a per-minute burst limit, but it won't clear in seconds - it won't
         // clear until the daily window rolls over. Flag it so the caller stops burning more
         // requests (across every model, every retry) on a key that's done for the day.
-        const isDailyQuota = /per\s*-?day|daily quota|requests per day/i.test(rateLimitMsg);
+        const isDailyQuota = allDaily && isFinite(keyFreeAt);
+        const retryAfterMs = isFinite(keyFreeAt) ? Math.max(0, keyFreeAt - Date.now()) : RATE_LIMIT_COOLDOWN_MS;
         return {
-            success: false, status: 429, error: 'RATE_LIMIT_EXCEEDED', isDailyQuota,
-            message: isDailyQuota ? `Daily free-tier quota used up for this key. ${rateLimitMsg}` : 'All Gemini models are rate-limited for this key.'
+            success: false, status: 429, error: 'RATE_LIMIT_EXCEEDED', isDailyQuota, retryAfterMs,
+            message: isDailyQuota
+                ? `Daily free Gemini quota used up for key …${apiKey.slice(-4)} - resets in ${formatWait(retryAfterMs)} (midnight Pacific time).`
+                : `Key …${apiKey.slice(-4)} is rate-limited by Google - free again in ${formatWait(retryAfterMs)}.`
         };
     }
     return { success: false, ...(primaryError || { status: 500, error: 'No usable Gemini model for this API key.', message: 'No usable Gemini model for this API key.' }) };
@@ -1663,7 +1716,8 @@ function geminiFailureResponse(res, result) {
         success: false,
         error: code || result.error || result.message || 'GENERATION_FAILED',
         message: result.message || result.error,
-        isDailyQuota: !!result.isDailyQuota
+        isDailyQuota: !!result.isDailyQuota,
+        retryAfterMs: result.retryAfterMs != null ? result.retryAfterMs : undefined
     });
 }
 
@@ -1735,20 +1789,64 @@ const invalidGeminiKeys = new Map(); // key -> time it was rejected
 // it reads as the same 429, but it won't clear for hours, and retrying it anyway just
 // burns more of that key's already-exhausted daily allowance for nothing (each retry
 // tries up to 4 models, up to 5 times, and that's per chunk).
-const rateLimitedGeminiKeys = new Map(); // key -> cooldown-until timestamp
+// The cooldown is as long as Google says (its "retry in 55s"), or until midnight Pacific
+// when every model of the key is out of its daily quota.
+const rateLimitedGeminiKeys = new Map(); // key -> { until, daily }
 const RATE_LIMIT_COOLDOWN_MS = 20 * 1000;
-const DAILY_QUOTA_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+function isGeminiKeyInvalid(key) {
+    return invalidGeminiKeys.get(key) > Date.now() - 10 * 60 * 1000;
+}
+function isGeminiKeyCooling(key) {
+    const parked = rateLimitedGeminiKeys.get(key);
+    return !!(parked && parked.until > Date.now());
+}
+// Keys that are neither rejected nor cooling down - possibly none. When every key is cooling
+// down nothing is sent: hitting them again only uses up more quota (the caller waits instead).
+// If every key was rejected outright, the raw list comes back so the user sees Google's error.
 function usableGeminiKeys(keys) {
-    const invalidCutoff = Date.now() - 10 * 60 * 1000;
-    const notInvalid = keys.filter(k => !(invalidGeminiKeys.get(k) > invalidCutoff));
+    const notInvalid = keys.filter(k => !isGeminiKeyInvalid(k));
+    if (!notInvalid.length) return keys;
+    return notInvalid.filter(k => !isGeminiKeyCooling(k));
+}
+
+// The answer when every key is cooling down: when the first one is free again, and whether
+// they are all out for the day (then retrying today is pointless).
+function keysCoolingResult(keys) {
     const now = Date.now();
-    const notRateLimited = notInvalid.filter(k => !(rateLimitedGeminiKeys.get(k) > now));
-    // Prefer a key that's neither invalid nor cooling down; fall back to "just not
-    // invalid" if every key is currently cooling down (so we still retry rather than
-    // stall); fall back to the raw list if every key is rejected outright, so the user
-    // gets the real error instead of an empty pool.
-    if (notRateLimited.length) return notRateLimited;
-    return notInvalid.length ? notInvalid : keys;
+    const parked = keys.map(k => rateLimitedGeminiKeys.get(k)).filter(p => p && p.until > now);
+    const isDailyQuota = parked.length > 0 && parked.every(p => p.daily);
+    const retryAfterMs = parked.length ? Math.max(0, Math.min(...parked.map(p => p.until)) - now) : RATE_LIMIT_COOLDOWN_MS;
+    const n = keys.length;
+    const message = isDailyQuota
+        ? `Daily free Gemini quota is used up on all ${n} API key(s). It resets in ${formatWait(retryAfterMs)} (midnight Pacific time). ` +
+          'To continue now: set up billing on one Google project, or add a key from another project.'
+        : `All ${n} API key(s) are rate-limited by Google - free again in ${formatWait(retryAfterMs)}.`;
+    return { ok: false, result: { success: false, status: 429, error: 'RATE_LIMIT_EXCEEDED', isDailyQuota, retryAfterMs, message } };
+}
+
+// Wait before the next retry: for rate limits until the first key is free again (as Google
+// said), otherwise the usual backoff.
+function geminiRetryWaitMs(result, retry) {
+    if (result && result.error === 'RATE_LIMIT_EXCEEDED' && result.retryAfterMs != null) {
+        return Math.min(90 * 1000, Math.max(2000, result.retryAfterMs + 500));
+    }
+    return GEMINI_RETRY_DELAYS_MS[Math.min(retry, GEMINI_RETRY_DELAYS_MS.length - 1)];
+}
+
+// For the API key list in Settings / DAI Studio: what each key can do right now.
+function geminiKeyStatus(key) {
+    const now = Date.now();
+    if (isGeminiKeyInvalid(key)) return { state: 'invalid' };
+    const models = [];
+    for (const [id, c] of geminiModelCooldowns) {
+        if (!id.startsWith(`${key}|`) || !(c.until > now)) continue;
+        models.push({ model: id.slice(key.length + 1), daily: !!c.daily, retryAfterMs: c.until - now });
+    }
+    const parked = rateLimitedGeminiKeys.get(key);
+    if (parked && parked.until > now) {
+        return { state: parked.daily ? 'daily' : 'cooling', retryAfterMs: parked.until - now, models };
+    }
+    return { state: models.length ? 'partial' : 'ok', models };
 }
 
 // One pass over the keys: success, or the most useful failure. Invalid keys and busy
@@ -1756,7 +1854,9 @@ function usableGeminiKeys(keys) {
 // because another key won't change it.
 async function tryKeysOnce(keys, call) {
     let transientOut = null, lastOut = null;
-    for (const key of usableGeminiKeys(keys)) {
+    const usable = usableGeminiKeys(keys);
+    if (!usable.length) return keysCoolingResult(keys);
+    for (const key of usable) {
         const out = await call(key);
         if (out.ok) return out;
         lastOut = out;
@@ -1770,13 +1870,19 @@ async function tryKeysOnce(keys, call) {
         if (isTransientGeminiFailure(out.result)) {
             if (out.result.error === 'RATE_LIMIT_EXCEEDED') {
                 const daily = !!out.result.isDailyQuota;
-                rateLimitedGeminiKeys.set(key, Date.now() + (daily ? DAILY_QUOTA_COOLDOWN_MS : RATE_LIMIT_COOLDOWN_MS));
-                console.warn(`[Gemini] key …${String(key).slice(-4)} ${daily ? 'hit its daily quota; parking it for hours' : 'rate-limited; moving to next key'}`);
+                const waitMs = out.result.retryAfterMs != null ? out.result.retryAfterMs : RATE_LIMIT_COOLDOWN_MS;
+                rateLimitedGeminiKeys.set(key, { until: Date.now() + waitMs, daily });
+                console.warn(`[Gemini] key …${String(key).slice(-4)} ${daily ? 'used up its daily quota' : 'rate-limited'}; parked for ${formatWait(waitMs)}, trying the next key`);
             }
-            transientOut = out;
+            // A busy (503) key is a better answer than a rate-limited one: it is worth retrying soon.
+            if (!transientOut || transientOut.result.error === 'RATE_LIMIT_EXCEEDED') transientOut = out;
             continue;
         }
         return out;
+    }
+    // Every key ended up rate-limited: report for all of them (soonest free key, all-daily or not).
+    if (transientOut && transientOut.result.error === 'RATE_LIMIT_EXCEEDED' && !usableGeminiKeys(keys).length) {
+        return keysCoolingResult(keys);
     }
     return transientOut || lastOut;
 }
@@ -1788,7 +1894,7 @@ async function geminiWithKeys(keys, call, signal) {
         out = await tryKeysOnce(keys, call);
         if (out.ok || !isTransientGeminiFailure(out.result)) return out;
         if (retry >= Math.min(2, geminiRetryLimit(out.result))) return out;
-        await sleepAbortable(GEMINI_RETRY_DELAYS_MS[retry], signal);
+        await sleepAbortable(geminiRetryWaitMs(out.result, retry), signal);
     }
 }
 
@@ -1852,7 +1958,7 @@ async function repairTranscript({ cues, sourceFile, totalSec, keys, model, promp
         const worker = async (lane) => {
             const laneKeys = [...keys.slice(lane), ...keys.slice(0, lane)];
             while (next < toCheck.length) {
-                if (signal && signal.aborted) return;
+                if ((signal && signal.aborted) || report.quotaError) return;
                 if (Date.now() > budgetEnd) {
                     report.gapsSkippedForTime = toCheck.length - next;
                     return;
@@ -1872,7 +1978,15 @@ async function repairTranscript({ cues, sourceFile, totalSec, keys, model, promp
                 }), signal);
                 report.gapsChecked++;
                 setGapNote();
-                if (!out.ok) continue;
+                if (!out.ok) {
+                    // Counted, so a failed check is never reported as "nothing missing".
+                    report.gapsFailed = (report.gapsFailed || 0) + 1;
+                    if (out.result && out.result.isDailyQuota) {
+                        report.quotaError = out.result.message; // the other lanes stop too (see the loop)
+                        return;
+                    }
+                    continue;
+                }
                 for (const cue of normalizeClipCues(out.items, w.start, clipSec, glossary)) {
                     // Skip anything that overlaps a line we already have (window edges).
                     const dur = Math.max(0.1, cue._end - cue._start);
@@ -1893,11 +2007,12 @@ async function repairTranscript({ cues, sourceFile, totalSec, keys, model, promp
     }
 
     const targets = cues.map((cue, index) => ({ cue, index })).filter(({ cue }) => cueNeedsTranslation(cue));
-    if (targets.length) {
+    if (targets.length && !report.quotaError) {
         if (progress) progress.note = `Translating ${targets.length} line(s) that came back without Khmer…`;
         const r = await retranslateCues(targets, cues, { keys, model, promptOpts, glossary, signal });
         report.retranslated = r.fixed;
-        if (r.error) report.translateError = r.error.error || r.error.message;
+        if (r.error) report.translateError = r.error.message || r.error.error;
+        if (r.error && r.error.isDailyQuota) report.quotaError = r.error.message;
     }
     report.stillUntranslated = cues.filter(cueNeedsTranslation).length;
     console.log('[Repair]', JSON.stringify(report));
@@ -2028,8 +2143,9 @@ app.post('/api/transcribe', async (req, res) => {
                         signal: abortCtrl.signal
                     }));
                     if (out.ok || failure || !isTransientGeminiFailure(out.result) || retry >= geminiRetryLimit(out.result)) break;
-                    const wait = GEMINI_RETRY_DELAYS_MS[retry];
-                    progress.note = `${out.result.code === 'NETWORK_ERROR' ? 'Connection problem' : 'Google is busy'} - retrying part ${i + 1} in ${wait / 1000}s (${retry + 1}/${geminiRetryLimit(out.result)})`;
+                    const wait = geminiRetryWaitMs(out.result, retry);
+                    const why = out.result.code === 'NETWORK_ERROR' ? 'Connection problem' : out.result.error === 'RATE_LIMIT_EXCEEDED' ? 'Google rate limit' : 'Google is busy';
+                    progress.note = `${why} - retrying part ${i + 1} in ${Math.round(wait / 1000)}s (${retry + 1}/${geminiRetryLimit(out.result)})`;
                     console.warn(`[Transcribe] ${progress.note}: ${out.result.error}`);
                     await sleepAbortable(wait, abortCtrl.signal);
                 }
@@ -2328,8 +2444,8 @@ app.post('/api/translate-srt', async (req, res) => {
                         });
                         r = out.ok ? out.res : out.result;
                         if (r.success || failure || !isTransientGeminiFailure(r) || retry >= geminiRetryLimit(r)) return r;
-                        const wait = GEMINI_RETRY_DELAYS_MS[retry];
-                        console.warn(`[Translate] Google busy, retrying lines ${idx[0] + 1}-${idx[idx.length - 1] + 1} in ${wait / 1000}s: ${r.error}`);
+                        const wait = geminiRetryWaitMs(r, retry);
+                        console.warn(`[Translate] ${r.error === 'RATE_LIMIT_EXCEEDED' ? 'Rate-limited' : 'Google busy'}, retrying lines ${idx[0] + 1}-${idx[idx.length - 1] + 1} in ${Math.round(wait / 1000)}s: ${r.message || r.error}`);
                         await sleepAbortable(wait, abortCtrl.signal);
                     }
                 };
@@ -2873,6 +2989,13 @@ Return ONLY a JSON array with one object per input line: [{ "id": "<same id>", "
 app.get('/api/transcribe-progress', (req, res) => {
     const p = transcribeProgress.get(String(req.query.requestId || ''));
     res.json(p ? { success: true, ...p } : { success: false });
+});
+
+// Quota state of each API key, as seen by this app since it started (keys sent in the body,
+// never in the URL). Only the last 4 characters come back.
+app.post('/api/gemini-key-status', (req, res) => {
+    const keys = (Array.isArray(req.body?.keys) ? req.body.keys : []).map(k => String(k || '').trim()).filter(Boolean);
+    res.json({ success: true, keys: keys.map(k => ({ suffix: k.slice(-4), ...geminiKeyStatus(k) })) });
 });
 
 app.post('/api/cancel-transcribe', (req, res) => {

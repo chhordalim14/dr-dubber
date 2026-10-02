@@ -1957,6 +1957,13 @@
                 <span id="text-fix-missing">Fix Missing</span>
               </button>
 
+              <button id="btn-fix-missing-all"
+                class="group h-7 px-2 rounded-md text-xs font-medium flex items-center gap-1 text-[var(--text-secondary)] hover:text-sky-400 hover:bg-sky-500/10 transition-all shrink-0"
+                title="Fix Missing on every tab: re-transcribe stretches with no subtitles and re-translate lines without Khmer">
+                <i data-lucide="layers" class="w-3.5 h-3.5 group-hover:scale-110 transition-transform"></i>
+                <span id="text-fix-missing-all">All Tabs</span>
+              </button>
+
               <div class="h-3.5 w-px bg-[var(--border-color)] mx-1 shrink-0"></div>
 
               <!-- ⚡ AI Refactor & Polish Dropdown (Non-Clipping) -->
@@ -3602,10 +3609,12 @@
             <span id="dai-queue-stats-summary" class="text-[var(--text-secondary)] font-mono">0 Done · 0 Running · 0 Pending</span>
           </div>
 
-          <div class="flex items-center gap-2 w-48">
-            <div class="flex-1 h-1.5 rounded-full bg-[var(--bg-base)] border border-[var(--border-color)] overflow-hidden">
+          <div class="flex items-center gap-3">
+            <span id="dai-overall-eta" class="text-[var(--text-secondary)] font-mono whitespace-nowrap"></span>
+            <div class="w-48 h-1.5 rounded-full bg-[var(--bg-base)] border border-[var(--border-color)] overflow-hidden">
               <div id="dai-overall-progress-bar" class="h-full bg-gradient-to-r from-indigo-500 to-emerald-400 transition-all duration-300" style="width: 0%"></div>
             </div>
+            <span id="dai-overall-percent" class="font-bold text-white font-mono w-10 text-right">0%</span>
           </div>
         </div>
 
@@ -10707,42 +10716,40 @@
     window.describeRepair = describeRepair;
 
     const btnFixMissing = document.getElementById("btn-fix-missing");
-    btnFixMissing?.addEventListener("click", async () => {
-      const targetProject = projects[activeProjectIndex];
-      if (!targetProject || !subtitles.length) {
-        showToast("Transcribe or import subtitles first.", "warning");
-        return;
-      }
-      if (btnFixMissing.dataset.busy === "1") return;
-      const apiKeys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]").filter(Boolean);
-      if (!apiKeys.length) {
-        showToast("Please enter your Gemini API Key in Settings ➔ General.", "error");
-        return;
-      }
-      const label = document.getElementById("text-fix-missing");
-      const requestId = crypto.randomUUID();
-      btnFixMissing.dataset.busy = "1";
-      btnFixMissing.classList.add("opacity-60", "pointer-events-none");
-      if (label) label.textContent = "Checking…";
-      showToast("Checking for missing dialogue and untranslated lines…", "info");
+    const btnFixMissingAll = document.getElementById("btn-fix-missing-all");
+    let fixMissingAllRun = null; // { stopped, requestId } while "Fix Missing: All Tabs" runs
+
+    const getGeminiKeys = () => JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]").filter(Boolean);
+    const projectTabName = (p) => p.tabTitle || (p.file?.name || p.name || `Tab ${projects.indexOf(p) + 1}`).replace(/\.[^/.]+$/, "");
+    // The open tab's live list is the global `subtitles`; other tabs keep theirs on the project.
+    const liveSubtitlesOf = (p) => (projects[activeProjectIndex] === p ? subtitles : p.subtitles || []);
+
+    // Repairs one tab's subtitles. Returns { ok, changed, report, error, isDailyQuota, cancelled }.
+    // onNote gets the backend's progress notes ("Double-checking 3 stretch(es)…").
+    async function fixMissingForProject(targetProject, { apiKeys, requestId = crypto.randomUUID(), onNote } = {}) {
+      const source = liveSubtitlesOf(targetProject);
+      if (!source.length) return { ok: true, changed: 0, skipped: "no subtitles" };
+
       let lastNote = null;
       const noteTimer = setInterval(async () => {
         try {
           const p = await (await fetch(`http://localhost:3001/api/transcribe-progress?requestId=${requestId}`)).json();
           if (p.success && p.note && p.note !== lastNote) {
             lastNote = p.note;
-            showToast(p.note, "info");
+            if (onNote) onNote(p.note);
           }
         } catch (e) { }
       }, 1500);
+      targetProject.isFixingMissing = true;
+      renderProjectTabs();
       try {
         const res = await fetch("http://localhost:3001/api/repair-subtitles", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            subtitles: subtitles.map((s) => ({ id: s.id, start: parseFloat(s.textStart), end: parseFloat(s.textEnd), text: s.text, originalText: s.originalText || "", speaker: s.speaker, gender: s.gender, emotion: s.emotion })),
+            subtitles: source.map((s) => ({ id: s.id, start: parseFloat(s.textStart), end: parseFloat(s.textEnd), text: s.text, originalText: s.originalText || "", speaker: s.speaker, gender: s.gender, emotion: s.emotion })),
             videoPath: targetProject.videoFilePath || null,
-            duration: targetProject.duration || duration,
+            duration: targetProject.duration || (projects[activeProjectIndex] === targetProject ? duration : 0),
             genre: activeDramaGenre || "historical",
             glossary: typeof getDramaGlossaryDict === "function" ? getDramaGlossaryDict() : null,
             apiKey: apiKeys[0],
@@ -10753,17 +10760,16 @@
         });
         const data = await res.json();
         if (!data.success) {
-          if (data.error !== "CANCELLED") showToast(data.error === "RATE_LIMIT_EXCEEDED" ? "All API keys are rate-limited. Try again in a minute." : `Fix Missing failed: ${data.message || data.error}`, "error");
-          return;
+          if (data.error === "CANCELLED") return { ok: false, cancelled: true };
+          return { ok: false, error: data.message || data.error, isDailyQuota: !!data.isDailyQuota };
         }
-        if (projects[activeProjectIndex] !== targetProject) targetProject.subtitles = targetProject.subtitles || [];
-        const list = projects[activeProjectIndex] === targetProject ? subtitles : targetProject.subtitles;
-        if (!data.updated.length && !data.added.length) {
-          showToast(data.report?.gapsSkipped ? `No untranslated lines found. ${data.report.gapsSkipped}` : "Nothing missing - every stretch of dialogue has a Khmer subtitle ✓", "success");
-          return;
-        }
+        const report = data.report || {};
+        if (!data.updated.length && !data.added.length) return { ok: true, changed: 0, report };
 
-        saveStateToPast();
+        // The user may have switched tabs while this ran: write into whichever list is live now.
+        const isActive = projects[activeProjectIndex] === targetProject;
+        const list = liveSubtitlesOf(targetProject);
+        if (isActive && typeof saveStateToPast === "function") saveStateToPast(); // undo history is the open tab's
         const changedIds = [];
         const byId = new Map(list.map((s) => [String(s.id), s]));
         data.updated.forEach((u) => {
@@ -10813,24 +10819,153 @@
           list.sort((a, b) => parseFloat(a.textStart) - parseFloat(b.textStart));
           changedIds.push(...newSubs.map((s) => s.id));
         }
-        if (projects[activeProjectIndex] === targetProject) {
+        if (isActive) {
           targetProject.subtitles = subtitles.map((s) => ({ ...s }));
           selectedItems = changedIds.flatMap((id) => [`text-${id}`, `audio-${id}`]);
           renderSubtitles();
           if (typeof updateGenerateButtonState === "function") updateGenerateButtonState();
           if (typeof updateGenerateAllButtonState === "function") updateGenerateAllButtonState();
+          if (typeof saveCurrentProjectState === "function") saveCurrentProjectState();
         }
-        if (typeof saveCurrentProjectState === "function") saveCurrentProjectState();
         maybeAutoSaveSubtitles(targetProject, targetProject.subtitles);
-        renderProjectTabs();
-        showToast(`Fix Missing: ${describeRepair(data.report)}. The ${changedIds.length} fixed line(s) are selected - press Generate to voice them.`, "success");
+        return { ok: true, changed: changedIds.length, report };
       } catch (e) {
-        showToast(`Fix Missing failed: ${e.message}`, "error");
+        return { ok: false, error: e.message };
       } finally {
         clearInterval(noteTimer);
-        btnFixMissing.dataset.busy = "";
-        btnFixMissing.classList.remove("opacity-60", "pointer-events-none");
-        if (label) label.textContent = "Fix Missing";
+        targetProject.isFixingMissing = false;
+        renderProjectTabs();
+      }
+    }
+
+    // A check that failed (rate limit / quota) must not read as "nothing missing".
+    const repairProblem = (r) => {
+      if (!r) return "";
+      if (r.quotaError) return r.quotaError;
+      if (r.gapsFailed) return `${r.gapsFailed} stretch(es) could not be checked (Google busy or rate-limited) - run Fix Missing again later`;
+      if (r.translateError) return `some lines could not be translated: ${r.translateError}`;
+      return "";
+    };
+
+    const setFixMissingBusy = (busy, text) => {
+      btnFixMissing.dataset.busy = busy ? "1" : "";
+      btnFixMissing.classList.toggle("opacity-60", busy);
+      btnFixMissing.classList.toggle("pointer-events-none", busy);
+      const label = document.getElementById("text-fix-missing");
+      if (label) label.textContent = text || "Fix Missing";
+    };
+
+    btnFixMissing?.addEventListener("click", async () => {
+      const targetProject = projects[activeProjectIndex];
+      if (!targetProject || !subtitles.length) {
+        showToast("Transcribe or import subtitles first.", "warning");
+        return;
+      }
+      if (btnFixMissing.dataset.busy === "1" || fixMissingAllRun) return;
+      const apiKeys = getGeminiKeys();
+      if (!apiKeys.length) {
+        showToast("Please enter your Gemini API Key in Settings ➔ General.", "error");
+        return;
+      }
+      setFixMissingBusy(true, "Checking…");
+      showToast("Checking for missing dialogue and untranslated lines…", "info");
+      try {
+        const r = await fixMissingForProject(targetProject, { apiKeys, onNote: (note) => showToast(note, "info") });
+        if (r.cancelled) return;
+        if (!r.ok) {
+          showToast(r.isDailyQuota ? r.error : `Fix Missing failed: ${r.error}`, "error");
+          return;
+        }
+        const problem = repairProblem(r.report);
+        if (!r.changed) {
+          if (problem) showToast(`Fix Missing: ${problem}`, "warning");
+          else showToast(r.report?.gapsSkipped ? `No untranslated lines found. ${r.report.gapsSkipped}` : "Nothing missing - every stretch of dialogue has a Khmer subtitle ✓", "success");
+          return;
+        }
+        showToast(`Fix Missing: ${describeRepair(r.report)}. The ${r.changed} fixed line(s) are selected - press Generate to voice them.${problem ? ` (${problem})` : ""}`, problem ? "warning" : "success");
+      } finally {
+        setFixMissingBusy(false);
+      }
+    });
+
+    // ── Fix Missing: All Tabs ───────────────────────────────────────────────
+    // Runs Fix Missing on every tab that has subtitles, one tab at a time (each tab already
+    // spreads its checks over all API keys, and one at a time is kinder to a free quota).
+    // Stops early when every key is out of its daily quota: the other tabs would only fail too.
+    const renderFixMissingAllButton = (text) => {
+      if (!btnFixMissingAll) return;
+      const running = !!fixMissingAllRun;
+      btnFixMissingAll.classList.toggle("text-rose-400", running);
+      btnFixMissingAll.title = running ? "Stop Fix Missing for all tabs" : "Fix Missing on every tab: re-transcribe stretches with no subtitles and re-translate lines without Khmer";
+      const label = document.getElementById("text-fix-missing-all");
+      if (label) label.textContent = text || (running ? "Stop" : "All Tabs");
+    };
+
+    btnFixMissingAll?.addEventListener("click", async () => {
+      if (fixMissingAllRun) {
+        // Stop: cancel the tab being checked; the loop ends after it.
+        fixMissingAllRun.stopped = true;
+        fetch("http://localhost:3001/api/cancel-transcribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ requestId: fixMissingAllRun.requestId }),
+        }).catch(() => { });
+        renderFixMissingAllButton("Stopping…");
+        return;
+      }
+      if (btnFixMissing?.dataset.busy === "1") return;
+      if (typeof saveCurrentProjectState === "function") saveCurrentProjectState();
+      const targets = projects.filter((p) => liveSubtitlesOf(p).length > 0);
+      if (!targets.length) {
+        showToast("No tab has subtitles yet - transcribe or import first.", "warning");
+        return;
+      }
+      const apiKeys = getGeminiKeys();
+      if (!apiKeys.length) {
+        showToast("Please enter your Gemini API Key in Settings ➔ General.", "error");
+        return;
+      }
+
+      fixMissingAllRun = { stopped: false, requestId: null };
+      renderFixMissingAllButton();
+      showToast(`Fix Missing: checking ${targets.length} tab(s) one by one…`, "info");
+      const results = [];
+      let quotaMessage = "";
+      try {
+        for (let i = 0; i < targets.length && !fixMissingAllRun.stopped; i++) {
+          const proj = targets[i];
+          const tabNo = projects.indexOf(proj) + 1;
+          fixMissingAllRun.requestId = crypto.randomUUID();
+          renderFixMissingAllButton(`Stop (${i + 1}/${targets.length})`);
+          const r = await fixMissingForProject(proj, { apiKeys, requestId: fixMissingAllRun.requestId });
+          if (r.cancelled) break;
+          results.push({ proj, tabNo, r });
+          const problem = r.ok ? repairProblem(r.report) : r.error;
+          if (r.isDailyQuota || r.report?.quotaError) {
+            quotaMessage = r.report?.quotaError || r.error;
+            break;
+          }
+          if (r.ok && r.changed) showToast(`Tab ${tabNo} "${projectTabName(proj)}": ${describeRepair(r.report)}${problem ? ` (${problem})` : ""}`, "success");
+          else if (problem) showToast(`Tab ${tabNo} "${projectTabName(proj)}": ${problem}`, "warning");
+        }
+      } finally {
+        const stopped = fixMissingAllRun.stopped;
+        fixMissingAllRun = null;
+        renderFixMissingAllButton();
+
+        const fixedTabs = results.filter((x) => x.r.ok && x.r.changed);
+        const totalLines = fixedTabs.reduce((n, x) => n + x.r.changed, 0);
+        const problemTabs = results.filter((x) => !x.r.ok || repairProblem(x.r.report)).map((x) => x.tabNo);
+        const notChecked = targets.length - results.length;
+        const parts = [`${results.length}/${targets.length} tab(s) checked`];
+        parts.push(fixedTabs.length ? `${totalLines} line(s) fixed in tab ${fixedTabs.map((x) => x.tabNo).join(", ")}` : "nothing missing");
+        if (problemTabs.length) parts.push(`run again later for tab ${problemTabs.join(", ")}`);
+        if (quotaMessage) {
+          showToast(`Fix Missing paused - ${quotaMessage} ${parts.join(" · ")}. ${notChecked} tab(s) not checked yet.`, "error");
+        } else {
+          showToast(`${stopped ? "Fix Missing stopped" : "Fix Missing done"}: ${parts.join(" · ")}.${fixedTabs.length ? " Fixed lines need Generate to be voiced." : ""}`,
+            problemTabs.length || stopped ? "warning" : "success");
+        }
       }
     });
 
@@ -29857,7 +29992,7 @@
           isActive ? "bg-[var(--accent-primary)]/15 text-[var(--accent-text)] font-semibold border-t-2 border-t-[var(--accent-primary)]" : "hover:bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-[var(--text-primary)] border-t-2 border-t-transparent",
         ].join(" ");
         btn.title = proj.tabTitle ? `${proj.tabTitle} (${proj.file?.name || `Video ${i + 1}`})` : proj.file?.name || `Video ${i + 1}`;
-        const isWorking = proj.isTranscribing || proj.isGeneratingAudio || proj.isIsolatingBgm;
+        const isWorking = proj.isTranscribing || proj.isGeneratingAudio || proj.isIsolatingBgm || proj.isFixingMissing;
         const dotClass = proj.subtitles.length > 0 ? "bg-emerald-400" : isWorking ? "bg-yellow-400 animate-pulse" : "bg-[var(--border-light)]";
 
         btn.innerHTML = `

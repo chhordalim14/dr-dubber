@@ -868,6 +868,11 @@ ipcMain.on('window:maximize', () => {
 ipcMain.on('window:close', () => {
     if (mainWindow) mainWindow.close();
 });
+// Taskbar progress (0..1 shows the bar, a negative value removes it), so a long batch
+// can be followed from the taskbar while the app is minimised.
+ipcMain.on('window:setProgress', (event, value) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setProgressBar(Number(value));
+});
 
 // Clean up any lingering background child processes on exit
 function cleanupChildProcesses() {

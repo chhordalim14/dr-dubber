@@ -14,7 +14,11 @@
     queue: [],
     isBatchRunning: false,
     batchAbortController: null,
-    activeItemId: null,
+    runningItemIds: new Set(), // queue items being processed right now (several run at once)
+    batchItemIds: new Set(),   // every file in the current batch (for the overall %)
+    batchStartedAt: 0,
+    lastBatchMs: 0,            // how long the last finished batch took
+    progressTimer: null,       // ticks the % / time-left display every second
     selectedPreviewItem: null,
     outputFolder: localStorage.getItem('aiDubberAutoSaveSrtCustomPath') || '',
     
@@ -245,6 +249,81 @@
     }
   }
 
+  // ── Per-key quota state (from the backend: what Google answered for each key so far) ──
+  const formatWaitShort = (ms) => {
+    if (!(ms > 0)) return '';
+    if (ms < 60000) return `${Math.max(1, Math.ceil(ms / 1000))}s`;
+    const min = Math.ceil(ms / 60000);
+    return min < 60 ? `${min}m` : `${Math.floor(min / 60)}h ${String(min % 60).padStart(2, '0')}m`;
+  };
+
+  // Full class names (not built from the color name) so the Tailwind build can see them.
+  const KEY_STATUS_CLASSES = {
+    emerald: { text: 'text-emerald-400', dot: 'bg-emerald-400', badge: 'bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400' },
+    amber: { text: 'text-amber-400', dot: 'bg-amber-400', badge: 'bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400' },
+    rose: { text: 'text-rose-400', dot: 'bg-rose-400', badge: 'bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-400' }
+  };
+
+  function keyStatusView(s) {
+    if (!s) return { color: 'emerald', text: 'Ready' };
+    if (s.state === 'invalid') return { color: 'rose', text: 'Rejected by Google (invalid or expired key)' };
+    if (s.state === 'daily') return { color: 'rose', text: `Daily quota used up · resets in ${formatWaitShort(s.retryAfterMs)}` };
+    if (s.state === 'cooling') return { color: 'amber', text: `Rate-limited · free again in ${formatWaitShort(s.retryAfterMs)}` };
+    if (s.state === 'partial') {
+      const out = s.models.map(m => `${m.model.replace(/^gemini-/, '')} ${m.daily ? 'out today' : `wait ${formatWaitShort(m.retryAfterMs)}`}`);
+      return { color: 'amber', text: `Ready · ${out.join(', ')}` };
+    }
+    return { color: 'emerald', text: 'Ready' };
+  }
+
+  let keyStatusFetchedAt = 0;
+  async function refreshKeyStatuses() {
+    const keys = getActiveApiKeys();
+    if (!keys.length) return;
+    keyStatusFetchedAt = Date.now();
+    let statuses;
+    try {
+      const res = await fetch(`${getBackendBase()}/api/gemini-key-status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keys })
+      });
+      statuses = (await res.json()).keys;
+    } catch (e) { return; }
+    if (!Array.isArray(statuses)) return;
+
+    // Key list in the API key modal (rows are in the same order as the keys).
+    statuses.forEach((s, idx) => {
+      const el = document.querySelector(`[data-dai-keystatus="${idx}"]`);
+      if (!el) return;
+      const v = keyStatusView(s);
+      const c = KEY_STATUS_CLASSES[v.color];
+      el.className = `text-[10px] ${c.text} flex items-center gap-1 min-w-0`;
+      el.innerHTML = `<span class="w-1.5 h-1.5 rounded-full ${c.dot} shrink-0"></span> <span class="truncate">${escapeHtml(v.text)}</span>`;
+      el.title = v.text;
+    });
+
+    // Header badge: how many keys can take work right now.
+    const badge = $('dai-api-key-badge');
+    if (!badge) return;
+    const ready = statuses.filter(s => s.state === 'ok' || s.state === 'partial').length;
+    const allDaily = statuses.every(s => s.state === 'daily' || s.state === 'invalid');
+    const soonest = Math.min(...statuses.filter(s => s.retryAfterMs > 0).map(s => s.retryAfterMs));
+    const color = ready === keys.length ? 'emerald' : ready > 0 ? 'amber' : 'rose';
+    const label = ready === keys.length
+      ? `${keys.length} API Key${keys.length > 1 ? 's' : ''} Active`
+      : ready > 0
+        ? `${ready}/${keys.length} Keys Ready`
+        : allDaily ? `Daily Quota Used Up · resets in ${formatWaitShort(soonest)}` : `All Keys Rate-Limited · ${formatWaitShort(soonest)}`;
+    const c = KEY_STATUS_CLASSES[color];
+    badge.innerHTML = `<span class="w-2 h-2 rounded-full ${c.dot}${color === 'emerald' ? ' animate-pulse' : ''}"></span>
+      <span>${escapeHtml(label)}</span>
+      <i data-lucide="key" class="w-3 h-3 ml-0.5 opacity-80"></i>`;
+    badge.className = `flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-semibold ${c.badge} cursor-pointer transition-all shadow-sm active:scale-95`;
+    badge.title = color === 'emerald' ? '' : 'Click to see the quota state of each key';
+    if (window.lucide && typeof window.lucide.createIcons === 'function') window.lucide.createIcons();
+  }
+
   function updateApiStatusDisplay() {
     const keys = getActiveApiKeys();
     const model = getActiveModel();
@@ -260,6 +339,7 @@
           <span>${keys.length} API Key${keys.length > 1 ? 's' : ''} Active</span>
           <i data-lucide="key" class="w-3 h-3 ml-0.5 opacity-80"></i>`;
         badge.className = 'flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-semibold bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 cursor-pointer transition-all shadow-sm active:scale-95';
+        refreshKeyStatuses();
       } else {
         badge.innerHTML = `<span class="w-2 h-2 rounded-full bg-rose-400"></span>
           <span>No Gemini Key (Click to Add)</span>
@@ -423,12 +503,145 @@
     renderQueueTable();
   }
 
+  // ──────────────────────────────────────────────────────────────────────────
+  // PROGRESS ESTIMATES
+  // ──────────────────────────────────────────────────────────────────────────
+  // The server only reports when a whole chunk is finished, and with API Saver a part is ONE
+  // chunk, so on its own the bar would sit still for many minutes. Between reports the bar moves
+  // on time instead, using how long earlier files took per second of audio (remembered across
+  // sessions, separately for API Saver on/off since their speed differs).
+  //   0-10%  extract audio   10-90%  Gemini transcribe   90-98%  double-check / fix Khmer   100% saved
+  const DEFAULT_SEC_PER_AUDIO_SEC = 1.0;
+  const EXTRACT_EXPECTED_MS = 20000;
+  const REPAIR_EXPECTED_MS = 120000; // the server's gap-check time budget
+
+  const rateStorageKey = (apiSaver) => `daiTranscribeSecPerAudioSec${apiSaver ? '_saver' : ''}`;
+  function getTranscribeRate(apiSaver) {
+    try {
+      const v = parseFloat(localStorage.getItem(rateStorageKey(apiSaver)));
+      if (v > 0.05 && v < 20) return v;
+    } catch (e) {}
+    return DEFAULT_SEC_PER_AUDIO_SEC;
+  }
+  function learnTranscribeRate(item) {
+    const audioSec = Number(item.duration) || 0;
+    if (!(audioSec > 30) || !item.transcribeStartedAt) return;
+    const sample = ((item.repairStartedAt || Date.now()) - item.transcribeStartedAt) / 1000 / audioSec;
+    // Smoothed, so one slow file (Google busy) doesn't throw off every later estimate.
+    const next = getTranscribeRate(item.apiSaver) * 0.6 + sample * 0.4;
+    try { localStorage.setItem(rateStorageKey(item.apiSaver), String(next)); } catch (e) {}
+  }
+
+  // Linear up to 85% of the expected time, then slows down and never reaches the end, so a
+  // stage that runs late keeps creeping instead of showing a finished bar.
+  const easeShare = (t) => (t <= 0.85 ? Math.max(0, t) : 0.85 + 0.13 * (1 - Math.exp(-(t - 0.85) / 0.6)));
+
+  function computeItemProgress(item, now = Date.now()) {
+    if (item.status === 'completed') return 100;
+    if (item.status === 'failed') return item.progress || 0;
+    if (item.status === 'extracting') {
+      return 1 + 9 * easeShare((now - (item.extractStartedAt || now)) / EXTRACT_EXPECTED_MS);
+    }
+    if (item.status === 'transcribing') {
+      if (item.repairStartedAt) {
+        const share = item.repairTotal > 0
+          ? item.repairDone / item.repairTotal
+          : (now - item.repairStartedAt) / REPAIR_EXPECTED_MS;
+        return 90 + 8 * easeShare(share);
+      }
+      const chunkShare = item.chunkTotal > 0 ? item.chunkDone / item.chunkTotal : 0;
+      const expectedMs = Math.max(30000, (Number(item.duration) || 300) * getTranscribeRate(item.apiSaver) * 1000);
+      const timeShare = easeShare((now - (item.transcribeStartedAt || now)) / expectedMs);
+      return 10 + 80 * Math.min(0.99, Math.max(chunkShare, timeShare));
+    }
+    return 0;
+  }
+
+  const formatDurationShort = (ms) => {
+    const totalMin = Math.round(ms / 60000);
+    if (totalMin < 1) return '<1m';
+    const h = Math.floor(totalMin / 60);
+    return h > 0 ? `${h}h ${String(totalMin % 60).padStart(2, '0')}m` : `${totalMin}m`;
+  };
+
+  // Remaining time from progress so far: elapsed * (left / done). Hidden until there is
+  // enough progress for the guess to mean anything.
+  function etaText(pct, elapsedMs) {
+    if (!(pct >= 3) || elapsedMs < 10000 || pct >= 100) return '';
+    return `~${formatDurationShort(elapsedMs * (100 - pct) / pct)} left`;
+  }
+
+  function itemStageLabel(item) {
+    if (item.status === 'extracting') return 'Extracting audio';
+    if (item.status !== 'transcribing') return item.progressText || '';
+    const note = item.progressNote || '';
+    if (/retrying/i.test(note)) return /connection/i.test(note) ? 'Connection retry' : 'Google busy, retrying';
+    if (item.repairStartedAt) return /translating/i.test(note) ? 'Fixing Khmer lines' : 'Double-checking';
+    return item.chunkTotal > 1 ? `Transcribing ${item.chunkDone}/${item.chunkTotal}` : 'Transcribing';
+  }
+
+  const batchItems = () => state.queue.filter(q => state.batchItemIds.has(q.id));
+
+  // Updates only the numbers/bars in place (called every second while a batch runs); the
+  // table itself is rebuilt by renderQueueTable() only when a file changes status.
+  function updateProgressDom() {
+    const now = Date.now();
+    for (const item of state.queue) {
+      const running = item.status === 'extracting' || item.status === 'transcribing';
+      if (!running) continue;
+      const pct = Math.floor(computeItemProgress(item, now));
+      item.progress = pct;
+      const sel = (attr) => document.querySelector(`[${attr}="${CSS.escape(item.id)}"]`);
+      const pctEl = sel('data-dai-pct');
+      const barEl = sel('data-dai-bar');
+      const labelEl = sel('data-dai-label');
+      const etaEl = sel('data-dai-eta');
+      if (pctEl) pctEl.textContent = `${pct}%`;
+      if (barEl) barEl.style.width = `${pct}%`;
+      if (labelEl) labelEl.textContent = itemStageLabel(item);
+      if (etaEl) {
+        const elapsed = now - (item.startedAt || now);
+        etaEl.textContent = [etaText(pct, elapsed), `${formatSeconds(elapsed / 1000)} elapsed`].filter(Boolean).join(' · ');
+        etaEl.title = item.progressNote || '';
+      }
+    }
+
+    // Overall: progress of the files in this batch, weighted by their length (a failed
+    // file counts as finished - there is nothing more to wait for on it).
+    const overallBar = $('dai-overall-progress-bar');
+    const overallPct = $('dai-overall-percent');
+    const overallEta = $('dai-overall-eta');
+    let pct;
+    let eta = '';
+    const items = batchItems();
+    if (state.isBatchRunning && items.length) {
+      let sum = 0, weightSum = 0;
+      for (const item of items) {
+        const w = Number(item.duration) > 0 ? Number(item.duration) : 300;
+        sum += w * (item.status === 'failed' ? 100 : computeItemProgress(item, now));
+        weightSum += w;
+      }
+      pct = Math.min(99, Math.floor(sum / weightSum));
+      const elapsed = now - state.batchStartedAt;
+      eta = [etaText(pct, elapsed), `${formatSeconds(elapsed / 1000)} elapsed`].filter(Boolean).join(' · ');
+    } else {
+      const total = state.queue.length;
+      pct = total === 0 ? 0 : Math.round(state.queue.filter(q => q.status === 'completed').length / total * 100);
+      if (state.lastBatchMs) eta = `Finished in ${formatDurationShort(state.lastBatchMs)}`;
+    }
+    // Keep the key badge current while Google rate-limits keys mid-batch.
+    if (state.isBatchRunning && now - keyStatusFetchedAt > 10000) refreshKeyStatuses();
+    if (overallBar) overallBar.style.width = `${pct}%`;
+    if (overallPct) overallPct.textContent = `${pct}%`;
+    if (overallEta) overallEta.textContent = eta;
+    try { window.electronAPI?.setTaskbarProgress?.(state.isBatchRunning ? pct / 100 : -1); } catch (e) {}
+  }
+
   function renderQueueTable() {
     const list = $('dai-queue-list');
     const emptyState = $('dai-queue-empty');
     const countBadge = $('dai-queue-count-badge');
     const statsSummary = $('dai-queue-stats-summary');
-    const overallBar = $('dai-overall-progress-bar');
     const btnStart = $('dai-btn-start-batch');
 
     if (!list) return;
@@ -444,14 +657,10 @@
       statsSummary.textContent = `${completed} Done · ${processing} Running · ${pending} Pending${failed > 0 ? ` · ${failed} Failed` : ''}`;
     }
 
-    if (overallBar) {
-      const pct = total === 0 ? 0 : Math.round((completed / total) * 100);
-      overallBar.style.width = `${pct}%`;
-    }
-
     if (total === 0) {
       if (emptyState) emptyState.classList.remove('hidden');
       list.innerHTML = '';
+      updateProgressDom();
       if (btnStart) {
         btnStart.disabled = true;
         btnStart.classList.add('opacity-50', 'cursor-not-allowed');
@@ -472,12 +681,12 @@
           <i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i> ${item.cuesCount} Lines
         </span>`;
       } else if (item.status === 'extracting') {
-        statusBadge = `<span class="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/15 border border-amber-500/30 text-amber-400 flex items-center gap-1 animate-pulse">
-          <i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> Extracting Audio
+        statusBadge = `<span class="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/15 border border-amber-500/30 text-amber-400 flex items-center gap-1 min-w-0">
+          <i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin shrink-0"></i> <span data-dai-label="${escapeHtml(item.id)}" class="truncate">${escapeHtml(itemStageLabel(item))}</span>
         </span>`;
       } else if (item.status === 'transcribing') {
-        statusBadge = `<span class="px-2 py-0.5 rounded-full text-[11px] font-bold bg-indigo-500/15 border border-indigo-500/30 text-indigo-400 flex items-center gap-1 animate-pulse">
-          <i data-lucide="sparkles" class="w-3.5 h-3.5 animate-spin"></i> ${escapeHtml(item.progressText || 'AI Transcribing')}
+        statusBadge = `<span class="px-2 py-0.5 rounded-full text-[11px] font-bold bg-indigo-500/15 border border-indigo-500/30 text-indigo-400 flex items-center gap-1 min-w-0">
+          <i data-lucide="sparkles" class="w-3.5 h-3.5 animate-spin shrink-0"></i> <span data-dai-label="${escapeHtml(item.id)}" class="truncate">${escapeHtml(itemStageLabel(item))}</span>
         </span>`;
       } else if (item.status === 'failed') {
         statusBadge = `<span class="px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-500/15 border border-rose-500/30 text-rose-400 flex items-center gap-1" title="${escapeHtml(item.error || 'Failed')}">
@@ -515,16 +724,20 @@
             ${item.size > 0 ? ` · ${formatBytes(item.size)}` : ''}
           </td>
           <td class="px-3 py-3">
-            <div class="flex flex-col gap-1 min-w-[150px]">
-              <div class="flex items-center justify-between">
+            <div class="flex flex-col gap-1 min-w-[190px] max-w-[260px]">
+              <div class="flex items-center justify-between gap-2 min-w-0">
                 ${statusBadge}
-                ${item.progress > 0 && item.status !== 'completed' ? `<span class="text-[10px] font-mono text-indigo-400 font-bold">${item.progress}%</span>` : ''}
+                ${item.status === 'transcribing' || item.status === 'extracting' ? `<span data-dai-pct="${escapeHtml(item.id)}" class="text-[11px] font-mono text-indigo-300 font-bold shrink-0">${item.progress}%</span>`
+                  : item.status === 'failed' && item.progress > 0 ? `<span class="text-[10px] font-mono text-rose-400 font-bold shrink-0">${item.progress}%</span>` : ''}
               </div>
               ${item.status === 'transcribing' || item.status === 'extracting' ? `
-                <div class="w-full h-1 rounded-full bg-[var(--bg-base)] overflow-hidden">
-                  <div class="h-full bg-gradient-to-r from-indigo-500 to-cyan-400 transition-all duration-300" style="width: ${Math.max(item.progress, 15)}%"></div>
+                <div class="w-full h-1.5 rounded-full bg-[var(--bg-base)] overflow-hidden">
+                  <div data-dai-bar="${escapeHtml(item.id)}" class="h-full bg-gradient-to-r from-indigo-500 to-cyan-400 transition-all duration-700" style="width: ${item.progress}%"></div>
                 </div>
+                <span data-dai-eta="${escapeHtml(item.id)}" class="text-[10px] font-mono text-[var(--text-muted)] truncate"></span>
               ` : ''}
+              ${item.status === 'completed' && item.elapsedMs ? `<span class="text-[10px] font-mono text-[var(--text-muted)]">Done in ${formatSeconds(item.elapsedMs / 1000)}</span>` : ''}
+              ${item.status === 'failed' && item.error ? `<span class="text-[10px] text-rose-300 truncate" title="${escapeHtml(item.error)}">${escapeHtml(item.error)}</span>` : ''}
             </div>
           </td>
           <td class="px-3 py-3 text-right">
@@ -568,11 +781,15 @@
     if (window.lucide && typeof window.lucide.createIcons === 'function') {
       window.lucide.createIcons();
     }
+    updateProgressDom();
   }
 
   // ──────────────────────────────────────────────────────────────────────────
   // BATCH EXECUTION RUNNER
   // ──────────────────────────────────────────────────────────────────────────
+
+  // Max files transcribed at the same time (also capped by the number of API keys).
+  const BATCH_MAX_PARALLEL_FILES = 6;
 
   async function startBatch() {
     if (state.isBatchRunning) return;
@@ -592,6 +809,12 @@
 
     state.isBatchRunning = true;
     state.batchAbortController = new AbortController();
+    state.batchItemIds = new Set(pendingItems.map(q => q.id));
+    state.batchStartedAt = Date.now();
+    state.lastBatchMs = 0;
+    for (const item of pendingItems) item.progress = 0;
+    clearInterval(state.progressTimer);
+    state.progressTimer = setInterval(updateProgressDom, 1000);
     updateBatchControlsState();
 
     const genre = $('dai-genre-select')?.value || 'historical';
@@ -606,39 +829,74 @@
 
     showToast(`🚀 Starting Batch Transcribe for ${pendingItems.length} file(s)...`, 'info');
 
-    for (let i = 0; i < pendingItems.length; i++) {
-      if (!state.isBatchRunning || state.batchAbortController?.signal.aborted) break;
-      const item = pendingItems[i];
-      state.activeItemId = item.id;
+    // Files run in parallel: one file only keeps one or two keys busy (an API Saver part is a
+    // single Gemini request), so a one-at-a-time queue left most keys idle and a 2 hour movie
+    // took hours. Each file starts on a different key so they don't all pile onto key #1; the
+    // server's per-key cooldowns spread any rate limits across the rest.
+    const concurrency = Math.max(1, Math.min(BATCH_MAX_PARALLEL_FILES, apiKeys.length, pendingItems.length));
+    const keyStride = Math.max(1, Math.floor(apiKeys.length / concurrency));
+    const batchAbort = state.batchAbortController;
+    let nextIndex = 0;
+    let stopToastShown = false;
 
-      try {
-        await processSingleBatchItem(item, {
-          apiKeys,
-          model,
-          genre,
-          glossaryDict,
-          customFolder,
-          signal: state.batchAbortController.signal
-        });
-      } catch (err) {
-        if (err.name === 'AbortError') {
-          showToast('Batch transcription stopped.', 'warning');
-          break;
+    // Every key out of its daily quota: the remaining files would all fail the same way, so they
+    // stay queued (Start again once the quota resets or billing is on).
+    let quotaOut = false;
+
+    const worker = async () => {
+      while (nextIndex < pendingItems.length) {
+        if (!state.isBatchRunning || state.batchAbortController?.signal.aborted || quotaOut) return;
+        const n = nextIndex++;
+        const item = pendingItems[n];
+        const offset = (n * keyStride) % apiKeys.length;
+        state.runningItemIds.add(item.id);
+        try {
+          await processSingleBatchItem(item, {
+            apiKeys: [...apiKeys.slice(offset), ...apiKeys.slice(0, offset)],
+            model,
+            genre,
+            glossaryDict,
+            customFolder,
+            signal: state.batchAbortController.signal
+          });
+        } catch (err) {
+          if (err.name === 'AbortError') {
+            if (!stopToastShown) showToast('Batch transcription stopped.', 'warning');
+            stopToastShown = true;
+            return;
+          }
+          item.status = 'failed';
+          item.error = err.message || 'Processing failed';
+          console.error(`[DAI Batch] Error processing ${item.fileName}:`, err);
+          if (err.isDailyQuota && !quotaOut) {
+            quotaOut = true;
+            showToast(`⛔ ${item.error} The remaining files stay in the queue.`, 'error');
+            refreshKeyStatuses();
+          }
+          renderQueueTable();
+        } finally {
+          state.runningItemIds.delete(item.id);
         }
-        item.status = 'failed';
-        item.error = err.message || 'Processing failed';
-        console.error(`[DAI Batch] Error processing ${item.fileName}:`, err);
-        renderQueueTable();
       }
-    }
+    };
+    await Promise.all(Array.from({ length: concurrency }, worker));
 
+    // Stopped (and maybe already restarted): stopBatch() has cleaned up, leave the new run alone.
+    if (state.batchAbortController !== batchAbort || batchAbort.signal.aborted) return;
+
+    clearInterval(state.progressTimer);
+    state.progressTimer = null;
+    state.lastBatchMs = quotaOut ? 0 : Date.now() - state.batchStartedAt;
     state.isBatchRunning = false;
-    state.activeItemId = null;
     updateBatchControlsState();
     renderQueueTable();
 
     const successCount = state.queue.filter(q => q.status === 'completed').length;
-    showToast(`🎉 Batch processing finished! ${successCount}/${state.queue.length} completed.`, 'success');
+    if (quotaOut) {
+      showToast(`Batch paused: daily Gemini quota used up. ${successCount}/${state.queue.length} completed - press Start again after the reset to continue.`, 'warning');
+    } else {
+      showToast(`🎉 Batch processing finished! ${successCount}/${state.queue.length} completed.`, 'success');
+    }
   }
 
   function stopBatch() {
@@ -646,9 +904,9 @@
       state.batchAbortController.abort();
     }
     // Aborting the fetch doesn't stop the server's Gemini calls - cancel those too, and mark
-    // the interrupted file as failed so it can be retried.
-    const current = state.queue.find(q => q.id === state.activeItemId);
-    if (current && current.status !== 'completed') {
+    // every interrupted file as failed so it can be retried.
+    for (const current of state.queue.filter(q => state.runningItemIds.has(q.id))) {
+      if (current.status === 'completed') continue;
       fetch(`${getBackendBase()}/api/cancel-transcribe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -657,8 +915,10 @@
       current.status = 'failed';
       current.error = 'Stopped';
     }
+    state.runningItemIds.clear();
+    clearInterval(state.progressTimer);
+    state.progressTimer = null;
     state.isBatchRunning = false;
-    state.activeItemId = null;
     updateBatchControlsState();
     renderQueueTable();
     showToast('Batch transcription stopped by user.', 'warning');
@@ -683,9 +943,12 @@
     const backendBase = getBackendBase();
 
     // Step 1: Extract Audio (if video or not already an mp3)
-    item.status = 'extracting';
-    item.progress = 10;
-    item.progressText = 'Extracting Audio...';
+    Object.assign(item, {
+      status: 'extracting', progress: 0, progressText: 'Extracting Audio...', progressNote: '',
+      startedAt: Date.now(), extractStartedAt: Date.now(), transcribeStartedAt: 0, repairStartedAt: 0,
+      chunkDone: 0, chunkTotal: 0, repairDone: 0, repairTotal: 0, elapsedMs: 0,
+      apiSaver: localStorage.getItem('aiDubberApiSaver') === 'true'
+    });
     renderQueueTable();
 
     let audioPath = null;
@@ -739,8 +1002,9 @@
 
     // Step 2: Gemini Transcribe & Translate
     item.status = 'transcribing';
-    item.progress = 30;
+    item.progress = 10;
     item.progressText = 'Transcribing with Gemini...';
+    item.transcribeStartedAt = Date.now();
     renderQueueTable();
 
     // Start progress polling
@@ -749,14 +1013,16 @@
         const pRes = await fetch(`${backendBase}/api/transcribe-progress?requestId=${encodeURIComponent(item.requestId)}`);
         const pData = await pRes.json();
         if (pData.success && pData.total > 0) {
-          const chunkPct = Math.round((pData.done / pData.total) * 60) + 30;
-          item.progress = Math.min(90, chunkPct);
-          // After the last chunk the server double-checks gaps / fills missing Khmer, and says so in `note`
-          // (also "Google is busy - retrying..." while waiting) - show it instead of a frozen "chunk 2/2".
-          item.progressText = pData.note && (pData.done >= pData.total || /retrying/i.test(pData.note))
-            ? pData.note
-            : `Transcribing chunk ${pData.done}/${pData.total}...`;
-          renderQueueTable();
+          // Only store what the server said; updateProgressDom() turns it into % every second.
+          item.chunkDone = pData.done;
+          item.chunkTotal = pData.total;
+          // After the last chunk the server double-checks gaps / fills missing Khmer, and says so in
+          // `note` with "(x/y)" (also "Google is busy - retrying..." while waiting).
+          item.progressNote = pData.note || '';
+          if (pData.done >= pData.total && !item.repairStartedAt) item.repairStartedAt = Date.now();
+          const m = item.repairStartedAt && /\((\d+)\/(\d+)\)/.exec(item.progressNote);
+          item.repairDone = m ? +m[1] : 0;
+          item.repairTotal = m ? +m[2] : 0;
         }
       } catch (e) {}
     }, 1500);
@@ -790,7 +1056,9 @@
     }
 
     if (!transcribeResult || !transcribeResult.success) {
-      throw new Error(transcribeResult?.message || transcribeResult?.error || 'Gemini transcription failed');
+      const err = new Error(transcribeResult?.message || transcribeResult?.error || 'Gemini transcription failed');
+      err.isDailyQuota = !!transcribeResult?.isDailyQuota;
+      throw err;
     }
 
     const rawCues = transcribeResult.data || transcribeResult.subtitles || transcribeResult.cues || [];
@@ -814,6 +1082,8 @@
     item.srtText = cuesToSrt(standardized);
     item.status = 'completed';
     item.progress = 100;
+    item.elapsedMs = Date.now() - item.startedAt;
+    learnTranscribeRate(item);
     item.progressText = 'Completed';
 
     // Auto-save SRT file
@@ -1860,8 +2130,8 @@
             </span>
             <div class="flex flex-col min-w-0">
               <span class="font-mono text-xs text-slate-200 select-all truncate">${masked}</span>
-              <span class="text-[10px] text-emerald-400 flex items-center gap-1">
-                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> Active Key Pool
+              <span data-dai-keystatus="${idx}" class="text-[10px] text-emerald-400 flex items-center gap-1 min-w-0">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0"></span> Active Key Pool
               </span>
             </div>
           </div>
@@ -1882,6 +2152,7 @@
     if (window.lucide && typeof window.lucide.createIcons === 'function') {
       window.lucide.createIcons();
     }
+    refreshKeyStatuses();
   }
 
   function addApiKey(rawKey) {
