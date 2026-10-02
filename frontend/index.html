@@ -1957,12 +1957,6 @@
                 <span id="text-fix-missing">Fix Missing</span>
               </button>
 
-              <button id="btn-fix-missing-all"
-                class="group h-7 px-2 rounded-md text-xs font-medium flex items-center gap-1 text-[var(--text-secondary)] hover:text-sky-400 hover:bg-sky-500/10 transition-all shrink-0"
-                title="Fix Missing on every tab: re-transcribe stretches with no subtitles and re-translate lines without Khmer">
-                <i data-lucide="layers" class="w-3.5 h-3.5 group-hover:scale-110 transition-transform"></i>
-                <span id="text-fix-missing-all">All Tabs</span>
-              </button>
 
               <div class="h-3.5 w-px bg-[var(--border-color)] mx-1 shrink-0"></div>
 
@@ -2266,20 +2260,36 @@
               <span id="text-transcribe" class="hidden sm:inline">Transcribe</span>
             </button>
 
-            <button id="btn-transcribe-all" title="Transcribe & Translate ALL open project tabs"
-              class="group h-8 px-2.5 sm:px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-white hover:border-emerald-500/50 shadow-sm active:scale-[0.95]">
-              <i id="icon-transcribe-all" data-lucide="layers"
-                class="w-3.5 h-3.5 text-emerald-400 shrink-0 group-hover:scale-110 transition-transform"></i>
-              <span class="hidden md:inline" id="text-transcribe-all">Transcribe All Tabs</span>
-              <span class="md:hidden">All Tabs</span>
-            </button>
-
-            <button id="btn-dai-translate-all" title="Re-translate every tab's transcript with DAI Translate and write the Khmer back into each tab"
-              onclick="window.daiStudio && window.daiStudio.translateAllTabs()"
-              class="group h-8 px-2.5 sm:px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-white hover:border-indigo-500/50 shadow-sm active:scale-[0.95]">
-              <i data-lucide="languages" class="w-3.5 h-3.5 text-indigo-400 shrink-0 group-hover:scale-110 transition-transform"></i>
-              <span class="hidden md:inline">DAI Translate All</span>
-            </button>
+            <!-- All Tabs menu: every action that runs on all open tabs -->
+            <div class="relative">
+              <button id="btn-transcribe-all" title="Run on every open tab: Transcribe, Fix Missing, Translate"
+                class="group h-8 px-2.5 sm:px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-white hover:border-emerald-500/50 shadow-sm active:scale-[0.95]">
+                <i id="icon-transcribe-all" data-lucide="layers" class="w-3.5 h-3.5 text-emerald-400 shrink-0"></i>
+                <span id="text-transcribe-all">All Tabs</span>
+                <i data-lucide="chevron-down" class="w-3 h-3 text-emerald-400/70 shrink-0"></i>
+              </button>
+              <div id="all-tabs-dropdown-menu"
+                class="hidden absolute bottom-full mb-1.5 left-0 w-[290px] bg-studio-card border border-white/[0.12] shadow-2xl rounded-xl p-2.5 z-[999] animate-dropdown origin-bottom-left font-sans backdrop-blur-xl">
+                <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-2 py-1">Every open tab</div>
+                <button id="btn-all-tabs-transcribe" class="w-full text-left px-2.5 py-1.5 text-xs flex items-start gap-2 rounded-lg hover:bg-white/[0.08] text-slate-200 cursor-pointer transition-colors">
+                  <i data-lucide="sparkles" class="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5"></i>
+                  <span class="flex flex-col"><span class="font-medium">Transcribe all tabs</span><span class="text-[10px] text-slate-400">Speech → Khmer subtitles, several tabs at once</span></span>
+                </button>
+                <button id="btn-all-tabs-fix-missing" class="w-full text-left px-2.5 py-1.5 text-xs flex items-start gap-2 rounded-lg hover:bg-white/[0.08] text-slate-200 cursor-pointer transition-colors">
+                  <i data-lucide="scan-search" class="w-3.5 h-3.5 text-sky-400 shrink-0 mt-0.5"></i>
+                  <span class="flex flex-col"><span class="font-medium">Fix Missing in all tabs</span><span class="text-[10px] text-slate-400">Recover missed lines, translate lines without Khmer</span></span>
+                </button>
+                <button id="btn-all-tabs-pipeline" class="w-full text-left px-2.5 py-1.5 text-xs flex items-start gap-2 rounded-lg hover:bg-white/[0.08] text-slate-200 cursor-pointer transition-colors">
+                  <i data-lucide="list-checks" class="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5"></i>
+                  <span class="flex flex-col"><span class="font-medium">Transcribe, then Fix Missing</span><span class="text-[10px] text-slate-400">Both in order - one click for a whole series</span></span>
+                </button>
+                <div class="my-1.5 border-t border-white/[0.08]"></div>
+                <button id="btn-all-tabs-translate" class="w-full text-left px-2.5 py-1.5 text-xs flex items-start gap-2 rounded-lg hover:bg-white/[0.08] text-slate-200 cursor-pointer transition-colors">
+                  <i data-lucide="languages" class="w-3.5 h-3.5 text-indigo-400 shrink-0 mt-0.5"></i>
+                  <span class="flex flex-col"><span class="font-medium">DAI Translate all tabs…</span><span class="text-[10px] text-slate-400">Re-translate existing transcripts (opens DAI Translate)</span></span>
+                </button>
+              </div>
+            </div>
 
             <!-- DAI-Transcribe Toolbar Shortcut -->
             <button id="btn-open-daitranscribe-toolbar" title="Open DAI-Transcribe Batch Studio"
@@ -9882,37 +9892,43 @@
     let transcribeTimerInterval = null;
     let transcribeStartTime = null;
 
+    // The "All Tabs ▾" menu button (Transcribe / Fix Missing / Translate every tab). While one
+    // of those runs it turns into a Stop button. allTabsJob: null | "fix" | "pipeline" (a
+    // Transcribe All run is tracked by isTranscribingAll), allTabsJobLabel: e.g. "Fixing 2/5".
+    let allTabsJob = null;
+    let allTabsJobLabel = "";
     const updateTranscribeAllButtonState = () => {
       const btnAll = document.getElementById("btn-transcribe-all");
       if (!btnAll) return;
       const hasAnyVideo = typeof projects !== "undefined" && Array.isArray(projects) && projects.some((p) => p.file || p.blobUrl);
-      if (isTranscribingAll) {
+      if (isTranscribingAll || allTabsJob) {
+        const label = allTabsJobLabel || "Stop All";
         btnAll.disabled = false;
         btnAll.className = "group px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ease-out bg-red-600 border border-red-600 text-white shadow-md shadow-red-900/20 active:scale-[0.95] animate-pulse cursor-pointer";
         btnAll.innerHTML = `
             <i data-lucide="x-circle" class="w-[14px] h-[14px] shrink-0"></i>
-            <span class="hidden md:inline">Stop All</span>
+            <span class="hidden md:inline">${label}</span>
             <span class="md:hidden">Stop</span>
           `;
-        btnAll.title = "Stop transcription for all project tabs";
+        btnAll.title = "Stop the job running on all tabs";
       } else if (!hasAnyVideo) {
         btnAll.disabled = true;
         btnAll.className = "group px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ease-out bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-muted)] opacity-60 cursor-not-allowed";
         btnAll.innerHTML = `
             <i id="icon-transcribe-all" data-lucide="layers" class="w-[14px] h-[14px] text-[var(--text-muted)] shrink-0"></i>
-            <span class="hidden md:inline" id="text-transcribe-all">Transcribe All Tabs</span>
-            <span class="md:hidden">All Tabs</span>
+            <span id="text-transcribe-all">All Tabs</span>
+            <i data-lucide="chevron-down" class="w-3 h-3 shrink-0 opacity-70"></i>
           `;
-        btnAll.title = "Upload videos in project tabs first to Transcribe All";
+        btnAll.title = "Open videos in project tabs first";
       } else {
         btnAll.disabled = false;
         btnAll.className = "group px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ease-out bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-secondary)] hover:text-[var(--text-bright)] hover:border-emerald-400/50 shadow-sm active:scale-[0.95] cursor-pointer";
         btnAll.innerHTML = `
             <i id="icon-transcribe-all" data-lucide="layers" class="w-[14px] h-[14px] text-emerald-400 shrink-0 transition-transform duration-300 group-hover:scale-110"></i>
-            <span class="hidden md:inline" id="text-transcribe-all">Transcribe All Tabs</span>
-            <span class="md:hidden">All Tabs</span>
+            <span id="text-transcribe-all">All Tabs</span>
+            <i data-lucide="chevron-down" class="w-3 h-3 text-emerald-400/70 shrink-0"></i>
           `;
-        btnAll.title = "Transcribe & Translate ALL open project tabs";
+        btnAll.title = "Run on every open tab: Transcribe, Fix Missing, Translate";
       }
       _lucideCreateIcons({ root: btnAll });
     };
@@ -10053,6 +10069,64 @@
     };
 
     // ── Core Project Transcription Engine ──────────────────────────────────
+    // /api/transcribe cues ({ start, end, text, originalText, gender, emotion, speaker }) -> subtitle
+    // rows. Shared by Transcribe and by DAI-Transcribe's "Transcribe All Tabs" (via dubberBridge).
+    function transcriptToSubtitles(parsedSubs) {
+      const parseAiTime = (timeVal) => {
+        if (timeVal === undefined || timeVal === null) return 0;
+        if (typeof timeVal === "number") return isNaN(timeVal) ? 0 : Math.max(0, timeVal);
+        const str = String(timeVal).trim().replace(",", ".");
+        if (!str) return 0;
+        if (!str.includes(":")) {
+          const num = parseFloat(str.replace(/[^0-9.]/g, ""));
+          return isNaN(num) ? 0 : Math.max(0, num);
+        }
+        const parts = str.split(":").map((p) => p.trim());
+        if (parts.length === 3) {
+          const p0 = parseFloat(parts[0]) || 0;
+          const p1 = parseFloat(parts[1]) || 0;
+          const p2 = parseFloat(parts[2]) || 0;
+          return p0 * 3600 + p1 * 60 + p2;
+        }
+        if (parts.length === 2) {
+          const mins = parseFloat(parts[0]) || 0;
+          const secs = parseFloat(parts[1]) || 0;
+          return mins * 60 + secs;
+        }
+        const fallback = parseFloat(str.replace(/[^0-9.]/g, ""));
+        return isNaN(fallback) ? 0 : Math.max(0, fallback);
+      };
+
+      return parsedSubs.map((sub) => {
+        const startRaw = sub.start !== undefined ? sub.start : 0;
+        const endRaw = sub.end !== undefined ? sub.end : 0;
+        const textRaw = sub.text || "";
+
+        const detectedChar = window.defaultVoiceFor(sub.gender || sub.voice, sub.speaker || sub.character);
+
+        return {
+          id: crypto.randomUUID().substring(0, 8),
+          textStart: parseAiTime(startRaw).toFixed(2),
+          textEnd: parseAiTime(endRaw).toFixed(2),
+          audioStart: parseAiTime(startRaw).toFixed(2),
+          audioEnd: parseAiTime(endRaw).toFixed(2),
+          originalText: sub.originalText || sub.original || null,
+          speaker: detectedChar,
+          character: detectedChar,
+          emotion: sub.emotion || "Neutral",
+          text: textRaw,
+          voice: "KH Khmer",
+          gender: detectedChar,
+          status: "done",
+          audioStatus: "idle",
+          audioUrl: null,
+          baseAudioDuration: 0,
+          speed: 1.0,
+          volume: 1.0,
+        };
+      });
+    }
+
     async function transcribeSingleProject(targetProject, isBatch = false, keyIndexOffset = 0) {
       if (!targetProject) return { success: false, error: "No project provided" };
 
@@ -10567,59 +10641,7 @@
                 throw new Error("AI returned empty or invalid JSON array.");
               }
 
-              const parseAiTime = (timeVal) => {
-                if (timeVal === undefined || timeVal === null) return 0;
-                if (typeof timeVal === "number") return isNaN(timeVal) ? 0 : Math.max(0, timeVal);
-                const str = String(timeVal).trim().replace(",", ".");
-                if (!str) return 0;
-                if (!str.includes(":")) {
-                  const num = parseFloat(str.replace(/[^0-9.]/g, ""));
-                  return isNaN(num) ? 0 : Math.max(0, num);
-                }
-                const parts = str.split(":").map((p) => p.trim());
-                if (parts.length === 3) {
-                  const p0 = parseFloat(parts[0]) || 0;
-                  const p1 = parseFloat(parts[1]) || 0;
-                  const p2 = parseFloat(parts[2]) || 0;
-                  return p0 * 3600 + p1 * 60 + p2;
-                }
-                if (parts.length === 2) {
-                  const mins = parseFloat(parts[0]) || 0;
-                  const secs = parseFloat(parts[1]) || 0;
-                  return mins * 60 + secs;
-                }
-                const fallback = parseFloat(str.replace(/[^0-9.]/g, ""));
-                return isNaN(fallback) ? 0 : Math.max(0, fallback);
-              };
-
-              const formattedSubs = parsedSubs.map((sub) => {
-                const startRaw = sub.start !== undefined ? sub.start : 0;
-                const endRaw = sub.end !== undefined ? sub.end : 0;
-                const textRaw = sub.text || "";
-
-                const detectedChar = window.defaultVoiceFor(sub.gender || sub.voice, sub.speaker || sub.character);
-
-                return {
-                  id: crypto.randomUUID().substring(0, 8),
-                  textStart: parseAiTime(startRaw).toFixed(2),
-                  textEnd: parseAiTime(endRaw).toFixed(2),
-                  audioStart: parseAiTime(startRaw).toFixed(2),
-                  audioEnd: parseAiTime(endRaw).toFixed(2),
-                  originalText: sub.originalText || sub.original || null,
-                  speaker: detectedChar,
-                  character: detectedChar,
-                  emotion: sub.emotion || "Neutral",
-                  text: textRaw,
-                  voice: "KH Khmer",
-                  gender: detectedChar,
-                  status: "done",
-                  audioStatus: "idle",
-                  audioUrl: null,
-                  baseAudioDuration: 0,
-                  speed: 1.0,
-                  volume: 1.0,
-                };
-              });
+              const formattedSubs = transcriptToSubtitles(parsedSubs);
 
               targetProject.subtitles = formattedSubs.map((s) => ({ ...s }));
               if (projects[activeProjectIndex] === targetProject) {
@@ -10716,7 +10738,6 @@
     window.describeRepair = describeRepair;
 
     const btnFixMissing = document.getElementById("btn-fix-missing");
-    const btnFixMissingAll = document.getElementById("btn-fix-missing-all");
     let fixMissingAllRun = null; // { stopped, requestId } while "Fix Missing: All Tabs" runs
 
     const getGeminiKeys = () => JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]").filter(Boolean);
@@ -10892,51 +10913,48 @@
     // Runs Fix Missing on every tab that has subtitles, one tab at a time (each tab already
     // spreads its checks over all API keys, and one at a time is kinder to a free quota).
     // Stops early when every key is out of its daily quota: the other tabs would only fail too.
-    const renderFixMissingAllButton = (text) => {
-      if (!btnFixMissingAll) return;
-      const running = !!fixMissingAllRun;
-      btnFixMissingAll.classList.toggle("text-rose-400", running);
-      btnFixMissingAll.title = running ? "Stop Fix Missing for all tabs" : "Fix Missing on every tab: re-transcribe stretches with no subtitles and re-translate lines without Khmer";
-      const label = document.getElementById("text-fix-missing-all");
-      if (label) label.textContent = text || (running ? "Stop" : "All Tabs");
-    };
+    // Started from the "All Tabs" menu; resolves with { checked, fixedLines, quotaOut, stopped }.
+    function stopFixMissingAll() {
+      if (!fixMissingAllRun) return;
+      // Cancel the tab being checked; the loop ends after it.
+      fixMissingAllRun.stopped = true;
+      fetch("http://localhost:3001/api/cancel-transcribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: fixMissingAllRun.requestId }),
+      }).catch(() => { });
+      allTabsJobLabel = "Stopping…";
+      updateTranscribeAllButtonState();
+    }
 
-    btnFixMissingAll?.addEventListener("click", async () => {
-      if (fixMissingAllRun) {
-        // Stop: cancel the tab being checked; the loop ends after it.
-        fixMissingAllRun.stopped = true;
-        fetch("http://localhost:3001/api/cancel-transcribe", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ requestId: fixMissingAllRun.requestId }),
-        }).catch(() => { });
-        renderFixMissingAllButton("Stopping…");
-        return;
-      }
-      if (btnFixMissing?.dataset.busy === "1") return;
+    async function fixMissingAllTabs() {
+      if (fixMissingAllRun || btnFixMissing?.dataset.busy === "1") return null;
       if (typeof saveCurrentProjectState === "function") saveCurrentProjectState();
       const targets = projects.filter((p) => liveSubtitlesOf(p).length > 0);
       if (!targets.length) {
         showToast("No tab has subtitles yet - transcribe or import first.", "warning");
-        return;
+        return null;
       }
       const apiKeys = getGeminiKeys();
       if (!apiKeys.length) {
         showToast("Please enter your Gemini API Key in Settings ➔ General.", "error");
-        return;
+        return null;
       }
 
       fixMissingAllRun = { stopped: false, requestId: null };
-      renderFixMissingAllButton();
+      const ownsJob = !allTabsJob; // inside "Transcribe, then Fix Missing" the pipeline owns the button
+      if (ownsJob) allTabsJob = "fix";
       showToast(`Fix Missing: checking ${targets.length} tab(s) one by one…`, "info");
       const results = [];
       let quotaMessage = "";
+      let stopped = false;
       try {
         for (let i = 0; i < targets.length && !fixMissingAllRun.stopped; i++) {
           const proj = targets[i];
           const tabNo = projects.indexOf(proj) + 1;
           fixMissingAllRun.requestId = crypto.randomUUID();
-          renderFixMissingAllButton(`Stop (${i + 1}/${targets.length})`);
+          allTabsJobLabel = `Stop · Fixing ${i + 1}/${targets.length}`;
+          updateTranscribeAllButtonState();
           const r = await fixMissingForProject(proj, { apiKeys, requestId: fixMissingAllRun.requestId });
           if (r.cancelled) break;
           results.push({ proj, tabNo, r });
@@ -10949,28 +10967,38 @@
           else if (problem) showToast(`Tab ${tabNo} "${projectTabName(proj)}": ${problem}`, "warning");
         }
       } finally {
-        const stopped = fixMissingAllRun.stopped;
+        stopped = fixMissingAllRun.stopped;
         fixMissingAllRun = null;
-        renderFixMissingAllButton();
-
-        const fixedTabs = results.filter((x) => x.r.ok && x.r.changed);
-        const totalLines = fixedTabs.reduce((n, x) => n + x.r.changed, 0);
-        const problemTabs = results.filter((x) => !x.r.ok || repairProblem(x.r.report)).map((x) => x.tabNo);
-        const notChecked = targets.length - results.length;
-        const parts = [`${results.length}/${targets.length} tab(s) checked`];
-        parts.push(fixedTabs.length ? `${totalLines} line(s) fixed in tab ${fixedTabs.map((x) => x.tabNo).join(", ")}` : "nothing missing");
-        if (problemTabs.length) parts.push(`run again later for tab ${problemTabs.join(", ")}`);
-        if (quotaMessage) {
-          showToast(`Fix Missing paused - ${quotaMessage} ${parts.join(" · ")}. ${notChecked} tab(s) not checked yet.`, "error");
-        } else {
-          showToast(`${stopped ? "Fix Missing stopped" : "Fix Missing done"}: ${parts.join(" · ")}.${fixedTabs.length ? " Fixed lines need Generate to be voiced." : ""}`,
-            problemTabs.length || stopped ? "warning" : "success");
-        }
+        if (ownsJob) allTabsJob = null;
+        allTabsJobLabel = "";
+        updateTranscribeAllButtonState();
       }
-    });
+
+      const fixedTabs = results.filter((x) => x.r.ok && x.r.changed);
+      const fixedLines = fixedTabs.reduce((n, x) => n + x.r.changed, 0);
+      const problemTabs = results.filter((x) => !x.r.ok || repairProblem(x.r.report)).map((x) => x.tabNo);
+      const notChecked = targets.length - results.length;
+      const parts = [`${results.length}/${targets.length} tab(s) checked`];
+      parts.push(fixedTabs.length ? `${fixedLines} line(s) fixed in tab ${fixedTabs.map((x) => x.tabNo).join(", ")}` : "nothing missing");
+      if (problemTabs.length) parts.push(`run again later for tab ${problemTabs.join(", ")}`);
+      if (quotaMessage) {
+        showToast(`Fix Missing paused - ${quotaMessage} ${parts.join(" · ")}. ${notChecked} tab(s) not checked yet.`, "error");
+      } else {
+        showToast(`${stopped ? "Fix Missing stopped" : "Fix Missing done"}: ${parts.join(" · ")}.${fixedTabs.length ? " Fixed lines need Generate to be voiced." : ""}`,
+          problemTabs.length || stopped ? "warning" : "success");
+      }
+      return { checked: results.length, fixedLines, quotaOut: !!quotaMessage, stopped };
+    }
 
     // ── Transcribe All Project Tabs Simultaneously (1-Click Parallel) ───────
+    // Set while "Transcribe All Tabs" runs inside DAI-Transcribe's batch engine (see below).
+    let allTabsBatchRun = false;
+
     async function transcribeAllProjects() {
+      if (allTabsBatchRun) {
+        window.daiStudio?.stopBatch();
+        return null;
+      }
       const isAnyRunning = isTranscribingAll || isTranscribing || projects.some((p) => p.isTranscribing);
 
       if (isAnyRunning) {
@@ -11070,6 +11098,23 @@
         }
       }
 
+      // Gemini with every video on disk: DAI-Transcribe's batch engine does the work - several tabs
+      // at once, live % and time left, pauses cleanly when the daily quota runs out - and writes
+      // each transcript back into its tab. Whisper and browser-only videos use the loop below.
+      if (engineMode !== "whisper" && window.daiStudio?.transcribeAllTabs && eligibleProjects.every((p) => p.videoFilePath)) {
+        allTabsBatchRun = true;
+        isTranscribingAll = true;
+        updateTranscribeAllButtonState();
+        try {
+          return await window.daiStudio.transcribeAllTabs();
+        } finally {
+          allTabsBatchRun = false;
+          isTranscribingAll = false;
+          updateTranscribeAllButtonState();
+          renderProjectTabs();
+        }
+      }
+
       isTranscribingAll = true;
       updateTranscribeAllButtonState();
       showToast(`⚡ Transcribing all ${eligibleProjects.length} project tab(s) in sequential order (1 to ${eligibleProjects.length})...`, "info");
@@ -11102,6 +11147,7 @@
       if (completedCount > 0) {
         showToast(`🎉 Completed and saved all ${completedCount} of ${eligibleProjects.length} project tab(s) in order!`, "success");
       }
+      return { completed: completedCount, total: eligibleProjects.length };
     }
 
     // Wire Event Listeners
@@ -11111,9 +11157,73 @@
       });
     }
 
+    // ── "All Tabs ▾" menu ───────────────────────────────────────────────────
+    // One button for everything that runs on every tab. While a job runs, the button is its
+    // Stop button.
+    let pipelineStopped = false;
+
+    // "Transcribe, then Fix Missing": skips the second step if the first was stopped or ran
+    // out of daily quota (Fix Missing would only fail too).
+    async function transcribeThenFixMissingAll() {
+      allTabsJob = "pipeline";
+      pipelineStopped = false;
+      updateTranscribeAllButtonState();
+      try {
+        const t = await transcribeAllProjects();
+        if (pipelineStopped || !t || t.stopped) return;
+        if (t.quotaOut) {
+          showToast("Fix Missing skipped: the daily Gemini quota is used up. Run it from All Tabs after the reset.", "warning");
+          return;
+        }
+        await fixMissingAllTabs();
+      } finally {
+        allTabsJob = null;
+        allTabsJobLabel = "";
+        updateTranscribeAllButtonState();
+      }
+    }
+
+    function stopAllTabsJob() {
+      if (allTabsJob === "pipeline") pipelineStopped = true;
+      if (isTranscribingAll) transcribeAllProjects(); // while running, this call stops it
+      stopFixMissingAll();
+    }
+
     const btnTranscribeAll = document.getElementById("btn-transcribe-all");
-    if (btnTranscribeAll) {
-      btnTranscribeAll.addEventListener("click", transcribeAllProjects);
+    const allTabsMenu = document.getElementById("all-tabs-dropdown-menu");
+    if (btnTranscribeAll && allTabsMenu) {
+      btnTranscribeAll.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (isTranscribingAll || allTabsJob) {
+          allTabsMenu.classList.add("hidden");
+          stopAllTabsJob();
+          return;
+        }
+        if (!allTabsMenu.classList.contains("hidden")) {
+          allTabsMenu.classList.add("hidden");
+          return;
+        }
+        // The toolbar scrolls sideways (overflow-x-auto), which would clip an absolute menu:
+        // place it fixed above the button, like the language menu.
+        const rect = btnTranscribeAll.getBoundingClientRect();
+        allTabsMenu.style.position = "fixed";
+        allTabsMenu.style.left = `${Math.min(window.innerWidth - 300, Math.max(10, rect.left))}px`;
+        allTabsMenu.style.bottom = `${window.innerHeight - rect.top + 6}px`;
+        allTabsMenu.style.top = "auto";
+        allTabsMenu.style.zIndex = "99999";
+        allTabsMenu.classList.remove("hidden");
+      });
+      document.addEventListener("click", (e) => {
+        if (!allTabsMenu.contains(e.target) && !btnTranscribeAll.contains(e.target)) allTabsMenu.classList.add("hidden");
+      });
+      const menuAction = (id, run) => document.getElementById(id)?.addEventListener("click", () => {
+        allTabsMenu.classList.add("hidden");
+        run();
+      });
+      menuAction("btn-all-tabs-transcribe", transcribeAllProjects);
+      menuAction("btn-all-tabs-fix-missing", fixMissingAllTabs);
+      menuAction("btn-all-tabs-pipeline", transcribeThenFixMissingAll);
+      menuAction("btn-all-tabs-translate", () => window.daiStudio?.translateAllTabs());
     }
 
     // --- Open Logs Folder ---
@@ -18667,6 +18777,33 @@
         applySrtToProject(parseSrtText(srtText), idx);
         return true;
       },
+      // Writes a finished transcript (/api/transcribe cues) into a tab in the background - no tab
+      // switch, unlike applySrtToTab. Keeps original text / gender / emotion, same as Transcribe.
+      applyTranscriptToTab: (ref, cues) => {
+        if (projects.indexOf(ref) < 0) return false;
+        const formattedSubs = transcriptToSubtitles(cues);
+        ref.subtitles = formattedSubs.map((s) => ({ ...s }));
+        if (projects[activeProjectIndex] === ref) {
+          saveStateToPast();
+          subtitles = ref.subtitles.map((s) => ({ ...s }));
+          autoAssignVoxProfiles(subtitles);
+          renderSubtitles();
+        } else {
+          autoAssignVoxProfiles(ref.subtitles);
+        }
+        renderProjectTabs();
+        if (typeof updateGenerateAllButtonState === "function") updateGenerateAllButtonState();
+        if (typeof updateGenerateButtonState === "function") updateGenerateButtonState();
+        Stats.inc(Stats.keys.lines, formattedSubs.length);
+        maybeAutoSaveSubtitles(ref, formattedSubs);
+        return true;
+      },
+      // The tab's "working" dot while DAI-Transcribe works on it.
+      setTabWorking: (ref, working) => {
+        if (!ref) return;
+        ref.isBatchTranscribing = !!working;
+        renderProjectTabs();
+      },
       parseSrt: (srtText) => parseSrtText(srtText),
       renameActiveTab: (name) => {
         const proj = projects[activeProjectIndex];
@@ -18688,7 +18825,7 @@
             .map((s) => ({ id: s.id, textStart: s.textStart, textEnd: s.textEnd, source: String(s.originalText).trim() })),
         }));
       },
-      isTabBusy: (ref) => !!(ref && (ref.isTranscribing || ref.isGeneratingAudio || ref.isIsolatingBgm)),
+      isTabBusy: (ref) => !!(ref && (ref.isTranscribing || ref.isGeneratingAudio || ref.isIsolatingBgm || ref.isBatchTranscribing || ref.isFixingMissing)),
       // Writes translations ([{ id, text, gender, emotion }]) into a tab. A line whose text changes loses
       // its old voice clip (it no longer matches). Returns how many lines changed, or -1 if the tab is gone.
       applyTabTranslation: (ref, results) => {
@@ -29992,7 +30129,7 @@
           isActive ? "bg-[var(--accent-primary)]/15 text-[var(--accent-text)] font-semibold border-t-2 border-t-[var(--accent-primary)]" : "hover:bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-[var(--text-primary)] border-t-2 border-t-transparent",
         ].join(" ");
         btn.title = proj.tabTitle ? `${proj.tabTitle} (${proj.file?.name || `Video ${i + 1}`})` : proj.file?.name || `Video ${i + 1}`;
-        const isWorking = proj.isTranscribing || proj.isGeneratingAudio || proj.isIsolatingBgm || proj.isFixingMissing;
+        const isWorking = proj.isTranscribing || proj.isGeneratingAudio || proj.isIsolatingBgm || proj.isFixingMissing || proj.isBatchTranscribing;
         const dotClass = proj.subtitles.length > 0 ? "bg-emerald-400" : isWorking ? "bg-yellow-400 animate-pulse" : "bg-[var(--border-light)]";
 
         btn.innerHTML = `

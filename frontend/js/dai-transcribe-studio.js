@@ -430,6 +430,47 @@
     showToast(`Added ${added} tab(s) to the queue${usable.length > added ? ` (${usable.length - added} already in it)` : ''}${skipped ? `, ${skipped} tab(s) without a video file skipped` : ''}. Press Start Batch to make their SRTs.`, 'success');
   }
 
+  // "Transcribe All Tabs" (main window): every tab with a video on disk is transcribed by this
+  // batch engine (parallel, live %, quota-aware) and each transcript is written straight back
+  // into its tab. Resolves with the batch summary, or null when nothing ran.
+  async function transcribeAllTabs() {
+    const bridge = window.dubberBridge;
+    if (!bridge) {
+      showToast('DR Dubber Pro projects engine not loaded.', 'error');
+      return null;
+    }
+    if (state.isBatchRunning) {
+      openDaiTranscribeModal('batch');
+      showToast('A batch is already running - see its progress here.', 'info');
+      return null;
+    }
+    const tabs = bridge.tabList().filter((t) => t.path);
+    const busy = tabs.filter((t) => bridge.isTabBusy(t.ref));
+    const usable = tabs.filter((t) => !bridge.isTabBusy(t.ref));
+    if (!usable.length) {
+      showToast(busy.length ? 'Every tab is busy (generating voice or transcribing).' : 'No tab has a video file on disk.', 'warning');
+      return null;
+    }
+    await addFilesToQueue(usable.map((t) => ({
+      filePath: t.path,
+      fileName: t.path.split(/[\\/]/).pop(),
+      fileUrl: `${getBackendBase()}/api/audio?path=${encodeURIComponent(t.path)}`,
+      targetTab: t.ref,
+      partIndex: t.number,
+    })), { quiet: true });
+    // Files already in the queue (even finished ones) are transcribed again for their tab; a
+    // part done in the last few hours comes back from the server's cache without using quota.
+    for (const t of usable) {
+      const item = state.queue.find((q) => q.filePath === t.path);
+      if (!item || ['extracting', 'transcribing'].includes(item.status)) continue;
+      Object.assign(item, { targetTab: t.ref, partIndex: t.number, autoApplyToTab: true, appliedToTab: false, status: 'pending', error: null, progress: 0 });
+    }
+    renderQueueTable();
+    if (busy.length) showToast(`${busy.length} busy tab(s) skipped (generating voice or transcribing).`, 'warning');
+    openDaiTranscribeModal('batch');
+    return startBatch();
+  }
+
   async function addFilesToQueue(files, { quiet = false } = {}) {
     if (!files || files.length === 0) return;
 
@@ -850,6 +891,7 @@
         const item = pendingItems[n];
         const offset = (n * keyStride) % apiKeys.length;
         state.runningItemIds.add(item.id);
+        if (item.autoApplyToTab) window.dubberBridge?.setTabWorking(item.targetTab, true);
         try {
           await processSingleBatchItem(item, {
             apiKeys: [...apiKeys.slice(offset), ...apiKeys.slice(0, offset)],
@@ -876,13 +918,21 @@
           renderQueueTable();
         } finally {
           state.runningItemIds.delete(item.id);
+          if (item.autoApplyToTab) window.dubberBridge?.setTabWorking(item.targetTab, false);
         }
       }
     };
     await Promise.all(Array.from({ length: concurrency }, worker));
 
     // Stopped (and maybe already restarted): stopBatch() has cleaned up, leave the new run alone.
-    if (state.batchAbortController !== batchAbort || batchAbort.signal.aborted) return;
+    const batchSummary = () => ({
+      completed: pendingItems.filter(q => q.status === 'completed').length,
+      failed: pendingItems.filter(q => q.status === 'failed').length,
+      total: pendingItems.length,
+      quotaOut,
+      stopped: batchAbort.signal.aborted
+    });
+    if (state.batchAbortController !== batchAbort || batchAbort.signal.aborted) return batchSummary();
 
     clearInterval(state.progressTimer);
     state.progressTimer = null;
@@ -897,6 +947,7 @@
     } else {
       showToast(`🎉 Batch processing finished! ${successCount}/${state.queue.length} completed.`, 'success');
     }
+    return batchSummary();
   }
 
   function stopBatch() {
@@ -1100,6 +1151,17 @@
       });
     } catch (e) {
       console.warn('[DAI Studio] Auto-save SRT warning:', e);
+    }
+
+    // From "Transcribe All Tabs": the transcript goes straight back into its tab (in the
+    // background - no tab switch), with original text / gender / emotion, like a normal Transcribe.
+    if (item.autoApplyToTab && item.targetTab) {
+      const bridge = window.dubberBridge;
+      if (bridge && bridge.applyTranscriptToTab(item.targetTab, rawCues)) {
+        item.appliedToTab = true;
+      } else {
+        showToast(`"${episodeName(item.fileName)}": its tab was closed - the SRT is saved, use "Open All as Dubber Tabs" to load it.`, 'warning');
+      }
     }
 
     renderQueueTable();
@@ -2433,6 +2495,9 @@
     closePreviewModal,
     removeItem: removeQueueItem,
     translateAllTabs: openTabsTranslate,
+    transcribeAllTabs,
+    stopBatch,
+    isBatchRunning: () => state.isBatchRunning,
     retryItem: (id) => {
       const item = state.queue.find(q => q.id === id);
       if (item) {
