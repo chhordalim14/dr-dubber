@@ -1,6 +1,6 @@
 {
-  "version": "1.4.0",
-  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.4.0/DR.Dubber.Pro.Setup.1.4.0.exe",
+  "version": "1.4.1",
+  "link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.4.1/DR.Dubber.Pro.Setup.1.4.1.exe",
   "mac_link": "https://github.com/chhordalim14/dr-dubber/releases/download/v1.2.1/DR.Dubber.Pro-1.2.1-arm64.dmg",
-  "notes": "v1.4.0 Release:\n- New: All Tabs > Make names consistent. Gives each character and place the same Khmer name in every part of a movie, and saves the names to the Character Glossary\n- The Character Glossary is used again by Transcribe, Fix Missing and Translate in the main editor, so later parts keep the same names\n- One All Tabs menu: Transcribe all tabs now runs several parts at once, with live progress and a Stop button\n- Smarter API key switching: when a key hits Google's limit, work moves to the least busy free key\n- Safer connection to Gemini: secure certificate checks are back on, and API keys are no longer sent inside web addresses\n- Fixed voice playing too fast, faster performance, and other bug fixes"
+  "notes": "v1.4.1 Release:\n- New: Dub Whole Series (under Join Episodes / Split Movie). Pick the episodes folder, set minutes per part and per tab, and press Start. Each part is joined, split into tabs, transcribed, voiced and has its background music isolated in one run\n- After exporting a part, press Next part to do the same for the next one\n- Stop any time. Continue picks up at the step that stopped, even after a quota pause, an error or an app restart\n- Includes everything from v1.4.0: consistent character and place names across parts, one All Tabs menu, smarter API key switching and a safer Gemini connection"
 }
