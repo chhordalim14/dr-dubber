@@ -2283,6 +2283,10 @@
                   <i data-lucide="list-checks" class="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5"></i>
                   <span class="flex flex-col"><span class="font-medium">Transcribe, then Fix Missing</span><span class="text-[10px] text-slate-400">Both in order - one click for a whole series</span></span>
                 </button>
+                <button id="btn-all-tabs-unify-names" class="w-full text-left px-2.5 py-1.5 text-xs flex items-start gap-2 rounded-lg hover:bg-white/[0.08] text-slate-200 cursor-pointer transition-colors">
+                  <i data-lucide="spell-check" class="w-3.5 h-3.5 text-rose-300 shrink-0 mt-0.5"></i>
+                  <span class="flex flex-col"><span class="font-medium">Make names consistent…</span><span class="text-[10px] text-slate-400">Same Khmer name for each character and place in every tab</span></span>
+                </button>
                 <div class="my-1.5 border-t border-white/[0.08]"></div>
                 <button id="btn-all-tabs-translate" class="w-full text-left px-2.5 py-1.5 text-xs flex items-start gap-2 rounded-lg hover:bg-white/[0.08] text-slate-200 cursor-pointer transition-colors">
                   <i data-lucide="languages" class="w-3.5 h-3.5 text-indigo-400 shrink-0 mt-0.5"></i>
@@ -4023,6 +4027,63 @@
             </tbody>
           </table>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── MAKE NAMES CONSISTENT (review before applying) ── -->
+  <div id="names-review-modal"
+    class="fixed inset-0 bg-black/80 backdrop-blur-md items-center justify-center z-[996] hidden modal-bg-enter">
+    <div
+      class="bg-[var(--bg-panel)] border border-emerald-500/40 rounded-2xl w-[860px] max-w-[95vw] max-h-[90vh] shadow-2xl flex flex-col overflow-hidden text-[var(--text-primary)] animate-modal-center">
+      <div class="px-5 py-3.5 border-b border-[var(--border-color)] bg-[var(--bg-base)] flex items-center justify-between shrink-0">
+        <div class="flex items-center gap-2 min-w-0">
+          <i data-lucide="spell-check" class="w-5 h-5 text-emerald-400 shrink-0"></i>
+          <div class="min-w-0">
+            <h3 class="text-sm font-bold text-white">Make names consistent</h3>
+            <div id="names-review-subtitle" class="text-[11px] text-[var(--text-muted)] truncate"></div>
+          </div>
+        </div>
+        <button id="names-review-close" class="p-1.5 rounded-lg text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-hover)]">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+      <div class="px-5 pt-3 text-[11px] text-[var(--text-secondary)] leading-relaxed shrink-0">
+        These names were found in the original dialogue. Pick the Khmer spelling to use for each one. Other spellings of
+        that name are replaced in every tab, but only in lines where the name appears in the original text. Names spelled
+        differently across tabs are listed first.
+      </div>
+
+      <div class="p-4 min-h-0 flex-1 flex flex-col">
+        <div class="border border-[var(--border-color)] rounded-xl overflow-y-auto custom-scrollbar min-h-0 flex-1">
+          <table class="w-full text-left border-collapse text-xs">
+            <thead class="bg-[var(--bg-base)] border-b border-[var(--border-color)] text-[10px] text-[var(--text-muted)] uppercase sticky top-0">
+              <tr>
+                <th class="px-3 py-2 w-8"></th>
+                <th class="px-3 py-2">Name in original</th>
+                <th class="px-3 py-2 w-[34%]">Use this Khmer spelling</th>
+                <th class="px-3 py-2">Spellings found (lines)</th>
+              </tr>
+            </thead>
+            <tbody id="names-review-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="px-5 py-3 border-t border-[var(--border-color)] bg-[var(--bg-base)] flex flex-wrap items-center gap-3 shrink-0">
+        <label class="flex items-center gap-2 text-[11px] text-[var(--text-secondary)] cursor-pointer">
+          <input id="names-review-save-glossary" type="checkbox" class="accent-emerald-500" checked />
+          Save checked names to the Character Glossary, so later parts use the same spelling
+        </label>
+        <span id="names-review-summary" class="ml-auto text-[11px] text-emerald-300 font-semibold"></span>
+        <button id="names-review-cancel"
+          class="h-8 px-3 rounded-lg text-xs font-semibold border border-[var(--border-light)] text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-hover)]">Cancel</button>
+        <button id="names-review-apply"
+          class="h-8 px-4 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-1.5 transition-all active:scale-95 shadow-md">
+          <i data-lucide="check" class="w-3.5 h-3.5"></i>
+          <span>Apply</span>
+        </button>
       </div>
     </div>
   </div>
@@ -6594,6 +6655,7 @@
     </div>
   </div>
 
+  <script src="js/name-consistency.js"></script>
   <script src="js/studio-main.js"></script>
   <!-- ═══════════════ RENDER QUEUE DRAWER ═══════════════ -->
   <div id="queue-drawer-backdrop"

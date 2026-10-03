@@ -4393,6 +4393,275 @@
       return { checked: results.length, fixedLines, quotaOut: !!quotaMessage, stopped };
     }
 
+    // ── Make names consistent across all tabs ───────────────────────────────
+    // Each part of a movie is translated on its own, so a character or place can be
+    // spelled one way in part 1 and another way in part 5. This reads the names in every
+    // tab's original dialogue (backend /api/unify-names), lets the user pick one Khmer
+    // spelling per name, rewrites the other spellings in every tab, and saves the names
+    // to the Character Glossary so later parts are translated the same way.
+    // The matching and safety rules live in js/name-consistency.js.
+    let unifyNamesRun = null; // { requestId } while the names are being read
+    let namesReview = null; // { names, tabs, projectByTabId } while the review window is open
+
+    const namesEsc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+    const namesTypeLabel = { person: "Person", place: "Place", group: "Group", other: "Name" };
+
+    // A line's voice was generated from its old text: mark it to be generated again.
+    const resetSubtitleAudio = (sub) => {
+      if (!sub.audioStatus || sub.audioStatus === "idle") return;
+      sub.audioStatus = "idle";
+      sub.audioUrl = null;
+      sub.file = null;
+      if (activeAudios[sub.id]) {
+        activeAudios[sub.id].pause();
+        if (typeof window.releaseAudioChain === "function") window.releaseAudioChain(activeAudios[sub.id]);
+        delete activeAudios[sub.id];
+      }
+    };
+
+    async function unifyNamesAllTabs() {
+      if (unifyNamesRun || allTabsJob || isTranscribingAll) return;
+      if (!window.NameConsistency) {
+        showToast("The name tools did not load. Restart the app and try again.", "error");
+        return;
+      }
+      if (typeof saveCurrentProjectState === "function") saveCurrentProjectState();
+      const tabProjects = projects.filter((p) =>
+        liveSubtitlesOf(p).some((s) => String(s.originalText || "").trim() && String(s.text || "").trim()));
+      if (!tabProjects.length) {
+        showToast("No tab has transcribed lines with their original text yet - transcribe with Gemini first.", "warning");
+        return;
+      }
+      const apiKeys = getGeminiKeys();
+      if (!apiKeys.length) {
+        showToast("Please enter your Gemini API Key in Settings ➔ General.", "error");
+        return;
+      }
+
+      const tabs = tabProjects.map((p, i) => ({
+        id: `tab${i}`,
+        title: projectTabName(p),
+        lines: liveSubtitlesOf(p).map((s) => ({ id: String(s.id), originalText: s.originalText || "", text: s.text || "" })),
+      }));
+      const projectByTabId = new Map(tabs.map((t, i) => [t.id, tabProjects[i]]));
+      const requestId = crypto.randomUUID();
+      unifyNamesRun = { requestId };
+      allTabsJob = "names";
+      allTabsJobLabel = "Stop · Reading names";
+      updateTranscribeAllButtonState();
+      showToast(`Reading the names in ${tabs.length} tab(s)…`, "info");
+      const progressTimer = setInterval(async () => {
+        try {
+          const p = await (await fetch(`http://localhost:3001/api/transcribe-progress?requestId=${requestId}`)).json();
+          if (p.success && p.total > 1 && unifyNamesRun) {
+            allTabsJobLabel = `Stop · Reading names ${p.done}/${p.total}`;
+            updateTranscribeAllButtonState();
+          }
+        } catch (e) { }
+      }, 1500);
+
+      let data;
+      try {
+        const res = await fetch("http://localhost:3001/api/unify-names", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tabs,
+            glossary: typeof getDramaGlossaryDict === "function" ? getDramaGlossaryDict() : null,
+            apiKey: apiKeys[0],
+            apiKeys,
+            model: localStorage.getItem("aiDubberModel") || "gemini-2.5-flash",
+            requestId,
+          }),
+        });
+        data = await res.json();
+      } catch (e) {
+        data = { success: false, message: e.message };
+      } finally {
+        clearInterval(progressTimer);
+        unifyNamesRun = null;
+        allTabsJob = null;
+        allTabsJobLabel = "";
+        updateTranscribeAllButtonState();
+      }
+
+      if (!data.success) {
+        if (data.error === "CANCELLED") showToast("Name check stopped.", "warning");
+        else showToast(`Name check failed: ${data.message || data.error}`, "error");
+        return;
+      }
+      if (!data.names || !data.names.length) {
+        showToast("No character or place names were found in the original dialogue.", "info");
+        return;
+      }
+      namesReview = { names: data.names, tabs, projectByTabId };
+      openNamesReview();
+    }
+
+    function stopUnifyNames() {
+      if (!unifyNamesRun) return;
+      fetch("http://localhost:3001/api/cancel-transcribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: unifyNamesRun.requestId }),
+      }).catch(() => { });
+    }
+
+    function collectNamesDecisions() {
+      if (!namesReview) return [];
+      return [...document.querySelectorAll("#names-review-body .names-row-check")]
+        .filter((cb) => cb.checked)
+        .map((cb) => {
+          const i = Number(cb.dataset.nameIdx);
+          const n = namesReview.names[i];
+          const input = document.querySelector(`#names-review-body .names-row-use[data-name-idx="${i}"]`);
+          const use = (input?.value || "").trim();
+          return { original: n.original, use, replace: n.spellings.map((s) => s.khmer) };
+        })
+        .filter((d) => d.use);
+    }
+
+    function updateNamesSummary() {
+      const summary = document.getElementById("names-review-summary");
+      if (!summary || !namesReview) return;
+      const changes = window.NameConsistency.planChanges(namesReview.tabs, collectNamesDecisions());
+      const tabCount = new Set(changes.map((c) => c.tabId)).size;
+      summary.textContent = changes.length
+        ? `${changes.length} line(s) will change in ${tabCount} tab(s)`
+        : "No lines need to change";
+    }
+
+    function openNamesReview() {
+      const modal = document.getElementById("names-review-modal");
+      const body = document.getElementById("names-review-body");
+      if (!modal || !body || !namesReview) return;
+      const { names } = namesReview;
+      const inconsistent = names.filter((n) => n.conflicting.length).length;
+      const subtitle = document.getElementById("names-review-subtitle");
+      if (subtitle) {
+        subtitle.textContent = `${names.length} name(s) found in ${namesReview.tabs.length} tab(s) · ${inconsistent} spelled differently`;
+      }
+      body.innerHTML = names.map((n, i) => {
+        const options = [...new Set([n.suggested, ...n.spellings.map((s) => s.khmer)])];
+        const linesOf = (k) => n.spellings.find((s) => s.khmer === k)?.lines || 0;
+        const found = n.spellings.length
+          ? n.spellings.map((s) => {
+            const tone = s.khmer === n.suggested
+              ? "border-emerald-500/40 text-emerald-300"
+              : n.conflicting.includes(s.khmer) ? "border-rose-500/40 text-rose-300" : "border-[var(--border-light)] text-[var(--text-secondary)]";
+            return `<span class="inline-block mr-1 mb-1 px-1.5 py-0.5 rounded border ${tone}">${namesEsc(s.khmer)} <span class="text-[10px] opacity-70">${s.lines}</span></span>`;
+          }).join("")
+          : `<span class="text-[10px] text-[var(--text-muted)]">Not written in Khmer yet</span>`;
+        return `
+          <tr class="border-b border-[var(--border-color)] align-top ${n.conflicting.length ? "" : "opacity-75"}">
+            <td class="px-3 py-2"><input type="checkbox" data-name-idx="${i}" class="names-row-check accent-emerald-500 mt-1" ${n.conflicting.length || !n.inGlossary ? "checked" : ""}></td>
+            <td class="px-3 py-2">
+              <div class="font-semibold text-[var(--text-primary)]">${namesEsc(n.original)}</div>
+              <div class="text-[10px] text-[var(--text-muted)]">${namesTypeLabel[n.type] || "Name"} · in ${n.linesWithName} line(s)${n.inGlossary ? " · from glossary" : ""}${n.conflicting.length ? ` · <span class="text-rose-300">${n.conflicting.length + 1} spellings</span>` : ""}</div>
+            </td>
+            <td class="px-3 py-2">
+              <input type="text" data-name-idx="${i}" list="names-opts-${i}" value="${namesEsc(n.suggested)}"
+                class="names-row-use w-full h-8 px-2 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)] text-xs text-[var(--text-primary)] outline-none focus:border-emerald-400 font-khmer">
+              <datalist id="names-opts-${i}">${options.map((k) => `<option value="${namesEsc(k)}">${linesOf(k)} line(s)</option>`).join("")}</datalist>
+            </td>
+            <td class="px-3 py-2 font-khmer">${found}</td>
+          </tr>`;
+      }).join("");
+      updateNamesSummary();
+      modal.classList.remove("hidden");
+      modal.classList.add("flex");
+      _lucideCreateIcons({ root: modal });
+    }
+
+    function closeNamesReview() {
+      const modal = document.getElementById("names-review-modal");
+      if (modal) {
+        modal.classList.add("hidden");
+        modal.classList.remove("flex");
+      }
+      namesReview = null;
+    }
+
+    function applyNamesReview() {
+      if (!namesReview) return;
+      const decisions = collectNamesDecisions();
+      const changes = window.NameConsistency.planChanges(namesReview.tabs, decisions);
+      const byTab = new Map();
+      changes.forEach((c) => {
+        if (!byTab.has(c.tabId)) byTab.set(c.tabId, []);
+        byTab.get(c.tabId).push(c);
+      });
+
+      let changedLines = 0;
+      let skipped = 0;
+      const changedTabNos = [];
+      for (const [tabId, list] of byTab) {
+        const proj = namesReview.projectByTabId.get(tabId);
+        if (!proj || !projects.includes(proj)) { // the tab was closed meanwhile
+          skipped += list.length;
+          continue;
+        }
+        const isActive = projects[activeProjectIndex] === proj;
+        const live = liveSubtitlesOf(proj);
+        const byId = new Map(live.map((s) => [String(s.id), s]));
+        if (isActive && typeof saveStateToPast === "function") saveStateToPast(); // Undo works on the open tab
+        const ids = [];
+        for (const c of list) {
+          const sub = byId.get(String(c.lineId));
+          // Edited by hand since the check: leave the user's edit alone.
+          if (!sub || (sub.text || "") !== c.before) {
+            skipped++;
+            continue;
+          }
+          sub.text = c.after;
+          resetSubtitleAudio(sub);
+          ids.push(sub.id);
+        }
+        if (!ids.length) continue;
+        changedLines += ids.length;
+        changedTabNos.push(projects.indexOf(proj) + 1);
+        if (isActive) {
+          proj.subtitles = subtitles.map((s) => ({ ...s }));
+          selectedItems = ids.flatMap((id) => [`text-${id}`, `audio-${id}`]);
+          renderSubtitles();
+          if (typeof updateGenerateButtonState === "function") updateGenerateButtonState();
+          if (typeof updateGenerateAllButtonState === "function") updateGenerateAllButtonState();
+          if (typeof saveCurrentProjectState === "function") saveCurrentProjectState();
+        }
+        maybeAutoSaveSubtitles(proj, proj.subtitles);
+      }
+
+      let glossaryNote = "";
+      if (document.getElementById("names-review-save-glossary")?.checked && decisions.length) {
+        let current = [];
+        try {
+          current = JSON.parse(localStorage.getItem("aiDubberGlossary") || localStorage.getItem("aiDubberDramaGlossary") || "[]");
+        } catch (e) { }
+        const r = window.NameConsistency.mergeIntoGlossary(current, decisions.map((d) => ({ original: d.original, khmer: d.use })));
+        try {
+          localStorage.setItem("aiDubberGlossary", JSON.stringify(r.list));
+          localStorage.setItem("aiDubberDramaGlossary", JSON.stringify(r.list));
+        } catch (e) { }
+        window.daiStudio?.reloadGlossary?.();
+        if (r.added || r.updated) glossaryNote = ` ${r.added + r.updated} name(s) saved to the Character Glossary.`;
+      }
+
+      closeNamesReview();
+      renderProjectTabs();
+      const skippedNote = skipped ? ` ${skipped} line(s) were left alone because they changed after the check.` : "";
+      if (changedLines) {
+        showToast(`Names made consistent: ${changedLines} line(s) changed in tab ${changedTabNos.sort((a, b) => a - b).join(", ")}.${glossaryNote}${skippedNote} Changed lines need Generate to be voiced again.`, "success");
+      } else {
+        showToast(`No lines needed changing.${glossaryNote}${skippedNote}`, "info");
+      }
+    }
+
+    document.getElementById("names-review-close")?.addEventListener("click", closeNamesReview);
+    document.getElementById("names-review-cancel")?.addEventListener("click", closeNamesReview);
+    document.getElementById("names-review-apply")?.addEventListener("click", applyNamesReview);
+    document.getElementById("names-review-body")?.addEventListener("input", updateNamesSummary);
+    document.getElementById("names-review-body")?.addEventListener("change", updateNamesSummary);
+
     // ── Transcribe All Project Tabs Simultaneously (1-Click Parallel) ───────
     // Set while "Transcribe All Tabs" runs inside DAI-Transcribe's batch engine (see below).
     let allTabsBatchRun = false;
@@ -4590,6 +4859,7 @@
       if (allTabsJob === "pipeline") pipelineStopped = true;
       if (isTranscribingAll) transcribeAllProjects(); // while running, this call stops it
       stopFixMissingAll();
+      stopUnifyNames();
     }
 
     const btnTranscribeAll = document.getElementById("btn-transcribe-all");
@@ -4626,6 +4896,7 @@
       menuAction("btn-all-tabs-transcribe", transcribeAllProjects);
       menuAction("btn-all-tabs-fix-missing", fixMissingAllTabs);
       menuAction("btn-all-tabs-pipeline", transcribeThenFixMissingAll);
+      menuAction("btn-all-tabs-unify-names", unifyNamesAllTabs);
       menuAction("btn-all-tabs-translate", () => window.daiStudio?.translateAllTabs());
     }
 
@@ -8979,7 +9250,27 @@
     window.isRenderDuckingEnabled = () => currentDuckingEnabled;
     window.getSubtitleStylePreset = () => currentSubtitlePreset;
 
-    window.getDramaGlossaryDict = () => null;
+    // One Character Glossary for the whole app: the list kept by DAI-Transcribe's
+    // "Character Glossary" (localStorage aiDubberGlossary, [{ original, khmer }]),
+    // also filled by All Tabs ➔ "Make names consistent". Every Gemini transcribe /
+    // translate / Fix Missing request sends it, so a name fixed once is spelled the
+    // same way in every later part. (This returned null since Aug 2026, so the main
+    // editor ignored the glossary entirely.)
+    window.getDramaGlossaryDict = () => {
+      try {
+        const list = JSON.parse(localStorage.getItem("aiDubberGlossary") || localStorage.getItem("aiDubberDramaGlossary") || "[]");
+        if (!Array.isArray(list)) return null;
+        const dict = {};
+        list.forEach((g) => {
+          const original = String(g?.original ?? g?.from ?? "").trim();
+          const khmer = String(g?.khmer ?? g?.to ?? "").trim();
+          if (original && khmer) dict[original] = khmer;
+        });
+        return Object.keys(dict).length ? dict : null;
+      } catch (e) {
+        return null;
+      }
+    };
 
     // ══════════════════════════════════════════════════════════════════════
     // CREATOR FEATURE 5: BATCH MULTI-EPISODE DUBBING QUEUE

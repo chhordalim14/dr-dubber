@@ -861,6 +861,7 @@
     const genre = $('dai-genre-select')?.value || 'historical';
     const model = $('dai-model-select')?.value || getActiveModel();
     const customFolder = state.outputFolder || localStorage.getItem('aiDubberAutoSaveSrtCustomPath') || '';
+    loadGlossaryFromStorage(); // pick up names saved elsewhere (All Tabs > Make names consistent)
     const glossaryDict = state.glossary.length > 0
       ? state.glossary.reduce((acc, cur) => {
           if (cur.original && cur.khmer) acc[cur.original.trim()] = cur.khmer.trim();
@@ -1542,12 +1543,15 @@
     if (mode === 'tabs') loadTabsIntoTranslator();
   }
 
-  const buildGlossaryDict = () => state.glossary.length > 0
-    ? state.glossary.reduce((acc, cur) => {
-        if (cur.original && cur.khmer) acc[cur.original.trim()] = cur.khmer.trim();
-        return acc;
-      }, {})
-    : null;
+  const buildGlossaryDict = () => {
+    loadGlossaryFromStorage(); // pick up names saved elsewhere (All Tabs > Make names consistent)
+    return state.glossary.length > 0
+      ? state.glossary.reduce((acc, cur) => {
+          if (cur.original && cur.khmer) acc[cur.original.trim()] = cur.khmer.trim();
+          return acc;
+        }, {})
+      : null;
+  };
 
   // ── All Project Tabs: re-translate every tab's original-language transcript ──
   const TAB_JOB_STATUS = {
@@ -2061,6 +2065,7 @@
   // ──────────────────────────────────────────────────────────────────────────
 
   function openGlossaryModal() {
+    loadGlossaryFromStorage();
     const modal = $('dai-glossary-modal');
     if (modal) {
       modal.classList.remove('hidden');
@@ -2116,6 +2121,7 @@
       return;
     }
 
+    loadGlossaryFromStorage(); // don't overwrite names saved elsewhere since the modal opened
     state.glossary.push({ original, khmer });
     saveGlossaryToStorage();
     renderGlossaryTable();
@@ -2511,6 +2517,11 @@
     updateCueText,
     openGlossaryModal,
     closeGlossaryModal,
+    // Called after another part of the app saved names to the shared glossary.
+    reloadGlossary: () => {
+      loadGlossaryFromStorage();
+      if (!$('dai-glossary-modal')?.classList.contains('hidden')) renderGlossaryTable();
+    },
     removeGlossaryItem,
     openApiKeyModal,
     closeApiKeyModal,

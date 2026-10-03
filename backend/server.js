@@ -3725,6 +3725,114 @@ ${dialogue.join('\n') || '(no dialogue provided - work from the original title)'
     }
 });
 
+// ── Make names consistent across all tabs ────────────────────────────────────
+// A long movie is dubbed as several parts (one tab each), and each part is translated
+// on its own, so a character or place can get a different Khmer spelling in part 1 and
+// part 5. This asks Gemini which names occur in the ORIGINAL dialogue and every Khmer
+// spelling the subtitles used for each, then name-consistency.js checks that against
+// the actual lines and suggests one spelling per name. The frontend lets the user pick
+// and applies the change; this route never edits subtitles itself.
+const NameConsistency = require('../frontend/js/name-consistency.js');
+const NAMES_LINES_PER_CHUNK = 400;
+const NAMES_PARALLEL = 3;
+const NAMES_RESPONSE_SCHEMA = {
+    type: 'ARRAY',
+    items: {
+        type: 'OBJECT',
+        properties: {
+            original: { type: 'STRING' },
+            type: { type: 'STRING', enum: ['person', 'place', 'group', 'other'] },
+            khmer: { type: 'ARRAY', items: { type: 'STRING' } }
+        },
+        required: ['original', 'type', 'khmer'],
+        propertyOrdering: ['original', 'type', 'khmer']
+    }
+};
+
+function buildNameExtractionPrompt(lines) {
+    return `You are checking the subtitles of a Khmer-dubbed movie for consistent names.
+
+Each line below is: original-language dialogue => the Khmer subtitle for it.
+
+List every proper name that appears in the ORIGINAL dialogue:
+- people (including nicknames and names used to address someone),
+- places (cities, kingdoms, mountains, palaces, villages),
+- groups (clans, sects, families, companies, armies),
+- other named things (named swords, martial-arts techniques, shops, titles used as a name).
+
+For each name return:
+- "original": the name copied EXACTLY as written in the original dialogue (same characters and spelling). Use the shortest form that identifies it (e.g. 林峰, not 林峰哥哥).
+- "type": person, place, group or other.
+- "khmer": every DIFFERENT Khmer spelling the subtitles use for this name in these lines, copied character-for-character from the Khmer text. Only include spellings that literally appear in the Khmer subtitles. Do not translate, correct or invent spellings. If the Khmer never writes the name (e.g. it uses a pronoun), return an empty list.
+
+Do not list ordinary words, pronouns, generic titles on their own (e.g. 王爷, 师父, 老板, boss) or words that only appear in the Khmer.
+Return only the JSON array.
+
+LINES:
+${lines.map(l => `${l.originalText} => ${l.text}`).join('\n')}`;
+}
+
+app.post('/api/unify-names', async (req, res) => {
+    const { tabs, glossary, apiKey, apiKeys, model = 'gemini-2.5-flash', requestId } = req.body || {};
+    const keyPool = [apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])].map(k => String(k || '').trim()).filter((k, i, a) => k && a.indexOf(k) === i);
+    if (!keyPool.length) return res.status(400).json({ success: false, error: 'INVALID_API_KEY', message: 'Gemini API key is required.' });
+    if (!Array.isArray(tabs) || !tabs.length) return res.status(400).json({ success: false, error: 'NO_TABS', message: 'No tabs were sent.' });
+
+    const lines = [];
+    tabs.forEach(t => (Array.isArray(t && t.lines) ? t.lines : []).forEach(l => {
+        const originalText = String((l && l.originalText) || '').replace(/\s+/g, ' ').trim();
+        const text = String((l && l.text) || '').replace(/\s+/g, ' ').trim();
+        if (originalText && text) lines.push({ originalText, text });
+    }));
+    if (!lines.length) {
+        return res.json({ success: false, error: 'NO_ORIGINAL_TEXT', message: 'None of the tabs has original-language text next to its Khmer lines, so names cannot be matched. Transcribe with Gemini first.' });
+    }
+    const chunks = [];
+    for (let i = 0; i < lines.length; i += NAMES_LINES_PER_CHUNK) chunks.push(lines.slice(i, i + NAMES_LINES_PER_CHUNK));
+
+    const abortCtrl = new AbortController();
+    res.on('close', () => { if (!res.writableFinished) abortCtrl.abort(); });
+    const progress = { done: 0, total: chunks.length, note: `Reading names… 0/${chunks.length}` };
+    if (requestId) { activeTranscribeRequests.set(requestId, abortCtrl); transcribeProgress.set(requestId, progress); }
+    try {
+        const results = new Array(chunks.length);
+        let failure = null;
+        let next = 0;
+        const worker = async () => {
+            while (!failure && !abortCtrl.signal.aborted) {
+                const idx = next++;
+                if (idx >= chunks.length) return;
+                const payload = {
+                    contents: [{ role: 'user', parts: [{ text: buildNameExtractionPrompt(chunks[idx]) }] }],
+                    generationConfig: { responseMimeType: 'application/json', responseSchema: NAMES_RESPONSE_SCHEMA, temperature: 0, maxOutputTokens: 16384 }
+                };
+                const out = await geminiWithKeys(keyPool, async (key) => {
+                    const r = await executeGeminiGenerate(key, model, payload, abortCtrl.signal);
+                    if (!r.success) return { ok: false, result: r };
+                    const parsed = extractJsonValue(r.text);
+                    if (!Array.isArray(parsed)) return { ok: false, result: { status: 502, error: 'Gemini returned an unreadable name list. Please try again.' } };
+                    return { ok: true, parsed };
+                }, abortCtrl.signal);
+                if (!out.ok) { failure = out.result; return; }
+                results[idx] = out.parsed;
+                progress.done++;
+                progress.note = `Reading names… ${progress.done}/${progress.total}`;
+            }
+        };
+        await Promise.all(Array.from({ length: Math.min(NAMES_PARALLEL, chunks.length) }, worker));
+        if (abortCtrl.signal.aborted) return res.json({ success: false, error: 'CANCELLED' });
+        if (failure) return geminiFailureResponse(res, failure);
+
+        const names = NameConsistency.analyzeNames(tabs, NameConsistency.mergeExtracted(results), glossary || null);
+        res.json({ success: true, names, linesChecked: lines.length });
+    } catch (e) {
+        if (e.name === 'AbortError') return res.json({ success: false, error: 'CANCELLED' });
+        res.status(500).json({ success: false, error: e.message });
+    } finally {
+        if (requestId) { activeTranscribeRequests.delete(requestId); transcribeProgress.delete(requestId); }
+    }
+});
+
 // Safe server listener that never crashes on duplicate instances
 const server = app.listen(PORT, () => {
     console.log(`[DR Dubber Pro Server] Listening on http://localhost:${PORT} (outgoing HTTPS via ${fetchBackend()})`);
