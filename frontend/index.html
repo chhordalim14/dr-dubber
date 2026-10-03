@@ -1788,6 +1788,12 @@
               <span class="truncate">Split Movie</span>
             </button>
 
+            <button id="btn-dub-series" title="One click: join episodes, split, transcribe, generate voices and isolate BGM, one part at a time"
+              class="col-span-2 group flex items-center justify-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-violet-500/10 border border-violet-500/40 hover:border-violet-400 rounded-xl text-xs font-bold text-violet-200 transition-all active:scale-[0.97]">
+              <i data-lucide="wand-sparkles" class="w-4 h-4 text-violet-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+              <span class="truncate">Dub Whole Series</span>
+            </button>
+
             <!-- DAI-Transcribe Batch Studio Button -->
             <button id="btn-open-daitranscribe-deck" title="Open DAI-Transcribe Batch Studio"
               onclick="window.daiStudio && window.daiStudio.open('batch')"
@@ -3411,6 +3417,52 @@
         <button id="je-open" class="hidden px-4 py-2 rounded-lg text-sm font-medium border border-[var(--border-light)] hover:bg-[var(--bg-hover)]">Open Folder</button>
         <button id="je-load" class="hidden px-4 py-2 rounded-lg text-sm font-medium border border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/10">Load into Dubber</button>
         <button id="je-start" disabled class="bg-emerald-600 text-white px-6 py-2 rounded-lg text-sm font-medium shadow-md hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed transition-all active:scale-[0.95]">Join</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════ DUB WHOLE SERIES (join → split → transcribe → voices → BGM) ═══════════ -->
+  <div id="modal-dub-series"
+    class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[998] hidden modal-bg-enter">
+    <div class="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-2xl w-[720px] max-w-[94vw] max-h-[90vh] shadow-2xl flex flex-col overflow-hidden text-[var(--text-primary)] animate-modal-center"
+      onclick="event.stopPropagation()">
+      <div class="flex justify-between items-center p-4 border-b border-[var(--border-color)] bg-violet-500/10">
+        <h2 class="text-violet-300 font-bold flex items-center gap-2"><i data-lucide="wand-sparkles" class="w-5 h-5"></i> Dub Whole Series</h2>
+        <button id="ds-close" class="text-[var(--text-secondary)] hover:text-[var(--text-bright)] transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+      <div class="p-5 flex flex-col gap-4 overflow-y-auto custom-scrollbar">
+        <p class="text-xs text-[var(--text-secondary)] leading-relaxed">Choose the folder with the episodes and press <b>Start</b>. The app joins the episodes into parts, then works on one part at a time: splits it into pieces, opens them as tabs, transcribes, makes the Khmer voices and isolates the BGM. When a part is finished, export it, then press <b>Next part</b>. You can close this window while it works.</p>
+        <div class="flex items-center gap-2">
+          <button id="ds-pick" class="shrink-0 whitespace-nowrap px-3 py-2 rounded-lg text-xs font-semibold bg-violet-600 text-white hover:brightness-110 active:scale-[0.97] transition-all flex items-center gap-1.5"><i data-lucide="folder-open" class="w-4 h-4"></i> Choose Folder</button>
+          <span id="ds-folder" class="text-xs text-[var(--text-muted)] truncate font-mono">No folder selected</span>
+        </div>
+        <div id="ds-summary" class="hidden flex-col gap-3">
+          <div id="ds-stats" class="text-sm font-semibold"></div>
+          <div id="ds-warnings" class="hidden text-xs text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded-lg p-2.5 leading-relaxed"></div>
+          <div class="grid grid-cols-3 gap-3 text-xs">
+            <label class="flex flex-col gap-1"><span class="text-[var(--text-secondary)]">Join: minutes per part</span>
+              <input id="ds-join-minutes" type="number" min="5" max="180" step="5" value="50" class="bg-[var(--bg-base)] border border-[var(--border-light)] rounded-md px-2 py-1.5 outline-none focus:border-violet-500"></label>
+            <label class="flex flex-col gap-1"><span class="text-[var(--text-secondary)]">Split: minutes per tab</span>
+              <input id="ds-split-minutes" type="number" min="3" max="60" step="1" value="7" class="bg-[var(--bg-base)] border border-[var(--border-light)] rounded-md px-2 py-1.5 outline-none focus:border-violet-500"></label>
+            <label class="flex flex-col gap-1"><span class="text-[var(--text-secondary)]">File name</span>
+              <input id="ds-name" type="text" class="bg-[var(--bg-base)] border border-[var(--border-light)] rounded-md px-2 py-1.5 outline-none focus:border-violet-500 font-khmer"></label>
+          </div>
+          <div class="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
+            <span class="text-[var(--text-secondary)]">For each part:</span>
+            <label class="flex items-center gap-1.5 cursor-pointer"><input id="ds-step-transcribe" type="checkbox" class="accent-violet-500" checked> Transcribe</label>
+            <label class="flex items-center gap-1.5 cursor-pointer"><input id="ds-step-generate" type="checkbox" class="accent-violet-500" checked> Generate voices</label>
+            <label class="flex items-center gap-1.5 cursor-pointer"><input id="ds-step-isolate" type="checkbox" class="accent-violet-500" checked> Isolate BGM</label>
+          </div>
+          <div id="ds-note" class="hidden text-xs text-sky-300 bg-sky-500/10 border border-sky-500/30 rounded-lg p-2.5 leading-relaxed"></div>
+          <div id="ds-parts" class="flex flex-col gap-1.5 max-h-[220px] overflow-y-auto custom-scrollbar pr-1"></div>
+          <div id="ds-steps" class="hidden flex-col gap-1 rounded-lg border border-[var(--border-color)] bg-[var(--bg-base)] p-3"></div>
+        </div>
+      </div>
+      <div class="p-4 border-t border-[var(--border-color)] bg-[var(--bg-base)] flex items-center gap-3 shrink-0">
+        <button id="ds-reset" class="hidden px-3 py-2 rounded-lg text-xs font-medium text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-hover)]">Start over</button>
+        <button id="ds-open" class="hidden ml-auto px-4 py-2 rounded-lg text-sm font-medium border border-[var(--border-light)] hover:bg-[var(--bg-hover)]">Open Folder</button>
+        <button id="ds-next" class="hidden px-4 py-2 rounded-lg text-sm font-semibold border border-violet-500/50 text-violet-300 hover:bg-violet-500/10">Next part</button>
+        <button id="ds-start" disabled class="ml-auto bg-violet-600 text-white px-6 py-2 rounded-lg text-sm font-semibold shadow-md hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed transition-all active:scale-[0.95]">Start</button>
       </div>
     </div>
   </div>

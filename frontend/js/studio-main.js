@@ -4860,6 +4860,7 @@
       if (isTranscribingAll) transcribeAllProjects(); // while running, this call stops it
       stopFixMissingAll();
       stopUnifyNames();
+      stopSeriesRun();
     }
 
     const btnTranscribeAll = document.getElementById("btn-transcribe-all");
@@ -15829,24 +15830,7 @@
       const epLabel = (f) => esc(f.episode !== null && f.episode !== undefined ? `EP${f.episode}` : f.name);
       let scan = null, parts = [], outDir = "", jobId = null, results = null;
 
-      // Greedy grouping by target length; a tiny last part is merged into the one before.
-      const planParts = () => {
-        const target = Math.max(5, parseFloat($("je-minutes").value) || 60) * 60;
-        const files = (scan?.files || []).filter((f) => !f.error);
-        const out = [];
-        let cur = [], dur = 0;
-        for (const f of files) {
-          if (cur.length && (dur + f.duration > target * 1.08 || cur.length >= 80)) { out.push(cur); cur = []; dur = 0; }
-          cur.push(f); dur += f.duration;
-        }
-        if (cur.length) out.push(cur);
-        if (out.length > 1) {
-          const last = out[out.length - 1], lastDur = last.reduce((s, f) => s + f.duration, 0);
-          const prev = out[out.length - 2];
-          if (lastDur < target * 0.35 && prev.length + last.length <= 80) out.splice(out.length - 2, 2, prev.concat(last));
-        }
-        return out;
-      };
+      const planParts = () => planEpisodeParts(scan?.files || [], parseFloat($("je-minutes").value) || 60);
 
       const renderParts = (status) => {
         const box = $("je-parts");
@@ -15995,6 +15979,26 @@
         modal.classList.add("hidden");
       });
     })();
+
+    // Greedy grouping of scanned episodes into parts of about `minutes`; a tiny last part is
+    // merged into the one before. Shared by Join Episodes and Dub Whole Series.
+    function planEpisodeParts(scannedFiles, minutes) {
+      const target = Math.max(5, minutes || 60) * 60;
+      const files = (scannedFiles || []).filter((f) => !f.error);
+      const out = [];
+      let cur = [], dur = 0;
+      for (const f of files) {
+        if (cur.length && (dur + f.duration > target * 1.08 || cur.length >= 80)) { out.push(cur); cur = []; dur = 0; }
+        cur.push(f); dur += f.duration;
+      }
+      if (cur.length) out.push(cur);
+      if (out.length > 1) {
+        const last = out[out.length - 1], lastDur = last.reduce((s, f) => s + f.duration, 0);
+        const prev = out[out.length - 2];
+        if (lastDur < target * 0.35 && prev.length + last.length <= 80) out.splice(out.length - 2, 2, prev.concat(last));
+      }
+      return out;
+    }
 
     // ── Split Movie ────────────────────────────────────────────────────────
     (() => {
@@ -16175,6 +16179,542 @@
         }));
         modal.classList.add("hidden");
       });
+    })();
+
+    // ── Dub Whole Series ───────────────────────────────────────────────────
+    // One button for the whole series workflow. Join Episodes into parts of about N minutes,
+    // then one part at a time: Split it into pieces, open the pieces as tabs, Transcribe all
+    // tabs (DAI batch), Generate voices for all tabs, Isolate BGM for all tabs. Every step runs
+    // the same code as its own button. The plan and each step's result are kept in localStorage,
+    // so after a Stop, a quota pause or an app restart, Continue picks up where it stopped.
+    const SERIES_KEY = "aiDubberSeriesRun";
+    let seriesRun = null; // { stopped, step, joinJobId, splitJobId } while the pipeline runs
+
+    // Called from stopAllTabsJob (the All Tabs Stop button and this window's Stop button).
+    // Transcribe is stopped by stopAllTabsJob itself.
+    function stopSeriesRun() {
+      if (!seriesRun) return;
+      seriesRun.stopped = true;
+      const post = (url, body) => fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).catch(() => { });
+      if (seriesRun.joinJobId) post("http://localhost:3001/api/episodes/cancel", { jobId: seriesRun.joinJobId });
+      if (seriesRun.splitJobId) post("http://localhost:3001/api/split/cancel", { jobId: seriesRun.splitJobId });
+      if (seriesRun.step === "generate" && (isGeneratingAudioAll || voxQueueRunning)) generateSelectedAudioAllProjects();
+      if (seriesRun.step === "isolate" && isIsolatingBgmAll) isolateBgmAllProjects({ skipConfirm: true });
+    }
+
+    (() => {
+      const $ = (id) => document.getElementById(id);
+      const modal = $("modal-dub-series");
+      if (!modal) return;
+      const API = "http://localhost:3001/api";
+      const postJson = async (url, body) => (await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json();
+      const getJson = async (url) => (await fetch(url)).json();
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const fmtDur = (sec) => {
+        const s = Math.round(sec || 0), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+        return h ? `${h}:${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}` : `${m}:${String(r).padStart(2, "0")}`;
+      };
+      const esc = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+      const dirOf = (p) => p.replace(/[\\/][^\\/]*$/, "");
+      const pathJoin = (dir, name) => (dir.includes("\\") ? `${dir}\\${name}` : `${dir}/${name}`);
+      const baseOf = (p) => p.split(/[\\/]/).pop().replace(/\.[^.]+$/, "");
+      const epLabel = (f) => (f.episode !== null && f.episode !== undefined ? `EP${f.episode}` : f.name);
+      const clampNum = (v, lo, hi, dflt) => Math.min(hi, Math.max(lo, Math.round(parseFloat(v) || dflt)));
+      const joinMinutes = () => clampNum($("ds-join-minutes").value, 5, 180, 50);
+      const splitMinutes = () => clampNum($("ds-split-minutes").value, 3, 60, 7);
+      const STEP_NAMES = { split: "Split into tabs", load: "Open as tabs", transcribe: "Transcribe", generate: "Generate voices", isolate: "Isolate BGM" };
+      const STEP_ORDER = ["split", "load", "transcribe", "generate", "isolate"];
+      const OPTIONAL_STEPS = ["transcribe", "generate", "isolate"];
+
+      let scan = null; // /api/episodes/scan result for a newly chosen folder
+      let plan = null; // persisted: { folder, seriesName, outDir, joinMinutes, parts, current, stepState, pieces, lastDone }
+      try {
+        const saved = JSON.parse(localStorage.getItem(SERIES_KEY) || "null");
+        if (saved && Array.isArray(saved.parts)) plan = saved;
+      } catch (e) { }
+      const savePlan = () => {
+        try {
+          if (plan) localStorage.setItem(SERIES_KEY, JSON.stringify(plan));
+          else localStorage.removeItem(SERIES_KEY);
+        } catch (e) { }
+      };
+
+      // Remembered settings.
+      try {
+        const prefs = JSON.parse(localStorage.getItem("aiDubberSeriesPrefs") || "null");
+        if (prefs) {
+          if (prefs.joinMinutes) $("ds-join-minutes").value = prefs.joinMinutes;
+          if (prefs.splitMinutes) $("ds-split-minutes").value = prefs.splitMinutes;
+          OPTIONAL_STEPS.forEach((k) => { if (typeof prefs[k] === "boolean") $(`ds-step-${k}`).checked = prefs[k]; });
+        }
+      } catch (e) { }
+      const savePrefs = () => {
+        const prefs = { joinMinutes: joinMinutes(), splitMinutes: splitMinutes() };
+        OPTIONAL_STEPS.forEach((k) => { prefs[k] = $(`ds-step-${k}`).checked; });
+        try { localStorage.setItem("aiDubberSeriesPrefs", JSON.stringify(prefs)); } catch (e) { }
+      };
+      // Read when each step starts, so a step can be switched off while the series runs.
+      const wanted = (step) => !OPTIONAL_STEPS.includes(step) || $(`ds-step-${step}`).checked;
+
+      const nextPartIndex = () => (plan ? plan.parts.findIndex((p) => p.status === "joined") : -1);
+      const unfinishedIndex = () => (plan && plan.current != null && plan.parts[plan.current] && plan.parts[plan.current].status !== "done" ? plan.current : -1);
+      const partsToJoin = () => (plan ? plan.parts.map((p, k) => k).filter((k) => plan.parts[k].status === "planned" || plan.parts[k].status === "failed") : []);
+      const piecesOpen = () => !!(plan && plan.pieces && plan.pieces.length && projects.length === plan.pieces.length && plan.pieces.every((p, k) => projects[k] && projects[k].videoFilePath === p));
+
+      // ── Rendering ────────────────────────────────────────────────────────
+      function render() {
+        const running = !!seriesRun;
+        const folder = plan?.folder || scan?.folder || "";
+        $("ds-folder").textContent = folder || "No folder selected";
+        $("ds-folder").title = folder;
+        const show = !!(plan || scan);
+        $("ds-summary").classList.toggle("hidden", !show);
+        $("ds-summary").classList.toggle("flex", show);
+
+        const parts = plan
+          ? plan.parts
+          : scan ? planEpisodeParts(scan.files, joinMinutes()).map((g) => ({ label: `${epLabel(g[0])} – ${epLabel(g[g.length - 1])}`, episodes: g.length, duration: g.reduce((s, f) => s + f.duration, 0), status: "preview" })) : [];
+        const totalEpisodes = parts.reduce((s, p) => s + p.episodes, 0);
+        const totalDur = parts.reduce((s, p) => s + p.duration, 0);
+        $("ds-stats").textContent = parts.length ? `${totalEpisodes} episodes · ${fmtDur(totalDur)} · ${parts.length} part${parts.length === 1 ? "" : "s"}` : (scan ? "No video files found in this folder." : "");
+        if (plan) $("ds-name").value = plan.seriesName || "";
+        $("ds-join-minutes").disabled = !!plan || running;
+        $("ds-name").disabled = !!plan || running;
+        $("ds-split-minutes").disabled = running;
+
+        const u = unfinishedIndex();
+        const box = $("ds-parts");
+        box.innerHTML = "";
+        parts.forEach((p, i) => {
+          let state = "";
+          const jp = plan?.joinProgress?.[i];
+          if (jp && jp.status === "running") state = `<span class="text-sky-400">joining ${jp.percent || 0}%</span>`;
+          else if (p.status === "preview" || p.status === "planned") state = `<span class="text-[var(--text-muted)]">${p.status === "planned" ? "not joined yet" : ""}</span>`;
+          else if (p.status === "failed") state = `<span class="text-red-400" title="${esc(p.error)}">join failed</span>`;
+          else if (p.status === "done") state = `<span class="text-emerald-400">✓ dubbed</span>`;
+          else if (i === u) state = running ? `<span class="text-violet-300">working…</span>` : `<span class="text-amber-400">stopped - Continue</span>`;
+          else state = `<span class="text-[var(--text-secondary)]">joined, waiting</span>`;
+          const tabs = Math.max(1, Math.min(MAX_PROJECT_TABS, Math.round(p.duration / (splitMinutes() * 60))));
+          const row = document.createElement("div");
+          row.className = `flex items-center gap-3 px-3 py-2 rounded-lg bg-[var(--bg-base)] border text-xs ${i === u ? "border-violet-500/50" : "border-[var(--border-color)]"}`;
+          row.innerHTML = `<span class="font-semibold w-14 shrink-0">Part ${i + 1}</span>
+            <span class="truncate flex-1">${esc(p.label)} · ${p.episodes} episodes · ≈${tabs} tab${tabs === 1 ? "" : "s"}</span>
+            <span class="font-mono text-[var(--text-secondary)] shrink-0">${fmtDur(p.duration)}</span>
+            <span class="w-36 text-right shrink-0">${state}</span>`;
+          box.appendChild(row);
+        });
+
+        // Steps of the part being worked on (or the last finished part).
+        const stepsBox = $("ds-steps");
+        const shown = plan && (u >= 0 ? { index: u, steps: plan.stepState || {} } : plan.lastDone);
+        stepsBox.classList.toggle("hidden", !shown);
+        stepsBox.classList.toggle("flex", !!shown);
+        if (shown) {
+          stepsBox.innerHTML = `<div class="text-[11px] font-semibold text-[var(--text-secondary)] mb-1">Part ${shown.index + 1}</div>` + STEP_ORDER.map((name) => {
+            const st = (shown.steps || {})[name];
+            const off = !st && !wanted(name);
+            const [icon, cls] = !st ? (off ? ["–", "text-[var(--text-muted)]"] : ["○", "text-[var(--text-muted)]"])
+              : st.state === "done" ? ["✓", "text-emerald-400"]
+                : st.state === "running" ? ["●", "text-violet-300 animate-pulse"]
+                  : st.state === "skipped" ? ["–", "text-[var(--text-muted)]"]
+                    : st.state === "stopped" ? ["■", "text-amber-400"] : ["✗", "text-red-400"];
+            const label = off ? `${STEP_NAMES[name]} (off)` : STEP_NAMES[name];
+            return `<div class="flex items-start gap-2 text-xs"><span class="w-4 shrink-0 text-center ${cls}">${icon}</span><span class="shrink-0">${label}</span><span class="text-[var(--text-muted)] truncate" title="${esc(st?.note)}">${st?.note ? "· " + esc(st.note) : ""}</span></div>`;
+          }).join("");
+        }
+
+        const nextIdx = nextPartIndex();
+        const toJoin = partsToJoin();
+        const note = $("ds-note");
+        let noteText = "";
+        if (plan && !running && u < 0 && nextIdx < 0 && !toJoin.length) noteText = "All parts are dubbed ✓ Start over to dub another series.";
+        else if (plan && !running && u < 0 && nextIdx >= 0 && plan.lastDone) noteText = `Export part ${plan.lastDone.index + 1} first if you haven't - Next part closes its tabs.`;
+        note.textContent = noteText;
+        note.classList.toggle("hidden", !noteText);
+
+        const btnStart = $("ds-start"), btnNext = $("ds-next");
+        if (running) {
+          btnStart.classList.remove("hidden");
+          btnStart.disabled = false;
+          btnStart.textContent = "Stop";
+          btnNext.classList.add("hidden");
+        } else if (!plan) {
+          btnStart.classList.remove("hidden");
+          btnStart.textContent = parts.length ? `Start: join ${parts.length} part${parts.length === 1 ? "" : "s"} and dub part 1` : "Start";
+          btnStart.disabled = !parts.length;
+          btnNext.classList.add("hidden");
+        } else {
+          btnStart.classList.add("hidden");
+          const label = u >= 0 ? `Continue part ${u + 1}` : nextIdx >= 0 ? `Next part: ${nextIdx + 1} of ${plan.parts.length}` : toJoin.length ? "Continue joining" : "";
+          btnNext.textContent = label;
+          btnNext.classList.toggle("hidden", !label);
+        }
+        $("ds-reset").classList.toggle("hidden", !plan || running);
+        $("ds-open").classList.toggle("hidden", !plan?.outDir);
+        if (window.lucide) _lucideCreateIcons({ root: modal });
+      }
+
+      // ── Checks and helpers ────────────────────────────────────────────────
+      function preflight() {
+        if (allTabsJob || isTranscribingAll || isTranscribing || isGeneratingAudioAll || isGeneratingAudio || isIsolatingBgmAll || voxQueueRunning) {
+          showToast("Another job is running. Wait for it to finish or stop it first.", "warning");
+          return false;
+        }
+        if (wanted("transcribe")) {
+          const engine = document.querySelector('input[name="transcription-engine"]:checked')?.value || "gemini";
+          if (engine !== "whisper" && !getGeminiKeys().length) {
+            showToast("Please add at least one Gemini API Key in Settings.", "error");
+            document.getElementById("btn-open-settings")?.click();
+            return false;
+          }
+        }
+        if (wanted("generate") && (!tempAudioPath || !tempAudioPath.trim())) {
+          showToast("Please set the 'Generated Audio Temp Path' in Settings first.", "error");
+          document.getElementById("btn-open-settings")?.click();
+          return false;
+        }
+        return true;
+      }
+
+      async function closeOpenTabs(reason) {
+        if (!projects.length) return true;
+        const ok = await customConfirm(`${reason} ${projects.length} tab(s) are open now. Close them? Anything you haven't exported from them is lost.`, "Close open tabs", "Yes, close them");
+        if (!ok) return false;
+        saveCurrentProjectState();
+        for (let k = projects.length - 1; k >= 0; k--) closeProjectTab(k);
+        return projects.length === 0;
+      }
+
+      const stoppedError = () => Object.assign(new Error("stopped"), { seriesStopped: true });
+      const checkStop = () => { if (!seriesRun || seriesRun.stopped) throw stoppedError(); };
+      const setLabel = (text) => {
+        allTabsJobLabel = `Stop · ${text}`;
+        updateTranscribeAllButtonState();
+        render();
+      };
+
+      async function withRun(fn) {
+        seriesRun = { stopped: false, step: null, joinJobId: null, splitJobId: null };
+        allTabsJob = "series";
+        setLabel("Dub series");
+        try {
+          await fn();
+        } catch (e) {
+          if (e && e.seriesStopped) showToast("Dub Whole Series stopped. Open it and press Continue to pick up where it stopped.", "warning");
+          else {
+            console.error("[Dub Whole Series]", e);
+            showToast(`Dub Whole Series paused: ${e.message} Fix it, then press Continue.`, "error");
+            modal.classList.remove("hidden");
+          }
+        } finally {
+          seriesRun = null;
+          allTabsJob = null;
+          allTabsJobLabel = "";
+          if (plan) plan.joinProgress = null;
+          savePlan();
+          updateTranscribeAllButtonState();
+          render();
+        }
+      }
+
+      // ── Steps ────────────────────────────────────────────────────────────
+      async function joinParts(indices) {
+        const r = await postJson(`${API}/episodes/join`, { parts: indices.map((k) => plan.parts[k].files), outDir: plan.outDir, seriesName: plan.seriesName });
+        if (!r.success) throw new Error(`Joining failed: ${r.error}.`);
+        seriesRun.joinJobId = r.jobId;
+        let st = null;
+        try {
+          for (;;) {
+            await sleep(1000);
+            st = await getJson(`${API}/episodes/status?jobId=${encodeURIComponent(r.jobId)}`).catch(() => null);
+            if (!st || !st.success) throw new Error("Lost track of the joining job.");
+            plan.joinProgress = [];
+            indices.forEach((k, j) => { plan.joinProgress[k] = st.parts[j]; });
+            const pct = Math.round(st.parts.reduce((s, p) => s + (p.status === "done" ? 100 : p.percent || 0), 0) / Math.max(1, st.parts.length));
+            setLabel(`Joining ${pct}%`);
+            if (st.status !== "running") break;
+          }
+        } finally {
+          seriesRun.joinJobId = null;
+          plan.joinProgress = null;
+        }
+        indices.forEach((k, j) => {
+          const sp = st.parts[j];
+          if (sp && sp.status === "done") Object.assign(plan.parts[k], { status: "joined", outPath: sp.outPath, error: null });
+          else if (sp && sp.status === "error") Object.assign(plan.parts[k], { status: "failed", error: sp.error });
+        });
+        savePlan();
+        if (st.status === "cancelled" || seriesRun.stopped) throw stoppedError();
+        if (st.repairedEpisodes?.length) showToast(`Repaired damaged audio in ${st.repairedEpisodes.length} episode(s) while joining.`, "info");
+        const failed = indices.filter((k) => plan.parts[k].status === "failed");
+        if (failed.length) showToast(`Part ${failed.map((k) => k + 1).join(", ")} could not be joined: ${plan.parts[failed[0]].error}. The other parts continue.`, "warning");
+        if (!plan.parts.some((p) => p.status === "joined" || p.status === "done")) throw new Error("No part could be joined.");
+      }
+
+      async function runStep(name, fn) {
+        checkStop();
+        if (!wanted(name)) {
+          plan.stepState[name] = { state: "skipped" };
+          savePlan();
+          render();
+          return;
+        }
+        seriesRun.step = name;
+        plan.stepState[name] = { state: "running" };
+        savePlan();
+        setLabel(`Part ${plan.current + 1}/${plan.parts.length} · ${STEP_NAMES[name]}`);
+        let note = "";
+        try {
+          note = await fn();
+          checkStop();
+        } catch (e) {
+          plan.stepState[name] = e.seriesStopped || seriesRun.stopped ? { state: "stopped" } : { state: "failed", note: e.message };
+          savePlan();
+          throw e.seriesStopped || seriesRun.stopped ? stoppedError() : e;
+        } finally {
+          if (seriesRun) seriesRun.step = null;
+        }
+        plan.stepState[name] = { state: "done", note: note || "" };
+        savePlan();
+        render();
+      }
+
+      async function splitStep() {
+        const part = plan.parts[plan.current];
+        const src = await postJson(`${API}/split/inspect`, { file: part.outPath });
+        if (!src.success) throw new Error(`Could not read part ${plan.current + 1}: ${src.error}.`);
+        let n = Math.max(1, Math.min(40, Math.round(src.duration / (splitMinutes() * 60))));
+        const capped = n > MAX_PROJECT_TABS;
+        if (capped) n = MAX_PROJECT_TABS;
+        while (n > 1 && src.duration / n < 120) n--; // the splitter refuses pieces under 2 minutes
+        if (n < 2) {
+          plan.pieces = [part.outPath];
+          return "short part, opened as one tab";
+        }
+        const r = await postJson(`${API}/split/start`, { file: src.path, outDir: pathJoin(dirOf(src.path), "DR Dubber Split"), partCount: n, baseName: baseOf(src.path) });
+        if (!r.success) throw new Error(`Splitting failed: ${r.error}.`);
+        seriesRun.splitJobId = r.jobId;
+        let st = null;
+        try {
+          for (;;) {
+            await sleep(700);
+            st = await getJson(`${API}/split/status?jobId=${encodeURIComponent(r.jobId)}`).catch(() => null);
+            if (!st || !st.success) throw new Error("Lost track of the splitting job.");
+            setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Splitting ${st.percent || 0}%`);
+            if (st.status !== "running") break;
+          }
+        } finally {
+          seriesRun.splitJobId = null;
+        }
+        if (st.status === "cancelled") throw stoppedError();
+        if (st.status !== "done") throw new Error(`Splitting failed: ${st.error || "unknown error"}.`);
+        plan.pieces = st.parts.map((p) => p.outPath);
+        return `${n} tabs of about ${fmtDur(src.duration / n)}${capped ? ` (limited to ${MAX_PROJECT_TABS} tabs)` : ""}`;
+      }
+
+      async function loadStep() {
+        if (projects.length && !(await closeOpenTabs(`Part ${plan.current + 1} opens as new tabs.`))) {
+          throw new Error("The open tabs were not closed.");
+        }
+        await loadVideoFiles(plan.pieces.map((p) => ({ name: p.split(/[\\/]/).pop(), path: p, url: `${API}/audio?path=${encodeURIComponent(p)}` })));
+        if (!piecesOpen()) throw new Error("Could not open the pieces as tabs.");
+        return `${plan.pieces.length} tab(s)`;
+      }
+
+      async function transcribeStep() {
+        const t = await transcribeAllProjects();
+        window.daiStudio?.close?.(); // the DAI window opens to show the batch; hide it again
+        checkStop();
+        if (!t) throw new Error("Transcribe did not start (see the message above).");
+        if (t.stopped) throw stoppedError();
+        if (t.quotaOut) throw new Error("The daily Gemini quota is used up. Press Continue after it resets, or add a key from another Google project.");
+        const total = t.total ?? projects.length;
+        const ok = t.completed ?? 0;
+        if (!ok) throw new Error("No tab could be transcribed.");
+        return t.failed ? `${ok} of ${total} tabs - ${t.failed} failed, transcribe those tabs again later` : `${ok} of ${total} tabs`;
+      }
+
+      async function generateStep() {
+        const g = await generateSelectedAudioAllProjects();
+        checkStop();
+        if (g && g.ok === false && g.reason === "no-subtitles") return "no subtitles to voice";
+        if (!g || g.ok === false) {
+          throw new Error(g?.reason === "settings" ? "Set the 'Generated Audio Temp Path' in Settings." : g?.reason === "vox-server" ? "Start the VoxCPM2 server first." : "Generate voices did not start.");
+        }
+        if (g.stopped) throw stoppedError();
+        const failedLines = projects.reduce((n, p) => n + liveSubtitlesOf(p).filter((s) => s.audioStatus === "error").length, 0);
+        const base = g.vox ? "done (VoxCPM2)" : `${g.succeeded} of ${g.total} tabs`;
+        return failedLines ? `${base} - ${failedLines} line(s) failed, press Generate All Tabs again later` : base;
+      }
+
+      async function isolateStep() {
+        const b = await isolateBgmAllProjects();
+        checkStop();
+        if (!b || b.ok === false) throw new Error(b?.reason === "no-video" ? "No video tabs to isolate." : "Isolate BGM did not start.");
+        if (b.stopped) throw stoppedError();
+        return `${b.completed} of ${b.total} tabs`;
+      }
+
+      async function runPart(i) {
+        if (plan.current !== i || !plan.stepState) {
+          plan.current = i;
+          plan.stepState = {};
+          plan.pieces = null;
+        }
+        savePlan();
+        if (!(plan.stepState.split?.state === "done" && plan.pieces?.length)) {
+          await runStep("split", splitStep);
+        }
+        if (!piecesOpen()) {
+          // Opening the tabs again (e.g. after an app restart) loses this part's earlier
+          // results, so the steps after it run again.
+          ["load", ...OPTIONAL_STEPS].forEach((k) => delete plan.stepState[k]);
+          await runStep("load", loadStep);
+        }
+        for (const [name, fn] of [["transcribe", transcribeStep], ["generate", generateStep], ["isolate", isolateStep]]) {
+          if (plan.stepState[name]?.state === "done") continue;
+          await runStep(name, fn);
+        }
+        plan.parts[i].status = "done";
+        plan.lastDone = { index: i, steps: plan.stepState };
+        plan.current = null;
+        plan.stepState = null;
+        plan.pieces = null;
+        savePlan();
+        const next = nextPartIndex();
+        showToast(next >= 0
+          ? `Part ${i + 1} of ${plan.parts.length} is dubbed ✓ Export it, then press Next part in Dub Whole Series.`
+          : `Part ${i + 1} is dubbed ✓ That was the last part.`, "success");
+        modal.classList.remove("hidden");
+      }
+
+      // ── Buttons ──────────────────────────────────────────────────────────
+      async function startSeries() {
+        if (!scan || seriesRun || !preflight()) return;
+        const groups = planEpisodeParts(scan.files, joinMinutes());
+        if (!groups.length) return;
+        if (!(await closeOpenTabs("Dub Whole Series opens each part as new tabs."))) return;
+        savePrefs();
+        plan = {
+          folder: scan.folder,
+          seriesName: $("ds-name").value.trim() || scan.seriesName,
+          outDir: pathJoin(scan.folder, "DR Dubber Joined"),
+          joinMinutes: joinMinutes(),
+          parts: groups.map((g) => ({
+            label: `${epLabel(g[0])} – ${epLabel(g[g.length - 1])}`,
+            episodes: g.length,
+            duration: g.reduce((s, f) => s + f.duration, 0),
+            files: g.map((f) => f.path),
+            status: "planned",
+          })),
+          current: null,
+          stepState: null,
+          pieces: null,
+          lastDone: null,
+        };
+        scan = null;
+        savePlan();
+        await withRun(async () => {
+          await joinParts(partsToJoin());
+          const first = nextPartIndex();
+          if (first >= 0) await runPart(first);
+        });
+      }
+
+      async function continueSeries() {
+        if (!plan || seriesRun || !preflight()) return;
+        const u = unfinishedIndex();
+        const target = u >= 0 ? u : nextPartIndex() >= 0 ? nextPartIndex() : partsToJoin()[0];
+        if (target === undefined) return;
+        savePrefs();
+        // Continuing a part whose tabs are still open keeps them; anything else opens new tabs.
+        const keepTabs = u >= 0 && piecesOpen();
+        if (!keepTabs && !(await closeOpenTabs(`Part ${target + 1} opens as new tabs.`))) return;
+        await withRun(async () => {
+          // Parts not joined yet (a stopped or failed join) are joined once no joined part is left.
+          if (unfinishedIndex() < 0 && nextPartIndex() < 0 && partsToJoin().length) await joinParts(partsToJoin());
+          const idx = unfinishedIndex() >= 0 ? unfinishedIndex() : nextPartIndex();
+          if (idx >= 0) await runPart(idx);
+        });
+      }
+
+      $("btn-dub-series")?.addEventListener("click", () => {
+        render();
+        modal.classList.remove("hidden");
+      });
+      const close = () => {
+        if (seriesRun) showToast("Dub Whole Series keeps working in the background. The All Tabs button shows its progress and can stop it.", "info");
+        modal.classList.add("hidden");
+      };
+      $("ds-close").addEventListener("click", close);
+      modal.addEventListener("click", close);
+
+      $("ds-pick").addEventListener("click", async () => {
+        if (seriesRun) return;
+        if (plan) {
+          const ok = await customConfirm("Start over with another folder? The files already made stay where they are.", "Start over", "Yes, start over");
+          if (!ok) return;
+          plan = null;
+          savePlan();
+        }
+        const res = await window.electronAPI?.selectFolder?.({ title: "Choose the folder with the episodes", defaultPath: localStorage.getItem("lastPath:joinEpisodes") || "" });
+        if (!res || res.canceled || !res.path) { render(); return; }
+        localStorage.setItem("lastPath:joinEpisodes", res.path);
+        scan = null;
+        render();
+        $("ds-folder").textContent = res.path;
+        $("ds-summary").classList.remove("hidden");
+        $("ds-summary").classList.add("flex");
+        $("ds-stats").textContent = "Reading episodes…";
+        try {
+          const r = await postJson(`${API}/episodes/scan`, { folder: res.path });
+          if (!r.success) throw new Error(r.error);
+          scan = { ...r, folder: r.folder || res.path };
+          $("ds-name").value = r.seriesName || "";
+          const warn = $("ds-warnings");
+          warn.innerHTML = (r.warnings || []).map((w) => `⚠ ${esc(w)}`).join("<br>");
+          warn.classList.toggle("hidden", !(r.warnings || []).length);
+          render();
+        } catch (e) {
+          scan = null;
+          render();
+          $("ds-summary").classList.remove("hidden");
+          $("ds-summary").classList.add("flex");
+          $("ds-stats").textContent = `Could not read the folder: ${e.message}`;
+        }
+      });
+
+      $("ds-start").addEventListener("click", () => {
+        if (seriesRun) {
+          stopAllTabsJob();
+          return;
+        }
+        startSeries();
+      });
+      $("ds-next").addEventListener("click", continueSeries);
+      $("ds-reset").addEventListener("click", async () => {
+        if (seriesRun || !plan) return;
+        const ok = await customConfirm("Forget this series and start over? The joined and split files stay in their folders.", "Start over", "Yes, start over");
+        if (!ok) return;
+        plan = null;
+        scan = null;
+        savePlan();
+        $("ds-warnings").classList.add("hidden");
+        render();
+      });
+      $("ds-open").addEventListener("click", () => {
+        if (plan?.outDir) window.electronAPI?.openExternal?.("file://" + encodeURI(plan.outDir.replace(/\\/g, "/")));
+      });
+      ["ds-join-minutes", "ds-split-minutes"].forEach((id) => {
+        $(id).addEventListener("input", render);
+        $(id).addEventListener("change", (e) => {
+          e.target.value = String(id === "ds-join-minutes" ? joinMinutes() : splitMinutes());
+          savePrefs();
+          render();
+        });
+      });
+      OPTIONAL_STEPS.forEach((k) => $(`ds-step-${k}`).addEventListener("change", () => { savePrefs(); render(); }));
+      render();
     })();
 
     async function loadVideoFiles(files) {
@@ -16440,6 +16980,7 @@
     window.updateGenerateButtonState = updateGenerateButtonState;
 
     let isGeneratingAudioAll = false;
+    let generateAllStops = 0; // bumped by every "stop all generation", so a caller can tell its run was stopped
 
     function updateGenerateAllButtonState() {
       const btnAll = document.getElementById("btn-generate-audio-all");
@@ -18445,6 +18986,7 @@
       const isAnyRunning = isGeneratingAudioAll || isGeneratingAudio || voxQueueRunning || projects.some((p) => p.isGeneratingAudio || p._voxQueued);
 
       if (isAnyRunning) {
+        generateAllStops++;
         isGeneratingAudioAll = false;
         cancelGeneration = true;
         isGeneratingAudio = false;
@@ -18461,13 +19003,13 @@
         updateGenerateAllButtonState();
         renderProjectTabs();
         showToast("Stopped audio generation for all project tabs.", "info");
-        return;
+        return { ok: false, reason: "stop-request" };
       }
 
       if (!tempAudioPath || tempAudioPath.trim() === "") {
         showToast("Please set the 'Generated Audio Temp Path' in Settings first.", "error");
         document.getElementById("btn-open-settings")?.click();
-        return;
+        return { ok: false, reason: "settings" };
       }
 
       // The active tab's projects[i].subtitles is only synced from the live `subtitles`
@@ -18480,7 +19022,7 @@
       const eligibleProjects = projects.filter((p) => p.subtitles && p.subtitles.length > 0);
       if (eligibleProjects.length === 0) {
         showToast("No subtitles found in any open project tab.", "info");
-        return;
+        return { ok: false, reason: "no-subtitles" };
       }
 
       const voxCmp2Data =
@@ -18503,7 +19045,7 @@
         }
         if (!_voxPingReady) {
           showToast("Please Start the VoxCPM2 Server first.", "warning");
-          return;
+          return { ok: false, reason: "vox-server" };
         }
 
         eligibleProjects.forEach((p) => {
@@ -18520,11 +19062,15 @@
         updateGenerateButtonState();
         updateGenerateAllButtonState();
         showToast(`Queued ${eligibleProjects.length} project tab(s) for VoxCPM2 generation. ⚡`, "success");
-        voxCmp2RunProjectQueue();
-        return;
+        // Awaited so callers (Dub Whole Series) know when the voices are done; the button
+        // handler ignores the result, so clicking Generate All behaves as before.
+        const stopsBeforeVox = generateAllStops;
+        await voxCmp2RunProjectQueue();
+        return { ok: true, vox: true, stopped: generateAllStops !== stopsBeforeVox };
       }
 
       // Standard TTS Parallel Runner with Dynamic Worker Pool
+      const stopsBefore = generateAllStops;
       isGeneratingAudioAll = true;
       cancelGeneration = false;
       updateGenerateAllButtonState();
@@ -18598,6 +19144,7 @@
       if (succeededCount > 0) {
         showToast(`🎉 Completed audio generation for ${succeededCount} of ${totalTabsProcessed || eligibleProjects.length} project tab(s)!`, "success");
       }
+      return { ok: true, succeeded: succeededCount, total: totalTabsProcessed || eligibleProjects.length, stopped: generateAllStops !== stopsBefore };
     }
 
     const btnGenerateAudioAll = document.getElementById("btn-generate-audio-all");
@@ -20898,10 +21445,12 @@
       }
     }
 
-    async function isolateBgmAllProjects() {
+    // opts.skipConfirm: stop without asking (used by Dub Whole Series' Stop button).
+    // Returns { completed, total, stopped } when a run finishes, or { ok: false, reason }.
+    async function isolateBgmAllProjects(opts = {}) {
       if (isIsolatingBgmAll) {
-        const confirmed = await customConfirm("Stop BGM isolation for all project tabs?", "Stop All", "Yes, Stop");
-        if (!confirmed) return;
+        const confirmed = opts.skipConfirm || await customConfirm("Stop BGM isolation for all project tabs?", "Stop All", "Yes, Stop");
+        if (!confirmed) return { ok: false, reason: "stop-cancelled" };
 
         isIsolatingBgmAll = false;
         isIsolatingBgm = false;
@@ -20921,13 +21470,13 @@
         updateIsolateBgmButton();
         if (typeof renderProjectTabs === "function") renderProjectTabs();
         showToast("Batch BGM Isolation Stopped.", "info");
-        return;
+        return { ok: false, reason: "stop-request" };
       }
 
       const eligible = projects.filter((p) => !p.isAudioOnly && (p.file || p.blobUrl));
       if (eligible.length === 0) {
         showToast("No video project tabs found to isolate BGM.", "info");
-        return;
+        return { ok: false, reason: "no-video" };
       }
 
       isIsolatingBgmAll = true;
@@ -20961,6 +21510,7 @@
       const workers = Array.from({ length: Math.min(eligible.length, poolSize) }, () => runWorker());
       await Promise.all(workers);
 
+      const stoppedByUser = !isIsolatingBgmAll; // the Stop path clears this flag mid-run
       isIsolatingBgmAll = false;
       updateIsolateBgmButton();
       if (typeof renderProjectTabs === "function") renderProjectTabs();
@@ -20968,6 +21518,7 @@
       if (completed > 0) {
         showToast(`🎉 Completed BGM isolation for all ${completed} of ${eligible.length} project(s)!`, "success");
       }
+      return { ok: true, completed, total: eligible.length, stopped: stoppedByUser };
     }
 
     const btnIsolateBgm = document.getElementById("btn-isolate-bgm");
@@ -21008,7 +21559,7 @@
 
     const btnIsolateBgmAll = document.getElementById("btn-isolate-bgm-all");
     if (btnIsolateBgmAll) {
-      btnIsolateBgmAll.addEventListener("click", isolateBgmAllProjects);
+      btnIsolateBgmAll.addEventListener("click", () => isolateBgmAllProjects());
     }
 
     // 3. Mute Audio Feature
