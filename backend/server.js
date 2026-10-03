@@ -1730,12 +1730,39 @@ function geminiKeyStatus(key) {
 // One pass over the keys: success, or the most useful failure. Invalid keys and busy
 // keys move on to the next key; a real error (bad request, blocked content) stops here
 // because another key won't change it.
+//
+// Which key next: the caller's first key if it is free (each transcribe lane / batch part
+// keeps "its" key). Otherwise - first key rate-limited, used up, or already tried - the free
+// key with the fewest requests running right now, across every job. Going down the list in
+// order made every job that lost its key pile onto the same next key, which then got
+// rate-limited itself while other keys sat idle.
+const geminiKeyInFlight = new Map(); // key -> requests currently running on it
+
+function pickNextGeminiKey(keys, tried) {
+    const candidates = usableGeminiKeys(keys).filter(k => !tried.has(k));
+    if (!candidates.length) return null;
+    if (candidates[0] === keys[0]) return keys[0];
+    let best = candidates[0];
+    for (const k of candidates) {
+        if ((geminiKeyInFlight.get(k) || 0) < (geminiKeyInFlight.get(best) || 0)) best = k;
+    }
+    return best;
+}
+
 async function tryKeysOnce(keys, call) {
     let transientOut = null, lastOut = null;
-    const usable = usableGeminiKeys(keys);
-    if (!usable.length) return keysCoolingResult(keys);
-    for (const key of usable) {
-        const out = await call(key);
+    if (!usableGeminiKeys(keys).length) return keysCoolingResult(keys);
+    const tried = new Set();
+    for (let key = pickNextGeminiKey(keys, tried); key; key = pickNextGeminiKey(keys, tried)) {
+        tried.add(key);
+        geminiKeyInFlight.set(key, (geminiKeyInFlight.get(key) || 0) + 1);
+        let out;
+        try {
+            out = await call(key);
+        } finally {
+            const left = (geminiKeyInFlight.get(key) || 1) - 1;
+            if (left > 0) geminiKeyInFlight.set(key, left); else geminiKeyInFlight.delete(key);
+        }
         if (out.ok) return out;
         lastOut = out;
         if (out.result && out.result.error === 'INVALID_API_KEY') {
@@ -3798,7 +3825,9 @@ app.post('/api/unify-names', async (req, res) => {
         const results = new Array(chunks.length);
         let failure = null;
         let next = 0;
-        const worker = async () => {
+        const worker = async (w) => {
+            // Each worker starts on a different key, like the transcribe lanes.
+            const workerKeys = [...keyPool.slice(w % keyPool.length), ...keyPool.slice(0, w % keyPool.length)];
             while (!failure && !abortCtrl.signal.aborted) {
                 const idx = next++;
                 if (idx >= chunks.length) return;
@@ -3806,7 +3835,7 @@ app.post('/api/unify-names', async (req, res) => {
                     contents: [{ role: 'user', parts: [{ text: buildNameExtractionPrompt(chunks[idx]) }] }],
                     generationConfig: { responseMimeType: 'application/json', responseSchema: NAMES_RESPONSE_SCHEMA, temperature: 0, maxOutputTokens: 16384 }
                 };
-                const out = await geminiWithKeys(keyPool, async (key) => {
+                const out = await geminiWithKeys(workerKeys, async (key) => {
                     const r = await executeGeminiGenerate(key, model, payload, abortCtrl.signal);
                     if (!r.success) return { ok: false, result: r };
                     const parsed = extractJsonValue(r.text);
@@ -3819,7 +3848,7 @@ app.post('/api/unify-names', async (req, res) => {
                 progress.note = `Reading names… ${progress.done}/${progress.total}`;
             }
         };
-        await Promise.all(Array.from({ length: Math.min(NAMES_PARALLEL, chunks.length) }, worker));
+        await Promise.all(Array.from({ length: Math.min(NAMES_PARALLEL, chunks.length) }, (_, w) => worker(w)));
         if (abortCtrl.signal.aborted) return res.json({ success: false, error: 'CANCELLED' });
         if (failure) return geminiFailureResponse(res, failure);
 
