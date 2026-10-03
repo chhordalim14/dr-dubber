@@ -6,6 +6,12 @@ const http = require('http');
 const crypto = require('crypto');
 const { spawn, exec } = require('child_process');
 
+// Prefer IPv4 for all Node-side network calls (Gemini, TTS tunnels, updates).
+// Electron 28 ships Node 18, whose fetch() connects to the first DNS answer only
+// (no Happy Eyeballs). On networks with broken IPv6, Google's AAAA records come
+// first and every request dies with "fetch failed / ENETUNREACH".
+try { require('dns').setDefaultResultOrder('ipv4first'); } catch (e) {}
+
 // Auto-detect and add FFmpeg to PATH across the entire app
 try { require('./backend/ffmpeg_env'); } catch (e) {}
 
@@ -300,10 +306,12 @@ ipcMain.handle('app:autoSaveSrt', async (event, { content, fileName, mode, sourc
         const targetFile = path.join(targetDir, srtFileName);
         await fs.promises.writeFile(targetFile, content, 'utf8');
 
-        // Also save to Desktop / OneDrive "transcribe output" folder (best-effort, in background)
-        const desktopOut = path.join(os.homedir(), 'Desktop', 'transcribe output');
-        const oneDriveDesktop = path.join(os.homedir(), 'OneDrive', 'Desktop', 'transcribe output');
-        Promise.all([desktopOut, oneDriveDesktop, 'C:\\Export\\AIDubber\\outputs'].map(async (dir) => {
+        // Also save to the Desktop "transcribe output" folder (best-effort, in background).
+        // app.getPath('desktop') is the Desktop the user actually sees, including when
+        // OneDrive has redirected it; guessing both Desktop and OneDrive\Desktop used to
+        // create a stray OneDrive folder tree on machines without OneDrive.
+        const desktopOut = path.join(app.getPath('desktop'), 'transcribe output');
+        Promise.all([desktopOut, 'C:\\Export\\AIDubber\\outputs'].map(async (dir) => {
             try {
                 if (!fs.existsSync(dir)) await fs.promises.mkdir(dir, { recursive: true });
                 await fs.promises.writeFile(path.join(dir, srtFileName), content, 'utf8');
@@ -443,7 +451,7 @@ async function clearDirContents(dir, protectedPaths = new Set()) {
 // These caches genuinely grow without bound (TTS output cache, extracted/separated
 // audio) since nothing else ever prunes them, so unlike the fake stubs before,
 // size/clear here are real operations against real disk usage.
-const CACHE_DIRS = [AUDIO_CACHE_DIR, path.join(STORAGE_BASE, 'separated'), path.join(STORAGE_BASE, 'uploads')];
+const CACHE_DIRS = [AUDIO_CACHE_DIR, path.join(STORAGE_BASE, 'separated'), path.join(STORAGE_BASE, 'uploads'), path.join(STORAGE_BASE, 'preview_cache'), path.join(STORAGE_BASE, 'audio_repair')];
 
 ipcMain.handle('app:getHardwareSpecs', async () => {
     return {
@@ -533,7 +541,7 @@ ipcMain.handle('whisper:checkFolder', async (event, folderPath) => {
     };
 });
 
-ipcMain.handle('whisper:transcribe', async (event, { id, whisperFolder, audioPath, videoPath, model, device, language }) => {
+ipcMain.handle('whisper:transcribe', async (event, { id, whisperFolder, audioPath, videoPath, model, device, language, beamSize }) => {
     if (!whisperFolder || !fs.existsSync(whisperFolder)) {
         return { success: false, error: 'Whisper folder not found' };
     }
@@ -554,6 +562,7 @@ ipcMain.handle('whisper:transcribe', async (event, { id, whisperFolder, audioPat
         if (model) args.push('--model', model);
         if (device) args.push('--device', device);
         if (language && String(language).toLowerCase() !== 'auto') args.push('--language', language);
+        if (beamSize) args.push('--beam_size', String(beamSize));
 
         try {
             // Force UTF-8 I/O: transcribe.py prints non-ASCII transcript text
@@ -860,6 +869,11 @@ ipcMain.on('window:maximize', () => {
 });
 ipcMain.on('window:close', () => {
     if (mainWindow) mainWindow.close();
+});
+// Taskbar progress (0..1 shows the bar, a negative value removes it), so a long batch
+// can be followed from the taskbar while the app is minimised.
+ipcMain.on('window:setProgress', (event, value) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setProgressBar(Number(value));
 });
 
 // Clean up any lingering background child processes on exit
