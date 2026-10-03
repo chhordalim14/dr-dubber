@@ -1,4 +1,3 @@
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 // IPv4-first DNS: see main.js. Repeated here so `npm run server` gets it too.
 try { require('dns').setDefaultResultOrder('ipv4first'); } catch (e) {}
 const express = require('express');
@@ -48,10 +47,11 @@ function setTtsCache(key, value) {
 const {
     ROOT_DIR, STORAGE_BASE, UPLOADS_DIR, AUDIO_CACHE_DIR, SEPARATED_DIR,
     PREVIEW_DIR, AUDIO_REPAIR_DIR, EXPORTS_DIR, OUTPUTS_DIR, CUSTOM_OUTPUTS_DIR,
-    USER_DESKTOP_OUTPUTS, ONEDRIVE_DESKTOP_OUTPUTS, PYTHON_DIR, LOGS_DIR,
+    USER_DESKTOP_OUTPUTS, PYTHON_DIR, LOGS_DIR,
     MIME_MAP, resolveLocalFilePath
 } = require('./lib/paths');
 const { trackProcess } = require('./lib/process-tracker');
+const { secureFetch, fetchBackend } = require('./lib/secure-fetch');
 
 // Clean stale temporary cache files (> 7 days old) asynchronously to prevent disk bloat
 function cleanStaleTempFiles() {
@@ -254,7 +254,7 @@ function getPythonScriptPath(scriptName) {
     return resolved;
 }
 
-[UPLOADS_DIR, AUDIO_CACHE_DIR, SEPARATED_DIR, EXPORTS_DIR, OUTPUTS_DIR, LOGS_DIR, CUSTOM_OUTPUTS_DIR, USER_DESKTOP_OUTPUTS, ONEDRIVE_DESKTOP_OUTPUTS].forEach(dir => {
+[UPLOADS_DIR, AUDIO_CACHE_DIR, SEPARATED_DIR, EXPORTS_DIR, OUTPUTS_DIR, LOGS_DIR, CUSTOM_OUTPUTS_DIR, USER_DESKTOP_OUTPUTS].forEach(dir => {
     if (dir && !fs.existsSync(dir)) {
         try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { }
     }
@@ -840,7 +840,7 @@ async function listGeminiModels(apiKey, signal) {
     const cached = geminiModelListCache.get(apiKey);
     if (cached && Date.now() - cached.at < 30 * 60 * 1000) return cached.models;
     try {
-        const res = await fetch(`${GEMINI_API_BASE}/models?pageSize=1000&key=${apiKey}`, { signal });
+        const res = await secureFetch(`${GEMINI_API_BASE}/models?pageSize=1000`, { signal, headers: { 'x-goog-api-key': apiKey } });
         if (!res.ok) return null;
         const json = await res.json();
         const models = new Set((json.models || [])
@@ -908,7 +908,7 @@ async function fetchWithTimeout(url, options, parentSignal, timeoutMs) {
     try {
         // Read the body here too, so the timeout and the user's Stop also cover a slow or
         // dropped body download (not just the headers).
-        const res = await fetch(url, { ...options, signal: ctrl.signal });
+        const res = await secureFetch(url, { ...options, signal: ctrl.signal });
         const text = await res.text();
         return { ok: res.ok, status: res.status, text };
     } catch (e) {
@@ -1059,9 +1059,10 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal) {
             }
             let res;
             try {
-                res = await fetchWithTimeout(`${GEMINI_API_BASE}/models/${m}:generateContent?key=${apiKey}`, {
+                res = await fetchWithTimeout(`${GEMINI_API_BASE}/models/${m}:generateContent`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    // Key in a header, not the URL: URLs end up in proxy logs and error messages.
+                    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
                     body: geminiNoJsonModeModels.has(m) ? plainBody : body
                 }, signal, GEMINI_ATTEMPT_TIMEOUT_MS);
             } catch (fetchErr) {
@@ -3469,7 +3470,7 @@ app.post('/api/generate-voxcmp2', async (req, res) => {
         };
 
         try {
-            response = await fetch(targetEndpoint, {
+            response = await secureFetch(targetEndpoint, {
                 method: 'POST',
                 headers: requestHeaders,
                 body: JSON.stringify(payload),
@@ -3480,7 +3481,7 @@ app.post('/api/generate-voxcmp2', async (req, res) => {
             const altBaseUrl = baseUrl.includes('127.0.0.1') ? baseUrl.replace('127.0.0.1', 'localhost') : baseUrl;
             targetEndpoint = `${altBaseUrl}/api/generate`;
             logVox(`[Retry Alternative] POST ${targetEndpoint}`);
-            response = await fetch(targetEndpoint, {
+            response = await secureFetch(targetEndpoint, {
                 method: 'POST',
                 headers: requestHeaders,
                 body: JSON.stringify(payload),
@@ -3492,7 +3493,7 @@ app.post('/api/generate-voxcmp2', async (req, res) => {
         if (response.status === 404) {
             const fallbackEndpoint = `${baseUrl}/generate`;
             logVox(`[/api/generate returned 404, trying /generate] POST ${fallbackEndpoint}`);
-            response = await fetch(fallbackEndpoint, {
+            response = await secureFetch(fallbackEndpoint, {
                 method: 'POST',
                 headers: requestHeaders,
                 body: JSON.stringify(payload),
@@ -3726,7 +3727,7 @@ ${dialogue.join('\n') || '(no dialogue provided - work from the original title)'
 
 // Safe server listener that never crashes on duplicate instances
 const server = app.listen(PORT, () => {
-    console.log(`[DR Dubber Pro Server] Listening on http://localhost:${PORT}`);
+    console.log(`[DR Dubber Pro Server] Listening on http://localhost:${PORT} (outgoing HTTPS via ${fetchBackend()})`);
 });
 
 server.on('error', (err) => {

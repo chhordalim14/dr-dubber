@@ -306,10 +306,12 @@ ipcMain.handle('app:autoSaveSrt', async (event, { content, fileName, mode, sourc
         const targetFile = path.join(targetDir, srtFileName);
         await fs.promises.writeFile(targetFile, content, 'utf8');
 
-        // Also save to Desktop / OneDrive "transcribe output" folder (best-effort, in background)
-        const desktopOut = path.join(os.homedir(), 'Desktop', 'transcribe output');
-        const oneDriveDesktop = path.join(os.homedir(), 'OneDrive', 'Desktop', 'transcribe output');
-        Promise.all([desktopOut, oneDriveDesktop, 'C:\\Export\\AIDubber\\outputs'].map(async (dir) => {
+        // Also save to the Desktop "transcribe output" folder (best-effort, in background).
+        // app.getPath('desktop') is the Desktop the user actually sees, including when
+        // OneDrive has redirected it; guessing both Desktop and OneDrive\Desktop used to
+        // create a stray OneDrive folder tree on machines without OneDrive.
+        const desktopOut = path.join(app.getPath('desktop'), 'transcribe output');
+        Promise.all([desktopOut, 'C:\\Export\\AIDubber\\outputs'].map(async (dir) => {
             try {
                 if (!fs.existsSync(dir)) await fs.promises.mkdir(dir, { recursive: true });
                 await fs.promises.writeFile(path.join(dir, srtFileName), content, 'utf8');

@@ -16,8 +16,20 @@ const AUDIO_REPAIR_DIR = path.join(STORAGE_BASE, 'audio_repair');
 const EXPORTS_DIR = path.join(STORAGE_BASE, 'exports');
 const OUTPUTS_DIR = path.join(STORAGE_BASE, 'outputs');
 const CUSTOM_OUTPUTS_DIR = process.platform === 'win32' ? 'C:\\Export\\AIDubber\\outputs' : path.join(STORAGE_BASE, 'custom_outputs');
-const USER_DESKTOP_OUTPUTS = path.join(os.homedir(), 'Desktop', 'transcribe output');
-const ONEDRIVE_DESKTOP_OUTPUTS = path.join(os.homedir(), 'OneDrive', 'Desktop', 'transcribe output');
+// The user's real Desktop. With OneDrive "Desktop backup" on, Windows moves the
+// Desktop to %USERPROFILE%\OneDrive\Desktop; Electron's app.getPath('desktop')
+// returns whichever one is actually in use. Under plain Node (standalone server,
+// tests) fall back to the conventional location.
+function resolveDesktopDir() {
+    try {
+        const electron = require('electron');
+        if (electron && typeof electron === 'object' && electron.app && typeof electron.app.getPath === 'function') {
+            return electron.app.getPath('desktop');
+        }
+    } catch (e) { /* not running inside Electron */ }
+    return path.join(os.homedir(), 'Desktop');
+}
+const USER_DESKTOP_OUTPUTS = path.join(resolveDesktopDir(), 'transcribe output');
 const PYTHON_DIR = path.join(ROOT_DIR, 'backend', 'python');
 const LOGS_DIR = path.join(STORAGE_BASE, 'logs');
 
@@ -128,7 +140,6 @@ module.exports = {
     OUTPUTS_DIR,
     CUSTOM_OUTPUTS_DIR,
     USER_DESKTOP_OUTPUTS,
-    ONEDRIVE_DESKTOP_OUTPUTS,
     PYTHON_DIR,
     LOGS_DIR,
     MIME_MAP,
