@@ -1,3 +1,8 @@
+// Manual integration script - needs a working Python TTS environment and is
+// not run in CI. The pure-logic parts of this file (Auto-Fit timing repair,
+// multi-tab queue targeting) now have real `node --test` regression tests
+// at ../tests/auto-fit-logic.test.js - run `npm test`. Keep this script for
+// the one thing those can't cover: actually invoking tts_generator.py.
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');

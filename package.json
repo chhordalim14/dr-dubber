@@ -7,6 +7,7 @@
     "prestart": "npm run build:css || true",
     "start": "electron .",
     "server": "node backend/server.js",
+    "test": "node --test",
     "build:css": "tailwindcss -c tailwind.config.js -i frontend/css/tailwind-src.css -o frontend/css/tailwind-built.css --minify || true",
     "watch:css": "tailwindcss -c tailwind.config.js -i frontend/css/tailwind-src.css -o frontend/css/tailwind-built.css --watch",
     "predist": "npm run build:css",
