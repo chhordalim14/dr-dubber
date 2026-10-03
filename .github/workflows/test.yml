@@ -1,0 +1,31 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    # The app ships for Windows first, and some tests only run on win32.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          # The tests don't launch Electron; skip the ~100 MB binary download.
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+
+      - name: Syntax-check main and backend entry points
+        run: |
+          node --check main.js
+          node --check backend/server.js
+
+      - name: Run tests
+        run: npm test
