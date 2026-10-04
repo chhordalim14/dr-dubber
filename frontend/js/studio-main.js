@@ -2989,7 +2989,15 @@
     const langDropdownContainer = document.getElementById("lang-dropdown-container");
 
     // --- DRAMA GENRE REGISTER STATE ---
-    let activeDramaGenre = localStorage.getItem("dr_dubber_drama_genre") || "historical";
+    // One saved genre for the whole app. This button, both DAI genre dropdowns and Dub Whole
+    // Series all show and change this same setting. The DAI dropdowns used to keep their own
+    // value (Ancient/Royal after every restart), so a modern series was transcribed with royal
+    // court words unless that dropdown was picked again by hand.
+    const DRAMA_GENRES = ["historical", "modern", "action", "comedy"];
+    // 'neutral' was an old DAI-only choice that the server treated as modern.
+    const normalizeDramaGenre = (g) => (DRAMA_GENRES.includes(g) ? g : g === "neutral" ? "modern" : "historical");
+    let activeDramaGenre = "historical"; // only used when nothing was ever saved
+    try { activeDramaGenre = normalizeDramaGenre(localStorage.getItem("dr_dubber_drama_genre")); } catch (e) { }
     const genreBtn = document.getElementById("btn-genre-select");
     const genreDropdown = document.getElementById("genre-dropdown-menu");
     const genreIcon = document.getElementById("genre-icon");
@@ -3003,15 +3011,20 @@
     };
 
     const setDramaGenre = (g) => {
+      g = normalizeDramaGenre(g);
       activeDramaGenre = g;
-      localStorage.setItem("dr_dubber_drama_genre", g);
+      try { localStorage.setItem("dr_dubber_drama_genre", g); } catch (e) { }
       const conf = genreConfig[g] || genreConfig.historical;
       if (genreIcon) genreIcon.textContent = conf.icon;
       if (genreLabel) {
         genreLabel.textContent = conf.label;
         genreLabel.className = `hidden sm:inline font-khmer text-xs font-semibold ${conf.color}`;
       }
+      // The other genre controls (DAI window, Dub Whole Series) follow this event.
+      try { window.dispatchEvent(new CustomEvent("dr-drama-genre-change", { detail: { genre: g } })); } catch (e) { }
     };
+    // For dai-transcribe-studio.js, which can't see this file's variables.
+    window.dramaGenre = { get: () => activeDramaGenre, set: setDramaGenre, values: DRAMA_GENRES.slice() };
     setDramaGenre(activeDramaGenre);
 
     if (genreBtn && genreDropdown) {
@@ -16348,6 +16361,17 @@
       // A finished part whose hands-free export didn't complete, with its tabs still open.
       const exportPending = () => !!(handsFree() && plan && unfinishedIndex() < 0 && plan.lastDone && !plan.parts[plan.lastDone.index].exported && projects.length);
       $("ds-handsfree")?.addEventListener("change", () => savePrefs());
+      // The genre picks the Khmer register Transcribe uses (royal court words or modern speech).
+      // It is the app's one saved genre (same as the genre button and the DAI window), shown
+      // here so it can be checked before Start. Transcribe reads it when the step starts.
+      const genreSel = $("ds-genre");
+      const showGenre = () => { if (genreSel) genreSel.value = activeDramaGenre; };
+      genreSel?.addEventListener("change", () => {
+        setDramaGenre(genreSel.value);
+        showToast(`Drama Register set to: ${genreConfig[activeDramaGenre]?.label || activeDramaGenre}`, "info");
+      });
+      window.addEventListener("dr-drama-genre-change", showGenre);
+      showGenre();
       // Read when each step starts, so a step can be switched off while the series runs.
       const wanted = (step) => !OPTIONAL_STEPS.includes(step) || $(`ds-step-${step}`).checked;
 

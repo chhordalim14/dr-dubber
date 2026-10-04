@@ -54,6 +54,35 @@
   // Helper DOM selector
   const $ = (id) => document.getElementById(id);
 
+  // ── Drama genre (tests/drama-genre.test.js loads this block) ──
+  // The app keeps one saved genre (the studio's genre button owns it, see window.dramaGenre in
+  // studio-main.js). Both genre dropdowns here show it and change it, and Transcribe/Translate
+  // read it from here. These dropdowns used to keep their own value, which was Ancient/Royal
+  // after every restart, so Dub Whole Series translated modern dramas with royal court words.
+  const GENRE_SELECT_IDS = ['dai-genre-select', 'dai-trans-genre-select'];
+  const getDramaGenre = () => {
+    const api = window.dramaGenre;
+    if (api && typeof api.get === 'function') return api.get();
+    try { return localStorage.getItem('dr_dubber_drama_genre') || 'historical'; } catch (e) { return 'historical'; }
+  };
+  const setSharedDramaGenre = (g) => {
+    if (!g) return;
+    const api = window.dramaGenre;
+    if (api && typeof api.set === 'function') api.set(g); // also fires dr-drama-genre-change
+    else {
+      try { localStorage.setItem('dr_dubber_drama_genre', g); } catch (e) { }
+    }
+    syncGenreSelects();
+  };
+  const syncGenreSelects = () => {
+    const g = getDramaGenre();
+    GENRE_SELECT_IDS.forEach(id => {
+      const el = $(id);
+      if (el && el.value !== g) el.value = g;
+    });
+  };
+  // ── end drama genre ──
+
   // Formatting helpers
   const formatBytes = (bytes) => {
     if (!bytes || bytes === 0) return '0 B';
@@ -210,6 +239,7 @@
     modal.classList.remove('hidden');
     modal.classList.add('flex');
     state.isOpen = true;
+    syncGenreSelects();
     switchTab(initialTab);
     updateApiStatusDisplay();
     updateOutputFolderDisplay();
@@ -874,7 +904,7 @@
     state.progressTimer = setInterval(updateProgressDom, 1000);
     updateBatchControlsState();
 
-    const genre = $('dai-genre-select')?.value || 'historical';
+    const genre = getDramaGenre(); // the app's saved genre (Dub Whole Series runs through here)
     const model = $('dai-model-select')?.value || getActiveModel();
     const customFolder = state.outputFolder || localStorage.getItem('aiDubberAutoSaveSrtCustomPath') || '';
     loadGlossaryFromStorage(); // pick up names saved elsewhere (All Tabs > Make names consistent)
@@ -1672,7 +1702,7 @@
       document.getElementById('btn-open-settings')?.click();
       return;
     }
-    const genre = $('dai-trans-genre-select')?.value || 'historical';
+    const genre = getDramaGenre();
     const model = $('dai-trans-model-select')?.value || getActiveModel();
     const glossaryDict = buildGlossaryDict();
     const stripHtml = $('dai-trans-chk-strip-html')?.checked;
@@ -1802,7 +1832,7 @@
       content = content.replace(/<[^>]+>/g, '');
     }
 
-    const genre = $('dai-trans-genre-select')?.value || 'historical';
+    const genre = getDramaGenre();
     const model = $('dai-trans-model-select')?.value || getActiveModel();
     const glossaryDict = buildGlossaryDict();
 
@@ -2388,6 +2418,12 @@
     $('dai-model-select')?.addEventListener('change', onModelChange);
     $('dai-trans-model-select')?.addEventListener('change', onModelChange);
     $('dai-titles-model-select')?.addEventListener('change', onModelChange);
+
+    // Genre: both dropdowns change the app's one saved genre and follow it when it changes
+    // anywhere else (studio genre button, Dub Whole Series).
+    GENRE_SELECT_IDS.forEach(id => $(id)?.addEventListener('change', (e) => setSharedDramaGenre(e.target.value)));
+    window.addEventListener('dr-drama-genre-change', syncGenreSelects);
+    syncGenreSelects();
 
     // Modal Close
     $('dai-btn-close-modal')?.addEventListener('click', closeDaiTranscribeModal);
