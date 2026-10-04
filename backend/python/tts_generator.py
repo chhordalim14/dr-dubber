@@ -157,7 +157,10 @@ TRIM_PAUSE_KEEP = 0.3       # ...are shortened to this
 TRIM_MIN_SPEECH = 0.15      # below this the "speech" is probably a click: keep the clip as Edge made it
 TRIM_MIN_SAVING = 0.02      # not worth a re-encode (a second MP3 generation) for less than this
 TRIM_WINDOW = 0.005         # analysis resolution
-TRIM_BITRATE = "64k"        # Edge sends 48k mono 24 kHz; a little headroom for the re-encode
+# Edge sends 48k mono 24 kHz. Trimming decodes and re-encodes it (a second MP3 generation), and
+# the clip is mixed and encoded once more on export, so 64k keeps that extra pass from adding
+# audible artefacts. It costs ~120 kB more per minute of voice, and the trimmed clips are shorter anyway.
+TRIM_BITRATE = "64k"
 
 def log_stderr(message):
     # stdout carries the JSON result the server parses, so diagnostics go to stderr.

@@ -54,13 +54,53 @@ function parseSilences(file) {
     return spans;
 }
 
+// Runs the trim; the JSON result comes back with the child's stderr (where the
+// "[TTS trim] kept original" notes go) attached as .stderr.
 function trim(file) {
-    const out = execFileSync(PY, [SCRIPT, `--trim-only=${file}`], {
+    const r = spawnSync(PY, [SCRIPT, `--trim-only=${file}`], {
         env: { ...process.env, DR_FFMPEG_PATH: FF, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
-        stdio: ['ignore', 'pipe', 'pipe'], // the "[TTS trim] kept original" notes go to stderr
-    }).toString();
-    return JSON.parse(out.trim().split(/\r?\n/).pop());
+        encoding: 'utf8',
+    });
+    assert.equal(r.status, 0, r.stderr);
+    return { ...JSON.parse(r.stdout.trim().split(/\r?\n/).pop()), stderr: r.stderr };
 }
+
+// server.js forwards those notes to the server log (the TTS call itself still succeeds, so its
+// stderr is otherwise dropped). server.js starts the whole backend when required, so the
+// helper is lifted out of its source and run against a fake console.
+function loadTrimNoteLogger() {
+    const src = fs.readFileSync(path.join(repo, 'backend', 'server.js'), 'utf8');
+    const m = src.match(/const TTS_TRIM_NOTES_SHOWN = \d+;\r?\nfunction logTtsTrimNotes\([\s\S]*?\r?\n\}\r?\n/);
+    assert.ok(m, 'logTtsTrimNotes not found in server.js');
+    const warned = [];
+    const fn = new Function('console', `${m[0]}\nreturn logTtsTrimNotes;`)({ warn: (line) => warned.push(line) });
+    return { log: fn, warned };
+}
+
+describe('server log gets the "kept original" trim notes', () => {
+    test('passes on only the [TTS trim] lines', () => {
+        const { log, warned } = loadTrimNoteLogger();
+        const n = log('some edge-tts chatter\r\n[TTS trim] kept original (ffmpeg not found): C:\\a\\1.mp3\r\n\r\n');
+        assert.equal(n, 1);
+        assert.deepEqual(warned, ['[TTS trim] kept original (ffmpeg not found): C:\\a\\1.mp3']);
+    });
+
+    test('a batch where every clip failed prints a few notes and a count, not hundreds of lines', () => {
+        const { log, warned } = loadTrimNoteLogger();
+        const lines = Array.from({ length: 40 }, (_, i) => `[TTS trim] kept original (ffmpeg not found): clip${i}.mp3`);
+        assert.equal(log(lines.join('\n')), 40);
+        assert.equal(warned.length, 6);
+        assert.deepEqual(warned.slice(0, 5), lines.slice(0, 5));
+        assert.match(warned[5], /35 more clip/);
+    });
+
+    test('nothing is printed when every clip trimmed fine', () => {
+        const { log, warned } = loadTrimNoteLogger();
+        assert.equal(log(''), 0);
+        assert.equal(log(undefined), 0);
+        assert.deepEqual(warned, []);
+    });
+});
 
 // Silence at the very start / end of the file (0 when the clip starts or ends with sound).
 const leadOf = (spans) => (spans.length && spans[0][0] < 0.001 ? spans[0][1] : 0);
@@ -122,5 +162,10 @@ describe('Edge TTS silence trimming', { skip }, () => {
         assert.equal(res.trimmed, false);
         assert.equal(fs.readFileSync(file, 'utf8'), 'not really an mp3');
         assert.equal(fs.readdirSync(dir).some((f) => f.endsWith('.trim.tmp')), false);
+        // ...and the failure is reported in a form the server passes on to its log.
+        assert.match(res.stderr, /\[TTS trim\] kept original \(decode failed/);
+        const { log, warned } = loadTrimNoteLogger();
+        assert.equal(log(res.stderr), 1);
+        assert.ok(warned[0].includes('broken.mp3'), warned[0]);
     });
 });

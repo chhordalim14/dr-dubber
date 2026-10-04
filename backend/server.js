@@ -35,6 +35,20 @@ function getTtsCacheKey(text, voice, rate, pitch, volume, speed, emotion) {
     const raw = `${TTS_CACHE_VERSION}|${text || ''}|${voice || ''}|${rate || ''}|${pitch || ''}|${volume || ''}|${speed || 1.0}|${emotion || 'Neutral'}`;
     return crypto.createHash('md5').update(raw).digest('hex');
 }
+// tts_generator.py writes "[TTS trim] kept original (...)" to stderr whenever it can't trim a
+// clip (no FFmpeg, a failed re-encode, a locked file...). The clip is still fine, so the TTS
+// call succeeds and its stderr would otherwise be dropped - pass those notes on, so a trim
+// that silently stopped working (every voice back to Edge's ~1s of padding) shows up in the
+// server log. A whole batch can hit the same problem, so only the first few are printed.
+const TTS_TRIM_NOTES_SHOWN = 5;
+function logTtsTrimNotes(stderr) {
+    const notes = String(stderr || '').split(/\r?\n/).map(l => l.trim()).filter(l => l.startsWith('[TTS trim]'));
+    notes.slice(0, TTS_TRIM_NOTES_SHOWN).forEach(l => console.warn(l));
+    if (notes.length > TTS_TRIM_NOTES_SHOWN) {
+        console.warn(`[TTS trim] ...and ${notes.length - TTS_TRIM_NOTES_SHOWN} more clip(s) kept their original padding`);
+    }
+    return notes.length;
+}
 function setTtsCache(key, value) {
     if (ttsCache.size >= TTS_CACHE_MAX_ENTRIES) {
         const oldestKey = ttsCache.keys().next().value;
@@ -3315,6 +3329,7 @@ app.post('/api/generate-audio', (req, res) => {
                 }
                 const data = JSON.parse(output);
                 if (data.success) {
+                    logTtsTrimNotes(stderr);
                     const freshUrl = `/api/audio?path=${encodeURIComponent(outFile)}`;
                     setTtsCache(cacheKey, {
                         file: outFile,
@@ -3439,6 +3454,7 @@ app.post('/api/generate-batch-audio', async (req, res) => {
         try {
             const parsed = JSON.parse(output);
             if (parsed.success && Array.isArray(parsed.results)) {
+                logTtsTrimNotes(stderr);
                 const taskById = new Map(uncachedTasks.map(t => [t.id, t]));
                 for (const r of parsed.results) {
                     if (r.success) {
