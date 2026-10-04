@@ -16646,16 +16646,38 @@
         const alreadyVoiced = !missingVoice() && projects.some((p) => liveSubtitlesOf(p).some((s) => s.audioStatus === "ready"));
         let g = alreadyVoiced ? { vox: false } : await runGenerate();
         if (g.reason === "no-subtitles") return "no subtitles to voice";
-        for (let pass = 1; pass <= RETRY_PASSES && missingVoice(); pass++) {
-          setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Generate again: ${missingVoice()} line(s) (${pass}/${RETRY_PASSES})`);
-          await sleep(5000);
-          checkStop();
+        const voiceMissingLines = async () => {
+          for (let pass = 1; pass <= RETRY_PASSES && missingVoice(); pass++) {
+            setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Generate again: ${missingVoice()} line(s) (${pass}/${RETRY_PASSES})`);
+            await sleep(5000);
+            checkStop();
+            g = await runGenerate();
+          }
+          const missing = missingVoice();
+          if (missing) throw new Error(`${missing} line(s) still have no voice after ${RETRY_PASSES + 1} tries. Press Continue to try them again.`);
+        };
+        await voiceMissingLines();
+
+        // Rushed lines (voice sped up to fit): extend into free time, shorten the rest with
+        // Gemini and voice those again - a 2x voice sounds robotic.
+        const fit = await fitFastLinesAllTabs({
+          checkStop,
+          onProgress: (done, total) => setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Shortening rushed lines ${done}/${total}`),
+        });
+        let stillRushed = 0;
+        if (fit.shortened) {
+          setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Voicing ${fit.shortened} shortened line(s)`);
           g = await runGenerate();
+          await voiceMissingLines();
+          stillRushed = refitShortenedLinesAllTabs();
         }
-        const missing = missingVoice();
-        if (missing) throw new Error(`${missing} line(s) still have no voice after ${RETRY_PASSES + 1} tries. Press Continue to try them again.`);
+
         const voiced = projects.reduce((n, p) => n + liveSubtitlesOf(p).filter((s) => isSpeakableText(s.text)).length, 0);
-        return `${g.vox ? "VoxCPM2 · " : ""}all ${voiced} line(s) voiced in ${projects.length} tab(s)`;
+        let note = `${g.vox ? "VoxCPM2 · " : ""}all ${voiced} line(s) voiced in ${projects.length} tab(s)`;
+        if (fit.extended) note += ` · ${fit.extended} line(s) given more time`;
+        if (fit.shortened) note += ` · ${fit.shortened} rushed line(s) shortened`;
+        if (stillRushed) note += ` · ${stillRushed} still fast`;
+        return note;
       }
 
       async function isolateStep() {
@@ -17920,14 +17942,13 @@
       return { keys, model: localStorage.getItem("aiDubberModel") || "gemini-2.5-flash" };
     }
 
-    // Returns [{ id, condensedText }] or null (error already toasted, or cancelled).
-    async function requestFastCondense(subs) {
+    // Returns [{ id, condensedText }] or null (error already toasted unless quiet, or cancelled).
+    async function requestFastCondense(subs, { proj = projects[activeProjectIndex], quiet = false } = {}) {
       const { keys, model } = getFastGeminiConfig();
       if (keys.length === 0) {
-        showToast("Please add at least one Gemini API Key in Settings.", "error");
+        if (!quiet) showToast("Please add at least one Gemini API Key in Settings.", "error");
         return null;
       }
-      const proj = projects[activeProjectIndex];
       const requestId = `condense_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       fastCondenseRequestIds.add(requestId);
       try {
@@ -17951,13 +17972,13 @@
         const data = await res.json().catch(() => ({ success: false, message: `Server error (${res.status})` }));
         if (data.error === "CANCELLED") return null;
         if (!data.success || !Array.isArray(data.results)) {
-          showToast(data.message || data.error || "Failed to shorten text.", "error");
+          if (!quiet) showToast(data.message || data.error || "Failed to shorten text.", "error");
           return null;
         }
         return data.results;
       } catch (err) {
         console.error("AI Condense Error:", err);
-        showToast("Could not reach the local server to shorten dialogue.", "error");
+        if (!quiet) showToast("Could not reach the local server to shorten dialogue.", "error");
         return null;
       } finally {
         fastCondenseRequestIds.delete(requestId);
@@ -18048,6 +18069,95 @@
       }
     }
     window.condenseAllFastSubtitles = condenseAllFastSubtitles;
+
+    // ── Dub Whole Series: fit rushed lines in every tab ──
+    // A voice longer than its slot is played faster (up to 2.5x), which sounds rushed. Same two
+    // fixes as the Fast Audio window, without the window: move the line's end into the free
+    // time before the next line (no text change), then have Gemini shorten the lines that are
+    // still clearly rushed. Shortened lines are left "idle" for Generate to voice again.
+    const SERIES_FIT_SPEED = 1.3; // only lines that clearly sound rushed are rewritten
+    async function fitFastLinesAllTabs({ onProgress = () => { }, checkStop = () => { } } = {}) {
+      saveCurrentProjectState(); // the open tab's edits live in `subtitles`
+      const tabDuration = (proj) => (proj.duration > 0 ? proj.duration : Infinity); // not the open tab's length
+      let extended = 0;
+      const toShorten = new Map(); // project -> [sub]
+      for (const proj of projects) {
+        const subs = proj.subtitles || [];
+        const nextStartById = buildFastNextStartMap(subs, tabDuration(proj));
+        for (const sub of subs) {
+          if (!isFastSub(sub)) continue;
+          const nextStart = nextStartById.get(String(sub.id)) ?? Infinity;
+          const newEnd = getFastExtendEnd(analyzeSubPace(sub), nextStart);
+          if (newEnd != null) {
+            sub.textEnd = newEnd.toFixed(2);
+            extended++;
+          }
+          refitFastSubSpeed(sub, nextStart);
+          if (analyzeSubPace(sub).effectiveSpeed >= SERIES_FIT_SPEED && isSpeakableText(sub.text)) {
+            if (!toShorten.has(proj)) toShorten.set(proj, []);
+            toShorten.get(proj).push(sub);
+          }
+        }
+      }
+
+      const total = [...toShorten.values()].reduce((n, l) => n + l.length, 0);
+      let shortened = 0, done = 0;
+      if (total && getFastGeminiConfig().keys.length) {
+        for (const [proj, list] of toShorten) {
+          // One request per tab chunk: ids are only unique within a tab.
+          for (let i = 0; i < list.length; i += FAST_CONDENSE_CHUNK) {
+            checkStop();
+            const chunk = list.slice(i, i + FAST_CONDENSE_CHUNK);
+            onProgress(done, total);
+            const results = await requestFastCondense(chunk, { proj, quiet: true });
+            done += chunk.length;
+            (results || []).forEach((r) => {
+              const sub = chunk.find((s) => String(s.id) === String(r.id));
+              const text = String(r.condensedText || "").trim();
+              if (!sub || !text || text === String(sub.text).trim() || !isSpeakableText(text)) return;
+              sub.text = text;
+              sub.speed = 1.0;
+              sub.audioStatus = "idle"; // Generate voices it again
+              sub._fitShortened = true;
+              shortened++;
+            });
+          }
+        }
+      }
+
+      const active = projects[activeProjectIndex];
+      if (active) {
+        subtitles = active.subtitles.map((s) => ({ ...s }));
+        renderSubtitles();
+        updateContextualControls();
+      }
+      return { extended, shortened, rushed: total };
+    }
+
+    // After the shortened lines are voiced again: fit each one's speed to its slot and count
+    // the lines that are still rushed.
+    function refitShortenedLinesAllTabs() {
+      saveCurrentProjectState();
+      let stillRushed = 0;
+      for (const proj of projects) {
+        const subs = proj.subtitles || [];
+        const nextStartById = buildFastNextStartMap(subs, proj.duration > 0 ? proj.duration : Infinity);
+        for (const sub of subs) {
+          if (!sub._fitShortened) continue;
+          delete sub._fitShortened;
+          if (sub.audioStatus !== "ready") continue;
+          refitFastSubSpeed(sub, nextStartById.get(String(sub.id)) ?? Infinity);
+          if (analyzeSubPace(sub).effectiveSpeed >= SERIES_FIT_SPEED) stillRushed++;
+        }
+      }
+      const active = projects[activeProjectIndex];
+      if (active) {
+        subtitles = active.subtitles.map((s) => ({ ...s }));
+        renderSubtitles();
+        updateContextualControls();
+      }
+      return stillRushed;
+    }
 
     // ── Timeline changes ──
     function extendSlotForSub(subId) {
