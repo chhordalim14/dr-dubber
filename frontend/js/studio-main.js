@@ -16773,12 +16773,50 @@
         return note;
       }
 
+      // A tab that only got the FFmpeg phase-cancel fallback has almost no music on these
+      // near-mono mixes, and one that failed has none - so those get one more try with the ML
+      // engine, and if any still went wrong the series pauses instead of exporting them.
       async function isolateStep() {
-        const b = await isolateBgmAllProjects();
+        const b = await isolateBgmAllProjects({ quiet: true });
         checkStop();
         if (!b || b.ok === false) throw new Error(b?.reason === "no-video" ? "No video tabs to isolate." : "Isolate BGM did not start.");
         if (b.stopped) throw stoppedError();
-        return `${b.completed} of ${b.total} tabs`;
+        let bad = [...b.fellBack, ...b.failed];
+        let substituted = b.substituted;
+        const retried = bad.length;
+        if (bad.length) {
+          setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Isolate BGM again: tab ${tabNumbers(bad)}`);
+          const again = await isolateBgmAllProjects({ quiet: true, only: bad });
+          checkStop();
+          if (again?.stopped) throw stoppedError();
+          if (again && again.ok !== false) {
+            bad = [...again.fellBack, ...again.failed];
+            substituted = [...new Set([...substituted, ...again.substituted])];
+          }
+        }
+        if (bad.length) {
+          const engine = localStorage.getItem("aiDubberVocalEngine") || "spleeter";
+          const label = engine === "demucs" ? "Demucs" : engine === "ffmpeg" ? "FFmpeg" : "Spleeter";
+          const why = (p) => {
+            const reason = (p.bgmMethod === "ffmpeg_fallback" ? p.bgmFallbackReason : p.bgmError) || "unknown error";
+            return /could not run/.test(reason) ? reason : `${label} could not run (${reason})`;
+          };
+          // Tabs that failed for the same reason share one line ("Tab 1, 2, 5: ...").
+          const byReason = new Map();
+          bad
+            .sort((a, c) => projects.indexOf(a) - projects.indexOf(c))
+            .forEach((p) => {
+              const r = why(p).replace(/\.$/, "");
+              byReason.set(r, [...(byReason.get(r) || []), p]);
+            });
+          const lines = [...byReason].map(([r, tabs]) => `Tab ${tabNumbers(tabs)}: ${r}.`);
+          throw new Error(`${lines.join(" ")} Fix it or switch engine in Settings, then press Continue.`);
+        }
+        let note = `${b.total} of ${b.total} tabs`;
+        if (retried) note += ` · ${retried} tab(s) needed a second try`;
+        const stillThere = substituted.filter((p) => projects.includes(p) && p.bgmFallbackReason);
+        if (stillThere.length) note += ` · tab ${tabNumbers(stillThere)} used ${stillThere[0].bgmMethod === "spleeter" ? "Spleeter" : "Demucs"} instead (${stillThere[0].bgmFallbackReason.split(";")[0]})`;
+        return note;
       }
 
       async function runPart(i) {
@@ -21797,7 +21835,10 @@
       }
     };
 
-    async function isolateBgmForProject(targetProject, isBatch = false) {
+    // opts.parallelJobs: how many tabs separate at once (the server gives each its share of the CPU).
+    // Returns { success, method, fallbackReason } - method "ffmpeg_fallback" means the ML engine
+    // could not run and the BGM is phase cancellation (almost no music on a near-mono mix).
+    async function isolateBgmForProject(targetProject, isBatch = false, opts = {}) {
       if (!targetProject) return { success: false, error: "No project provided" };
       if (targetProject.isAudioOnly) {
         if (!isBatch) showToast("Isolate BGM requires a loaded video. Not available for SRT Only tabs.", "error");
@@ -21852,6 +21893,7 @@
               demucsFolder,
               demucsSegment,
               spleeterFolder,
+              parallelJobs: opts.parallelJobs || 1,
             }),
             signal: targetProject.isolateAbortController.signal,
           });
@@ -21876,6 +21918,7 @@
           if (demucsFolder) formData.append("demucsFolder", demucsFolder);
           if (demucsSegment) formData.append("demucsSegment", demucsSegment);
           if (spleeterFolder) formData.append("spleeterFolder", spleeterFolder);
+          formData.append("parallelJobs", String(opts.parallelJobs || 1));
 
           response = await fetch("http://localhost:3001/api/remove-vocals", {
             method: "POST",
@@ -21914,6 +21957,10 @@
               } else if (status.status === "cancelled") {
                 clearInterval(poll);
                 reject(Object.assign(new Error("Cancelled"), { name: "AbortError" }));
+              } else if (status.status === "unknown" || status.success === false) {
+                // The server doesn't know this job (e.g. it restarted): waiting would never end.
+                clearInterval(poll);
+                reject(new Error(status.error === "Unknown job" ? "The server lost track of this BGM job (did it restart?). Try again." : status.error || "BGM isolation failed on server."));
               }
             } catch (e) {
               clearInterval(poll);
@@ -21946,6 +21993,15 @@
         };
 
         targetProject.vocalUrl = `http://localhost:3001${data.vocalUrl}`;
+        // Kept on the tab so Isolate All / Dub Whole Series can tell real ML stems from the
+        // phase-cancel fallback (and say why the ML engine didn't run).
+        targetProject.bgmMethod = data.method || vocalEngine;
+        targetProject.bgmFallbackReason = data.fallbackReason || "";
+        targetProject.bgmError = "";
+        const fallbackNote = data.fallbackReason ? ` ${data.fallbackReason}.` : "";
+        if (!isBatch && data.method === "ffmpeg_fallback") {
+          showToast(`BGM is only FFmpeg phase cancellation - it may have almost no music.${fallbackNote} Fix it or switch engine in Settings, then isolate again.`, "warning");
+        }
 
         if (projects[activeProjectIndex] === targetProject) {
           bgmTrack = { ...targetProject.bgmTrack };
@@ -21959,24 +22015,28 @@
 
           if (!isBatch) {
             if (data.method === "ffmpeg_fallback") {
-              showToast("BGM isolated via FFmpeg phase cancellation (ML engine not found).", "info");
+              // Warned above.
             } else if (data.method === "ffmpeg") {
               showToast("BGM isolated via FFmpeg phase cancellation!", "success");
+            } else if (data.fallbackReason) {
+              showToast(`BGM isolated, but not with the engine you picked:${fallbackNote}`, "warning");
             } else {
-              showToast("BGM successfully isolated!", "success");
+              showToast(data.cached ? "BGM isolated (reused the earlier result for this video)." : "BGM successfully isolated!", "success");
             }
           }
-        } else if (!isBatch) {
+        } else if (!isBatch && data.method !== "ffmpeg_fallback") {
           showToast("Background BGM isolation finished!", "success");
         }
 
-        return { success: true };
+        return { success: true, method: targetProject.bgmMethod, fallbackReason: targetProject.bgmFallbackReason };
       } catch (error) {
         if (error.name === "AbortError" || error.message?.includes("Cancelled")) {
           console.log("BGM fetch aborted cleanly for tab.");
           return { success: false, cancelled: true };
         }
         console.error("BGM Isolation Error:", error);
+        targetProject.bgmMethod = null;
+        targetProject.bgmError = error.message || "BGM isolation failed";
         if (error.errorCode === "SMART_APP_CONTROL_BLOCK") {
           showToast("BGM isolation was blocked by Windows Smart App Control.", "error");
         } else if (!isBatch) {
@@ -21994,7 +22054,10 @@
     }
 
     // opts.skipConfirm: stop without asking (used by Dub Whole Series' Stop button).
-    // Returns { completed, total, stopped } when a run finishes, or { ok: false, reason }.
+    // opts.only: isolate just these tabs (Dub Whole Series retries the ones that went wrong).
+    // Returns { completed, total, stopped, fellBack, failed, substituted } when a run finishes,
+    // or { ok: false, reason }. fellBack = tabs that only got the FFmpeg phase-cancel fallback,
+    // failed = tabs with no BGM at all, substituted = tabs where the other ML engine stood in.
     async function isolateBgmAllProjects(opts = {}) {
       if (isIsolatingBgmAll) {
         const confirmed = opts.skipConfirm || await customConfirm("Stop BGM isolation for all project tabs?", "Stop All", "Yes, Stop");
@@ -22021,7 +22084,7 @@
         return { ok: false, reason: "stop-request" };
       }
 
-      const eligible = projects.filter((p) => !p.isAudioOnly && (p.file || p.blobUrl));
+      const eligible = projects.filter((p) => !p.isAudioOnly && (p.file || p.blobUrl) && (!opts.only || opts.only.includes(p)));
       if (eligible.length === 0) {
         showToast("No video project tabs found to isolate BGM.", "info");
         return { ok: false, reason: "no-video" };
@@ -22039,18 +22102,30 @@
 
       // 🚀 Concurrency Worker Pool: 2 background isolation workers
       const poolSize = 2;
+      const parallelJobs = Math.min(eligible.length, poolSize);
       let activeIdx = 0;
       let completed = 0;
+      const fellBack = [];
+      const failed = [];
+      const substituted = [];
 
       const runWorker = async () => {
         while (activeIdx < eligible.length) {
           if (!isIsolatingBgmAll) break;
           const p = eligible[activeIdx++];
           try {
-            const res = await isolateBgmForProject(p, true);
-            if (res && res.success) completed++;
+            const res = await isolateBgmForProject(p, true, { parallelJobs });
+            if (res && res.success) {
+              completed++;
+              if (res.method === "ffmpeg_fallback") fellBack.push(p);
+              else if (res.fallbackReason) substituted.push(p);
+            } else if (res && !res.cancelled) {
+              failed.push(p);
+            }
           } catch (e) {
             console.error("BGM isolation error for tab:", e);
+            p.bgmError = e.message || "BGM isolation failed";
+            failed.push(p);
           }
         }
       };
@@ -22063,10 +22138,28 @@
       updateIsolateBgmButton();
       if (typeof renderProjectTabs === "function") renderProjectTabs();
 
-      if (completed > 0) {
+      const tabNos = (list) => list.map((p) => projects.indexOf(p) + 1).join(", ");
+      // Phase cancellation on a near-mono drama mix leaves almost no music, so it is never
+      // counted as a quiet success - the user is told which tabs and why.
+      if (!stoppedByUser && !opts.quiet && (fellBack.length || failed.length)) {
+        const parts = [];
+        if (fellBack.length) parts.push(`tab ${tabNos(fellBack)} only got FFmpeg phase cancellation (${fellBack[0].bgmFallbackReason || "the ML engine could not run"})`);
+        if (failed.length) parts.push(`tab ${tabNos(failed)} failed (${failed[0].bgmError || "unknown error"})`);
+        showToast(`BGM isolation: ${parts.join("; ")}. Fix it or switch engine in Settings, then isolate again.`, "warning");
+      } else if (completed > 0) {
         showToast(`🎉 Completed BGM isolation for all ${completed} of ${eligible.length} project(s)!`, "success");
       }
-      return { ok: true, completed, total: eligible.length, stopped: stoppedByUser };
+      return {
+        ok: true,
+        completed,
+        total: eligible.length,
+        stopped: stoppedByUser,
+        fellBack,
+        failed,
+        substituted,
+        fallbackCount: fellBack.length,
+        failedCount: failed.length,
+      };
     }
 
     const btnIsolateBgm = document.getElementById("btn-isolate-bgm");

@@ -599,9 +599,72 @@ app.post('/api/save-srt', (req, res) => {
     res.json({ success: true, filePath: savedPath });
 });
 
-// Direct native FFmpeg stem separation (stereo phase cancellation)
-// Zero Python dependencies, zero setup, instant and 100% reliable across all systems.
-function isolateBgmWithFfmpeg(audioPath, outputDir, jobId, isFallback = false) {
+// --- BGM ISOLATION ---
+const { cacheKeyForFile, lookupCachedStems, storeStems, pruneBgmCache, jobStatusFor, pickSeparatorThreads, killProcessTree } = require('./lib/bgm-cache');
+// Engines: Spleeter 2stems (the default: ~40 s for a 9-minute tab), Demucs
+// htdemucs (cleaner, full-band stems, but ~4.5 min per 9-minute tab on CPU, so
+// opt-in; also the stand-in when Spleeter can't run) and FFmpeg phase cancellation.
+const BGM_ENGINES = ['spleeter', 'demucs', 'ffmpeg'];
+const DEFAULT_BGM_ENGINE = 'spleeter';
+const bgmChildren = new Map(); // jobId -> running separator process, so Stop can kill it
+
+// Part of the cache key: a new model must not reuse the old model's stems.
+function bgmEngineModel(engine) {
+    if (engine === 'demucs') return process.env.DEMUCS_MODEL || 'htdemucs';
+    if (engine === 'spleeter') return 'spleeter:2stems';
+    return 'stereotools-lr';
+}
+
+function isBgmJobCancelled(jobId) {
+    const job = bgmJobs.get(jobId);
+    return !!(job && job.status === 'cancelled');
+}
+
+function bgmDoneJob(bgmPath, vocalPath, extra = {}) {
+    const bgmUri = `/api/audio?path=${encodeURIComponent(bgmPath)}`;
+    const vocalUri = `/api/audio?path=${encodeURIComponent(vocalPath)}`;
+    return {
+        status: 'done',
+        success: true,
+        progress: 100,
+        url: bgmUri,
+        file: bgmPath,
+        bgmPath: bgmPath,
+        vocalPath: vocalPath,
+        bgmUrl: bgmUri,
+        vocalUrl: vocalUri,
+        timestamp: Date.now(),
+        ...extra
+    };
+}
+
+function removeDirQuietly(dir) {
+    if (!dir) return;
+    fs.rm(dir, { recursive: true, force: true }, () => {});
+}
+
+// Cached stems not used for 14 days, and work folders left by a crash or Stop.
+setTimeout(() => {
+    try {
+        const removed = pruneBgmCache(SEPARATED_DIR, 14 * 24 * 60 * 60 * 1000);
+        if (removed) console.log(`[BGM cache] Removed ${removed} unused entr${removed === 1 ? 'y' : 'ies'}.`);
+        const workRoot = path.join(SEPARATED_DIR, 'bgm-work');
+        if (fs.existsSync(workRoot)) {
+            for (const name of fs.readdirSync(workRoot)) {
+                const dir = path.join(workRoot, name);
+                try { if (Date.now() - fs.statSync(dir).mtimeMs > 24 * 60 * 60 * 1000) removeDirQuietly(dir); } catch (e) {}
+            }
+        }
+    } catch (e) {}
+}, 15000);
+
+// Direct native FFmpeg stem separation (stereo phase cancellation).
+// Needs no Python, but it only removes what sits dead-centre in the stereo
+// image: on a near-mono drama mix it removes most of the music as well. So it
+// runs only when the user picks it, or as a fallback that is always reported
+// (method 'ffmpeg_fallback' plus the reason the ML engine failed) - the app
+// tells the user instead of exporting tabs with almost no music.
+function isolateBgmWithFfmpeg(audioPath, outputDir, jobId, isFallback = false, fallbackReason = '') {
     const ffmpegBin = getFFmpegBinary();
     const jobSuffix = `${process.pid}_${Date.now()}`;
     const jobDir = path.join(outputDir, `ffmpeg_${jobSuffix}`);
@@ -631,44 +694,50 @@ function isolateBgmWithFfmpeg(audioPath, outputDir, jobId, isFallback = false) {
     try {
         child = spawn(ffmpegBin, args, { windowsHide: true });
         trackProcess(child);
+        bgmChildren.set(jobId, child);
     } catch (err) {
         console.error('[FFmpeg Vocal Separation Spawn Error]', err);
-        bgmJobs.set(jobId, { status: 'error', success: false, error: `Failed to spawn FFmpeg process: ${err.message}` });
+        bgmJobs.set(jobId, { status: 'error', success: false, timestamp: Date.now(), error: `Failed to spawn FFmpeg process: ${err.message}` });
         return;
     }
 
     let stderr = '';
+    let settled = false;
     const stderrDecoder = new StringDecoder('utf8');
     child.stderr.on('data', d => stderr += stderrDecoder.write(d));
 
     child.on('error', (err) => {
+        if (settled) return;
+        settled = true;
+        bgmChildren.delete(jobId);
+        if (isBgmJobCancelled(jobId)) return;
         console.error('[FFmpeg Vocal Separation Error]', err);
-        bgmJobs.set(jobId, { status: 'error', success: false, error: `FFmpeg execution error: ${err.message}` });
+        bgmJobs.set(jobId, { status: 'error', success: false, timestamp: Date.now(), error: `FFmpeg execution error: ${err.message}` });
     });
 
     child.on('close', (code) => {
+        if (settled) return;
+        settled = true;
+        bgmChildren.delete(jobId);
+        // Stopped by the user: keep the 'cancelled' mark instead of re-adding a result.
+        if (isBgmJobCancelled(jobId)) {
+            removeDirQuietly(jobDir);
+            return;
+        }
         if (code === 0 && fs.existsSync(bgmPath) && fs.existsSync(vocalPath)) {
             console.log(`[FFmpeg Vocal Separation Succeeded] Job ${jobId} finished! BGM: ${bgmPath}`);
-            const bgmUri = `/api/audio?path=${encodeURIComponent(bgmPath)}`;
-            const vocalUri = `/api/audio?path=${encodeURIComponent(vocalPath)}`;
-            bgmJobs.set(jobId, {
-                status: 'done',
-                success: true,
-                progress: 100,
-                url: bgmUri,
-                file: bgmPath,
-                bgmPath: bgmPath,
-                vocalPath: vocalPath,
-                bgmUrl: bgmUri,
-                vocalUrl: vocalUri,
-                method: isFallback ? 'ffmpeg_fallback' : 'ffmpeg'
-            });
+            bgmJobs.set(jobId, bgmDoneJob(bgmPath, vocalPath, isFallback
+                ? { method: 'ffmpeg_fallback', fallbackReason: fallbackReason || 'The ML separator could not run.' }
+                : { method: 'ffmpeg' }));
         } else {
             console.error(`[FFmpeg Vocal Separation Failed] Code ${code}, Stderr: ${stderr.trim()}`);
+            removeDirQuietly(jobDir);
+            const ffErr = stderr.trim().split(/\r?\n/).slice(-2).join(' ') || `FFmpeg separation process exited with code ${code}`;
             bgmJobs.set(jobId, {
                 status: 'error',
                 success: false,
-                error: stderr.trim() || `FFmpeg separation process exited with code ${code}`
+                timestamp: Date.now(),
+                error: fallbackReason ? `${fallbackReason}. The FFmpeg fallback failed too: ${ffErr}` : ffErr
             });
         }
     });
@@ -683,13 +752,30 @@ app.post('/api/remove-vocals', upload.any(), async (req, res) => {
     if (!audioPath || !fs.existsSync(audioPath)) {
         return res.status(400).json({ success: false, error: 'Audio/Video file not found' });
     }
+    // The cache is keyed on the user's own file (not the repaired copy below);
+    // an upload gets a new temp name every time, so caching it would never hit.
+    const sourcePath = uploadedFile ? null : audioPath;
+
+    let engine = req.body.engine;
+    if (!BGM_ENGINES.includes(engine)) engine = DEFAULT_BGM_ENGINE;
+    const cacheKey = (sourcePath && engine !== 'ffmpeg') ? cacheKeyForFile(sourcePath, engine, bgmEngineModel(engine)) : null;
+
+    // Same file, same engine and model as an earlier run: hand back its stems at once.
+    const cached = lookupCachedStems(SEPARATED_DIR, cacheKey);
+    if (cached) {
+        console.log(`[Vocal Separator] Job ${jobId}: reusing cached ${engine} stems for ${path.basename(sourcePath)}`);
+        bgmJobs.set(jobId, bgmDoneJob(cached.bgm, cached.vocal, { method: cached.method || engine, requestedEngine: engine, cached: true }));
+        return res.json({ success: true, jobId: jobId, status: 'processing' });
+    }
+
     audioPath = (await audioRepair.getAudioSource(audioPath).catch(() => ({ path: audioPath }))).path;
+    // Stop pressed while the audio was being prepared.
+    if (isBgmJobCancelled(jobId)) {
+        return res.json({ success: false, jobId: jobId, status: 'cancelled', error: 'Cancelled' });
+    }
 
     bgmJobs.set(jobId, { status: 'processing', progress: 10, success: true, timestamp: Date.now() });
     res.json({ success: true, jobId: jobId, status: 'processing' });
-
-    let engine = req.body.engine;
-    if (!engine || (engine !== 'spleeter' && engine !== 'demucs' && engine !== 'ffmpeg')) engine = 'spleeter';
 
     // Fast path: If the user specifically chose FFmpeg, run native FFmpeg directly
     if (engine === 'ffmpeg') {
@@ -697,22 +783,36 @@ app.post('/api/remove-vocals', upload.any(), async (req, res) => {
         return;
     }
 
+    const engineLabel = engine === 'demucs' ? 'Demucs' : 'Spleeter';
+    // Phase cancellation when no ML engine could run - always reported back with
+    // the reason (method 'ffmpeg_fallback'), so the app can warn and retry.
+    const fallBack = (reason) => {
+        if (isBgmJobCancelled(jobId)) return;
+        console.warn(`[Vocal Separator] Job ${jobId}: ${reason}. Falling back to FFmpeg phase cancellation (reported to the app).`);
+        isolateBgmWithFfmpeg(audioPath, SEPARATED_DIR, jobId, true, reason);
+    };
+
     const spleeterPython = SPLEETER_PYTHON_CMD || getSpleeterPythonCmd();
     let separatorPython = PYTHON_CMD;
     if (engine === 'spleeter' && spleeterPython) {
         separatorPython = spleeterPython;
     }
 
-    // If no operational Python environment is detected on this machine,
-    // seamlessly fall back to direct native FFmpeg phase cancellation immediately.
     if (!separatorPython) {
-        console.warn(`[Vocal Separator] Requested engine '${engine}', but no operational Python found. Falling back to native FFmpeg separation...`);
-        isolateBgmWithFfmpeg(audioPath, SEPARATED_DIR, jobId, true);
+        fallBack(`${engineLabel} could not run (no working Python was found)`);
         return;
     }
 
+    // Each job gets its own work folder, so a finished job's leftovers and a
+    // stopped job's partial files can be deleted without touching anyone else's.
+    const workDir = path.join(SEPARATED_DIR, 'bgm-work', String(jobId).replace(/[^\w.-]/g, '_'));
+    try { fs.mkdirSync(workDir, { recursive: true }); } catch (e) {}
+
     const useGPU = req.body.useGPU === true || req.body.useGPU === 'true';
-    const pyArgs = ['--input', audioPath, '--output', SEPARATED_DIR, '--engine', engine];
+    const parallelJobs = parseInt(req.body.parallelJobs, 10) || 1;
+    const pyArgs = ['--input', audioPath, '--output', workDir, '--engine', engine];
+    // Demucs is also the stand-in when Spleeter fails, so it always gets its CPU share.
+    pyArgs.push('--threads', String(pickSeparatorThreads(os.cpus().length, parallelJobs)));
     if (engine === 'demucs' && !useGPU) {
         pyArgs.push('--device', 'cpu');
     }
@@ -734,31 +834,44 @@ app.post('/api/remove-vocals', upload.any(), async (req, res) => {
     };
     let child;
     try {
-        child = spawn(separatorPython, [pyScript, ...pyArgs], { env: runEnv });
+        // Own process group off Windows, so Stop can kill the separator and its
+        // Demucs/Spleeter child together (on Windows taskkill /T does that).
+        child = spawn(separatorPython, [pyScript, ...pyArgs], { env: runEnv, windowsHide: true, detached: process.platform !== 'win32' });
         trackProcess(child);
+        bgmChildren.set(jobId, child);
     } catch (spawnErr) {
-        console.warn('[Python Vocal Separator Spawn Failed]', spawnErr.message, 'Falling back to native FFmpeg separation...');
-        isolateBgmWithFfmpeg(audioPath, SEPARATED_DIR, jobId, true);
+        fallBack(`${engineLabel} could not run (${spawnErr.message})`);
         return;
     }
 
     let output = '';
     let stderr = '';
+    let settled = false;
     const stdoutDecoder = new StringDecoder('utf8');
     const stderrDecoder = new StringDecoder('utf8');
     child.stdout.on('data', d => output += stdoutDecoder.write(d));
     child.stderr.on('data', d => stderr += stderrDecoder.write(d));
     child.on('error', (err) => {
-        console.warn('[Python Vocal Separator Process Error]', err.message, 'Falling back to native FFmpeg separation...');
-        isolateBgmWithFfmpeg(audioPath, SEPARATED_DIR, jobId, true);
+        if (settled) return;
+        settled = true;
+        bgmChildren.delete(jobId);
+        fallBack(`${engineLabel} could not run (${err.message})`);
     });
     child.on('close', (code) => {
+        if (settled) return;
+        settled = true;
+        bgmChildren.delete(jobId);
+        // Stopped by the user: don't report a result or start the fallback.
+        if (isBgmJobCancelled(jobId)) {
+            removeDirQuietly(workDir);
+            return;
+        }
         const trimmedOut = output.trim();
         const trimmedErr = stderr.trim();
+        const errTail = trimmedErr.split(/\r?\n/).map(l => l.trim()).filter(Boolean).slice(-2).join(' ').slice(-300);
 
         if (code !== 0 && !trimmedOut) {
-            console.warn(`[Python Vocal Separator Failed] Code ${code}, Stderr: ${trimmedErr}. Seamlessly falling back to native FFmpeg separation...`);
-            isolateBgmWithFfmpeg(audioPath, SEPARATED_DIR, jobId, true);
+            fallBack(`${engineLabel} could not run (${errTail || `exit code ${code}`})`);
             return;
         }
 
@@ -772,41 +885,48 @@ app.post('/api/remove-vocals', upload.any(), async (req, res) => {
 
             const data = JSON.parse(jsonStr);
             if (data.success) {
-                const bgmUri = `/api/audio?path=${encodeURIComponent(data.bgm)}`;
-                const vocalUri = `/api/audio?path=${encodeURIComponent(data.vocal)}`;
-                bgmJobs.set(jobId, {
-                    status: 'done',
-                    success: true,
-                    progress: 100,
-                    url: bgmUri,
-                    file: data.bgm,
-                    bgmPath: data.bgm,
-                    vocalPath: data.vocal,
-                    bgmUrl: bgmUri,
-                    vocalUrl: vocalUri,
-                    method: data.method || engine
-                });
+                const method = data.method || engine;
+                let bgmPath = data.bgm;
+                let vocalPath = data.vocal;
+                // Only stems from the engine that was asked for are cached: if
+                // Spleeter stood in for Demucs, the next run should try Demucs again.
+                if (cacheKey && method === engine) {
+                    const stored = storeStems(SEPARATED_DIR, cacheKey, { bgm: bgmPath, vocal: vocalPath, method, source: sourcePath });
+                    if (stored) {
+                        bgmPath = stored.bgm;
+                        vocalPath = stored.vocal;
+                        removeDirQuietly(workDir);
+                    }
+                }
+                const extra = { method, requestedEngine: engine };
+                if (data.fallbackReason) extra.fallbackReason = data.fallbackReason;
+                bgmJobs.set(jobId, bgmDoneJob(bgmPath, vocalPath, extra));
             } else {
-                console.warn('[Python Vocal Separator reported failure]', data.error || trimmedErr, 'Falling back to native FFmpeg separation...');
-                isolateBgmWithFfmpeg(audioPath, SEPARATED_DIR, jobId, true);
+                removeDirQuietly(workDir);
+                fallBack(data.error || `${engineLabel} could not run (${errTail || 'no result'})`);
             }
         } catch (e) {
-            console.warn('[Python Vocal Separator Parse Error]', e.message, 'Falling back to native FFmpeg separation...');
-            isolateBgmWithFfmpeg(audioPath, SEPARATED_DIR, jobId, true);
+            removeDirQuietly(workDir);
+            fallBack(`${engineLabel} could not run (${errTail || `unreadable result: ${e.message}`})`);
         }
     });
 });
 
 app.get('/api/bgm-job-status', (req, res) => {
-    const jobId = req.query.jobId;
-    const job = bgmJobs.get(jobId);
-    if (!job) return res.json({ status: 'done', success: true });
-    res.json(job);
+    res.json(jobStatusFor(bgmJobs, req.query.jobId));
 });
 
 app.post('/api/cancel-remove-vocals', (req, res) => {
     const { jobId } = req.body;
-    if (jobId) bgmJobs.delete(jobId);
+    if (jobId) {
+        // Mark it first: the process's close handler then neither reports a
+        // result nor starts the FFmpeg fallback for a job the user stopped.
+        bgmJobs.set(jobId, { status: 'cancelled', success: false, error: 'Cancelled', timestamp: Date.now() });
+        const child = bgmChildren.get(jobId);
+        bgmChildren.delete(jobId);
+        if (child) killProcessTree(child);
+        setTimeout(() => { if (isBgmJobCancelled(jobId)) bgmJobs.delete(jobId); }, 15 * 60 * 1000).unref();
+    }
     res.json({ success: true });
 });
 

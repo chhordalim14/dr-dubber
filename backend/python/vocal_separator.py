@@ -10,6 +10,7 @@ import os.path
 import subprocess
 import argparse
 import json
+import re
 import time
 
 def ensure_ffmpeg_in_path():
@@ -174,6 +175,26 @@ def get_demucs_python_default():
 DEMUCS_PYTHON_DEFAULT = get_demucs_python_default()
 DEMUCS_MODEL = os.environ.get("DEMUCS_MODEL") or "htdemucs"
 
+# Why each engine failed, in plain words. The server shows these to the user
+# (e.g. "Tab 3: Demucs could not run (...)") instead of quietly handing back a
+# phase-cancel result with almost no music in it.
+ENGINE_ERRORS = {}
+
+def error_tail(text, limit=300):
+    """Last meaningful lines of a tool's stderr (progress bars dropped)."""
+    if not text:
+        return ""
+    lines = [l.strip() for l in re.split(r"[\r\n]+", text) if l.strip()]
+    lines = [l for l in lines if "%|" not in l and not l.lower().startswith("warning")]
+    tail = " | ".join(lines[-2:])
+    if len(tail) > limit and lines:
+        tail = lines[-1]  # the last line usually holds the actual error
+    return tail if len(tail) <= limit else "..." + tail[-limit:]
+
+def note_error(engine, message):
+    ENGINE_ERRORS[engine] = message or "unknown error"
+    sys.stderr.write(f"[{engine}] {ENGINE_ERRORS[engine]}\n")
+
 def get_spleeter_python_default():
     py_dir = os.path.dirname(os.path.abspath(__file__))
     if "app.asar" in py_dir and "app.asar.unpacked" not in py_dir:
@@ -255,13 +276,19 @@ def find_python_in_folder(folder, module_name=None):
             return c
     return None
 
-def separate_demucs(input_audio, output_dir, demucs_folder=None, segment=None, device=None):
+def separate_demucs(input_audio, output_dir, demucs_folder=None, segment=None, device=None, threads=None):
     """
     High-fidelity ML-based separation via Demucs (htdemucs model). Produces a
     genuine isolated vocal stem and a clean instrumental/BGM stem.
     """
-    demucs_python = find_python_in_folder(demucs_folder) or os.environ.get("DEMUCS_PYTHON") or (DEMUCS_PYTHON_DEFAULT if is_working_python(DEMUCS_PYTHON_DEFAULT) else None) or (sys.executable if is_working_python(sys.executable) else None)
-    if not demucs_python or not is_working_python(demucs_python):
+    demucs_python = (
+        find_python_in_folder(demucs_folder, "demucs")
+        or (os.environ.get("DEMUCS_PYTHON") if is_demucs_python(os.environ.get("DEMUCS_PYTHON")) else None)
+        or (DEMUCS_PYTHON_DEFAULT if is_working_python(DEMUCS_PYTHON_DEFAULT) else None)
+        or (sys.executable if is_demucs_python(sys.executable) else None)
+    )
+    if not demucs_python:
+        note_error("Demucs", "no Python with Demucs installed was found (backend/demucs-env is missing or broken)")
         return None
     try:
         output_dir = os.path.abspath(output_dir)
@@ -288,7 +315,17 @@ def separate_demucs(input_audio, output_dir, demucs_folder=None, segment=None, d
             cmd += ["--segment", str(segment)]
         cmd.append(input_audio)
 
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+        # torch otherwise starts one thread per core in every process, so two
+        # tabs separating at once would each grab all 16 and slow each other
+        # down. The server passes this process's share of the CPU.
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
+        if threads:
+            for var in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+                env[var] = str(threads)
+
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=env)
 
         base_name = os.path.splitext(os.path.basename(input_audio))[0]
         stem_dir = os.path.join(job_dir, DEMUCS_MODEL, base_name)
@@ -302,11 +339,10 @@ def separate_demucs(input_audio, output_dir, demucs_folder=None, segment=None, d
                 "vocal": os.path.abspath(vocal_path),
                 "bgm": os.path.abspath(bgm_path)
             }
-        if res.returncode != 0:
-            sys.stderr.write(f"[Demucs] exit code {res.returncode}: {res.stderr}\n")
+        note_error("Demucs", error_tail(res.stderr) or f"exit code {res.returncode}, no stems written")
         return None
     except Exception as e:
-        sys.stderr.write(f"[Demucs] exception: {e}\n")
+        note_error("Demucs", str(e))
         return None
 
 def separate_spleeter(input_audio, output_dir, spleeter_folder=None, spleeter_python_override=None):
@@ -321,7 +357,7 @@ def separate_spleeter(input_audio, output_dir, spleeter_folder=None, spleeter_py
         or (sys.executable if is_spleeter_python(sys.executable) else None)
     )
     if not spleeter_python:
-        sys.stderr.write("[Spleeter] No working Python environment with 'spleeter' installed was found.\n")
+        note_error("Spleeter", "no Python with Spleeter installed was found (backend/spleeter-env is missing or broken)")
         return None
     try:
         output_dir = os.path.abspath(output_dir)
@@ -386,11 +422,10 @@ def separate_spleeter(input_audio, output_dir, spleeter_folder=None, spleeter_py
                 "vocal": os.path.abspath(vocal_path),
                 "bgm": os.path.abspath(bgm_path)
             }
-        if res.returncode != 0:
-            sys.stderr.write(f"[Spleeter] exit code {res.returncode}: {res.stderr}\n")
+        note_error("Spleeter", error_tail(res.stderr) or f"exit code {res.returncode}, no stems written")
         return None
     except Exception as e:
-        sys.stderr.write(f"[Spleeter] exception: {e}\n")
+        note_error("Spleeter", str(e))
         return None
 
 def separate_ffmpeg(input_audio, output_dir):
@@ -438,55 +473,38 @@ def separate_ffmpeg(input_audio, output_dir):
         sys.stderr.write(f"[FFmpeg] exception: {e}\n")
         return None
 
-def separate(input_audio, output_dir, engine="spleeter", demucs_folder=None, segment=None, device=None, spleeter_folder=None, spleeter_python=None):
+def ml_failure(engines):
+    reasons = "; ".join(f"{name} could not run ({ENGINE_ERRORS.get(name, 'unknown error')})" for name in engines)
+    return {"success": False, "error": reasons}
+
+def separate(input_audio, output_dir, engine="spleeter", demucs_folder=None, segment=None, device=None, spleeter_folder=None, spleeter_python=None, threads=None):
+    """
+    Runs the chosen engine and, if it fails, the other ML engine. There is no
+    phase-cancel fallback in here any more: when both ML engines fail the error
+    says why, and the server decides what to do (and tells the user).
+    """
     if engine == "ffmpeg":
         res = separate_ffmpeg(input_audio, output_dir)
         if res:
             return res
         return {"success": False, "error": "FFmpeg audio separation failed."}
 
-    if engine == "spleeter":
-        result = separate_spleeter(input_audio, output_dir, spleeter_folder=spleeter_folder, spleeter_python_override=spleeter_python)
-        if result:
-            return result
-        sys.stderr.write("[Spleeter] unavailable or failed, attempting Demucs separation\n")
-        demucs_res = separate_demucs(input_audio, output_dir, demucs_folder, segment, device)
-        if demucs_res:
-            return demucs_res
-        sys.stderr.write("[Demucs] unavailable or failed, falling back to FFmpeg separation\n")
-        ffmpeg_res = separate_ffmpeg(input_audio, output_dir)
-        if ffmpeg_res:
-            ffmpeg_res["method"] = "ffmpeg_fallback"
-            return ffmpeg_res
-        return {"success": False, "error": "Stem separation failed (Spleeter, Demucs, and FFmpeg fallback were unavailable)."}
-
+    run_demucs = lambda: separate_demucs(input_audio, output_dir, demucs_folder, segment, device, threads)
+    run_spleeter = lambda: separate_spleeter(input_audio, output_dir, spleeter_folder=spleeter_folder, spleeter_python_override=spleeter_python)
     if engine in ("demucs", "auto"):
-        result = separate_demucs(input_audio, output_dir, demucs_folder, segment, device)
-        if result:
-            return result
-        sys.stderr.write("[Demucs] unavailable or failed, attempting Spleeter separation\n")
-        spleeter_res = separate_spleeter(input_audio, output_dir, spleeter_folder=spleeter_folder, spleeter_python_override=spleeter_python)
-        if spleeter_res:
-            return spleeter_res
-        sys.stderr.write("[Spleeter] unavailable or failed, falling back to FFmpeg separation\n")
-        ffmpeg_res = separate_ffmpeg(input_audio, output_dir)
-        if ffmpeg_res:
-            ffmpeg_res["method"] = "ffmpeg_fallback"
-            return ffmpeg_res
-        return {"success": False, "error": "Stem separation failed (Demucs, Spleeter, and FFmpeg fallback were unavailable)."}
+        order = [("Demucs", run_demucs), ("Spleeter", run_spleeter)]
+    else:  # "spleeter" or anything unknown: the fast default first
+        order = [("Spleeter", run_spleeter), ("Demucs", run_demucs)]
 
-    # For any legacy or unspecified engine, try spleeter then demucs then ffmpeg
-    spleeter_res = separate_spleeter(input_audio, output_dir, spleeter_folder=spleeter_folder, spleeter_python_override=spleeter_python)
-    if spleeter_res:
-        return spleeter_res
-    demucs_res = separate_demucs(input_audio, output_dir, demucs_folder, segment, device)
-    if demucs_res:
-        return demucs_res
-    ffmpeg_res = separate_ffmpeg(input_audio, output_dir)
-    if ffmpeg_res:
-        ffmpeg_res["method"] = "ffmpeg_fallback"
-        return ffmpeg_res
-    return {"success": False, "error": f"Stem separation failed for engine '{engine}'."}
+    first_name = order[0][0]
+    for name, run in order:
+        result = run()
+        if result:
+            if name != first_name:
+                # Still real ML stems, but not the engine the user picked - say so.
+                result["fallbackReason"] = f"{first_name} could not run ({ENGINE_ERRORS.get(first_name, 'unknown error')}); used {name} instead"
+            return result
+    return ml_failure([name for name, _ in order])
 
 def main():
     try:
@@ -504,6 +522,7 @@ def main():
         parser.add_argument("--device", default=None, help="Demucs device override; omit to let demucs auto-detect")
         parser.add_argument("--spleeter-folder", default=None, help="Optional portable Spleeter install to use instead of the bundled one")
         parser.add_argument("--spleeter-python", default=None, help="Optional direct path to Spleeter Python binary")
+        parser.add_argument("--threads", default=None, type=int, help="CPU threads Demucs may use (its share when several tabs separate at once)")
 
         args = parser.parse_args()
         result = separate(
@@ -514,7 +533,8 @@ def main():
             segment=args.segment,
             device=args.device,
             spleeter_folder=args.spleeter_folder,
-            spleeter_python=args.spleeter_python
+            spleeter_python=args.spleeter_python,
+            threads=args.threads
         )
         print(json.dumps(result))
     except Exception as exc:
