@@ -22506,8 +22506,6 @@
       // Subtitle size is now controlled via right-click menu in index01 (ctx-sub-size).
       // Read globalSubtitleSize from localStorage as the single source of truth.
       // Default 106 = the preview's default (globalSubtitleSize), so an untouched slider exports what the preview shows.
-      const getSubtitleSize = () => parseInt(localStorage.getItem("aiDubberSubtitleSize") || "106", 10);
-
       // ── Render Mode State ──────────────────────────────────────────
       window._renderMode = "video"; // 'video' | 'audio'
       window._audioFormat = "mp3"; // 'mp3'   | 'wav'
@@ -22913,7 +22911,12 @@
               renderEngine: localStorage.getItem("aiDubberRenderEngine") || "cpu",
               videoDuration: projDuration,
               blurBoxes: cleanBlurBoxes,
-              subtitleSize: getSubtitleSize(),
+              // Size and bold/italic/underline: the live values the preview draws with (a video
+              // preset can change them without saving them to localStorage).
+              subtitleSize: globalSubtitleSize,
+              subtitleBold: globalSubtitleBold,
+              subtitleItalic: globalSubtitleItalic,
+              subtitleUnderline: globalSubtitleUnderline,
               flipHorizontal: projIsFlippedH,
               flipVertical: projIsFlippedV,
               cropConfig: {
@@ -23446,7 +23449,12 @@
               renderEngine: localStorage.getItem("aiDubberRenderEngine") || "cpu",
               videoDuration: projDuration,
               blurBoxes: cleanBlurBoxes,
-              subtitleSize: getSubtitleSize(),
+              // Size and bold/italic/underline: the live values the preview draws with (a video
+              // preset can change them without saving them to localStorage).
+              subtitleSize: globalSubtitleSize,
+              subtitleBold: globalSubtitleBold,
+              subtitleItalic: globalSubtitleItalic,
+              subtitleUnderline: globalSubtitleUnderline,
               flipHorizontal: projIsFlippedH,
               flipVertical: projIsFlippedV,
               cropConfig: {
