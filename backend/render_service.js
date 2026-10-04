@@ -268,6 +268,280 @@ function escapeAssText(text) {
         .replace(/\r\n|\r|\n/g, '\\N');
 }
 
+// ---------------------------------------------------------------------------
+// Burned-in subtitles that match the editor preview.
+//
+// The preview sizes, wraps and places subtitles itself (studio-main.js
+// updateSubtitleDisplay + frontend/js/subtitle-layout.js). The export used to hand
+// libass a plain SRT with force_style, which (1) measured everything in libass's
+// default 384x288 script space, so sizes and margins had nothing to do with the
+// preview, and (2) left line breaking to libass, which only breaks at spaces, so
+// long Khmer lines ran off the frame. Now an ASS file is written whose script size
+// is the video size, whose lines are already broken exactly like the preview, and
+// whose font size is converted from the preview's CSS size with the font's metrics.
+// ---------------------------------------------------------------------------
+const SubtitleLayout = require('../frontend/js/subtitle-layout.js');
+
+const SUBTITLE_FONTS_DIR = path.join(__dirname, '..', 'frontend', 'fonts');
+
+// The fonts folder ffmpeg is pointed at. In the installed app frontend/fonts lives
+// inside app.asar, which only Electron can read: ffmpeg would silently find no
+// fonts and libass would fall back to some system font (or boxes). So the bundled
+// fonts are copied next to the render's temp files first (Electron's fs can read
+// the archive). In development the folder is used as it is.
+function getFfmpegFontsDir(tempDir) {
+    if (!/app\.asar(?!\.unpacked)/.test(SUBTITLE_FONTS_DIR) || !tempDir) return SUBTITLE_FONTS_DIR;
+    const target = path.join(tempDir, 'fonts');
+    try {
+        fs.mkdirSync(target, { recursive: true });
+        for (const f of fs.readdirSync(SUBTITLE_FONTS_DIR)) {
+            if (!/\.(ttf|otf)$/i.test(f)) continue;
+            const dest = path.join(target, f);
+            if (!fs.existsSync(dest)) fs.writeFileSync(dest, fs.readFileSync(path.join(SUBTITLE_FONTS_DIR, f)));
+        }
+        return target;
+    } catch (e) {
+        console.warn('[Render] Could not copy subtitle fonts out of the app archive:', e.message);
+        return SUBTITLE_FONTS_DIR;
+    }
+}
+
+// Reads the few facts about a .ttf/.otf the layout needs, with small partial reads
+// (system font folders hold some very large files).
+function readFontFaceInfo(filePath) {
+    let fd = null;
+    try {
+        fd = fs.openSync(filePath, 'r');
+        const header = Buffer.alloc(12);
+        if (fs.readSync(fd, header, 0, 12, 0) < 12) return null;
+        const version = header.readUInt32BE(0);
+        if (version !== 0x00010000 && version !== 0x4F54544F && version !== 0x74727565) return null;
+        const numTables = header.readUInt16BE(4);
+        const dir = Buffer.alloc(16 * numTables);
+        fs.readSync(fd, dir, 0, dir.length, 12);
+        const tables = {};
+        for (let i = 0; i < numTables; i++) {
+            const o = 16 * i;
+            tables[dir.toString('latin1', o, o + 4)] = { offset: dir.readUInt32BE(o + 8), length: dir.readUInt32BE(o + 12) };
+        }
+        const readTable = (tag) => {
+            const t = tables[tag];
+            if (!t || t.length <= 0 || t.length > 4 * 1024 * 1024) return null;
+            const buf = Buffer.alloc(t.length);
+            fs.readSync(fd, buf, 0, t.length, t.offset);
+            return buf;
+        };
+        const head = readTable('head');
+        const name = readTable('name');
+        if (!head || !name) return null;
+        const upem = head.readUInt16BE(18) || 1000;
+        const os2 = readTable('OS/2');
+        const hhea = readTable('hhea');
+        let weight = 400, fsSelection = 0, typoAsc = 0, typoDesc = 0, winAsc = 0, winDesc = 0;
+        if (os2 && os2.length >= 78) {
+            weight = os2.readUInt16BE(4);
+            fsSelection = os2.readUInt16BE(62);
+            typoAsc = os2.readInt16BE(68);
+            typoDesc = Math.abs(os2.readInt16BE(70));
+            winAsc = os2.readUInt16BE(74);
+            winDesc = os2.readUInt16BE(76);
+        }
+        const hheaAsc = hhea ? hhea.readInt16BE(4) : 0;
+        const hheaDesc = hhea ? Math.abs(hhea.readInt16BE(6)) : 0;
+        if (!(winAsc + winDesc)) { winAsc = hheaAsc || typoAsc; winDesc = hheaDesc || typoDesc; }
+
+        const names = {};
+        const count = name.readUInt16BE(2);
+        const strings = name.readUInt16BE(4);
+        for (let i = 0; i < count; i++) {
+            const r = 6 + 12 * i;
+            if (r + 12 > name.length) break;
+            const platform = name.readUInt16BE(r);
+            const id = name.readUInt16BE(r + 6);
+            const len = name.readUInt16BE(r + 8);
+            const off = strings + name.readUInt16BE(r + 10);
+            if (![1, 2, 16].includes(id) || off + len > name.length) continue;
+            let value = '';
+            if (platform === 3 || platform === 0) {
+                for (let k = 0; k + 1 < len; k += 2) value += String.fromCharCode(name.readUInt16BE(off + k));
+                names[id] = value; // Windows names win over Mac ones
+            } else if (platform === 1 && !names[id]) {
+                names[id] = name.toString('latin1', off, off + len);
+            }
+        }
+        if (!names[1]) return null;
+        // Chromium (the preview) uses the typo metrics when the font asks for them
+        // (USE_TYPO_METRICS), else the Windows ones; libass always uses the Windows ones.
+        const useTypo = (fsSelection & 0x80) && (typoAsc + typoDesc) > 0;
+        return {
+            file: filePath,
+            family: names[1],
+            subfamily: names[2] || 'Regular',
+            typographicFamily: names[16] || names[1],
+            weight,
+            italic: !!(fsSelection & 1) || /italic|oblique/i.test(names[2] || ''),
+            libassHeight: (winAsc + winDesc) / upem,
+            libassDescent: winDesc / upem,
+            cssAscent: (useTypo ? typoAsc : winAsc) / upem,
+            cssDescent: (useTypo ? typoDesc : winDesc) / upem,
+        };
+    } catch (e) {
+        return null;
+    } finally {
+        if (fd !== null) { try { fs.closeSync(fd); } catch (e) { /* ignore */ } }
+    }
+}
+
+const _fontFolderCache = new Map();
+function listFontFaces(dir) {
+    if (_fontFolderCache.has(dir)) return _fontFolderCache.get(dir);
+    let faces = [];
+    try {
+        faces = fs.readdirSync(dir)
+            .filter(f => /\.(ttf|otf)$/i.test(f))
+            .map(f => readFontFaceInfo(path.join(dir, f)))
+            .filter(Boolean);
+    } catch (e) {
+        faces = [];
+    }
+    _fontFolderCache.set(dir, faces);
+    return faces;
+}
+
+// Finds the font file the preview would use for this family and weight, and the
+// name libass must be given to load exactly that file. The bundled Kantumruy Pro
+// shows why: the preview's normal weight is the Medium file, whose family name is
+// "Kantumruy Pro Medium" — asking libass for "Kantumruy Pro" gets the Bold file.
+function resolveSubtitleFace(family, bold) {
+    const wanted = String(family || '').trim().toLowerCase();
+    if (!wanted) return null;
+    const folders = [SUBTITLE_FONTS_DIR];
+    if (process.platform === 'win32') {
+        if (process.env.WINDIR) folders.push(path.join(process.env.WINDIR, 'Fonts'));
+        if (process.env.LOCALAPPDATA) folders.push(path.join(process.env.LOCALAPPDATA, 'Microsoft', 'Windows', 'Fonts'));
+    }
+    for (const dir of folders) {
+        const matches = listFontFaces(dir).filter(f => !f.italic && (
+            f.typographicFamily.toLowerCase() === wanted || f.family.toLowerCase() === wanted));
+        if (matches.length === 0) continue;
+        const target = bold ? 700 : 400;
+        matches.sort((a, b) => (Math.abs(a.weight - target) - Math.abs(b.weight - target))
+            || (bold ? b.weight - a.weight : a.weight - b.weight));
+        const face = matches[0];
+        return { ...face, fontName: face.family, boldFlag: /bold|black|heavy/i.test(face.subfamily) ? -1 : 0 };
+    }
+    return null;
+}
+
+// Cues from the (already sanitised) SRT text: [{ start, end, text }].
+function parseSrtCues(srt) {
+    const cues = [];
+    for (const block of String(srt || '').split(/\r?\n\r?\n+/)) {
+        const lines = block.split(/\r?\n/);
+        const t = lines.findIndex(l => l.includes('-->'));
+        if (t === -1) continue;
+        const [a, b] = lines[t].split('-->').map(s => s.trim());
+        const start = parseTimeToSeconds(a);
+        const end = parseTimeToSeconds(b);
+        const text = lines.slice(t + 1).join('\n').trim();
+        if (!text || isNaN(start) || isNaN(end) || end <= start) continue;
+        cues.push({ start, end, text });
+    }
+    return cues;
+}
+
+// Text for one ASS line: libass would read braces as override tags and a
+// backslash as an escape, so those are swapped for look-alikes.
+function toAssLine(text) {
+    return String(text).replace(/\{/g, '(').replace(/\}/g, ')').replace(/\\/g, '/');
+}
+
+// ASS style + events reproducing the preview at canvasW x canvasH.
+// Returns { content, style } (style is reported for logs/tests).
+function buildSubtitleAss(cues, options, canvasW, canvasH) {
+    const W = Math.max(2, Math.round(canvasW || 1920));
+    const H = Math.max(2, Math.round(canvasH || 1080));
+    const s = SubtitleLayout.resolveStyle(options);
+
+    let primary = hexToAssColor(s.color, '&H00FFFFFF');
+    let outlineCol = hexToAssColor(s.outlineColor, '&H00000000');
+    let shadowCol = hexToAssColor(s.shadowColor, '&H00000000');
+    let outlinePx = SubtitleLayout.previewPxToVideoPx(s.outlineWidth, W, H);
+    let shadowPx = SubtitleLayout.previewPxToVideoPx(s.shadowDepth, W, H);
+    let marginPercent = s.marginPercent;
+    let bold = s.bold;
+    let sizeMultiplier = 1;
+    // Export-only looks picked in the export dialog (the preview does not show them).
+    // Their outline/shadow numbers are in the same preview pixels as the user's.
+    if (s.preset === 'tiktok_pop') {
+        sizeMultiplier = 1.15; primary = '&H0000E5FF'; outlineCol = '&H00000000';
+        outlinePx = SubtitleLayout.previewPxToVideoPx(4, W, H); shadowPx = SubtitleLayout.previewPxToVideoPx(2, W, H);
+        marginPercent = Math.min(90, marginPercent * 1.5); bold = true;
+    } else if (s.preset === 'neon_cyan') {
+        primary = '&H00FFFF00'; outlineCol = '&H00111111';
+        outlinePx = SubtitleLayout.previewPxToVideoPx(3, W, H); shadowPx = SubtitleLayout.previewPxToVideoPx(2, W, H); bold = true;
+    } else if (s.preset === 'royal_gold') {
+        primary = '&H003AD3F5'; outlineCol = '&H00151535';
+        outlinePx = SubtitleLayout.previewPxToVideoPx(3, W, H); shadowPx = SubtitleLayout.previewPxToVideoPx(2, W, H); bold = true;
+    }
+
+    const face = resolveSubtitleFace(s.font, bold);
+    const fontName = face ? face.fontName : s.font;
+    const boldFlag = face ? face.boldFlag : (bold ? -1 : 0);
+    // libass makes "Fontsize" the font's full Windows height (ascent + descent), CSS
+    // makes font-size the em. Convert so the letters are as tall as in the preview.
+    const libassHeight = face ? face.libassHeight : 1.25;
+
+    const sample = SubtitleLayout.layoutSubtitle('', { baseSize: s.baseSize, videoWidth: W, videoHeight: H, sizeMultiplier });
+    const emPx = sample.fontSize * SubtitleLayout.CSS_FONT_RATIO;
+    const assFontSize = Math.round(emPx * libassHeight * 10) / 10;
+    // Preview: the bottom of the 1.2-line-height box sits marginPercent above the
+    // video's bottom edge. libass puts the bottom of the font's descent at MarginV.
+    // Shift by the difference so the text's baseline lands where the preview's does.
+    let baselineFix = 0;
+    if (face) {
+        const cssBaseline = (SubtitleLayout.CSS_LINE_HEIGHT - (face.cssAscent + face.cssDescent)) / 2 + face.cssDescent;
+        baselineFix = (cssBaseline - face.libassDescent) * emPx;
+    }
+    const marginV = Math.max(0, Math.round(H * marginPercent / 100 + baselineFix));
+    // Shadow colour at ~75% so the hard ASS shadow reads like the preview's soft one.
+    const bgr = shadowCol.replace(/^&H/i, '').replace(/&$/, '');
+    const shadowAss = `&H40${bgr.length >= 8 ? bgr.slice(-6) : bgr.padStart(6, '0')}`.toUpperCase();
+    const r1 = (n) => Math.round(n * 10) / 10;
+
+    const header = [
+        '[Script Info]',
+        'ScriptType: v4.00+',
+        `PlayResX: ${W}`,
+        `PlayResY: ${H}`,
+        // 2 = never wrap: the lines below are already broken exactly like the preview.
+        'WrapStyle: 2',
+        'ScaledBorderAndShadow: yes',
+        'YCbCr Matrix: None',
+        '',
+        '[V4+ Styles]',
+        'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
+        `Style: Default,${fontName},${assFontSize},${primary},${primary},${outlineCol},${shadowAss},${boldFlag},${s.italic ? -1 : 0},${s.underline ? -1 : 0},0,100,100,0,0,1,${r1(outlinePx)},${r1(shadowPx)},2,${sample.sideMargin},${sample.sideMargin},${marginV},1`,
+        '',
+        '[Events]',
+        'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+    ];
+    const events = [];
+    for (const cue of cues || []) {
+        const layout = SubtitleLayout.layoutSubtitle(cue.text, { baseSize: s.baseSize, videoWidth: W, videoHeight: H, sizeMultiplier });
+        if (layout.chunks.length === 0) continue;
+        const times = SubtitleLayout.chunkTimes(cue.start, cue.end, layout.chunks.length);
+        layout.chunks.forEach((lines, i) => {
+            const text = lines.map(toAssLine).join('\\N');
+            events.push(`Dialogue: 0,${formatAssTimestamp(times[i].start)},${formatAssTimestamp(times[i].end)},Default,,0,0,0,,${text}`);
+        });
+    }
+    return {
+        content: header.concat(events).join('\n') + '\n',
+        style: { fontName, fontFile: face ? face.file : null, assFontSize, marginV, outline: r1(outlinePx), shadow: r1(shadowPx), primary, boldFlag, events: events.length },
+    };
+}
+
 // Renders draggable "free text" overlays (persistent, full-duration captions the user
 // positions freely on the canvas) by piggy-backing on the libass `subtitles` filter,
 // since this ffmpeg build path already guarantees libass availability via hasSubtitlesFilter().
@@ -712,18 +986,24 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         isOriginalAudioMuted,
         originalAudioPath, // repaired copy of the video's own audio (see audio_repair.js)
         burnSubtitles = true,
-        subtitlePreset = 'classic', // 'classic' | 'tiktok_pop' | 'neon_cyan' | 'royal_gold'
-        subtitleFont = 'Kantumruy Pro',
-        subtitleFontSize = 28,
+        // Subtitle style: no defaults here on purpose. SubtitleLayout.resolveStyle()
+        // picks what the editor sent (subtitleSize/subtitleColor) over the old names
+        // (subtitleFontSize/subtitleFontColor) and falls back to the preview's defaults.
+        // A default on an old name used to win over the value the editor sent.
+        subtitlePreset, // 'classic' | 'tiktok_pop' | 'neon_cyan' | 'royal_gold'
+        subtitleFont,
+        subtitleFontSize,
         subtitleSize,
         subtitleColor,
-        subtitleFontColor = '&H00FFFFFF',
-        subtitleOutlineColor = '&H00000000',
-        subtitleOutlineWidth = 2,
-        subtitleShadowColor = '&H00000000',
-        subtitleShadowDepth = 1,
-        subtitlePosition = 'bottom',
-        subtitleMarginV = 30,
+        subtitleFontColor,
+        subtitleOutlineColor,
+        subtitleOutlineWidth,
+        subtitleShadowColor,
+        subtitleShadowDepth,
+        subtitleMarginV,
+        subtitleBold,
+        subtitleItalic,
+        subtitleUnderline,
         resolution,
         aspectRatio,
         customAspectRatio,
@@ -1401,36 +1681,23 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         }
 
         if (validSrtPath) {
-            const escapedSrtPath = escapeFfmpegFilterPath(validSrtPath);
-            const fontsDir = escapeFfmpegFilterPath(path.join(__dirname, '..', 'frontend', 'fonts'));
+            const fontsDir = escapeFfmpegFilterPath(getFfmpegFontsDir(tempDir));
 
             if (hasSubtitlesFilter()) {
-                const finalFont = subtitleFont || 'Kantumruy Pro';
-                const rawFontSize = parseInt(subtitleFontSize || subtitleSize, 10) || 28;
-                // Mirror the editor preview's "Exact Backend Font Size Math" (index.html
-                // updateSubtitleDisplay): scale by min(canvasW, canvasH)/1080, not just an
-                // explicit resolution/aspect-ratio override (targetH) — otherwise subtitles are
-                // burned in unscaled whenever no explicit resolution was chosen, even though the
-                // live preview always applies this scale.
-                const refDimension = Math.min(canvasW || 1920, canvasH || 1080);
-                const effectiveFontSize = refDimension ? Math.round(rawFontSize * (refDimension / 1080)) : rawFontSize;
-                const fontCol = hexToAssColor(subtitleFontColor || subtitleColor, '&H00FFFFFF');
-                const outlineCol = hexToAssColor(subtitleOutlineColor, '&H00000000');
-                const outlineW = subtitleOutlineWidth !== undefined ? subtitleOutlineWidth : 2;
-                const shadowDepth = subtitleShadowDepth !== undefined ? subtitleShadowDepth : 1;
-                const marginV = subtitleMarginV !== undefined ? subtitleMarginV : 30;
-
-                let subStyle = `Fontname=${finalFont},Fontsize=${effectiveFontSize},PrimaryColour=${fontCol},OutlineColour=${outlineCol},BorderStyle=1,Outline=${outlineW},Shadow=${shadowDepth},Alignment=2,MarginV=${marginV}`;
-
-                if (subtitlePreset === 'tiktok_pop') {
-                    subStyle = `Fontname=${finalFont},Fontsize=${Math.round(effectiveFontSize * 1.15)},PrimaryColour=&H0000E5FF,OutlineColour=&H00000000,BorderStyle=1,Outline=4,Shadow=2,Alignment=2,MarginV=${Math.round(marginV * 1.5)},Bold=1`;
-                } else if (subtitlePreset === 'neon_cyan') {
-                    subStyle = `Fontname=${finalFont},Fontsize=${effectiveFontSize},PrimaryColour=&H00FFFF00,OutlineColour=&H00111111,BorderStyle=1,Outline=3,Shadow=2,Alignment=2,MarginV=${marginV},Bold=1`;
-                } else if (subtitlePreset === 'royal_gold') {
-                    subStyle = `Fontname=${finalFont},Fontsize=${effectiveFontSize},PrimaryColour=&H003AD3F5,OutlineColour=&H00151535,BorderStyle=1,Outline=3,Shadow=2,Alignment=2,MarginV=${marginV},Bold=1`;
-                }
-
-                filterComplex.push(`[${currentVideoTag}]subtitles=filename='${escapedSrtPath}':fontsdir='${fontsDir}':force_style='${subStyle}'[final_video]`);
+                // An ASS file in video pixels with the preview's line breaks (see
+                // buildSubtitleAss). The values the editor sent win over the old option names.
+                const assPath = path.join(tempDir, 'subtitles_burn.ass');
+                const ass = buildSubtitleAss(parseSrtCues(fs.readFileSync(validSrtPath, 'utf8')), {
+                    subtitleSize, subtitleFontSize, subtitleColor, subtitleFontColor, subtitleFont,
+                    subtitleOutlineColor, subtitleOutlineWidth, subtitleShadowColor, subtitleShadowDepth,
+                    subtitleMarginV, subtitleBold, subtitleItalic, subtitleUnderline, subtitlePreset,
+                }, canvasW, canvasH);
+                fs.writeFileSync(assPath, ass.content, 'utf8');
+                console.log(`[Render] Subtitles: ${ass.style.events} events, font "${ass.style.fontName}" size ${ass.style.assFontSize}, MarginV ${ass.style.marginV}, on ${canvasW}x${canvasH}`);
+                // The 'ass' filter, not 'subtitles': only 'ass' lets us ask libass for complex
+                // (HarfBuzz) shaping. With the 'subtitles' filter's simple shaping Khmer comes
+                // out broken — coeng subscripts drawn as separate marks, vowels in the wrong place.
+                filterComplex.push(`[${currentVideoTag}]ass=filename='${escapeFfmpegFilterPath(assPath)}':fontsdir='${fontsDir}':shaping=complex[final_video]`);
             } else {
                 filterComplex.push(`[${currentVideoTag}]null[final_video]`);
                 softSrtInputIndex = nextInputIndex++;
@@ -1447,8 +1714,9 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             const assPath = buildFreeTextAssFile(validFreeTexts, canvasW, canvasH, videoDuration, tempDir);
             if (assPath) {
                 const escapedAssPath = escapeFfmpegFilterPath(assPath);
-                const ftFontsDir = escapeFfmpegFilterPath(path.join(__dirname, '..', 'frontend', 'fonts'));
-                filterComplex.push(`[${finalVideoTag}]subtitles=filename='${escapedAssPath}':fontsdir='${ftFontsDir}'[final_video_ft]`);
+                const ftFontsDir = escapeFfmpegFilterPath(getFfmpegFontsDir(tempDir));
+                // Same complex shaping as the subtitles above, so Khmer free text renders correctly too.
+                filterComplex.push(`[${finalVideoTag}]ass=filename='${escapedAssPath}':fontsdir='${ftFontsDir}':shaping=complex[final_video_ft]`);
                 finalVideoTag = 'final_video_ft';
             }
         }
@@ -1594,5 +1862,8 @@ module.exports = {
     renderVideo,
     cancelRender,
     getRenderProgress,
-    detectAvailableEncoders
+    detectAvailableEncoders,
+    // Exposed for tests (tests/subtitle-layout.test.js).
+    _buildSubtitleAss: buildSubtitleAss,
+    _resolveSubtitleFace: resolveSubtitleFace
 };
