@@ -19,9 +19,9 @@ module.exports = function createEpisodesRouter({ episodeJoiner }) {
     });
 
     router.post('/join', async (req, res) => {
-        const { parts, outDir, seriesName } = req.body || {};
+        const { parts, outDir, seriesName, partNumbers } = req.body || {};
         try {
-            const jobId = await episodeJoiner.start({ parts, outDir: resolveLocalFilePath(outDir) || outDir, seriesName });
+            const jobId = await episodeJoiner.start({ parts, outDir: resolveLocalFilePath(outDir) || outDir, seriesName, partNumbers });
             res.json({ success: true, jobId });
         } catch (e) {
             res.json({ success: false, error: e.message });

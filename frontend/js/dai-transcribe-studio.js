@@ -433,7 +433,14 @@
   // "Transcribe All Tabs" (main window): every tab with a video on disk is transcribed by this
   // batch engine (parallel, live %, quota-aware) and each transcript is written straight back
   // into its tab. Resolves with the batch summary, or null when nothing ran.
-  async function transcribeAllTabs() {
+  // onlyRefs (optional Set of project objects): transcribe just those tabs, e.g. a retry of
+  // the tabs that came back empty.
+  // oneAtATime: one tab at a time, like pressing Transcribe on each tab. Several tabs at once
+  // multiply the Gemini requests, and rate-limited chunks then go to a fallback model that
+  // splits the dialogue differently (fewer, longer lines).
+  // keyPerTab: one tab per API key, all at once - each key (its own Google project) carries
+  // one request at a time, and a rate limit is waited out on the same model.
+  async function transcribeAllTabs({ onlyRefs = null, oneAtATime = false, keyPerTab = false } = {}) {
     const bridge = window.dubberBridge;
     if (!bridge) {
       showToast('DR Dubber Pro projects engine not loaded.', 'error');
@@ -444,7 +451,7 @@
       showToast('A batch is already running - see its progress here.', 'info');
       return null;
     }
-    const tabs = bridge.tabList().filter((t) => t.path);
+    const tabs = bridge.tabList().filter((t) => t.path && (!onlyRefs || onlyRefs.has(t.ref)));
     const busy = tabs.filter((t) => bridge.isTabBusy(t.ref));
     const usable = tabs.filter((t) => !bridge.isTabBusy(t.ref));
     if (!usable.length) {
@@ -460,15 +467,20 @@
     })), { quiet: true });
     // Files already in the queue (even finished ones) are transcribed again for their tab; a
     // part done in the last few hours comes back from the server's cache without using quota.
+    // Only these tabs' items run: older queue items (e.g. from a previous series part whose
+    // tabs are closed) must not be re-run or counted in this batch's summary.
+    const runIds = new Set();
     for (const t of usable) {
       const item = state.queue.find((q) => q.filePath === t.path);
       if (!item || ['extracting', 'transcribing'].includes(item.status)) continue;
-      Object.assign(item, { targetTab: t.ref, partIndex: t.number, autoApplyToTab: true, appliedToTab: false, status: 'pending', error: null, progress: 0 });
+      Object.assign(item, { targetTab: t.ref, partIndex: t.number, autoApplyToTab: true, appliedToTab: false, repairIncomplete: false, status: 'pending', error: null, progress: 0 });
+      runIds.add(item.id);
     }
     renderQueueTable();
     if (busy.length) showToast(`${busy.length} busy tab(s) skipped (generating voice or transcribing).`, 'warning');
+    if (!runIds.size) return null;
     openDaiTranscribeModal('batch');
-    return startBatch();
+    return startBatch(runIds, { maxParallel: oneAtATime ? 1 : null, keyPerTab });
   }
 
   async function addFilesToQueue(files, { quiet = false } = {}) {
@@ -482,7 +494,8 @@
       const size = isElectronObj ? 0 : (f.size || 0);
 
       // Check if already in queue
-      const existing = state.queue.find(q => (filePath && q.filePath === filePath) || q.fileName === fileName);
+      // By path when there is one: the same file name in another folder is a different file.
+      const existing = state.queue.find(q => (filePath ? q.filePath === filePath : q.fileName === fileName));
       if (existing) continue;
 
       const ext = (fileName || '').split('.').pop().toLowerCase();
@@ -832,8 +845,11 @@
   // Max files transcribed at the same time (also capped by the number of API keys).
   const BATCH_MAX_PARALLEL_FILES = 6;
 
-  async function startBatch() {
+  // onlyIds (Set of queue item ids) limits the batch to those items; the Start button
+  // passes a click event, which means "everything pending".
+  async function startBatch(onlyIds, { maxParallel = null, keyPerTab = false } = {}) {
     if (state.isBatchRunning) return;
+    if (!(onlyIds instanceof Set)) onlyIds = null;
 
     const apiKeys = getActiveApiKeys();
     if (apiKeys.length === 0) {
@@ -842,7 +858,7 @@
       return;
     }
 
-    const pendingItems = state.queue.filter(q => q.status === 'pending' || q.status === 'failed');
+    const pendingItems = state.queue.filter(q => (q.status === 'pending' || q.status === 'failed') && (!onlyIds || onlyIds.has(q.id)));
     if (pendingItems.length === 0) {
       showToast('No pending files to process in the queue.', 'info');
       return;
@@ -875,27 +891,40 @@
     // single Gemini request), so a one-at-a-time queue left most keys idle and a 2 hour movie
     // took hours. Each file starts on a different key so they don't all pile onto key #1; the
     // server's per-key cooldowns spread any rate limits across the rest.
-    const concurrency = Math.max(1, Math.min(BATCH_MAX_PARALLEL_FILES, apiKeys.length, pendingItems.length));
+    const concurrency = Math.max(1, Math.min(maxParallel || BATCH_MAX_PARALLEL_FILES, apiKeys.length, pendingItems.length));
     const keyStride = Math.max(1, Math.floor(apiKeys.length / concurrency));
     const batchAbort = state.batchAbortController;
-    let nextIndex = 0;
+    const todo = [...pendingItems];
+    // keyPerTab: worker w owns key w; keys beyond the parallel count replace a key that runs
+    // out of its daily quota.
+    const spareKeys = keyPerTab ? apiKeys.slice(concurrency) : [];
     let stopToastShown = false;
 
     // Every key out of its daily quota: the remaining files would all fail the same way, so they
     // stay queued (Start again once the quota resets or billing is on).
     let quotaOut = false;
 
-    const worker = async () => {
-      while (nextIndex < pendingItems.length) {
+    let inFlight = 0; // files being worked on - one can come back to `todo` (its key ran out)
+    const worker = async (w) => {
+      let ownKey = keyPerTab ? apiKeys[w] : null;
+      while (todo.length || (keyPerTab && inFlight)) {
         if (!state.isBatchRunning || state.batchAbortController?.signal.aborted || quotaOut) return;
-        const n = nextIndex++;
-        const item = pendingItems[n];
-        const offset = (n * keyStride) % apiKeys.length;
+        if (!todo.length) {
+          await new Promise((r) => setTimeout(r, 500));
+          continue;
+        }
+        const item = todo.shift();
+        inFlight++;
+        const offset = (pendingItems.indexOf(item) * keyStride) % apiKeys.length;
         state.runningItemIds.add(item.id);
         if (item.autoApplyToTab) window.dubberBridge?.setTabWorking(item.targetTab, true);
         try {
           await processSingleBatchItem(item, {
-            apiKeys: [...apiKeys.slice(offset), ...apiKeys.slice(0, offset)],
+            // keyPerTab: own key first, the others only as backups (one request at a time), so a
+            // rate-limited key passes the next chunk to an idle key instead of waiting.
+            apiKeys: ownKey ? [ownKey, ...apiKeys.filter((k) => k !== ownKey)] : [...apiKeys.slice(offset), ...apiKeys.slice(0, offset)],
+            maxLanes: keyPerTab ? 1 : null,
+            stayOnModel: keyPerTab,
             model,
             genre,
             glossaryDict,
@@ -908,6 +937,17 @@
             stopToastShown = true;
             return;
           }
+          if (err.isDailyQuota && ownKey) {
+            // This key is out for today: the file goes back in line for a key that still has
+            // quota, and this worker carries on with a spare key (or stops).
+            Object.assign(item, { status: 'pending', error: null, progress: 0 });
+            todo.unshift(item);
+            ownKey = spareKeys.shift() || null;
+            console.warn(`[DAI Batch] Key ${w + 1} is out of daily quota${ownKey ? ' - using a spare key' : ''}.`);
+            renderQueueTable();
+            if (!ownKey) return;
+            continue;
+          }
           item.status = 'failed';
           item.error = err.message || 'Processing failed';
           console.error(`[DAI Batch] Error processing ${item.fileName}:`, err);
@@ -918,17 +958,29 @@
           }
           renderQueueTable();
         } finally {
+          inFlight--;
           state.runningItemIds.delete(item.id);
           if (item.autoApplyToTab) window.dubberBridge?.setTabWorking(item.targetTab, false);
         }
       }
     };
-    await Promise.all(Array.from({ length: concurrency }, worker));
+    await Promise.all(Array.from({ length: concurrency }, (_, w) => worker(w)));
+    // keyPerTab: every key ran out of its daily quota with files left.
+    if (keyPerTab && todo.length && !batchAbort.signal.aborted) {
+      quotaOut = true;
+      todo.forEach((item) => Object.assign(item, { status: 'failed', error: 'Every API key is out of its daily Gemini quota.' }));
+      showToast(`⛔ Every API key is out of its daily quota. ${todo.length} file(s) stay in the queue.`, 'error');
+      refreshKeyStatuses();
+    }
 
     // Stopped (and maybe already restarted): stopBatch() has cleaned up, leave the new run alone.
+    // A transcript that never reached its tab (tab closed) doesn't count as done.
+    const reachedTab = (q) => q.status === 'completed' && (!q.autoApplyToTab || q.appliedToTab);
     const batchSummary = () => ({
-      completed: pendingItems.filter(q => q.status === 'completed').length,
-      failed: pendingItems.filter(q => q.status === 'failed').length,
+      completed: pendingItems.filter(reachedTab).length,
+      failed: pendingItems.filter(q => q.status === 'failed' || (q.status === 'completed' && !reachedTab(q))).length,
+      partial: pendingItems.filter(q => reachedTab(q) && q.repairIncomplete).length,
+      fallbackTabs: pendingItems.filter(q => reachedTab(q) && q.fallbackModels?.length).map(q => ({ tab: q.targetTab, models: q.fallbackModels })),
       total: pendingItems.length,
       quotaOut,
       stopped: batchAbort.signal.aborted
@@ -991,7 +1043,7 @@
   }
 
   async function processSingleBatchItem(item, opts) {
-    const { apiKeys, model, genre, glossaryDict, customFolder, signal } = opts;
+    const { apiKeys, model, genre, glossaryDict, customFolder, signal, stayOnModel = false, maxLanes = null } = opts;
     const backendBase = getBackendBase();
 
     // Step 1: Extract Audio (if video or not already an mp3)
@@ -1097,7 +1149,9 @@
           requestId: item.requestId,
           customFolder,
           sourceFilePath: item.filePath,
-          apiSaver: localStorage.getItem('aiDubberApiSaver') === 'true'
+          apiSaver: localStorage.getItem('aiDubberApiSaver') === 'true',
+          stayOnModel,
+          ...(maxLanes ? { maxLanes } : {})
         }),
         signal
       });
@@ -1128,6 +1182,13 @@
       gender: c.gender || 'Female',
       emotion: c.emotion || 'Neutral'
     }));
+
+    // The server's missed-dialogue / translation pass didn't finish: the tab may have holes
+    // or lines without Khmer. Fix Missing fills them.
+    const rep = transcribeResult.repair || {};
+    item.repairIncomplete = !!(rep.gapsSkippedForTime || rep.gapsFailed || rep.quotaError || rep.stillUntranslated);
+
+    item.fallbackModels = transcribeResult.fallbackModels || [];
 
     item.subtitles = standardized;
     item.cuesCount = standardized.length;

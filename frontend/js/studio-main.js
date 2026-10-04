@@ -3157,7 +3157,7 @@
         let customFolderPath = localStorage.getItem("aiDubberAutoSaveSrtCustomPath") || "";
         let sourceFilePath = (targetProject.file && targetProject.file.path) || targetProject.videoFilePath || null;
         let baseName = (targetProject.file && targetProject.file.name ? targetProject.file.name.replace(/\.[^/.]+$/, "") : (targetProject.name || "subtitle")).trim();
-        baseName = baseName.replace(/([_.\- ](?:part|pt|chunk)\s*\d+)(?:[_.\- ](?:part|pt|chunk)\s*\d+)+$/i, "$1");
+        baseName = baseName.replace(/([_.\- ](?:part|pt|chunk)\s*0*(\d+))(?:[_.\- ](?:part|pt|chunk)\s*0*\2)+$/i, "$1");
 
         if (mode === "source" && !sourceFilePath && customFolderPath) {
           mode = "custom";
@@ -4147,6 +4147,8 @@
     const projectTabName = (p) => p.tabTitle || (p.file?.name || p.name || `Tab ${projects.indexOf(p) + 1}`).replace(/\.[^/.]+$/, "");
     // The open tab's live list is the global `subtitles`; other tabs keep theirs on the project.
     const liveSubtitlesOf = (p) => (projects[activeProjectIndex] === p ? subtitles : p.subtitles || []);
+    // A line with no letters or digits (empty, "♪", "...") has nothing for the TTS to voice.
+    const isSpeakableText = (text) => /[\p{L}\p{N}]/u.test(text || "");
 
     // Repairs one tab's subtitles. Returns { ok, changed, report, error, isDailyQuota, cancelled }.
     // onNote gets the backend's progress notes ("Double-checking 3 stretch(es)…").
@@ -4666,7 +4668,8 @@
     // Set while "Transcribe All Tabs" runs inside DAI-Transcribe's batch engine (see below).
     let allTabsBatchRun = false;
 
-    async function transcribeAllProjects() {
+    // onlyRefs (optional Set of projects): transcribe just those tabs (Dub Whole Series retries).
+    async function transcribeAllProjects({ onlyRefs = null, oneAtATime = false, keyPerTab = false } = {}) {
       if (allTabsBatchRun) {
         window.daiStudio?.stopBatch();
         return null;
@@ -4747,7 +4750,7 @@
         return;
       }
 
-      const eligibleProjects = projects.filter((p) => p.file || p.blobUrl);
+      const eligibleProjects = projects.filter((p) => (p.file || p.blobUrl) && (!onlyRefs || onlyRefs.has(p)));
       if (eligibleProjects.length === 0) {
         showToast("No video files found in any open project tab.", "info");
         return;
@@ -4778,7 +4781,7 @@
         isTranscribingAll = true;
         updateTranscribeAllButtonState();
         try {
-          return await window.daiStudio.transcribeAllTabs();
+          return await window.daiStudio.transcribeAllTabs({ onlyRefs, oneAtATime, keyPerTab });
         } finally {
           allTabsBatchRun = false;
           isTranscribingAll = false;
@@ -4792,10 +4795,14 @@
       showToast(`⚡ Transcribing all ${eligibleProjects.length} project tab(s) in sequential order (1 to ${eligibleProjects.length})...`, "info");
 
       let completedCount = 0;
+      let stoppedLoop = false;
 
       // Process projects sequentially one by one in exact order (1, 2, 3... N)
       for (let i = 0; i < eligibleProjects.length; i++) {
-        if (!isTranscribingAll) break;
+        if (!isTranscribingAll) {
+          stoppedLoop = true;
+          break;
+        }
         const proj = eligibleProjects[i];
         const tabNum = i + 1;
         const vidName = proj.file?.name || proj.name || `Video ${tabNum}`;
@@ -4819,7 +4826,7 @@
       if (completedCount > 0) {
         showToast(`🎉 Completed and saved all ${completedCount} of ${eligibleProjects.length} project tab(s) in order!`, "success");
       }
-      return { completed: completedCount, total: eligibleProjects.length };
+      return { completed: completedCount, failed: eligibleProjects.length - completedCount, total: eligibleProjects.length, stopped: stoppedLoop };
     }
 
     // Wire Event Listeners
@@ -16116,7 +16123,11 @@
           title: "Choose the movie to split",
           defaultPath: localStorage.getItem("lastPath:splitMovie") || "",
           filters: [
-            { name: "Video", extensions: ["mp4", "mkv", "mov", "m4v", "avi", "wmv", "flv", "ts", "m2ts", "mts", "webm", "mpg", "mpeg", "3gp", "vob", "rmvb", "rm", "asf", "f4v", "ogv", "divx"] },
+            {
+              name: "Video or audio",
+              extensions: ["mp4", "mkv", "mov", "m4v", "avi", "wmv", "flv", "ts", "m2ts", "mts", "webm", "mpg", "mpeg", "3gp", "3g2", "vob", "rmvb", "rm", "asf", "f4v", "ogv", "divx", "mxf", "dv", "qt",
+                "mp3", "wav", "m4a", "m4b", "aac", "flac", "ogg", "oga", "opus", "wma", "ac3", "eac3", "dts", "aif", "aiff", "caf", "mp2", "mka", "amr", "ape", "wv", "ra"],
+            },
             { name: "All Files", extensions: ["*"] },
           ],
         });
@@ -16189,6 +16200,7 @@
     // so after a Stop, a quota pause or an app restart, Continue picks up where it stopped.
     const SERIES_KEY = "aiDubberSeriesRun";
     let seriesRun = null; // { stopped, step, joinJobId, splitJobId } while the pipeline runs
+    let cancelSeriesBackgroundJoin = () => { }; // set by Dub Whole Series below
 
     // Called from stopAllTabsJob (the All Tabs Stop button and this window's Stop button).
     // Transcribe is stopped by stopAllTabsJob itself.
@@ -16197,6 +16209,9 @@
       seriesRun.stopped = true;
       const post = (url, body) => fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).catch(() => { });
       if (seriesRun.joinJobId) post("http://localhost:3001/api/episodes/cancel", { jobId: seriesRun.joinJobId });
+      // Stop means stop: the parts joining in the background stop too (Continue reuses the
+      // parts already finished and joins the rest).
+      cancelSeriesBackgroundJoin();
       if (seriesRun.splitJobId) post("http://localhost:3001/api/split/cancel", { jobId: seriesRun.splitJobId });
       if (seriesRun.step === "generate" && (isGeneratingAudioAll || voxQueueRunning)) generateSelectedAudioAllProjects();
       if (seriesRun.step === "isolate" && isIsolatingBgmAll) isolateBgmAllProjects({ skipConfirm: true });
@@ -16258,7 +16273,13 @@
 
       const nextPartIndex = () => (plan ? plan.parts.findIndex((p) => p.status === "joined") : -1);
       const unfinishedIndex = () => (plan && plan.current != null && plan.parts[plan.current] && plan.parts[plan.current].status !== "done" ? plan.current : -1);
-      const partsToJoin = () => (plan ? plan.parts.map((p, k) => k).filter((k) => plan.parts[k].status === "planned" || plan.parts[k].status === "failed") : []);
+      // Parts after the one being dubbed are joined in the background (plan.bgJoin = { jobId,
+      // indices }, kept across a reload), so part 1 is dubbed as soon as it is joined.
+      let bgJoinProgress = null; // { [partIndex]: backend part status } while that job runs
+      let bgPoll = null;
+      let bgPollJob = null; // the plan.bgJoin that bgPoll is watching
+      const joiningIndices = () => (plan?.bgJoin ? plan.bgJoin.indices.filter((k) => plan.parts[k].status === "planned") : []);
+      const partsToJoin = () => (plan ? plan.parts.map((p, k) => k).filter((k) => (plan.parts[k].status === "planned" || plan.parts[k].status === "failed") && !joiningIndices().includes(k)) : []);
       const piecesOpen = () => !!(plan && plan.pieces && plan.pieces.length && projects.length === plan.pieces.length && plan.pieces.every((p, k) => projects[k] && projects[k].videoFilePath === p));
 
       // ── Rendering ────────────────────────────────────────────────────────
@@ -16273,12 +16294,13 @@
 
         const parts = plan
           ? plan.parts
+          : scan?.joinedParts ? scan.joinedParts.map((jp) => ({ label: jp.label, episodes: jp.episodes, duration: jp.duration, status: "preview" }))
           : scan ? planEpisodeParts(scan.files, joinMinutes()).map((g) => ({ label: `${epLabel(g[0])} – ${epLabel(g[g.length - 1])}`, episodes: g.length, duration: g.reduce((s, f) => s + f.duration, 0), status: "preview" })) : [];
         const totalEpisodes = parts.reduce((s, p) => s + p.episodes, 0);
         const totalDur = parts.reduce((s, p) => s + p.duration, 0);
         $("ds-stats").textContent = parts.length ? `${totalEpisodes} episodes · ${fmtDur(totalDur)} · ${parts.length} part${parts.length === 1 ? "" : "s"}` : (scan ? "No video files found in this folder." : "");
         if (plan) $("ds-name").value = plan.seriesName || "";
-        $("ds-join-minutes").disabled = !!plan || running;
+        $("ds-join-minutes").disabled = !!plan || running || !!scan?.joinedParts; // joined parts are already cut
         $("ds-name").disabled = !!plan || running;
         $("ds-split-minutes").disabled = running;
 
@@ -16287,8 +16309,9 @@
         box.innerHTML = "";
         parts.forEach((p, i) => {
           let state = "";
-          const jp = plan?.joinProgress?.[i];
+          const jp = plan?.joinProgress?.[i] || bgJoinProgress?.[i];
           if (jp && jp.status === "running") state = `<span class="text-sky-400">joining ${jp.percent || 0}%</span>`;
+          else if (p.status === "planned" && joiningIndices().includes(i)) state = `<span class="text-sky-400">waiting to join</span>`;
           else if (p.status === "preview" || p.status === "planned") state = `<span class="text-[var(--text-muted)]">${p.status === "planned" ? "not joined yet" : ""}</span>`;
           else if (p.status === "failed") state = `<span class="text-red-400" title="${esc(p.error)}">join failed</span>`;
           else if (p.status === "done") state = `<span class="text-emerald-400">✓ dubbed</span>`;
@@ -16325,10 +16348,11 @@
 
         const nextIdx = nextPartIndex();
         const toJoin = partsToJoin();
+        const joining = joiningIndices();
         const note = $("ds-note");
         let noteText = "";
-        if (plan && !running && u < 0 && nextIdx < 0 && !toJoin.length) noteText = "All parts are dubbed ✓ Start over to dub another series.";
-        else if (plan && !running && u < 0 && nextIdx >= 0 && plan.lastDone) noteText = `Export part ${plan.lastDone.index + 1} first if you haven't - Next part closes its tabs.`;
+        if (plan && !running && u < 0 && nextIdx < 0 && !toJoin.length && !joining.length) noteText = "All parts are dubbed ✓ Start over to dub another series.";
+        else if (plan && !running && u < 0 && (nextIdx >= 0 || joining.length) && plan.lastDone) noteText = `Export part ${plan.lastDone.index + 1} first if you haven't - Next part closes its tabs.`;
         note.textContent = noteText;
         note.classList.toggle("hidden", !noteText);
 
@@ -16340,12 +16364,19 @@
           btnNext.classList.add("hidden");
         } else if (!plan) {
           btnStart.classList.remove("hidden");
-          btnStart.textContent = parts.length ? `Start: join ${parts.length} part${parts.length === 1 ? "" : "s"} and dub part 1` : "Start";
+          btnStart.textContent = !parts.length ? "Start" : scan?.joinedParts ? `Start: dub part 1 of ${parts.length} (already joined)` : `Start: join ${parts.length} part${parts.length === 1 ? "" : "s"} and dub part 1`;
           btnStart.disabled = !parts.length;
           btnNext.classList.add("hidden");
+        } else if (joining.length) {
+          // Not dubbing, but the next parts are joining in the background: they can be stopped too.
+          btnStart.classList.remove("hidden");
+          btnStart.disabled = false;
+          btnStart.textContent = "Stop joining";
+          btnNext.classList.remove("hidden");
+          btnNext.textContent = u >= 0 ? `Continue part ${u + 1}` : `Next part: ${(nextIdx >= 0 ? nextIdx : joining[0]) + 1} of ${plan.parts.length}`;
         } else {
           btnStart.classList.add("hidden");
-          const label = u >= 0 ? `Continue part ${u + 1}` : nextIdx >= 0 ? `Next part: ${nextIdx + 1} of ${plan.parts.length}` : toJoin.length ? "Continue joining" : "";
+          const label = u >= 0 ? `Continue part ${u + 1}` : nextIdx >= 0 ? `Next part: ${nextIdx + 1} of ${plan.parts.length}` : joining.length ? `Next part: ${joining[0] + 1} of ${plan.parts.length}` : toJoin.length ? "Continue joining" : "";
           btnNext.textContent = label;
           btnNext.classList.toggle("hidden", !label);
         }
@@ -16418,13 +16449,15 @@
       }
 
       // ── Steps ────────────────────────────────────────────────────────────
-      async function joinParts(indices) {
-        const r = await postJson(`${API}/episodes/join`, { parts: indices.map((k) => plan.parts[k].files), outDir: plan.outDir, seriesName: plan.seriesName });
+      async function joinParts(indices, { quietReuse = false } = {}) {
+        const r = await postJson(`${API}/episodes/join`, { parts: indices.map((k) => plan.parts[k].files), partNumbers: indices.map((k) => k + 1), outDir: plan.outDir, seriesName: plan.seriesName });
         if (!r.success) throw new Error(`Joining failed: ${r.error}.`);
         seriesRun.joinJobId = r.jobId;
         let st = null;
         try {
           for (;;) {
+            // Stop pressed before the job id came back (or its cancel got lost): cancel now.
+            if (seriesRun.stopped) postJson(`${API}/episodes/cancel`, { jobId: r.jobId }).catch(() => { });
             await sleep(1000);
             st = await getJson(`${API}/episodes/status?jobId=${encodeURIComponent(r.jobId)}`).catch(() => null);
             if (!st || !st.success) throw new Error("Lost track of the joining job.");
@@ -16446,9 +16479,29 @@
         savePlan();
         if (st.status === "cancelled" || seriesRun.stopped) throw stoppedError();
         if (st.repairedEpisodes?.length) showToast(`Repaired damaged audio in ${st.repairedEpisodes.length} episode(s) while joining.`, "info");
+        const reused = indices.filter((k, j) => st.parts[j]?.reused);
+        if (reused.length && !quietReuse) showToast(`Part ${reused.map((k) => k + 1).join(", ")} was already joined - reused the file, no joining needed.`, "success");
         const failed = indices.filter((k) => plan.parts[k].status === "failed");
         if (failed.length) showToast(`Part ${failed.map((k) => k + 1).join(", ")} could not be joined: ${plan.parts[failed[0]].error}. The other parts continue.`, "warning");
         if (!plan.parts.some((p) => p.status === "joined" || p.status === "done")) throw new Error("No part could be joined.");
+      }
+
+      // Joins the first part that can be joined - parts not tried yet before ones that failed -
+      // so one part that can't be joined doesn't stop the series from moving on.
+      async function joinNextAvailable() {
+        const order = partsToJoin().sort((a, b) => (plan.parts[a].status === "failed") - (plan.parts[b].status === "failed") || a - b);
+        let lastError = null;
+        for (const k of order) {
+          try {
+            await joinParts([k]);
+          } catch (e) {
+            if (e.seriesStopped) throw e;
+            lastError = e;
+          }
+          if (plan.parts[k].status === "joined") return k;
+        }
+        if (order.length) throw lastError || new Error("No part could be joined.");
+        return -1;
       }
 
       async function runStep(name, fn) {
@@ -16521,30 +16574,88 @@
         return `${plan.pieces.length} tab(s)`;
       }
 
+      const QUOTA_MSG = "The daily Gemini quota is used up. Press Continue after it resets, or add a key from another Google project.";
+      const RETRY_PASSES = 2;
+      const tabNumbers = (list) => list.map((p) => projects.indexOf(p) + 1).join(", ");
+
+      // Every tab must come back with subtitles: tabs that failed or came back empty are
+      // transcribed again (pieces already done come from the server's cache, no quota), then
+      // Fix Missing fills stretches Gemini skipped and lines left without Khmer.
       async function transcribeStep() {
-        const t = await transcribeAllProjects();
-        window.daiStudio?.close?.(); // the DAI window opens to show the batch; hide it again
+        const emptyTabs = () => projects.filter((p) => !liveSubtitlesOf(p).length);
+        const fallbackTabs = new Map(); // tab -> fallback model(s) Gemini used for it
+        const runTranscribe = async (onlyTabs) => {
+          // One API key per tab, all tabs at once: each key (its own Google project) carries one
+          // request at a time, and a rate limit is waited out on the same model. Spreading every
+          // tab over every key got rate-limited onto fallback models that merge the dialogue
+          // into fewer, longer lines.
+          const t = await transcribeAllProjects({ onlyRefs: onlyTabs ? new Set(onlyTabs) : null, keyPerTab: true });
+          window.daiStudio?.close?.(); // the DAI window opens to show the batch; hide it again
+          checkStop();
+          if (!t) throw new Error("Transcribe did not start (see the message above).");
+          if (t.stopped) throw stoppedError();
+          if (t.quotaOut) throw new Error(QUOTA_MSG);
+          (t.fallbackTabs || []).forEach((f) => fallbackTabs.set(f.tab, f.models));
+          return t;
+        };
+
+        // On Continue, tabs that already have subtitles are kept.
+        const first = emptyTabs();
+        if (first.length) await runTranscribe(first.length < projects.length ? first : null);
+        for (let pass = 1; pass <= RETRY_PASSES && emptyTabs().length; pass++) {
+          setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Transcribe again: tab ${tabNumbers(emptyTabs())} (${pass}/${RETRY_PASSES})`);
+          await sleep(5000);
+          checkStop();
+          await runTranscribe(emptyTabs());
+        }
+        const stillEmpty = emptyTabs();
+        if (stillEmpty.length === projects.length) throw new Error("No tab could be transcribed.");
+        if (stillEmpty.length) throw new Error(`Tab ${tabNumbers(stillEmpty)} could not be transcribed after ${RETRY_PASSES + 1} tries. Press Continue to try again.`);
+
+        setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Fix missing lines`);
+        const f = getGeminiKeys().length ? await fixMissingAllTabs() : null;
         checkStop();
-        if (!t) throw new Error("Transcribe did not start (see the message above).");
-        if (t.stopped) throw stoppedError();
-        if (t.quotaOut) throw new Error("The daily Gemini quota is used up. Press Continue after it resets, or add a key from another Google project.");
-        const total = t.total ?? projects.length;
-        const ok = t.completed ?? 0;
-        if (!ok) throw new Error("No tab could be transcribed.");
-        return t.failed ? `${ok} of ${total} tabs - ${t.failed} failed, transcribe those tabs again later` : `${ok} of ${total} tabs`;
+        if (f?.stopped) throw stoppedError();
+        if (f?.quotaOut) throw new Error(QUOTA_MSG);
+        const noKhmer = projects.reduce((n, p) => n + liveSubtitlesOf(p).filter((s) => !isSpeakableText(s.text)).length, 0);
+        let note = `${projects.length} of ${projects.length} tabs`;
+        if (f?.fixedLines) note += ` · ${f.fixedLines} missing line(s) filled`;
+        if (noKhmer) note += ` · ${noKhmer} line(s) have no text to voice`;
+        const fellBack = [...fallbackTabs].filter(([tab]) => projects.includes(tab));
+        if (fellBack.length) note += ` · tab ${tabNumbers(fellBack.map(([tab]) => tab))} partly used ${[...new Set(fellBack.flatMap(([, m]) => m))].join(", ")} (Google rate limit) - re-transcribe if the lines look merged`;
+        return note;
       }
 
+      // Every line with text must end up voiced: lines that failed are generated again
+      // (only pending lines are sent), and the series pauses instead of moving on if some
+      // still have no voice.
       async function generateStep() {
-        const g = await generateSelectedAudioAllProjects();
-        checkStop();
-        if (g && g.ok === false && g.reason === "no-subtitles") return "no subtitles to voice";
-        if (!g || g.ok === false) {
-          throw new Error(g?.reason === "settings" ? "Set the 'Generated Audio Temp Path' in Settings." : g?.reason === "vox-server" ? "Start the VoxCPM2 server first." : "Generate voices did not start.");
+        const missingVoice = () => projects.reduce((n, p) => n + liveSubtitlesOf(p).filter((s) => isSpeakableText(s.text) && (s.audioStatus !== "ready" || !s.file)).length, 0);
+        const runGenerate = async () => {
+          const g = await generateSelectedAudioAllProjects();
+          checkStop();
+          if (g && g.ok === false && g.reason === "no-subtitles") return g;
+          if (!g || g.ok === false) {
+            throw new Error(g?.reason === "settings" ? "Set the 'Generated Audio Temp Path' in Settings." : g?.reason === "vox-server" ? "Start the VoxCPM2 server first." : "Generate voices did not start.");
+          }
+          if (g.stopped) throw stoppedError();
+          return g;
+        };
+
+        // On Continue with every line already voiced, Generate All would redo every line.
+        const alreadyVoiced = !missingVoice() && projects.some((p) => liveSubtitlesOf(p).some((s) => s.audioStatus === "ready"));
+        let g = alreadyVoiced ? { vox: false } : await runGenerate();
+        if (g.reason === "no-subtitles") return "no subtitles to voice";
+        for (let pass = 1; pass <= RETRY_PASSES && missingVoice(); pass++) {
+          setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Generate again: ${missingVoice()} line(s) (${pass}/${RETRY_PASSES})`);
+          await sleep(5000);
+          checkStop();
+          g = await runGenerate();
         }
-        if (g.stopped) throw stoppedError();
-        const failedLines = projects.reduce((n, p) => n + liveSubtitlesOf(p).filter((s) => s.audioStatus === "error").length, 0);
-        const base = g.vox ? "done (VoxCPM2)" : `${g.succeeded} of ${g.total} tabs`;
-        return failedLines ? `${base} - ${failedLines} line(s) failed, press Generate All Tabs again later` : base;
+        const missing = missingVoice();
+        if (missing) throw new Error(`${missing} line(s) still have no voice after ${RETRY_PASSES + 1} tries. Press Continue to try them again.`);
+        const voiced = projects.reduce((n, p) => n + liveSubtitlesOf(p).filter((s) => isSpeakableText(s.text)).length, 0);
+        return `${g.vox ? "VoxCPM2 · " : ""}all ${voiced} line(s) voiced in ${projects.length} tab(s)`;
       }
 
       async function isolateStep() {
@@ -16563,6 +16674,13 @@
         }
         savePlan();
         if (!(plan.stepState.split?.state === "done" && plan.pieces?.length)) {
+          // The joined file must hold exactly this part's episodes (an earlier build could save
+          // a part under another part's number). Joining again reuses a correct file in under a
+          // second, and rebuilds a wrong or missing one under the right name.
+          if (!plan.parts[i].prejoined) {
+            await joinParts([i], { quietReuse: true });
+            if (plan.parts[i].status !== "joined") throw new Error(`Part ${i + 1} could not be joined: ${plan.parts[i].error || "unknown error"}.`);
+          }
           await runStep("split", splitStep);
         }
         if (!piecesOpen()) {
@@ -16581,26 +16699,131 @@
         plan.stepState = null;
         plan.pieces = null;
         savePlan();
-        const next = nextPartIndex();
+        const next = [nextPartIndex(), ...joiningIndices(), ...partsToJoin()].find((k) => k >= 0) ?? -1;
         showToast(next >= 0
           ? `Part ${i + 1} of ${plan.parts.length} is dubbed ✓ Export it, then press Next part in Dub Whole Series.`
           : `Part ${i + 1} is dubbed ✓ That was the last part.`, "success");
         modal.classList.remove("hidden");
       }
 
+      async function startBackgroundJoin(indices) {
+        if (!plan || plan.bgJoin || !indices.length) return;
+        const r = await postJson(`${API}/episodes/join`, { parts: indices.map((k) => plan.parts[k].files), partNumbers: indices.map((k) => k + 1), outDir: plan.outDir, seriesName: plan.seriesName }).catch((e) => ({ success: false, error: e.message }));
+        if (!r.success) {
+          showToast(`Could not start joining the next parts (${r.error}). They are joined when you press Next part.`, "warning");
+          return;
+        }
+        // Back to "planned": the background job owns them now (a failed part is tried again).
+        indices.forEach((k) => Object.assign(plan.parts[k], { status: "planned", error: null }));
+        plan.bgJoin = { jobId: r.jobId, indices };
+        savePlan();
+        pollBackgroundJoin();
+      }
+
+      function pollBackgroundJoin() {
+        if (!plan?.bgJoin || bgPollJob === plan.bgJoin) return;
+        const job = plan.bgJoin;
+        bgPollJob = job; // a newer job (stopped, then started again) gets its own poller
+        let misses = 0;
+        bgPoll = (async () => {
+          try {
+            for (;;) {
+              const st = await getJson(`${API}/episodes/status?jobId=${encodeURIComponent(job.jobId)}`).catch(() => null);
+              if (plan?.bgJoin !== job) return; // stopped or started over
+              if (!st) {
+                // Couldn't reach the server: try again, and only after ~30s give the job up
+                // (cancelled, so it can't race a join of the same part started later).
+                if (++misses < 15) {
+                  await sleep(2000);
+                  continue;
+                }
+                postJson(`${API}/episodes/cancel`, { jobId: job.jobId }).catch(() => { });
+                break;
+              }
+              misses = 0;
+              // Unknown job: the app was restarted. Those parts are joined again on Next part.
+              if (!st.success) break;
+              bgJoinProgress = {};
+              job.indices.forEach((k, j) => {
+                const sp = st.parts[j];
+                bgJoinProgress[k] = sp;
+                if (plan.parts[k].status !== "planned") return;
+                if (sp?.status === "done") Object.assign(plan.parts[k], { status: "joined", outPath: sp.outPath, error: null });
+                else if (sp?.status === "error") {
+                  Object.assign(plan.parts[k], { status: "failed", error: sp.error });
+                  showToast(`Part ${k + 1} could not be joined: ${sp.error}. Next part tries again.`, "warning");
+                }
+              });
+              savePlan();
+              render();
+              if (st.status !== "running") break;
+              await sleep(2000);
+            }
+          } finally {
+            if (plan?.bgJoin === job) {
+              plan.bgJoin = null;
+              savePlan();
+            }
+            if (bgPollJob === job) {
+              bgPollJob = null;
+              bgPoll = null;
+              bgJoinProgress = null;
+            }
+            render();
+          }
+        })();
+      }
+
+      function cancelBackgroundJoin() {
+        if (!plan?.bgJoin) return;
+        postJson(`${API}/episodes/cancel`, { jobId: plan.bgJoin.jobId }).catch(() => { });
+        plan.bgJoin = null;
+        bgJoinProgress = null;
+        savePlan();
+        render();
+      }
+      cancelSeriesBackgroundJoin = cancelBackgroundJoin;
+
+      // Makes sure the next part to dub is joined: waits for the background join if it has
+      // that part, otherwise joins it now (and only it - the rest join in the background).
+      async function ensureNextPartJoined() {
+        if (unfinishedIndex() >= 0 || nextPartIndex() >= 0) return;
+        const waitFor = joiningIndices()[0];
+        if (waitFor !== undefined) {
+          while (plan.parts[waitFor].status === "planned" && joiningIndices().includes(waitFor)) {
+            checkStop();
+            setLabel(`Joining part ${waitFor + 1} ${bgJoinProgress?.[waitFor]?.percent || 0}%`);
+            await sleep(1000);
+          }
+          if (nextPartIndex() >= 0) return;
+        }
+        await joinNextAvailable();
+      }
+
+      if (plan?.bgJoin) pollBackgroundJoin(); // reopened app: pick the running join back up
+
       // ── Buttons ──────────────────────────────────────────────────────────
       async function startSeries() {
         if (!scan || seriesRun || !preflight()) return;
-        const groups = planEpisodeParts(scan.files, joinMinutes());
-        if (!groups.length) return;
+        const groups = scan.joinedParts ? [] : planEpisodeParts(scan.files, joinMinutes());
+        if (!groups.length && !scan.joinedParts?.length) return;
         if (!(await closeOpenTabs("Dub Whole Series opens each part as new tabs."))) return;
         savePrefs();
         plan = {
           folder: scan.folder,
           seriesName: $("ds-name").value.trim() || scan.seriesName,
-          outDir: pathJoin(scan.folder, "DR Dubber Joined"),
+          outDir: scan.joinedParts ? scan.folder : pathJoin(scan.folder, "DR Dubber Joined"),
           joinMinutes: joinMinutes(),
-          parts: groups.map((g) => ({
+          // A "DR Dubber Joined" folder was chosen: its parts are ready, nothing to join.
+          parts: scan.joinedParts ? scan.joinedParts.map((jp) => ({
+            label: jp.label,
+            episodes: jp.episodes,
+            duration: jp.duration,
+            files: [jp.path],
+            outPath: jp.path,
+            prejoined: true,
+            status: "joined",
+          })) : groups.map((g) => ({
             label: `${epLabel(g[0])} – ${epLabel(g[g.length - 1])}`,
             episodes: g.length,
             duration: g.reduce((s, f) => s + f.duration, 0),
@@ -16615,7 +16838,9 @@
         scan = null;
         savePlan();
         await withRun(async () => {
-          await joinParts(partsToJoin());
+          // Join part 1 only, then dub it while the other parts join in the background.
+          await joinNextAvailable();
+          await startBackgroundJoin(partsToJoin());
           const first = nextPartIndex();
           if (first >= 0) await runPart(first);
         });
@@ -16624,15 +16849,16 @@
       async function continueSeries() {
         if (!plan || seriesRun || !preflight()) return;
         const u = unfinishedIndex();
-        const target = u >= 0 ? u : nextPartIndex() >= 0 ? nextPartIndex() : partsToJoin()[0];
+        const target = u >= 0 ? u : nextPartIndex() >= 0 ? nextPartIndex() : joiningIndices()[0] ?? partsToJoin()[0];
         if (target === undefined) return;
         savePrefs();
         // Continuing a part whose tabs are still open keeps them; anything else opens new tabs.
         const keepTabs = u >= 0 && piecesOpen();
         if (!keepTabs && !(await closeOpenTabs(`Part ${target + 1} opens as new tabs.`))) return;
         await withRun(async () => {
-          // Parts not joined yet (a stopped or failed join) are joined once no joined part is left.
-          if (unfinishedIndex() < 0 && nextPartIndex() < 0 && partsToJoin().length) await joinParts(partsToJoin());
+          await ensureNextPartJoined();
+          // Parts not joined yet (stopped, failed, or the app was restarted) join in the background.
+          await startBackgroundJoin(partsToJoin());
           const idx = unfinishedIndex() >= 0 ? unfinishedIndex() : nextPartIndex();
           if (idx >= 0) await runPart(idx);
         });
@@ -16654,6 +16880,7 @@
         if (plan) {
           const ok = await customConfirm("Start over with another folder? The files already made stay where they are.", "Start over", "Yes, start over");
           if (!ok) return;
+          cancelBackgroundJoin();
           plan = null;
           savePlan();
         }
@@ -16689,6 +16916,11 @@
           stopAllTabsJob();
           return;
         }
+        if (plan?.bgJoin) {
+          cancelBackgroundJoin();
+          showToast("Stopped joining. Next part joins what is left (finished parts are reused).", "info");
+          return;
+        }
         startSeries();
       });
       $("ds-next").addEventListener("click", continueSeries);
@@ -16696,6 +16928,7 @@
         if (seriesRun || !plan) return;
         const ok = await customConfirm("Forget this series and start over? The joined and split files stay in their folders.", "Start over", "Yes, start over");
         if (!ok) return;
+        cancelBackgroundJoin();
         plan = null;
         scan = null;
         savePlan();
@@ -18621,14 +18854,22 @@
         }, 100);
       };
 
+      // Results only touch the audio fields of the on-screen row, so text or voice edits made
+      // on the active tab while its lines generate are kept.
+      const AUDIO_FIELDS = ["audioStatus", "audioUrl", "file", "audioStart", "audioEnd", "baseAudioDuration", "speed"];
+      const syncLiveAudio = (projSub, extraFields = []) => {
+        if (!projSub || projects[activeProjectIndex] !== targetProject) return;
+        const live = subtitles.find((s) => s.id === projSub.id);
+        if (live) [...AUDIO_FIELDS, ...extraFields].forEach((k) => { live[k] = projSub[k]; });
+      };
+
       const batchedRenderSubtitlesImmediate = (sub) => {
         if (!sub) return;
         const projSub = targetProject.subtitles.find((s) => s.id === sub.id);
         if (projSub) Object.assign(projSub, sub);
 
         if (projects[activeProjectIndex] === targetProject) {
-          const liveIdx = subtitles.findIndex((s) => s.id === sub.id);
-          if (liveIdx > -1) subtitles[liveIdx] = { ...sub };
+          syncLiveAudio(sub);
           if (typeof updateSubtitleRowStatus === "function") {
             updateSubtitleRowStatus(sub);
           }
@@ -18642,11 +18883,23 @@
       const processSingleAudio = async (subId) => {
         if (cancelRef.cancelled) return;
 
-        const targetSubs = targetProject.subtitles;
-        let currentIndex = targetSubs.findIndex((s) => s.id === subId);
+        // Always read targetProject.subtitles fresh: saveCurrentProjectState() and tab
+        // switches replace that array mid-run, and results written to a captured old
+        // array were silently lost (tabs ended up half-voiced).
+        let currentIndex = targetProject.subtitles.findIndex((s) => s.id === subId);
         if (currentIndex === -1) return;
 
-        const sub = targetSubs[currentIndex];
+        // Nothing to speak (empty, "♪", "..."): edge-tts has no audio for it, and 8 retries
+        // would hold a worker for ~2 minutes before failing anyway.
+        if (!isSpeakableText(targetProject.subtitles[currentIndex].text)) return;
+
+        // A stopped line keeps its old voice if it had one, otherwise it is pending again.
+        const resetStoppedLine = () => {
+          const s = targetProject.subtitles.find((x) => x.id === subId);
+          if (!s || s.audioStatus !== "generating") return;
+          s.audioStatus = s.file || s.audioUrl ? "ready" : "idle";
+          syncLiveAudio(s);
+        };
 
         if (activeAudios[subId]) {
           activeAudios[subId].pause();
@@ -18663,12 +18916,16 @@
         while (attempt < maxRetries && !success && !cancelRef.cancelled) {
           attempt++;
 
-          targetSubs[currentIndex].audioStatus = "generating";
+          currentIndex = targetProject.subtitles.findIndex((s) => s.id === subId);
+          if (currentIndex === -1) break;
+          targetProject.subtitles[currentIndex].audioStatus = "generating";
           if (projects[activeProjectIndex] === targetProject) {
             const liveIdx = subtitles.findIndex((s) => s.id === subId);
             if (liveIdx > -1) subtitles[liveIdx].audioStatus = "generating";
           }
-          batchedRenderSubtitles(targetSubs[currentIndex]);
+          batchedRenderSubtitles(targetProject.subtitles[currentIndex]);
+          // Latest text and voice: the active tab's edits are in the live list.
+          const sub = (projects[activeProjectIndex] === targetProject && subtitles.find((s) => s.id === subId)) || targetProject.subtitles[currentIndex];
 
           try {
             let data;
@@ -18702,32 +18959,31 @@
                 signal: jobAbortController.signal,
               });
               data = await response.json();
+              // A request the server rejects (bad input) fails the same way every time: don't retry it.
+              if (!data.success && response.status >= 400 && response.status < 500 && response.status !== 429) attempt = maxRetries;
             }
 
             if (data.success) {
               const freshUrl = (data.url && data.url.startsWith("blob:")) ? data.url : `${data.url}&t=${Date.now()}`;
-              const safeIndex = targetSubs.findIndex((s) => s.id === subId);
+              const safeIndex = targetProject.subtitles.findIndex((s) => s.id === subId);
               if (safeIndex > -1) {
-                spinOffOrphanAudioIfNeeded(targetSubs[safeIndex]);
-                const startTime = parseFloat(targetSubs[safeIndex].textStart || 0);
-                targetSubs[safeIndex].audioStatus = "ready";
-                targetSubs[safeIndex].audioUrl = freshUrl;
-                targetSubs[safeIndex].file = data.file;
-                targetSubs[safeIndex].audioStart = startTime.toFixed(2);
-                if (!targetSubs[safeIndex].speed) targetSubs[safeIndex].speed = 1.0;
+                spinOffOrphanAudioIfNeeded(targetProject.subtitles[safeIndex]);
+                const startTime = parseFloat(targetProject.subtitles[safeIndex].textStart || 0);
+                targetProject.subtitles[safeIndex].audioStatus = "ready";
+                targetProject.subtitles[safeIndex].audioUrl = freshUrl;
+                targetProject.subtitles[safeIndex].file = data.file;
+                targetProject.subtitles[safeIndex].audioStart = startTime.toFixed(2);
+                if (!targetProject.subtitles[safeIndex].speed) targetProject.subtitles[safeIndex].speed = 1.0;
                 if (data.duration && data.duration > 0) {
-                  targetSubs[safeIndex].baseAudioDuration = data.duration;
-                  targetSubs[safeIndex].audioEnd = (startTime + data.duration / (targetSubs[safeIndex].speed || 1.0)).toFixed(2);
-                } else if (!targetSubs[safeIndex].audioEnd) {
-                  targetSubs[safeIndex].audioEnd = targetSubs[safeIndex].textEnd;
+                  targetProject.subtitles[safeIndex].baseAudioDuration = data.duration;
+                  targetProject.subtitles[safeIndex].audioEnd = (startTime + data.duration / (targetProject.subtitles[safeIndex].speed || 1.0)).toFixed(2);
+                } else if (!targetProject.subtitles[safeIndex].audioEnd) {
+                  targetProject.subtitles[safeIndex].audioEnd = targetProject.subtitles[safeIndex].textEnd;
                 }
 
-                if (projects[activeProjectIndex] === targetProject) {
-                  const liveIdx = subtitles.findIndex((s) => s.id === subId);
-                  if (liveIdx > -1) subtitles[liveIdx] = { ...targetSubs[safeIndex] };
-                }
+                syncLiveAudio(targetProject.subtitles[safeIndex]);
                 success = true;
-                batchedRenderSubtitlesImmediate(targetSubs[safeIndex]);
+                batchedRenderSubtitlesImmediate(targetProject.subtitles[safeIndex]);
 
                 if (projects[activeProjectIndex] === targetProject) {
                   if (activeAudios[subId]) {
@@ -18743,14 +18999,14 @@
                   preWarmAudio.preload = "auto";
                   preWarmAudio.src = preWarmUrl;
                   preWarmAudio.load();
-                  preWarmAudio.playbackRate = targetSubs[safeIndex].speed || 1.0;
-                  preWarmAudio.volume = Math.min(1.0, targetSubs[safeIndex].volume ?? 1.0);
+                  preWarmAudio.playbackRate = targetProject.subtitles[safeIndex].speed || 1.0;
+                  preWarmAudio.volume = Math.min(1.0, targetProject.subtitles[safeIndex].volume ?? 1.0);
                   activeAudios[subId] = preWarmAudio;
                 }
               }
 
               // Background duration load (reuse backend duration if available to avoid media element allocation)
-              const bgIndex = targetSubs.findIndex((s) => s.id === subId);
+              const bgIndex = targetProject.subtitles.findIndex((s) => s.id === subId);
               if (bgIndex > -1) {
                 const metaPromise = new Promise((resolveMetaPromise) => {
                   let tempA = null;
@@ -18763,35 +19019,35 @@
                       tempA = null;
                     }
                     if (!isFinite(durationVal) || isNaN(durationVal) || durationVal <= 0) durationVal = 2.0;
-                    const idx = targetSubs.findIndex((s) => s.id === subId);
+                    const idx = targetProject.subtitles.findIndex((s) => s.id === subId);
                     if (idx === -1) {
                       resolveMetaPromise();
                       return;
                     }
-                    const startTime = parseFloat(targetSubs[idx].textStart || targetSubs[idx].audioStart || 0);
-                    targetSubs[idx].audioStart = startTime.toFixed(2);
-                    let finalSpeed = targetSubs[idx].speed || 1.0;
-                    const safeProjDur = targetProject.duration > 0 ? targetProject.duration : (duration > 0 ? duration : Infinity);
+                    const startTime = parseFloat(targetProject.subtitles[idx].textStart || targetProject.subtitles[idx].audioStart || 0);
+                    targetProject.subtitles[idx].audioStart = startTime.toFixed(2);
+                    let finalSpeed = targetProject.subtitles[idx].speed || 1.0;
+                    // Not the global duration: that is the active tab's video, not this one's.
+                    const safeProjDur = targetProject.duration > 0 ? targetProject.duration : Infinity;
                     const timeRemainingInVideo = safeProjDur - startTime;
                     const expectedVisualDuration = durationVal / finalSpeed;
                     if (expectedVisualDuration > timeRemainingInVideo && timeRemainingInVideo > 0.1) {
                       let requiredSpeed = durationVal / timeRemainingInVideo;
                       finalSpeed = Math.max(0.5, Math.min(2.5, requiredSpeed));
                     }
-                    targetSubs[idx].baseAudioDuration = durationVal;
-                    targetSubs[idx].speed = finalSpeed;
+                    targetProject.subtitles[idx].baseAudioDuration = durationVal;
+                    targetProject.subtitles[idx].speed = finalSpeed;
                     let calculatedEnd = startTime + durationVal / finalSpeed;
                     if (calculatedEnd > safeProjDur) calculatedEnd = safeProjDur;
-                    targetSubs[idx].audioEnd = calculatedEnd.toFixed(2);
+                    targetProject.subtitles[idx].audioEnd = calculatedEnd.toFixed(2);
 
                     if (projects[activeProjectIndex] === targetProject) {
-                      const liveIdx = subtitles.findIndex((s) => s.id === subId);
-                      if (liveIdx > -1) subtitles[liveIdx] = { ...targetSubs[idx] };
+                      syncLiveAudio(targetProject.subtitles[idx]);
                       if (activeAudios[subId]) {
                         activeAudios[subId].playbackRate = finalSpeed;
                       }
                     }
-                    batchedRenderSubtitlesImmediate(targetSubs[idx]);
+                    batchedRenderSubtitlesImmediate(targetProject.subtitles[idx]);
                     resolveMetaPromise();
                   };
 
@@ -18823,6 +19079,7 @@
             if (error.name === "AbortError" || cancelRef.cancelled) {
               console.log("Generation aborted by user.");
               queue.length = 0;
+              resetStoppedLine();
               break;
             }
 
@@ -18830,8 +19087,8 @@
             console.warn(`[Retry ${attempt}/${maxRetries}] Audio gen retry for subtitle ${subId}:`, error.message);
 
             if (attempt >= maxRetries) {
-              const safeIndex = targetSubs.findIndex((s) => s.id === subId);
-              if (safeIndex > -1) targetSubs[safeIndex].audioStatus = "error";
+              const safeIndex = targetProject.subtitles.findIndex((s) => s.id === subId);
+              if (safeIndex > -1) targetProject.subtitles[safeIndex].audioStatus = "error";
               if (projects[activeProjectIndex] === targetProject) {
                 const liveIdx = subtitles.findIndex((s) => s.id === subId);
                 if (liveIdx > -1) subtitles[liveIdx].audioStatus = "error";
@@ -18839,15 +19096,15 @@
             } else {
               const baseDelay = isNetworkError ? 3000 : 1500;
               const backoff = Math.min(baseDelay * Math.pow(2, attempt - 1), 30000);
-              const retryIndex = targetSubs.findIndex((s) => s.id === subId);
+              const retryIndex = targetProject.subtitles.findIndex((s) => s.id === subId);
               if (retryIndex > -1) {
-                targetSubs[retryIndex].audioStatus = "generating";
-                targetSubs[retryIndex]._retryInfo = `Retry in ${(backoff / 1000).toFixed(0)}s`;
+                targetProject.subtitles[retryIndex].audioStatus = "generating";
+                targetProject.subtitles[retryIndex]._retryInfo = `Retry in ${(backoff / 1000).toFixed(0)}s`;
                 if (projects[activeProjectIndex] === targetProject) {
                   const liveIdx = subtitles.findIndex((s) => s.id === subId);
-                  if (liveIdx > -1) subtitles[liveIdx]._retryInfo = targetSubs[retryIndex]._retryInfo;
+                  if (liveIdx > -1) subtitles[liveIdx]._retryInfo = targetProject.subtitles[retryIndex]._retryInfo;
                 }
-                batchedRenderSubtitles(targetSubs[retryIndex]);
+                batchedRenderSubtitles(targetProject.subtitles[retryIndex]);
               }
 
               const waitStart = Date.now();
@@ -18857,7 +19114,7 @@
               }
 
               if (retryIndex > -1) {
-                delete targetSubs[retryIndex]._retryInfo;
+                delete targetProject.subtitles[retryIndex]._retryInfo;
                 if (projects[activeProjectIndex] === targetProject) {
                   const liveIdx = subtitles.findIndex((s) => s.id === subId);
                   if (liveIdx > -1) delete subtitles[liveIdx]._retryInfo;
@@ -18866,12 +19123,13 @@
             }
           }
 
-          currentIndex = targetSubs.findIndex((s) => s.id === subId);
-          if (currentIndex > -1) batchedRenderSubtitles(targetSubs[currentIndex]);
+          currentIndex = targetProject.subtitles.findIndex((s) => s.id === subId);
+          if (currentIndex > -1) batchedRenderSubtitles(targetProject.subtitles[currentIndex]);
         }
 
-        const finalIndex = targetSubs.findIndex((s) => s.id === subId);
-        if (finalIndex > -1) batchedRenderSubtitles(targetSubs[finalIndex]);
+        if (cancelRef.cancelled) resetStoppedLine();
+        const finalIndex = targetProject.subtitles.findIndex((s) => s.id === subId);
+        if (finalIndex > -1) batchedRenderSubtitles(targetProject.subtitles[finalIndex]);
       };
 
       const runWorker = async () => {
@@ -18948,7 +19206,9 @@
         saveProjectStateDirectly(targetProject);
 
         if (projects[activeProjectIndex] === targetProject) {
-          subtitles = targetProject.subtitles.map((s) => ({ ...s }));
+          // Auto-Fit / Sync End changed timing on the stored copy; bring those fields to the
+          // on-screen list without overwriting edits made there meanwhile.
+          targetProject.subtitles.forEach((s) => syncLiveAudio(s, matchAudioEndEnabled ? ["textEnd"] : []));
           renderSubtitles();
           updateContextualControls();
         }
@@ -18963,11 +19223,15 @@
         console.error("Project generation error:", error);
         return { success: false, error: error.message };
       } finally {
-        targetProject.isGeneratingAudio = false;
-        targetProject.generateAbortController = null;
-        targetProject._cancelGenRef = null;
+        // A newer run may already own this tab (stopped, then started again): leave its state alone.
+        const stillOwner = targetProject._cancelGenRef === cancelRef;
+        if (stillOwner) {
+          targetProject.isGeneratingAudio = false;
+          targetProject.generateAbortController = null;
+          targetProject._cancelGenRef = null;
+        }
 
-        if (projects[activeProjectIndex] === targetProject) {
+        if (projects[activeProjectIndex] === targetProject && stillOwner) {
           isGeneratingAudio = false;
           cancelGeneration = false;
           generateAbortController = null;
@@ -18982,11 +19246,13 @@
       }
     }
 
+    let genAllRunId = 0;
     async function generateSelectedAudioAllProjects() {
       const isAnyRunning = isGeneratingAudioAll || isGeneratingAudio || voxQueueRunning || projects.some((p) => p.isGeneratingAudio || p._voxQueued);
 
       if (isAnyRunning) {
         generateAllStops++;
+        genAllRunId++;
         isGeneratingAudioAll = false;
         cancelGeneration = true;
         isGeneratingAudio = false;
@@ -18995,9 +19261,16 @@
         projects.forEach((p) => {
           p.isGeneratingAudio = false;
           p._voxQueued = false;
+          p._selectedIds = null;
           if (p._cancelGenRef) p._cancelGenRef.cancelled = true;
           if (p.generateAbortController) p.generateAbortController.abort();
+          // A line stopped mid-request keeps its old voice if it had one; otherwise it is
+          // pending again, so the next Generate All picks it up.
+          [p.subtitles || [], projects[activeProjectIndex] === p ? subtitles : []].forEach((list) => list.forEach((s) => {
+            if (s.audioStatus === "generating") s.audioStatus = s.file || s.audioUrl ? "ready" : "idle";
+          }));
         });
+        if (typeof renderSubtitles === "function") renderSubtitles();
 
         updateGenerateButtonState();
         updateGenerateAllButtonState();
@@ -19018,6 +19291,14 @@
       // be wrongly excluded from eligibleProjects (or report "No subtitles found" if
       // it's the only tab open), same class of bug as the single-tab Generate button had.
       saveCurrentProjectState();
+
+      // Nothing is generating now, so a "generating" line is left over from a run that was
+      // interrupted; it would never count as pending again. Same rule as Stop.
+      projects.forEach((p) => {
+        [p.subtitles || [], projects[activeProjectIndex] === p ? subtitles : []].forEach((list) => list.forEach((s) => {
+          if (s.audioStatus === "generating") s.audioStatus = s.file || s.audioUrl ? "ready" : "idle";
+        }));
+      });
 
       const eligibleProjects = projects.filter((p) => p.subtitles && p.subtitles.length > 0);
       if (eligibleProjects.length === 0) {
@@ -19071,8 +19352,15 @@
 
       // Standard TTS Parallel Runner with Dynamic Worker Pool
       const stopsBefore = generateAllStops;
+      // Each run has its own id: workers of a stopped run that are still unwinding must not
+      // keep going or switch off a newer run.
+      const runId = ++genAllRunId;
       isGeneratingAudioAll = true;
       cancelGeneration = false;
+      eligibleProjects.forEach((p) => {
+        p.cancelGeneration = false; // a stale per-tab stop flag would come back on a tab switch and stop this run
+        p._selectedIds = null; // VoxCPM2 leftovers would limit a tab to a few lines
+      });
       updateGenerateAllButtonState();
       updateGenerateButtonState();
       showToast(`⚡ Generating audio for all ${eligibleProjects.length} project tab(s)...`, "success");
@@ -19091,7 +19379,7 @@
 
       const runWorker = async () => {
         while (activeIdx < eligibleProjects.length) {
-          if (!isGeneratingAudioAll || cancelGeneration) break;
+          if (runId !== genAllRunId || !isGeneratingAudioAll || cancelGeneration) break;
           const p = eligibleProjects[activeIdx++];
           let ids = null;
 
@@ -19134,6 +19422,16 @@
       const workers = Array.from({ length: Math.min(eligibleProjects.length, poolSize) }, () => runWorker());
       await Promise.all(workers);
 
+      if (runId !== genAllRunId) {
+        // Stopped (Stop already cleared every tab's flags), and maybe a newer run already
+        // started: leave the shared state and the tabs' busy flags to it.
+        renderProjectTabs();
+        return { ok: true, succeeded: succeededCount, total: totalTabsProcessed || eligibleProjects.length, stopped: true };
+      }
+      // Tabs the pool skipped (already complete) were marked busy up front.
+      eligibleProjects.forEach((p) => {
+        if (!p._cancelGenRef) p.isGeneratingAudio = false;
+      });
       isGeneratingAudioAll = false;
       updateGenerateAllButtonState();
       updateGenerateButtonState();

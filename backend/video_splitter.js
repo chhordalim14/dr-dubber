@@ -17,6 +17,9 @@ const SEARCH_WINDOW_SEC = 90;   // look up to this far either side of each even-
 const SEARCH_WINDOW_SHARE = 0.15; // ...but no more than 15% of a part, so short parts stay even
 const MIN_PART_SEC = 60;
 const COPY_EXTS = new Set(['.mp4', '.m4v', '.mov', '.mkv', '.webm']); // other containers are re-wrapped as .mkv
+// Audio-only files (audio dramas): AAC and MP3 are cut by stream copy into their own
+// container; any other codec (WMA, AC3, FLAC, Opus...) is converted to AAC .m4a.
+const AUDIO_COPY = { aac: '.m4a', mp3: '.mp3' };
 
 function fmtClock(sec) {
     const s = Math.max(0, Math.round(sec));
@@ -38,20 +41,26 @@ function createVideoSplitter({ getFFmpegBinary, getFFprobeBinary, trackProcess }
     async function inspect(file) {
         if (!fs.existsSync(file) || !fs.statSync(file).isFile()) throw new Error('File not found.');
         const info = await probe(file);
-        if (info.error) throw new Error(`This file can't be read as a video (${info.error}).`);
+        if (info.error) throw new Error(`This file can't be read as a video or audio file (${info.error}).`);
         const streams = info.streams || [];
+        // Cover art in MP3/M4A shows up as an image "video" stream - it isn't video.
         const v = streams.find(s => s.codec_type === 'video' && !(s.disposition && s.disposition.attached_pic));
+        const audios = streams.filter(s => s.codec_type === 'audio');
+        const a = audios.find(s => s.disposition && s.disposition.default) || audios[0];
         const duration = parseFloat(info.format && info.format.duration) || 0;
-        if (!v) throw new Error('This file has no video stream.');
-        if (!(duration > 0)) throw new Error('Could not read the video length.');
+        if (!v && !a) throw new Error('This file has no audio or video.');
+        if (!(duration > 0)) throw new Error('Could not read the length of this file.');
         return {
             path: file,
             name: path.basename(file),
             duration,
             startTime: parseFloat(info.format && info.format.start_time) || 0,
-            videoIndex: v.index,
-            audioTracks: streams.filter(s => s.codec_type === 'audio').length,
-            video: { codec: v.codec_name, width: v.width, height: v.height },
+            audioOnly: !v,
+            videoIndex: v ? v.index : null,
+            audioIndex: a ? a.index : null,
+            audioCodec: a ? a.codec_name : null,
+            audioTracks: audios.length,
+            video: v ? { codec: v.codec_name, width: v.width, height: v.height } : null,
         };
     }
 
@@ -166,7 +175,7 @@ function createVideoSplitter({ getFFmpegBinary, getFFprobeBinary, trackProcess }
             const targets = Array.from({ length: n - 1 }, (_, i) => src.startTime + (i + 1) * src.duration / n);
             const reach = Math.min(SEARCH_WINDOW_SEC, SEARCH_WINDOW_SHARE * src.duration / n);
             const windows = targets.map(t => [Math.max(src.startTime, t - reach), Math.min(src.startTime + src.duration, t + reach)]);
-            const keyframes = targets.length ? await keyframesIn(job, src, windows) : [];
+            const keyframes = targets.length && !src.audioOnly ? await keyframesIn(job, src, windows) : [];
             if (job.cancelled) throw new Error('cancelled');
             const cuts = [];
             for (let i = 0; i < targets.length; i++) {
@@ -174,7 +183,10 @@ function createVideoSplitter({ getFFmpegBinary, getFFprobeBinary, trackProcess }
                 const [from, to] = windows[i];
                 const loud = await loudnessIn(job, src, from, to);
                 const prev = cuts.length ? cuts[cuts.length - 1].time : src.startTime;
-                const cut = pickCut(targets[i], keyframes, loud, Math.max(from, prev + MIN_PART_SEC), Math.min(to, src.startTime + src.duration - MIN_PART_SEC));
+                // Audio only: no keyframes, so every 0.1s block is a possible cut (the quietest wins).
+                const points = !src.audioOnly ? keyframes
+                    : loud.length ? loud.map(([t]) => ({ pts: t, dts: t })) : [{ pts: targets[i], dts: targets[i] }];
+                const cut = pickCut(targets[i], points, loud, Math.max(from, prev + MIN_PART_SEC), Math.min(to, src.startTime + src.duration - MIN_PART_SEC));
                 if (cut) cuts.push(cut);
                 job.percent = Math.round((i + 1) / targets.length * 15);
             }
@@ -186,14 +198,16 @@ function createVideoSplitter({ getFFmpegBinary, getFFprobeBinary, trackProcess }
             job.phase = 'splitting';
             const times = cuts.map(c => Math.max(0.01, c.dts - src.startTime - 0.01).toFixed(3));
             const pattern = path.join(job.outDir, `${job.baseName.replace(/%/g, '%%')}_part%02d${job.ext}`);
-            const args = ['-hide_banner', '-nostdin', '-y', '-i', src.path,
-                '-map', `0:${src.videoIndex}`, '-map', '0:a?', '-sn', '-dn', '-c', 'copy',
+            const streamArgs = !src.audioOnly
+                ? ['-map', `0:${src.videoIndex}`, '-map', '0:a?', '-sn', '-dn', '-c', 'copy']
+                : ['-map', `0:${src.audioIndex}`, '-vn', '-sn', '-dn', ...(AUDIO_COPY[src.audioCodec] ? ['-c:a', 'copy'] : ['-c:a', 'aac', '-b:a', '192k'])];
+            const args = ['-hide_banner', '-nostdin', '-y', '-i', src.path, ...streamArgs,
                 '-f', 'segment', '-reset_timestamps', '1', '-avoid_negative_ts', 'make_zero', '-segment_start_number', '1'];
             if (times.length) args.push('-segment_times', times.join(','));
             else args.push('-segment_time', String(Math.ceil(src.duration + 60)));
-            if (job.ext === '.mp4' || job.ext === '.m4v' || job.ext === '.mov') {
+            if (job.ext === '.mp4' || job.ext === '.m4v' || job.ext === '.mov' || job.ext === '.m4a') {
                 args.push('-segment_format_options', 'movflags=+faststart');
-                if (src.video.codec === 'hevc') args.push('-tag:v', 'hvc1');
+                if (src.video && src.video.codec === 'hevc') args.push('-tag:v', 'hvc1');
             }
             args.push('-progress', 'pipe:1', '-nostats', pattern);
             const r = await run(job, getFFmpegBinary(), args, {
@@ -244,7 +258,8 @@ function createVideoSplitter({ getFFmpegBinary, getFFprobeBinary, trackProcess }
         const srcExt = path.extname(src.path).toLowerCase();
         const safeName = String(baseName || path.basename(src.path, srcExt)).replace(/[<>:"/\\|?*]+/g, '').trim() || 'Movie';
         const job = { id: crypto.randomUUID(), status: 'running', phase: 'analyzing', percent: 0, error: null, cancelled: false, proc: null,
-            src, outDir, partCount: n, baseName: safeName, ext: COPY_EXTS.has(srcExt) ? srcExt : '.mkv', parts: [] };
+            src, outDir, partCount: n, baseName: safeName,
+            ext: src.audioOnly ? (AUDIO_COPY[src.audioCodec] || '.m4a') : COPY_EXTS.has(srcExt) ? srcExt : '.mkv', parts: [] };
         jobs.set(job.id, job);
         runJob(job);
         return job.id;

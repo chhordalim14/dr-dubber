@@ -449,8 +449,9 @@ function saveTranscribeAudio(audioBufferOrPath, videoName, partIndex, customFold
         .replace(/^transcribe_\d+_/i, '') // strip redundant previous timestamp prefixes
         .replace(/^transcribe_/i, '');
 
-    // Collapse any repeated part suffixes (e.g. name_part1_part1 -> name_part1)
-    cleanBase = cleanBase.replace(/([_.\- ](?:part|pt|chunk)\s*\d+)(?:[_.\- ](?:part|pt|chunk)\s*\d+)+$/i, '$1');
+    // Collapse a repeated identical part suffix (name_part1_part1 -> name_part1). Different numbers
+    // are kept: "series_part01_part06" is piece 6 of part 1, and must not overwrite piece 1.
+    cleanBase = cleanBase.replace(/([_.\- ](?:part|pt|chunk)\s*0*(\d+))(?:[_.\- ](?:part|pt|chunk)\s*0*\2)+$/i, '$1');
 
     // Check if filename already ends with a part/chunk designation (e.g. _part1, -part2, .part3, Part 1, pt1)
     const hasPartSuffix = /(?:[_.\- ](?:part|pt|chunk)\s*\d+|\bpart\s*\d+)$/i.test(cleanBase);
@@ -579,7 +580,7 @@ app.post('/api/save-srt', (req, res) => {
     let cleanBase = (fileName || 'subtitles')
         .replace(/[/\\?%*:|"<>]/g, '_')
         .replace(/\.srt$/i, '');
-    cleanBase = cleanBase.replace(/([_.\- ](?:part|pt|chunk)\s*\d+)(?:[_.\- ](?:part|pt|chunk)\s*\d+)+$/i, '$1');
+    cleanBase = cleanBase.replace(/([_.\- ](?:part|pt|chunk)\s*0*(\d+))(?:[_.\- ](?:part|pt|chunk)\s*0*\2)+$/i, '$1');
     const srtFileName = `${cleanBase}.srt`;
 
     const destinations = getTranscribeDestinations(customFolder, sourceFilePath);
@@ -1024,9 +1025,14 @@ function formatWait(ms) {
     return `${Math.floor(min / 60)}h ${String(min % 60).padStart(2, '0')}m`;
 }
 
-async function executeGeminiGenerate(apiKey, requestedModel, payload, signal) {
+// stayOnModel: only the requested model (or the best one this key has, if it lacks it). A
+// rate-limited model then comes back as a rate limit the caller waits out, instead of the
+// request moving to another model - for transcription, where another model splits the
+// dialogue differently (fewer, longer lines).
+async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { stayOnModel = false } = {}) {
     apiKey = String(apiKey || '').trim();
-    const candidateModels = await getCandidateModels(apiKey, requestedModel, signal);
+    const allModels = await getCandidateModels(apiKey, requestedModel, signal);
+    const candidateModels = stayOnModel ? allModels.slice(0, 1) : allModels;
     const body = JSON.stringify(payload);
     const gen = payload && payload.generationConfig;
     const plainBody = gen && (gen.responseMimeType || gen.responseSchema)
@@ -1108,9 +1114,9 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal) {
                     }
                     const clean = JSON.stringify(value);
                     if (cand && cand.content) cand.content.parts = [{ text: clean }];
-                    return { success: true, json, text: clean, finishReason: cand?.finishReason, modelUsed: m };
+                    return { success: true, json, text: clean, finishReason: cand?.finishReason, modelUsed: m, fellBack: idx > 0 };
                 }
-                return { success: true, json, text, finishReason: cand?.finishReason, modelUsed: m };
+                return { success: true, json, text, finishReason: cand?.finishReason, modelUsed: m, fellBack: idx > 0 };
             }
 
             let errData = {};
@@ -1453,6 +1459,7 @@ TIMESTAMPS & ACTING RULES:
    - Only real spoken dialogue and narration. Skip background music, song lyrics, sound effects, breathing, and crowd noise.
    - Never invent, summarize, or skip dialogue. If the clip has no speech, return [].
    - "originalText" is the exact words spoken in the original language.
+   - "text" is written in Khmer script only: never leave a word in Chinese or put in a word from any other language or script (Arabic, Thai, Japanese...). Write names and places in Khmer letters.
 
 3. Speaker Gender & Emotion:
    - gender: "Male" or "Female" - the gender of the voice actually speaking this line. Judge by the voice you hear, not by who is being talked about.
@@ -1475,7 +1482,7 @@ SCHEMA:
 }
 
 // Transcribe one clip; returns cues with times relative to the clip start.
-async function transcribeClipWithGemini({ apiKey, model, audioBase64, mimeType, clipSec, promptOpts, signal }) {
+async function transcribeClipWithGemini({ apiKey, model, audioBase64, mimeType, clipSec, promptOpts, signal, stayOnModel = false }) {
     const payload = {
         contents: [{
             role: 'user',
@@ -1494,14 +1501,15 @@ async function transcribeClipWithGemini({ apiKey, model, audioBase64, mimeType, 
     let lastRaw = '';
     // A malformed JSON reply is usually a one-off; ask once more before giving up.
     for (let attempt = 0; attempt < 2; attempt++) {
-        const result = await executeGeminiGenerate(apiKey, model, payload, signal);
+        const result = await executeGeminiGenerate(apiKey, model, payload, signal, { stayOnModel });
         if (!result.success) return { ok: false, result };
         lastRaw = result.text || '';
         const items = parseJsonArrayLoose(lastRaw);
         if (items) {
-            const truncated = result.finishReason === 'MAX_TOKENS';
-            if (truncated) console.warn('[Transcribe] Output hit MAX_TOKENS; kept complete lines only.');
-            return { ok: true, items, raw: lastRaw, modelUsed: result.modelUsed, truncated };
+            // Anything but a normal STOP (MAX_TOKENS, SAFETY, RECITATION, OTHER...) may have cut the reply short.
+            const truncated = !!result.finishReason && result.finishReason !== 'STOP';
+            if (truncated) console.warn(`[Transcribe] Reply ended with ${result.finishReason}; kept complete lines only.`);
+            return { ok: true, items, raw: lastRaw, modelUsed: result.modelUsed, fellBack: !!result.fellBack, truncated };
         }
         console.error('[Transcribe] Unparseable Gemini output:', lastRaw.slice(0, 500));
     }
@@ -1614,11 +1622,17 @@ const REPAIR_TRANSLATE_BATCH = 40;
 // could add many minutes, so it stops starting new checks after this long (lines found so far stay).
 const REPAIR_GAP_BUDGET_MS = 2 * 60 * 1000;
 
+// Another script leaked into a Khmer line (e.g. "នាងចង់បាន صحن ធំជាងនេះ": Gemini slipped an
+// Arabic word in), or Chinese was left untranslated. Latin is allowed (names, "OK").
+// Hebrew/Arabic/Syriac, Cyrillic, Indic, Thai, Lao, Myanmar, kana, CJK, Hangul.
+const FOREIGN_SCRIPT_RE = /[֐-ࣿЀ-ӿऀ-෿฀-໿က-႟぀-ヿ㐀-鿿豈-﫿가-힯]/;
+const FOREIGN_SCRIPT_RUN_RE = /[֐-ࣿЀ-ӿऀ-෿฀-໿က-႟぀-ヿ㐀-鿿豈-﫿가-힯]+/g;
+
 function cueNeedsTranslation(cue) {
     const text = String(cue.text || '').trim();
     const original = String(cue.originalText || '').trim();
     if (!original) return false;
-    return !text || !KHMER_CHAR_RE.test(text) || text === original;
+    return !text || !KHMER_CHAR_RE.test(text) || text === original || FOREIGN_SCRIPT_RE.test(text);
 }
 
 function findDialogueGaps(cues, totalSec) {
@@ -1840,7 +1854,7 @@ async function retranslateCues(targets, allCues, { keys, model, promptOpts, glos
 }
 
 // cues: [{ _start, _end, text, originalText, speaker, ... }] (mutated in place + new ones appended)
-async function repairTranscript({ cues, sourceFile, totalSec, keys, model, promptOpts, glossary, workDir, signal, progress, checkGaps = true }) {
+async function repairTranscript({ cues, sourceFile, totalSec, keys, model, promptOpts, glossary, workDir, signal, progress, checkGaps = true, stayOnModel = false, maxLanes = TRANSCRIBE_MAX_LANES }) {
     const report = { gapsFound: 0, gapsChecked: 0, linesAdded: 0, retranslated: 0, stillUntranslated: 0 };
 
     if (checkGaps && sourceFile && totalSec > 0) {
@@ -1879,7 +1893,7 @@ async function repairTranscript({ cues, sourceFile, totalSec, keys, model, promp
                 const before = existing.filter(c => c._end <= w.start + 0.5).slice(-4);
                 const out = await geminiWithKeys(laneKeys, (key) => transcribeClipWithGemini({
                     apiKey: key, model, audioBase64: clipBase64, mimeType: 'audio/mp3', clipSec,
-                    promptOpts: { ...promptOpts, previousLines: before }, signal
+                    promptOpts: { ...promptOpts, previousLines: before }, signal, stayOnModel
                 }), signal);
                 report.gapsChecked++;
                 setGapNote();
@@ -1907,7 +1921,7 @@ async function repairTranscript({ cues, sourceFile, totalSec, keys, model, promp
                 }
             }
         };
-        await Promise.all(Array.from({ length: Math.max(1, Math.min(keys.length, TRANSCRIBE_MAX_LANES, toCheck.length)) }, (_, lane) => worker(lane)));
+        await Promise.all(Array.from({ length: Math.max(1, Math.min(keys.length, TRANSCRIBE_MAX_LANES, maxLanes, toCheck.length)) }, (_, lane) => worker(lane)));
         cues.sort((a, b) => a._start - b._start);
     }
 
@@ -1918,6 +1932,15 @@ async function repairTranscript({ cues, sourceFile, totalSec, keys, model, promp
         report.retranslated = r.fixed;
         if (r.error) report.translateError = r.error.message || r.error.error;
         if (r.error && r.error.isDailyQuota) report.quotaError = r.error.message;
+    }
+    // Last resort for a Khmer line that still carries another script: drop the foreign word, so
+    // the voice never reads it out (the rest of the line stays).
+    for (const cue of cues) {
+        const text = String(cue.text || '');
+        if (KHMER_CHAR_RE.test(text) && FOREIGN_SCRIPT_RE.test(text)) {
+            cue.text = text.replace(FOREIGN_SCRIPT_RUN_RE, ' ').replace(/\s{2,}/g, ' ').trim();
+            if (cue._repaired !== 'added') cue._repaired = 'translated'; // Fix Missing sends it back as updated
+        }
     }
     report.stillUntranslated = cues.filter(cueNeedsTranslation).length;
     console.log('[Repair]', JSON.stringify(report));
@@ -1941,8 +1964,14 @@ app.post('/api/transcribe', async (req, res) => {
         partIndex,
         customFolder,
         sourceFilePath,
-        apiSaver = false
+        apiSaver = false,
+        stayOnModel = false,
+        // Requests this file may run at once. With 1, the extra keys are only backups: a
+        // rate-limited key hands the next chunk to the least busy other key (Dub Whole Series
+        // runs one file per key, so this keeps every key at about one request).
+        maxLanes = TRANSCRIBE_MAX_LANES
     } = req.body;
+    const laneCap = Math.max(1, Math.min(TRANSCRIBE_MAX_LANES, parseInt(maxLanes, 10) || TRANSCRIBE_MAX_LANES));
 
     if (!audioBase64 && !audioPath) {
         return res.status(400).json({ success: false, error: 'No audio data or audio path received.' });
@@ -2001,13 +2030,15 @@ app.post('/api/transcribe', async (req, res) => {
         const keyPool = [apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])]
             .map(k => String(k || '').trim())
             .filter((k, i, a) => k && a.indexOf(k) === i);
-        const laneCount = Math.max(1, Math.min(keyPool.length, TRANSCRIBE_MAX_LANES, Math.ceil(chunks.length / 2)));
+        const laneCount = Math.max(1, Math.min(keyPool.length, laneCap, Math.ceil(chunks.length / 2)));
         const chunkCues = new Array(chunks.length);
         const rawParts = new Array(chunks.length);
         const progress = { done: 0, total: chunks.length };
         if (requestId) transcribeProgress.set(requestId, progress);
         let failure = null;
         let anyTruncated = false;
+        const modelsUsed = new Set();
+        const fellBackModels = new Set(); // models used only because the first choice was rate-limited
         console.log(`[Transcribe] ${chunks.length} chunk(s) across ${laneCount} API key lane(s)${apiSaver ? ' [API saver]' : ''}`);
 
         const cutClip = async (i) => {
@@ -2040,12 +2071,13 @@ app.post('/api/transcribe', async (req, res) => {
                 const { clipBase64, clipMime } = await cutClip(i);
                 const cacheKey = transcribeCacheKey(clipBase64, [model, genreRegister, glossary || null]);
                 let out = transcribeCacheGet(cacheKey);
+                if (out && stayOnModel && out.fellBack) out = null; // made by a fallback model earlier: redo it
                 if (out) console.log(`[Transcribe] Chunk ${i + 1}/${chunks.length} reused from previous attempt`);
                 for (let retry = 0; !out || !out.ok; retry++) {
                     out = await tryKeysOnce(keys, (key) => transcribeClipWithGemini({
                         apiKey: key, model, audioBase64: clipBase64, mimeType: clipMime, clipSec,
                         promptOpts: { ...promptOpts, previousLines: laneCues.slice(-4) },
-                        signal: abortCtrl.signal
+                        signal: abortCtrl.signal, stayOnModel: !!stayOnModel
                     }));
                     if (out.ok || failure || !isTransientGeminiFailure(out.result) || retry >= geminiRetryLimit(out.result)) break;
                     const wait = geminiRetryWaitMs(out.result, retry);
@@ -2054,14 +2086,18 @@ app.post('/api/transcribe', async (req, res) => {
                     console.warn(`[Transcribe] ${progress.note}: ${out.result.error}`);
                     await sleepAbortable(wait, abortCtrl.signal);
                 }
-                if (out.ok) transcribeCacheSet(cacheKey, out);
+                // A cut-off or empty reply isn't cached, so a re-run asks Gemini again instead of reusing the hole.
+                if (out.ok && !out.truncated && out.items.length) transcribeCacheSet(cacheKey, out);
                 if (!out.ok) {
                     console.warn(`[Transcribe] Chunk ${i + 1}/${chunks.length} failed:`, out.result.error);
                     failure = failure || out.result;
                     return;
                 }
                 rawParts[i] = out.raw;
-                if (out.truncated) anyTruncated = true;
+                if (out.modelUsed) modelsUsed.add(out.modelUsed);
+                if (out.fellBack && out.modelUsed) fellBackModels.add(out.modelUsed);
+                // An empty or cut-off chunk leaves a hole; make sure the missed-dialogue pass checks it.
+                if (out.truncated || !out.items.length) anyTruncated = true;
                 chunkCues[i] = normalizeClipCues(out.items, chunk.start, clipSec, glossary);
                 laneCues = chunkCues[i].length ? chunkCues[i] : laneCues;
                 progress.done++;
@@ -2078,12 +2114,16 @@ app.post('/api/transcribe', async (req, res) => {
         if (abortCtrl.signal.aborted) return res.json({ success: false, error: 'CANCELLED' });
         if (failure) return geminiFailureResponse(res, failure);
         const allCues = chunkCues.flat();
+        // A rate-limited model makes the server fall back to another one, which can split the
+        // dialogue very differently (fewer, longer lines). Say so instead of hiding it.
+        const fallbackModels = [...fellBackModels];
+        if (fallbackModels.length) console.warn(`[Transcribe] Some chunks used a fallback model: ${fallbackModels.join(', ')} (asked for ${resolveGeminiModel(model)})`);
 
         let repair = null;
         try {
             repair = await repairTranscript({
                 cues: allCues, sourceFile: totalSec > 0 ? inputFile : null, totalSec, keys: keyPool, model,
-                promptOpts, glossary, workDir, signal: abortCtrl.signal, progress,
+                promptOpts, glossary, workDir, signal: abortCtrl.signal, progress, stayOnModel: !!stayOnModel, maxLanes: laneCap,
                 // API saver skips the missed-dialogue pass, unless a reply was cut off (its tail is a gap).
                 checkGaps: !apiSaver || anyTruncated
             });
@@ -2100,6 +2140,8 @@ app.post('/api/transcribe', async (req, res) => {
             success: true,
             data: finalizeCues(allCues),
             repair,
+            modelsUsed: [...modelsUsed],
+            fallbackModels,
             rawText: rawParts.filter(Boolean).join('\n')
         });
 
@@ -3238,12 +3280,13 @@ app.post('/api/generate-audio', (req, res) => {
 
         child = spawn(PYTHON_CMD, [
             pyScript,
-            '--text', text,
-            '--voice', voice,
-            '--rate', prosody.rate,
-            '--pitch', prosody.pitch,
-            '--volume', prosody.volume,
-            '--output', outFile
+            // `--flag=value` form: argparse rejects separate values starting with '-' (e.g. rate "-10%")
+            `--text=${text}`,
+            `--voice=${voice}`,
+            `--rate=${prosody.rate}`,
+            `--pitch=${prosody.pitch}`,
+            `--volume=${prosody.volume}`,
+            `--output=${outFile}`
         ], { env: PYTHON_ENV });
         trackProcess(child);
 
