@@ -50,6 +50,9 @@ const {
     USER_DESKTOP_OUTPUTS, PYTHON_DIR, LOGS_DIR,
     MIME_MAP, resolveLocalFilePath
 } = require('./lib/paths');
+// Everything the server prints also goes to <storage>/logs/server.log (see lib/server-log.js).
+require('./lib/server-log').installServerLog(LOGS_DIR);
+const { FOREIGN_SCRIPT_RE, stripForeignScript, collapseRepeatedPartSuffix, buildTtsArgv } = require('./lib/text-rules');
 const { trackProcess } = require('./lib/process-tracker');
 const { secureFetch, fetchBackend } = require('./lib/secure-fetch');
 
@@ -449,9 +452,7 @@ function saveTranscribeAudio(audioBufferOrPath, videoName, partIndex, customFold
         .replace(/^transcribe_\d+_/i, '') // strip redundant previous timestamp prefixes
         .replace(/^transcribe_/i, '');
 
-    // Collapse a repeated identical part suffix (name_part1_part1 -> name_part1). Different numbers
-    // are kept: "series_part01_part06" is piece 6 of part 1, and must not overwrite piece 1.
-    cleanBase = cleanBase.replace(/([_.\- ](?:part|pt|chunk)\s*0*(\d+))(?:[_.\- ](?:part|pt|chunk)\s*0*\2)+$/i, '$1');
+    cleanBase = collapseRepeatedPartSuffix(cleanBase); // name_part1_part1 -> name_part1 (part01_part06 kept)
 
     // Check if filename already ends with a part/chunk designation (e.g. _part1, -part2, .part3, Part 1, pt1)
     const hasPartSuffix = /(?:[_.\- ](?:part|pt|chunk)\s*\d+|\bpart\s*\d+)$/i.test(cleanBase);
@@ -580,7 +581,7 @@ app.post('/api/save-srt', (req, res) => {
     let cleanBase = (fileName || 'subtitles')
         .replace(/[/\\?%*:|"<>]/g, '_')
         .replace(/\.srt$/i, '');
-    cleanBase = cleanBase.replace(/([_.\- ](?:part|pt|chunk)\s*0*(\d+))(?:[_.\- ](?:part|pt|chunk)\s*0*\2)+$/i, '$1');
+    cleanBase = collapseRepeatedPartSuffix(cleanBase);
     const srtFileName = `${cleanBase}.srt`;
 
     const destinations = getTranscribeDestinations(customFolder, sourceFilePath);
@@ -1622,12 +1623,6 @@ const REPAIR_TRANSLATE_BATCH = 40;
 // could add many minutes, so it stops starting new checks after this long (lines found so far stay).
 const REPAIR_GAP_BUDGET_MS = 2 * 60 * 1000;
 
-// Another script leaked into a Khmer line (e.g. "នាងចង់បាន صحن ធំជាងនេះ": Gemini slipped an
-// Arabic word in), or Chinese was left untranslated. Latin is allowed (names, "OK").
-// Hebrew/Arabic/Syriac, Cyrillic, Indic, Thai, Lao, Myanmar, kana, CJK, Hangul.
-const FOREIGN_SCRIPT_RE = /[֐-ࣿЀ-ӿऀ-෿฀-໿က-႟぀-ヿ㐀-鿿豈-﫿가-힯]/;
-const FOREIGN_SCRIPT_RUN_RE = /[֐-ࣿЀ-ӿऀ-෿฀-໿က-႟぀-ヿ㐀-鿿豈-﫿가-힯]+/g;
-
 function cueNeedsTranslation(cue) {
     const text = String(cue.text || '').trim();
     const original = String(cue.originalText || '').trim();
@@ -1938,7 +1933,7 @@ async function repairTranscript({ cues, sourceFile, totalSec, keys, model, promp
     for (const cue of cues) {
         const text = String(cue.text || '');
         if (KHMER_CHAR_RE.test(text) && FOREIGN_SCRIPT_RE.test(text)) {
-            cue.text = text.replace(FOREIGN_SCRIPT_RUN_RE, ' ').replace(/\s{2,}/g, ' ').trim();
+            cue.text = stripForeignScript(text);
             if (cue._repaired !== 'added') cue._repaired = 'translated'; // Fix Missing sends it back as updated
         }
     }
@@ -3278,16 +3273,9 @@ app.post('/api/generate-audio', (req, res) => {
             return;
         }
 
-        child = spawn(PYTHON_CMD, [
-            pyScript,
-            // `--flag=value` form: argparse rejects separate values starting with '-' (e.g. rate "-10%")
-            `--text=${text}`,
-            `--voice=${voice}`,
-            `--rate=${prosody.rate}`,
-            `--pitch=${prosody.pitch}`,
-            `--volume=${prosody.volume}`,
-            `--output=${outFile}`
-        ], { env: PYTHON_ENV });
+        child = spawn(PYTHON_CMD, buildTtsArgv({
+            script: pyScript, text, voice, rate: prosody.rate, pitch: prosody.pitch, volume: prosody.volume, output: outFile
+        }), { env: PYTHON_ENV });
         trackProcess(child);
 
         let output = '';
