@@ -5545,9 +5545,9 @@
           const renderedHeight = vHeight * fitRatio;
 
           // --- 2. Exact Backend Font Size Math ---
-          const refDimension = Math.min(vWidth, vHeight);
-          const backendScaleFactor = refDimension / 1080;
-          const backendFontSize = Math.round(baseSize * backendScaleFactor);
+          // Shared with the export (frontend/js/subtitle-layout.js) so both size the text the same.
+          const SubLayout = window.SubtitleLayout;
+          const backendFontSize = SubLayout.scaledFontSize(baseSize, vWidth, vHeight);
 
           // Apply visual scale for the UI preview (1.33 ASS to CSS multiplier)
           const previewFontSize = Math.round(backendFontSize * fitRatio * 0.95);
@@ -5584,92 +5584,27 @@
           subtitleText.style.fontStyle = globalSubtitleItalic ? "italic" : "normal";
           subtitleText.style.textDecoration = globalSubtitleUnderline ? "underline" : "none";
 
-          // --- 4. Cached Smart Wrap (Only recalculate if text, size, or video width changes) ---
-          if (!activeSub._cachedChunks || activeSub._cachedText !== activeSub.text || activeSub._cachedBaseSize !== baseSize || activeSub._cachedVWidth !== vWidth) {
-            let textToRender = activeSub.text
-              .replace(/<[^>]+>/g, "")
-              .replace(/\\N/g, " ")
-              .replace(/\n/g, " ")
-              .replace(/\s+/g, " ")
-              .trim();
-
-            const marginSideBackend = Math.round(vWidth * 0.04);
-            const usableWidth = vWidth - marginSideBackend * 2;
-
-            const getCharWidth = (char) => {
-              if (/[\u3000-\u9FFF\uAC00-\uD7AF]/.test(char)) return backendFontSize * 1.05;
-              if (/[\u17B4-\u17D3]/.test(char)) return backendFontSize * 0.1;
-              if (/[\u1780-\u17B3A-Z]/.test(char)) return backendFontSize * 0.65;
-              return backendFontSize * 0.45;
-            };
-
-            let linesArray = [];
-            let currentLine = "";
-            let currentWidth = 0;
-            let lastSpaceIndex = -1;
-            let lastSpaceWidth = 0;
-
-            for (let i = 0; i < textToRender.length; i++) {
-              const char = textToRender[i];
-              const charWidth = getCharWidth(char);
-
-              if (char === " ") {
-                lastSpaceIndex = currentLine.length;
-                lastSpaceWidth = currentWidth;
-              }
-
-              currentLine += char;
-              currentWidth += charWidth;
-
-              if (currentWidth >= usableWidth) {
-                if (lastSpaceIndex !== -1 && currentWidth - lastSpaceWidth < usableWidth * 0.4) {
-                  linesArray.push(currentLine.substring(0, lastSpaceIndex).trim());
-                  currentLine = currentLine.substring(lastSpaceIndex + 1);
-                } else {
-                  let breakIdx = currentLine.length - 1;
-                  while (breakIdx > 0 && (currentLine[breakIdx - 1] === "\u17D2" || /[\u17B4-\u17D3]/.test(currentLine[breakIdx]))) {
-                    breakIdx--;
-                  }
-                  if (breakIdx <= 0) breakIdx = currentLine.length - 1;
-
-                  linesArray.push(currentLine.substring(0, breakIdx).trim());
-                  currentLine = currentLine.substring(breakIdx);
-                }
-
-                currentWidth = 0;
-                for (let c of currentLine) currentWidth += getCharWidth(c);
-                lastSpaceIndex = -1;
-              }
-            }
-
-            if (currentLine.trim().length > 0) {
-              linesArray.push(currentLine.trim());
-            }
-
-            const chunks = [];
-            for (let i = 0; i < linesArray.length; i += 2) {
-              chunks.push(linesArray.slice(i, i + 2).join("<br>"));
-            }
+          // --- 4. Cached Smart Wrap (Only recalculate if text, size, or video size changes) ---
+          // The wrap/chunk rules live in subtitle-layout.js and the export burns in exactly
+          // the same lines, so what is seen here is what the exported video shows.
+          if (!activeSub._cachedChunks || activeSub._cachedText !== activeSub.text || activeSub._cachedBaseSize !== baseSize || activeSub._cachedVWidth !== vWidth || activeSub._cachedVHeight !== vHeight) {
+            const layout = SubLayout.layoutSubtitle(activeSub.text, { baseSize, videoWidth: vWidth, videoHeight: vHeight });
+            const escapeLine = (line) => line.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            const chunks = layout.chunks.map((lines) => lines.map(escapeLine).join("<br>"));
             if (chunks.length === 0) chunks.push("");
 
             activeSub._cachedChunks = chunks;
             activeSub._cachedText = activeSub.text;
             activeSub._cachedBaseSize = baseSize;
             activeSub._cachedVWidth = vWidth;
+            activeSub._cachedVHeight = vHeight;
           }
 
           const chunks = activeSub._cachedChunks;
 
           // --- 5. Dynamic Time Division (Live Swap) ---
-          const startSec = parseFloat(activeSub.textStart);
-          const endSec = parseFloat(activeSub.textEnd);
-          const totalDuration = Math.max(0.01, endSec - startSec);
-          const timePerChunk = totalDuration / chunks.length;
-          const timeIntoSub = currentTime - startSec;
-
-          let currentChunkIdx = Math.floor(timeIntoSub / timePerChunk);
-          if (currentChunkIdx >= chunks.length) currentChunkIdx = chunks.length - 1;
-          if (currentChunkIdx < 0) currentChunkIdx = 0;
+          // Same split as the export: each chunk gets an equal share of the line's time.
+          const currentChunkIdx = SubLayout.chunkIndexAt(activeSub.textStart, activeSub.textEnd, chunks.length, currentTime);
 
           subtitleText.innerHTML = chunks[currentChunkIdx].replace(/\\N/g, "<br>");
           subtitleOverlay.classList.remove("hidden");
@@ -22570,7 +22505,8 @@
 
       // Subtitle size is now controlled via right-click menu in index01 (ctx-sub-size).
       // Read globalSubtitleSize from localStorage as the single source of truth.
-      const getSubtitleSize = () => parseInt(localStorage.getItem("aiDubberSubtitleSize") || "36", 10);
+      // Default 106 = the preview's default (globalSubtitleSize), so an untouched slider exports what the preview shows.
+      const getSubtitleSize = () => parseInt(localStorage.getItem("aiDubberSubtitleSize") || "106", 10);
 
       // ── Render Mode State ──────────────────────────────────────────
       window._renderMode = "video"; // 'video' | 'audio'
