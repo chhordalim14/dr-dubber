@@ -11,11 +11,19 @@ const SL = require('../frontend/js/subtitle-layout.js');
 const render = require('../backend/render_service.js');
 
 const LONG_KHMER = 'ខ្ញុំមិនដែលគិតថាអ្នកជាមនុស្សបែបនេះសោះ ហេតុអ្វីបានជាធ្វើបែបនេះដាក់ខ្ញុំ';
-const COMBINING = /[\u17B4-\u17D3\u17DD\u200C\u200D]/;
+// Ordinary dialogue full of vowels that take space (\u17B6 \u17C4 \u17C5 \u17C1 \u17BE \u17C7): the old width
+// guess counted these as almost nothing and the burned-in lines ran off the frame.
+const VOWEL_HEAVY = [
+  '\u1791\u17C5\u178E\u17B6\u17A0\u17BE\u1799\u1794\u17B6\u1793\u1787\u17B6\u1798\u17B7\u1793\u1791\u17C5\u1787\u17B6\u1798\u17BD\u1799\u1782\u17C1\u1793\u17C4\u17C7\u1791\u17C1 \u1796\u17C1\u179B\u1793\u17C1\u17C7\u1782\u17C1\u1780\u17C6\u1796\u17BB\u1784\u179A\u1784\u1785\u17B6\u17C6\u1793\u17C5\u1791\u17B8\u1793\u17C4\u17C7\u17A0\u17BE\u1799',
+  '\u1796\u17C1\u179B\u1793\u17C4\u17C7\u1782\u17C1\u1791\u17C5\u179A\u1780\u17AA\u1796\u17BB\u1780\u1798\u17D2\u178A\u17B6\u1799\u17A0\u17BE\u1799\u1793\u17B7\u1799\u17B6\u1799\u1790\u17B6\u1780\u17BC\u1793\u1798\u17B7\u1793\u1785\u1784\u17CB\u1791\u17C5\u1791\u17C0\u178F\u1791\u17C1',
+  '\u178F\u17BE\u179B\u17C4\u1780\u17AF\u1784\u1785\u1784\u17CB\u17B2\u17D2\u1799\u1781\u17D2\u1789\u17BB\u17C6\u1792\u17D2\u179C\u17BE\u1799\u17C9\u17B6\u1784\u1798\u17C9\u17C1\u1785\u1791\u17C0\u178F\u1791\u17C5? \u1781\u17D2\u1789\u17BB\u17C6\u1782\u17D2\u1798\u17B6\u1793\u1795\u17D2\u179B\u17BC\u179C\u178E\u17B6\u1791\u17C0\u178F\u17A0\u17BE\u1799\u17D4',
+];
+// Everything that must stay with the letter before it, including \u17D4 \u17D5 \u17D6 \u17D7.
+const COMBINING = /[\u17B4-\u17D7\u17DD\u200C\u200D]/;
 const COENG = '\u17D2';
 
-// No line may start with a vowel sign/diacritic/coeng, and no line may end on a
-// coeng (that would tear a stacked consonant away from its base).
+// No line may start with a vowel sign/diacritic/coeng/Khmer full stop, and no line
+// may end on a coeng (that would tear a stacked consonant away from its base).
 function assertClustersIntact(lines, label) {
   lines.forEach((line, i) => {
     assert.ok(!COMBINING.test(line[0]), `${label}: line ${i} starts with a combining mark: ${line}`);
@@ -30,8 +38,24 @@ describe('wrapText / layoutSubtitle', () => {
     assert.equal(layout.lines.join('').replace(/ /g, ''), LONG_KHMER.replace(/ /g, ''));
     assertClustersIntact(layout.lines, 'size 106');
     for (const line of layout.lines) {
-      const width = Array.from(line).reduce((w, ch) => w + SL.charWidth(ch, layout.fontSize), 0);
-      assert.ok(width <= layout.usableWidth + layout.fontSize, `line too wide: ${line}`);
+      assert.ok(SL.textWidth(line, layout.fontSize) <= layout.usableWidth, `line too wide: ${line}`);
+    }
+  });
+
+  test('vowels that take space count as real width', () => {
+    // ោ is drawn before and after its consonant: about as wide as the consonant.
+    assert.ok(SL.textWidth('កោ', 100) > SL.textWidth('ក', 100) * 1.9);
+    assert.ok(SL.textWidth('កា', 100) > SL.textWidth('ក', 100) * 1.4);
+    // Marks drawn above/below and plain subscripts take no width.
+    assert.equal(SL.textWidth('កិុំ', 100), SL.textWidth('ក', 100));
+    assert.equal(SL.textWidth('ក្ក', 100), SL.textWidth('ក', 100));
+    // ្រ is drawn beside the consonant.
+    assert.ok(SL.textWidth('ក្រ', 100) > SL.textWidth('ក', 100) * 1.4);
+    for (const text of VOWEL_HEAVY) {
+      const layout = SL.layoutSubtitle(text, { baseSize: 106, videoWidth: 1080, videoHeight: 1920 });
+      assert.ok(layout.lines.length >= 2, `should wrap: ${text}`);
+      assertClustersIntact(layout.lines, text);
+      for (const line of layout.lines) assert.ok(SL.textWidth(line, layout.fontSize) <= layout.usableWidth, `line too wide: ${line}`);
     }
   });
 
@@ -53,6 +77,18 @@ describe('wrapText / layoutSubtitle', () => {
     assert.equal(SL.canBreakBefore(word, 3), false, 'before a vowel sign');
     assert.equal(SL.canBreakBefore(word, 4), false, 'before a diacritic');
     assert.equal(SL.canBreakBefore('កខ', 1), true, 'between two plain consonants');
+    assert.equal(SL.canBreakBefore('កោ', 1), false, 'before a vowel that takes space');
+    assert.equal(SL.canBreakBefore('ក។', 1), false, 'before the Khmer full stop');
+    assert.equal(SL.canBreakBefore('ក៕', 1), false, 'before the Khmer end-of-text mark');
+    assert.equal(SL.canBreakBefore('ក ។', 1), false, 'at a space that is followed by a full stop');
+  });
+
+  test('a line never starts with a lone ។', () => {
+    const text = 'ខ្ញុំមិនដឹងទេ ។ '.repeat(12).trim();
+    for (let size = 40; size <= 150; size += 2) {
+      const layout = SL.layoutSubtitle(text, { baseSize: size, videoWidth: 1080, videoHeight: 1920 });
+      layout.lines.forEach((line) => assert.notEqual(line[0], '។', `size ${size}: ${line}`));
+    }
   });
 
   test('at most 2 lines per chunk, and the chunks share the time evenly', () => {
@@ -185,6 +221,49 @@ test('burn-in draws the subtitle in the chosen colour', { skip: !FFMPEG && 'ffmp
     }
     assert.equal(top, 0, 'nothing drawn in the top half');
     assert.ok(bottom > 500, `expected yellow text near the bottom, got ${bottom} pixels`);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// The export tells libass never to wrap, so a line the layout thinks fits but that
+// is really wider gets cut off at the frame edge. Burns vowel-heavy dialogue at the
+// default size, in bold and with the biggest preset, and checks every drawn pixel
+// (letters, outline and shadow) stays inside the side margins.
+test('burned-in Khmer lines stay inside the side margins', { skip: !FFMPEG && 'ffmpeg not found' }, () => {
+  const W = 1080, H = 1920;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'subs-margin-'));
+  const fontsDir = path.join(__dirname, '..', 'frontend', 'fonts').replace(/\\/g, '/').replace(/:/g, '\\:');
+  const styles = [
+    { subtitleSize: 106 },
+    { subtitleSize: 106, subtitleBold: true },
+    { subtitleSize: 106, subtitlePreset: 'tiktok_pop' },
+    { subtitleSize: 130, subtitleBold: true },
+  ];
+  try {
+    for (const style of styles) {
+      for (const text of [LONG_KHMER, ...VOWEL_HEAVY]) {
+        const ass = render._buildSubtitleAss([{ start: 0, end: 4, text }], { ...style, subtitleColor: '#ffffff' }, W, H);
+        // Show every chunk at once (libass stacks them) so one frame checks all lines.
+        const content = ass.content.replace(/^Dialogue: 0,[^,]+,[^,]+,/gm, 'Dialogue: 0,0:00:00.00,0:00:01.00,');
+        fs.writeFileSync(path.join(dir, 'a.ass'), content, 'utf8');
+        const raw = execFileSync(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', `color=c=0x808080:s=${W}x${H}:d=1`,
+          '-vf', `ass=filename=a.ass:fontsdir='${fontsDir}':shaping=complex`, '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'gray', 'pipe:1'],
+          { cwd: dir, maxBuffer: 4 * W * H });
+        let minX = W, maxX = -1;
+        for (let i = 0; i < raw.length; i++) {
+          if (Math.abs(raw[i] - 128) > 40) {
+            const x = i % W;
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+          }
+        }
+        const margin = Math.round(W * SL.SIDE_MARGIN_RATIO);
+        const label = `${JSON.stringify(style)} "${text}": drawn x=${minX}-${maxX}, margins ${margin}-${W - margin}`;
+        assert.ok(maxX > minX, `nothing drawn: ${label}`);
+        assert.ok(minX >= margin && maxX <= W - margin, label);
+      }
+    }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

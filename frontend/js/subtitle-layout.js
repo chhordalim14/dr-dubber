@@ -47,14 +47,62 @@
     marginPercent: 8,
   };
 
-  // Marks that belong to the letter before them: Khmer vowel signs, diacritics and
-  // the coeng (U+17D2, which stacks the NEXT consonant under the previous one),
-  // plus the joiners. A line must never start with one of these.
-  const COMBINING_RE = /[឴-៓៝‌‍]/;
+  // Lines are broken a few percent before the usable width. The width below is an
+  // estimate (another font, bold, the outline), and the export tells libass never to
+  // wrap, so a line that came out a little too wide would be cut off at the frame edge.
+  const WRAP_SLACK = 0.96;
+
+  // Everything that belongs to the letter before it: Khmer vowel signs (also the
+  // ones that take space, like ា or ោ), diacritics, the coeng (U+17D2, which stacks
+  // the NEXT consonant under the previous one) and the joiners. Also the Khmer full
+  // stops and the repeat sign (។ ៕ ៖ ៗ), which end the word before them. A line must
+  // never start with one of these.
+  const NO_BREAK_BEFORE_RE = /[឴-ៗ៝‌‍]/;
   const COENG = '្';
-  const WIDE_RE = /[　-鿿가-힯]/;
-  const WIDE_LETTER_RE = /[ក-ឳA-Z]/;
+  const WIDE_RE = /[　-鿿가-힯＀-￯]/;
   const isBreakSpace = (ch) => ch === ' ' || ch === '​';
+
+  // Width of each Khmer code point (U+1780-U+17DD) in em, measured from what libass
+  // and Chromium actually draw with Kantumruy Pro Bold (the wider weight, so a bold
+  // preview still fits). Rendered, not just the font's advance table: libass/Chrome
+  // split ើ ឿ ៀ ោ ៅ into a part before and a part after the consonant, so those take
+  // the width of both parts, while the advance table lists some of them as 0.
+  // Default for a consonant / independent vowel is 0.65 em.
+  const KHMER_EM = (() => {
+    const t = new Array(0x5e).fill(0.65);
+    const set = (from, to, w) => { for (let c = from; c <= to; c++) t[c - 0x1780] = w; };
+    // Wide consonants: ឃ ញ ឍ យ ល ស ហ, and the extra-wide ឈ ណ; the narrow រ វ.
+    for (const c of [0x1783, 0x1789, 0x178D, 0x1799, 0x179B, 0x179F, 0x17A0]) set(c, c, 0.95);
+    set(0x1788, 0x1788, 1.25); set(0x178E, 0x178E, 1.25);
+    set(0x179A, 0x179A, 0.36); set(0x179C, 0x179C, 0.36);
+    set(0x17A1, 0x17A1, 0.88); set(0x17A6, 0x17A6, 0.95);
+    set(0x17B4, 0x17B5, 0); // inherent vowels: invisible
+    set(0x17B6, 0x17B6, 0.34); // ា
+    set(0x17B7, 0x17BD, 0); // ិ ី ឹ ឺ ុ ូ ួ: drawn above/below, no width
+    set(0x17BE, 0x17BE, 0.35); // ើ = េ before + a mark above
+    set(0x17BF, 0x17C0, 0.68); // ឿ ៀ = េ before + a part after
+    set(0x17C1, 0x17C3, 0.35); // េ ែ ៃ
+    set(0x17C4, 0x17C5, 0.68); // ោ ៅ = េ before + ា after
+    set(0x17C6, 0x17C6, 0); // ំ
+    set(0x17C7, 0x17C7, 0.37); // ះ
+    set(0x17C8, 0x17C8, 0.26); // ៈ
+    set(0x17C9, 0x17D3, 0); // diacritics and the coeng itself
+    set(0x17D4, 0x17D4, 0.62); // ។
+    set(0x17D5, 0x17D5, 0.80); // ៕
+    set(0x17D6, 0x17D6, 0.40); // ៖
+    set(0x17D7, 0x17D7, 0.60); // ៗ
+    set(0x17D8, 0x17D8, 2.17);
+    set(0x17D9, 0x17D9, 0.56);
+    set(0x17DA, 0x17DA, 1.18);
+    set(0x17DB, 0x17DB, 0.39);
+    set(0x17DC, 0x17DC, 0.57);
+    set(0x17DD, 0x17DD, 0);
+    return t;
+  })();
+  // After a coeng most consonants are drawn under the previous one (no width), but
+  // these are drawn beside it: ្រ before it, ្យ ្ស ្ប ្ឃ ្ឈ after it.
+  const SPACING_SUBSCRIPTS = new Set(['រ', 'យ', 'ស', 'ប', 'ឃ', 'ឈ']);
+  const SPACING_SUBSCRIPT_EM = 0.33;
 
   const toNumber = (v) => {
     const n = typeof v === 'number' ? v : parseFloat(v);
@@ -93,31 +141,60 @@
     return Math.round(base * (Math.min(w, h) / REFERENCE_SHORT_SIDE));
   }
 
-  // Estimated advance of one character. Rough on purpose: it only has to be the
-  // same estimate on both sides so preview and export agree.
-  function charWidth(ch, fontSize) {
-    if (WIDE_RE.test(ch)) return fontSize * 1.05;
-    if (COMBINING_RE.test(ch)) return fontSize * 0.1;
-    if (WIDE_LETTER_RE.test(ch)) return fontSize * 0.65;
-    return fontSize * 0.45;
+  // Width of one character in em. prev is the character before it (a consonant
+  // after a coeng is a subscript and usually takes no width of its own).
+  function charEm(ch, prev) {
+    const c = ch.charCodeAt(0);
+    if (c >= 0x1780 && c <= 0x17DD) {
+      if (prev === COENG) return SPACING_SUBSCRIPTS.has(ch) ? SPACING_SUBSCRIPT_EM : 0;
+      return KHMER_EM[c - 0x1780];
+    }
+    if (c >= 0x17E0 && c <= 0x17F9) return 0.62; // Khmer digits and signs
+    if (c === 0x200B || c === 0x200C || c === 0x200D) return 0;
+    if (c === 0x20) return 0.32;
+    if (WIDE_RE.test(ch)) return 1.05; // CJK comes from a fallback font, full width
+    if (c >= 0x41 && c <= 0x5A) return 0.7; // A-Z
+    if (c >= 0x61 && c <= 0x7A) return 0.58; // a-z
+    if (c >= 0x30 && c <= 0x39) return 0.62; // 0-9
+    if (c < 0x80) return 0.4; // ASCII punctuation
+    return 0.65;
   }
 
-  // Is it safe to start a new line at text[i]? Not on a combining mark, and not
-  // right after a coeng (that would tear a stacked consonant off its base).
+  // Width of one character in video pixels for a subtitle of this (scaled) size.
+  // The text is drawn at CSS_FONT_RATIO of the size (the preview's CSS font-size,
+  // which the export reproduces), so that is the em.
+  function charWidth(ch, fontSize, prev) {
+    return charEm(ch, prev) * fontSize * CSS_FONT_RATIO;
+  }
+
+  // Estimated drawn width of a whole line in video pixels.
+  function textWidth(text, fontSize) {
+    const s = String(text || '');
+    let w = 0;
+    for (let k = 0; k < s.length; k++) w += charWidth(s[k], fontSize, k > 0 ? s[k - 1] : '');
+    return w;
+  }
+
+  // Is it safe to start a new line at text[i]? Not on (or, when breaking at a space,
+  // right before) a vowel sign, diacritic or Khmer full stop, and not right after a
+  // coeng (that would tear a stacked consonant off its base).
   function canBreakBefore(text, i) {
     if (i <= 0 || i >= text.length) return false;
-    if (COMBINING_RE.test(text[i])) return false;
     if (text[i - 1] === COENG) return false;
+    let j = i;
+    while (j < text.length && isBreakSpace(text[j])) j++;
+    if (j < text.length && NO_BREAK_BEFORE_RE.test(text[j])) return false;
     return true;
   }
 
-  // Greedy wrap into lines no wider than usableWidth. Prefers the last space when it
-  // is close to the end of the line; otherwise breaks between Khmer clusters.
+  // Greedy wrap into lines no wider than usableWidth (less WRAP_SLACK). Prefers the
+  // last space when it is close to the end of the line; otherwise breaks between
+  // Khmer clusters.
   function wrapText(text, fontSize, usableWidth) {
     const clean = cleanText(text);
     if (!clean) return [];
     const size = firstPositive(fontSize) || DEFAULT_SIZE;
-    const maxWidth = firstPositive(usableWidth) || 1000;
+    const maxWidth = (firstPositive(usableWidth) || 1000) * WRAP_SLACK;
     const lines = [];
     let line = '';
     let width = 0;
@@ -133,7 +210,7 @@
           lastSpace = k;
           lastSpaceWidth = width;
         }
-        width += charWidth(line[k], size);
+        width += charWidth(line[k], size, k > 0 ? line[k - 1] : '');
       }
     };
 
@@ -143,13 +220,17 @@
         lastSpace = line.length;
         lastSpaceWidth = width;
       }
+      const prev = line.length > 0 ? line[line.length - 1] : '';
       line += ch;
-      width += charWidth(ch, size);
-      if (width < maxWidth) continue;
+      width += charWidth(ch, size, prev);
+      // A space that overflows is trimmed off the line anyway. Decide at the next
+      // character instead, which may be a ។ that must not start the next line.
+      if (width < maxWidth || isBreakSpace(ch)) continue;
 
       // Line is full. Break at the last space when little text would move down with
-      // it; otherwise break at the last point between two Khmer clusters.
-      if (lastSpace > 0 && width - lastSpaceWidth < maxWidth * 0.4) {
+      // it (and the next line would not start with a ។ or a vowel sign); otherwise
+      // break at the last point between two Khmer clusters.
+      if (lastSpace > 0 && width - lastSpaceWidth < maxWidth * 0.4 && canBreakBefore(line, lastSpace + 1)) {
         const head = line.substring(0, lastSpace).trim();
         if (head) lines.push(head);
         line = line.substring(lastSpace + 1);
@@ -228,6 +309,11 @@
     const outline = toNumber(o.subtitleOutlineWidth);
     const shadow = toNumber(o.subtitleShadowDepth);
     return {
+      // An old-name size is taken as an editor (preview) size, not converted. The old
+      // subtitleFontSize meant units of libass's 288-line script (28 = about 187 px
+      // tall on a 1920-tall video), so a caller still sending it gets much smaller
+      // text than before. No caller sends it today; one that comes back should send
+      // subtitleSize instead.
       baseSize: firstPositive(o.subtitleSize, o.subtitleFontSize) || DEFAULT_SIZE,
       color: firstDefined(o.subtitleColor, o.subtitleFontColor) || DEFAULTS.color,
       font: firstDefined(o.subtitleFont) || DEFAULTS.font,
@@ -256,10 +342,12 @@
     CSS_LINE_HEIGHT,
     PREVIEW_SHORT_SIDE,
     MAX_LINES_PER_CHUNK,
+    WRAP_SLACK,
     DEFAULTS,
     cleanText,
     scaledFontSize,
     charWidth,
+    textWidth,
     canBreakBefore,
     wrapText,
     chunkLines,
