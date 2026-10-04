@@ -706,6 +706,8 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         voiceVolume = 1.0,
         duckingEnabled = true,
         duckingDepth = 'standard', // 'light' | 'standard' | 'deep'
+        // Every export at the same loudness: -14 LUFS (YouTube / Facebook), peaks under -1.5 dB.
+        normalizeLoudness = true,
         muteOriginal = true,
         isOriginalAudioMuted,
         originalAudioPath, // repaired copy of the video's own audio (see audio_repair.js)
@@ -816,6 +818,8 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         const rawDuration = providedDuration || optVideoDuration || (videoPath ? await getVideoDuration(videoPath) : 0) || 0;
         const effectiveVideoDuration = rawDuration > 0 ? Math.max(0.1, parseFloat(rawDuration)) : (videoPath ? await getVideoDuration(videoPath) : null);
         const videoDuration = effectiveVideoDuration || 60;
+        // loudnorm resamples internally; the aformat after it brings the audio back to 44.1 kHz.
+        const loudnessFilter = normalizeLoudness ? 'loudnorm=I=-14:TP=-1.5:LRA=11,' : '';
 
         // ─────────────────────────────────────────────────────────────
         // AUDIO ONLY EXPORT
@@ -847,15 +851,15 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                     `[bgm_vol][d_sc]sidechaincompress=threshold=0.08:ratio=7:attack=15:release=350[bgm_ducked]`,
                     `[bgm_ducked]equalizer=f=1100:t=q:w=1.5:g=-6[bgm_clean]`,
                     `[bgm_clean][d_mix]amix=inputs=2:normalize=0:duration=longest[final_audio]`,
-                    `[final_audio]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[clean_audio]`
+                    `[final_audio]${loudnessFilter}aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[clean_audio]`
                 ];
                 args.push('-filter_complex', fComplex.join(';'));
                 args.push('-map', '[clean_audio]');
             } else if (dIndex >= 0) {
-                args.push('-filter_complex', `[${dIndex}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[clean_audio]`);
+                args.push('-filter_complex', `[${dIndex}:a]${loudnessFilter}aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[clean_audio]`);
                 args.push('-map', '[clean_audio]');
             } else if (bIndex >= 0) {
-                args.push('-filter_complex', `[${bIndex}:a]${bgmFilterChain},aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[clean_audio]`);
+                args.push('-filter_complex', `[${bIndex}:a]${bgmFilterChain},${loudnessFilter}aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[clean_audio]`);
                 args.push('-map', '[clean_audio]');
             } else {
                 throw new Error('No audio track or BGM found to export.');
@@ -1073,7 +1077,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         // silence to the full video length: otherwise the audio track stops after the last
         // voice clip (e.g. 8s of audio in a 4-minute video), which some players/sites mishandle.
         const padToVideo = Number(videoDuration) > 0 ? `,apad=whole_dur=${Number(videoDuration).toFixed(3)}` : '';
-        filterComplex.push(`[final_audio]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo${padToVideo}[clean_audio]`);
+        filterComplex.push(`[final_audio]${loudnessFilter}aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo${padToVideo}[clean_audio]`);
 
         // Video Filters: Color Filters, Presets, Flips, User Crop, Scaling & Subtitle Burning
         let videoInTag = '0:v';

@@ -4500,6 +4500,61 @@
       openNamesReview();
     }
 
+    // Dub Whole Series: the same check without the review window. Every name gets its suggested
+    // spelling (the Character Glossary's, else the one most used in this part), the tabs are
+    // rewritten, and the names are saved to the glossary - so the next parts are translated
+    // with the same names. Returns { names, changedLines, glossarySaved } or null (nothing to do).
+    async function unifyNamesForSeries() {
+      if (!window.NameConsistency || unifyNamesRun) return null;
+      saveCurrentProjectState();
+      const tabProjects = projects.filter((p) =>
+        liveSubtitlesOf(p).some((s) => String(s.originalText || "").trim() && String(s.text || "").trim()));
+      const apiKeys = getGeminiKeys();
+      if (!tabProjects.length || !apiKeys.length) return null;
+      const tabs = tabProjects.map((p, i) => ({
+        id: `tab${i}`,
+        title: projectTabName(p),
+        lines: liveSubtitlesOf(p).map((s) => ({ id: String(s.id), originalText: s.originalText || "", text: s.text || "" })),
+      }));
+      const projectByTabId = new Map(tabs.map((t, i) => [t.id, tabProjects[i]]));
+      const requestId = crypto.randomUUID();
+      unifyNamesRun = { requestId }; // Stop (stopUnifyNames) cancels it
+      let data;
+      try {
+        const res = await fetch("http://localhost:3001/api/unify-names", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tabs,
+            glossary: typeof getDramaGlossaryDict === "function" ? getDramaGlossaryDict() : null,
+            apiKey: apiKeys[0],
+            apiKeys,
+            model: localStorage.getItem("aiDubberModel") || "gemini-2.5-flash",
+            requestId,
+          }),
+        });
+        data = await res.json();
+      } catch (e) {
+        data = { success: false, message: e.message };
+      } finally {
+        unifyNamesRun = null;
+      }
+      if (!data.success) {
+        if (data.error === "CANCELLED") return { cancelled: true };
+        console.warn("[Dub Whole Series] Name check skipped:", data.message || data.error);
+        return { error: data.message || data.error };
+      }
+      const names = data.names || [];
+      // Same default as the review window's checkboxes: names spelled more than one way, and
+      // names not in the glossary yet (saved so later parts use them).
+      const decisions = names
+        .filter((n) => n.suggested && (n.conflicting.length || !n.inGlossary))
+        .map((n) => ({ original: n.original, use: n.suggested, replace: n.spellings.map((s) => s.khmer) }));
+      if (!decisions.length) return { names: names.length, changedLines: 0, glossarySaved: 0 };
+      const r = applyNameDecisions({ tabs, projectByTabId }, decisions, { saveGlossary: true });
+      return { names: names.length, changedLines: r.changedLines, glossarySaved: r.glossarySaved };
+    }
+
     function stopUnifyNames() {
       if (!unifyNamesRun) return;
       fetch("http://localhost:3001/api/cancel-transcribe", {
@@ -4584,10 +4639,10 @@
       namesReview = null;
     }
 
-    function applyNamesReview() {
-      if (!namesReview) return;
-      const decisions = collectNamesDecisions();
-      const changes = window.NameConsistency.planChanges(namesReview.tabs, decisions);
+    // Rewrites the chosen spellings into the tabs and (optionally) saves them to the Character
+    // Glossary. Shared by the review window and Dub Whole Series.
+    function applyNameDecisions({ tabs, projectByTabId }, decisions, { saveGlossary }) {
+      const changes = window.NameConsistency.planChanges(tabs, decisions);
       const byTab = new Map();
       changes.forEach((c) => {
         if (!byTab.has(c.tabId)) byTab.set(c.tabId, []);
@@ -4598,7 +4653,7 @@
       let skipped = 0;
       const changedTabNos = [];
       for (const [tabId, list] of byTab) {
-        const proj = namesReview.projectByTabId.get(tabId);
+        const proj = projectByTabId.get(tabId);
         if (!proj || !projects.includes(proj)) { // the tab was closed meanwhile
           skipped += list.length;
           continue;
@@ -4633,8 +4688,8 @@
         maybeAutoSaveSubtitles(proj, proj.subtitles);
       }
 
-      let glossaryNote = "";
-      if (document.getElementById("names-review-save-glossary")?.checked && decisions.length) {
+      let glossarySaved = 0;
+      if (saveGlossary && decisions.length) {
         let current = [];
         try {
           current = JSON.parse(localStorage.getItem("aiDubberGlossary") || localStorage.getItem("aiDubberDramaGlossary") || "[]");
@@ -4645,11 +4700,19 @@
           localStorage.setItem("aiDubberDramaGlossary", JSON.stringify(r.list));
         } catch (e) { }
         window.daiStudio?.reloadGlossary?.();
-        if (r.added || r.updated) glossaryNote = ` ${r.added + r.updated} name(s) saved to the Character Glossary.`;
+        glossarySaved = r.added + r.updated;
       }
-
-      closeNamesReview();
       renderProjectTabs();
+      return { changedLines, skipped, changedTabNos, glossarySaved };
+    }
+
+    function applyNamesReview() {
+      if (!namesReview) return;
+      const { changedLines, skipped, changedTabNos, glossarySaved } = applyNameDecisions(namesReview, collectNamesDecisions(), {
+        saveGlossary: !!document.getElementById("names-review-save-glossary")?.checked,
+      });
+      const glossaryNote = glossarySaved ? ` ${glossarySaved} name(s) saved to the Character Glossary.` : "";
+      closeNamesReview();
       const skippedNote = skipped ? ` ${skipped} line(s) were left alone because they changed after the check.` : "";
       if (changedLines) {
         showToast(`Names made consistent: ${changedLines} line(s) changed in tab ${changedTabNos.sort((a, b) => a - b).join(", ")}.${glossaryNote}${skippedNote} Changed lines need Generate to be voiced again.`, "success");
@@ -9256,6 +9319,15 @@
 
     window.getRenderDuckingDepth = () => currentDuckingDepth;
     window.isRenderDuckingEnabled = () => currentDuckingEnabled;
+
+    // Export loudness (-14 LUFS): on unless switched off in the export settings.
+    {
+      const loudToggle = document.getElementById("toggle-render-loudness");
+      if (loudToggle) {
+        loudToggle.checked = localStorage.getItem("aiDubberNormalizeLoudness") !== "false";
+        loudToggle.addEventListener("change", () => localStorage.setItem("aiDubberNormalizeLoudness", loudToggle.checked ? "true" : "false"));
+      }
+    }
     window.getSubtitleStylePreset = () => currentSubtitlePreset;
 
     // One Character Glossary for the whole app: the list kept by DAI-Transcribe's
@@ -16617,10 +16689,18 @@
         checkStop();
         if (f?.stopped) throw stoppedError();
         if (f?.quotaOut) throw new Error(QUOTA_MSG);
+
+        // Same spelling for every name in this part, saved to the glossary for the next parts.
+        setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Making names consistent`);
+        const nm = await unifyNamesForSeries();
+        checkStop();
+        if (nm?.cancelled) throw stoppedError();
         const noKhmer = projects.reduce((n, p) => n + liveSubtitlesOf(p).filter((s) => !isSpeakableText(s.text)).length, 0);
         let note = `${projects.length} of ${projects.length} tabs`;
         if (f?.fixedLines) note += ` · ${f.fixedLines} missing line(s) filled`;
         if (noKhmer) note += ` · ${noKhmer} line(s) have no text to voice`;
+        if (nm?.changedLines) note += ` · names made consistent in ${nm.changedLines} line(s)`;
+        if (nm?.glossarySaved) note += ` · ${nm.glossarySaved} name(s) saved to the glossary`;
         const fellBack = [...fallbackTabs].filter(([tab]) => projects.includes(tab));
         if (fellBack.length) note += ` · tab ${tabNumbers(fellBack.map(([tab]) => tab))} partly used ${[...new Set(fellBack.flatMap(([, m]) => m))].join(", ")} (Google rate limit) - re-transcribe if the lines look merged`;
         return note;
@@ -22708,6 +22788,7 @@
               bgmTrack: bgmTrackData,
               isOriginalAudioMuted,
               duckingEnabled: typeof isRenderDuckingEnabled === "function" ? isRenderDuckingEnabled() : true,
+              normalizeLoudness: localStorage.getItem("aiDubberNormalizeLoudness") !== "false",
               duckingDepth: typeof getRenderDuckingDepth === "function" ? getRenderDuckingDepth() : "standard",
               subtitlePreset: typeof getSubtitleStylePreset === "function" ? getSubtitleStylePreset() : "classic",
               outputFileName: finalFileName,
@@ -23239,6 +23320,7 @@
               bgmTrack: bgmTrackData,
               isOriginalAudioMuted: proj.isOriginalAudioMuted === true || (proj.currentVolume !== undefined ? proj.currentVolume === 0 : false),
               duckingEnabled: typeof isRenderDuckingEnabled === "function" ? isRenderDuckingEnabled() : true,
+              normalizeLoudness: localStorage.getItem("aiDubberNormalizeLoudness") !== "false",
               duckingDepth: typeof getRenderDuckingDepth === "function" ? getRenderDuckingDepth() : "standard",
               subtitlePreset: typeof getSubtitleStylePreset === "function" ? getSubtitleStylePreset() : "classic",
               outputFileName: fileName,

@@ -6166,6 +6166,23 @@
               class="duck-depth-btn h-7 rounded-lg text-[11px] font-semibold border border-[var(--border-light)] text-[var(--text-secondary)] hover:border-cyan-400/50 transition-all">Deep
               (-20dB)</button>
           </div>
+          <div class="flex items-center justify-between pt-2 mt-1 border-t border-[var(--border-light)]">
+            <label for="toggle-render-loudness" class="text-xs text-[var(--text-secondary)] font-medium flex items-center gap-2">
+              <i data-lucide="volume-2" class="w-3.5 h-3.5 text-cyan-400"></i>
+              Normalize Loudness (-14 LUFS)
+            </label>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" id="toggle-render-loudness" class="sr-only peer" checked />
+              <div
+                class="w-9 h-5 bg-[var(--border-light)] rounded-full peer peer-checked:bg-[var(--accent-primary)] transition-colors duration-200">
+              </div>
+              <div
+                class="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200 peer-checked:translate-x-4">
+              </div>
+            </label>
+          </div>
+          <p class="text-[10px] text-[var(--text-muted)] -mt-1">Every export plays at the same volume as YouTube and
+            Facebook expect, so parts and episodes don't jump in loudness.</p>
         </div>
 
         <!-- ── SUBTITLE VISUAL STYLE PRESETS ── -->

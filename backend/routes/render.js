@@ -207,6 +207,7 @@ module.exports = function createRenderRouter({ upload, renderVideo, cancelRender
                 ? (renderOpts.duckingEnabled === true || renderOpts.duckingEnabled === 'true' || renderOpts.duckingEnabled === 1 || renderOpts.duckingEnabled === '1')
                 : true,
             duckingDepth: renderOpts.duckingDepth || 'standard',
+            normalizeLoudness: renderOpts.normalizeLoudness === undefined ? true : !(renderOpts.normalizeLoudness === false || renderOpts.normalizeLoudness === 'false' || renderOpts.normalizeLoudness === 0 || renderOpts.normalizeLoudness === '0'),
             // Only when the video's own audio is actually mixed in (same rule as render_service):
             // checking/repairing a 2-hour track for a muted or audio-only export is wasted time.
             originalAudioPath: (videoPath && !isAudioOnly && !(renderOpts.isOriginalAudioMuted !== undefined ? renderOpts.isOriginalAudioMuted : (renderOpts.muteOriginal !== undefined ? renderOpts.muteOriginal : true)))
