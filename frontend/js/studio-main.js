@@ -16287,6 +16287,7 @@
       if (seriesRun.splitJobId) post("http://localhost:3001/api/split/cancel", { jobId: seriesRun.splitJobId });
       if (seriesRun.step === "generate" && (isGeneratingAudioAll || voxQueueRunning)) generateSelectedAudioAllProjects();
       if (seriesRun.step === "isolate" && isIsolatingBgmAll) isolateBgmAllProjects({ skipConfirm: true });
+      if (seriesRun.step === "export") window.seriesRenderApi?.stop();
     }
 
     (() => {
@@ -16333,13 +16334,20 @@
           if (prefs.joinMinutes) $("ds-join-minutes").value = prefs.joinMinutes;
           if (prefs.splitMinutes) $("ds-split-minutes").value = prefs.splitMinutes;
           OPTIONAL_STEPS.forEach((k) => { if (typeof prefs[k] === "boolean") $(`ds-step-${k}`).checked = prefs[k]; });
+          if (typeof prefs.handsFree === "boolean" && $("ds-handsfree")) $("ds-handsfree").checked = prefs.handsFree;
         }
       } catch (e) { }
       const savePrefs = () => {
         const prefs = { joinMinutes: joinMinutes(), splitMinutes: splitMinutes() };
         OPTIONAL_STEPS.forEach((k) => { prefs[k] = $(`ds-step-${k}`).checked; });
+        prefs.handsFree = handsFree();
         try { localStorage.setItem("aiDubberSeriesPrefs", JSON.stringify(prefs)); } catch (e) { }
       };
+      // Hands-free: each finished part is exported and the next part starts by itself.
+      const handsFree = () => !!$("ds-handsfree")?.checked;
+      // A finished part whose hands-free export didn't complete, with its tabs still open.
+      const exportPending = () => !!(handsFree() && plan && unfinishedIndex() < 0 && plan.lastDone && !plan.parts[plan.lastDone.index].exported && projects.length);
+      $("ds-handsfree")?.addEventListener("change", () => savePrefs());
       // Read when each step starts, so a step can be switched off while the series runs.
       const wanted = (step) => !OPTIONAL_STEPS.includes(step) || $(`ds-step-${step}`).checked;
 
@@ -16445,10 +16453,10 @@
           btnStart.disabled = false;
           btnStart.textContent = "Stop joining";
           btnNext.classList.remove("hidden");
-          btnNext.textContent = u >= 0 ? `Continue part ${u + 1}` : `Next part: ${(nextIdx >= 0 ? nextIdx : joining[0]) + 1} of ${plan.parts.length}`;
+          btnNext.textContent = exportPending() ? `Export part ${plan.lastDone.index + 1} again` : u >= 0 ? `Continue part ${u + 1}` : `Next part: ${(nextIdx >= 0 ? nextIdx : joining[0]) + 1} of ${plan.parts.length}`;
         } else {
           btnStart.classList.add("hidden");
-          const label = u >= 0 ? `Continue part ${u + 1}` : nextIdx >= 0 ? `Next part: ${nextIdx + 1} of ${plan.parts.length}` : joining.length ? `Next part: ${joining[0] + 1} of ${plan.parts.length}` : toJoin.length ? "Continue joining" : "";
+          const label = exportPending() ? `Export part ${plan.lastDone.index + 1} again` : u >= 0 ? `Continue part ${u + 1}` : nextIdx >= 0 ? `Next part: ${nextIdx + 1} of ${plan.parts.length}` : joining.length ? `Next part: ${joining[0] + 1} of ${plan.parts.length}` : toJoin.length ? "Continue joining" : "";
           btnNext.textContent = label;
           btnNext.classList.toggle("hidden", !label);
         }
@@ -16470,6 +16478,11 @@
             document.getElementById("btn-open-settings")?.click();
             return false;
           }
+        }
+        if (handsFree() && (!exportPath || !exportPath.trim())) {
+          showToast("Hands-free exports each part: set the 'Save Path' in Settings first.", "error");
+          document.getElementById("btn-open-settings")?.click();
+          return false;
         }
         if (wanted("generate") && (!tempAudioPath || !tempAudioPath.trim())) {
           showToast("Please set the 'Generated Audio Temp Path' in Settings first.", "error");
@@ -16801,11 +16814,49 @@
         plan.stepState = null;
         plan.pieces = null;
         savePlan();
+        if (handsFree()) return; // exportAndContinue() takes it from here
         const next = [nextPartIndex(), ...joiningIndices(), ...partsToJoin()].find((k) => k >= 0) ?? -1;
         showToast(next >= 0
           ? `Part ${i + 1} of ${plan.parts.length} is dubbed ✓ Export it, then press Next part in Dub Whole Series.`
           : `Part ${i + 1} is dubbed ✓ That was the last part.`, "success");
         modal.classList.remove("hidden");
+      }
+
+      // Hands-free: export the finished part through the render queue, close its tabs and dub
+      // the next part - until every part is done. An export that doesn't finish stops here with
+      // the tabs still open, so nothing is closed before it is saved.
+      async function exportAndContinue() {
+        while (handsFree() && plan?.lastDone && !plan.parts[plan.lastDone.index].exported) {
+          const i = plan.lastDone.index;
+          if (!window.seriesRenderApi) throw new Error("The render queue is not ready.");
+          seriesRun.step = "export";
+          setLabel(`Part ${i + 1}/${plan.parts.length} · Exporting ${projects.length} tab(s)`);
+          let r;
+          try {
+            r = await window.seriesRenderApi.exportAllTabs(`${plan.outDir}|part${i + 1}`);
+          } finally {
+            if (seriesRun) seriesRun.step = null;
+          }
+          checkStop();
+          if (!r.total || r.done < r.total) {
+            throw new Error(`Part ${i + 1}: ${r.done} of ${r.total} tab(s) exported${r.failed ? ` (${r.failed} failed)` : ""}. Export the rest from the render queue, then press Next part.`);
+          }
+          plan.parts[i].exported = true;
+          savePlan();
+          render();
+          if (![nextPartIndex(), ...joiningIndices(), ...partsToJoin()].some((k) => k >= 0)) {
+            showToast(`All ${plan.parts.length} parts are dubbed and exported ✓`, "success");
+            modal.classList.remove("hidden");
+            return;
+          }
+          showToast(`Part ${i + 1} exported ✓ Starting part ${i + 2}.`, "success");
+          for (let k = projects.length - 1; k >= 0; k--) closeProjectTab(k); // exported: safe to close
+          await ensureNextPartJoined();
+          await startBackgroundJoin(partsToJoin());
+          const idx = nextPartIndex();
+          if (idx < 0) return;
+          await runPart(idx);
+        }
       }
 
       async function startBackgroundJoin(indices) {
@@ -16945,12 +16996,20 @@
           await startBackgroundJoin(partsToJoin());
           const first = nextPartIndex();
           if (first >= 0) await runPart(first);
+          await exportAndContinue();
         });
       }
 
       async function continueSeries() {
         if (!plan || seriesRun || !preflight()) return;
         const u = unfinishedIndex();
+        // Hands-free and the last part's export didn't finish (its tabs are still open): try the
+        // export again before anything is closed.
+        if (exportPending()) {
+          savePrefs();
+          await withRun(exportAndContinue);
+          return;
+        }
         const target = u >= 0 ? u : nextPartIndex() >= 0 ? nextPartIndex() : joiningIndices()[0] ?? partsToJoin()[0];
         if (target === undefined) return;
         savePrefs();
@@ -16963,6 +17022,7 @@
           await startBackgroundJoin(partsToJoin());
           const idx = unfinishedIndex() >= 0 ? unfinishedIndex() : nextPartIndex();
           if (idx >= 0) await runPart(idx);
+          await exportAndContinue();
         });
       }
 
@@ -24032,7 +24092,7 @@
           }
         };
 
-        document.getElementById("btn-stop-queue")?.addEventListener("click", async () => {
+        const stopRenderQueue = async () => {
           if (!queueRunning) return;
           queueStopRequested = true;
 
@@ -24056,12 +24116,15 @@
 
           showToast("Queue stopped. All pending jobs cancelled.", "info");
           renderQueueList();
-        });
+        };
+        document.getElementById("btn-stop-queue")?.addEventListener("click", stopRenderQueue);
 
         // ── Start Queue runner ────────────────────────────────────
-        document.getElementById("btn-start-queue")?.addEventListener("click", async () => {
+        // onlyItems (Set): render just those queue items (Dub Whole Series' hands-free export).
+        const runRenderQueue = async (onlyItems = null) => {
           if (queueRunning) return;
-          const pending = renderQueue.filter((i) => i.status === "pending");
+          const wantedItem = (i) => !onlyItems || onlyItems.has(i);
+          const pending = renderQueue.filter((i) => i.status === "pending" && wantedItem(i));
           if (pending.length === 0) return showToast("No pending items in the queue.", "info");
 
           queueRunning = true;
@@ -24074,7 +24137,7 @@
           for (let i = 0; i < renderQueue.length; i++) {
             if (queueStopRequested) break;
             const item = renderQueue[i];
-            if (item.status !== "pending") continue;
+            if (item.status !== "pending" || !wantedItem(item)) continue;
 
             // Mark running
             item.status = "running";
@@ -24239,7 +24302,48 @@
 
           const doneCount = renderQueue.filter((i) => i.status === "done").length;
           if (doneCount > 0) showToast(`Queue complete! ${doneCount} file${doneCount > 1 ? "s" : ""} rendered. 🎉`, "success");
-        });
+        };
+        document.getElementById("btn-start-queue")?.addEventListener("click", () => runRenderQueue());
+
+        // Dub Whole Series (hands-free): every tab of the finished part into the render queue -
+        // MP4, or MP3 for a tab without video - rendered with the same settings as
+        // "All to Queue". Returns { total, done, failed, cancelled } for those items.
+        const SERIES_AUDIO_FILE_RE = /\.(mp3|wav|m4a|m4b|aac|flac|ogg|oga|opus|wma|ac3|eac3|dts|aif|aiff|caf|mp2|mka|amr|ape|wv|ra|weba)$/i;
+        // tag: which series part these exports belong to - a retry reuses that part's finished
+        // exports instead of rendering them again.
+        const exportAllTabsForSeries = async (tag = null) => {
+          window._isSavingForRender = true;
+          saveCurrentProjectState();
+          window._isSavingForRender = false;
+          const items = new Set();
+          projects.forEach((proj) => {
+            if (!proj.file) return;
+            const audioOnly = !!proj.isAudioOnly || SERIES_AUDIO_FILE_RE.test(proj.videoFilePath || proj.file.name || "");
+            const baseName = (proj.file.name || "video").replace(/\.[^/.]+$/, "");
+            const fileName = `${baseName}_${proj.targetLanguage || targetLanguage || "Khmer"}_Dubbed.${audioOnly ? "mp3" : "mp4"}`;
+            const queued = renderQueue.find((i) => i.projectLabel === proj.file.name && i.config?.outputFileName === fileName &&
+              (i.status === "pending" || i.status === "running" || (tag && i.seriesTag === tag && i.status === "done")));
+            if (queued) {
+              items.add(queued);
+              return;
+            }
+            const item = { status: "pending", progress: 0, projectLabel: proj.file.name, seriesTag: tag, ...buildConfigSnapshot(proj, fileName, audioOnly, "mp3") };
+            renderQueue.push(item);
+            items.add(item);
+          });
+          updateQueueBadge();
+          renderQueueList();
+          while (queueRunning) await new Promise((r) => setTimeout(r, 1000)); // the user's own queue run first
+          if ([...items].some((i) => i.status === "pending")) await runRenderQueue(items);
+          const list = [...items];
+          return {
+            total: list.length,
+            done: list.filter((i) => i.status === "done").length,
+            failed: list.filter((i) => i.status === "error").length,
+            cancelled: list.filter((i) => i.status === "cancelled" || i.status === "pending").length,
+          };
+        };
+        window.seriesRenderApi = { exportAllTabs: exportAllTabsForSeries, stop: stopRenderQueue };
 
         // Initial render of empty queue UI
         renderQueueList();
