@@ -55,6 +55,7 @@ require('./lib/server-log').installServerLog(LOGS_DIR);
 const { FOREIGN_SCRIPT_RE, stripForeignScript, collapseRepeatedPartSuffix, buildTtsArgv } = require('./lib/text-rules');
 const { trackProcess } = require('./lib/process-tracker');
 const { secureFetch, fetchBackend } = require('./lib/secure-fetch');
+const { KHMER_SYLLABLES_PER_SEC, KHMER_DUBBING_RULES, khmerMaxSyllables, lineSeconds, getKhmerDramaRegisterGuidance, parseSrtBlocksForTranslate, translatePromptLine, buildTranslatePrompt } = require('./lib/khmer-prompts');
 
 // Clean stale temporary cache files (> 7 days old) asynchronously to prevent disk bloat
 function cleanStaleTempFiles() {
@@ -1231,88 +1232,6 @@ function applyGlossary(text, glossary) {
     return result;
 }
 
-function getKhmerDramaRegisterGuidance(genreRegister) {
-    if (genreRegister === 'historical' || genreRegister === 'imperial' || genreRegister === 'wuxia') {
-        return `
-5. Historical, Imperial Palace & Wuxia Register (រឿងបុរាណ/រាជវាំង/ក្បាច់គុន/ទេវតា):
-   - Use authentic Cambodian classical royal court language, martial arts terms, and dramatic tone:
-     * Sovereign & Royal Court: "ព្រះអង្គ", "ព្រះមហាក្សត្រ", "ព្រះរាជបញ្ជា", "ក្រាបទូល", "សូមទ្រង់ព្រះមេត្តា".
-     * Self-referral: "ទូលបង្គំ" (men to royalty), "ខ្ញុំម្ចាស់" (women to royalty), "យើង" (Emperor/King/Master).
-     * Family & Consorts: "ម្ចាស់បង", "ម្ចាស់អូន", "ព្រះមាតា", "ព្រះបិតា", "រាជបុត្រ", "ព្រះនាង", "អ្នកម្នាង".
-     * Martial Arts / Sects / Masters: "លោកម្ចាស់", "លោកគ្រូ", "សិស្សច្បង", "សិស្សប្អូន", "លោកមេបក្ស", "និកាយ", "វិជ្ជាគុណ".
-     * Short Dramatic Conflict: "អាមនុស្សថោកទាប!", "កុំសង្ឃឹមថារួចខ្លួន!", "ឯងចង់ងាប់មែនទេ?!", "ទទួលបញ្ជា!".`;
-    } else if (genreRegister === 'action') {
-        return `
-5. Action, Military & Crime Register (រឿងសកម្មភាព/កងទ័ព/ឧក្រិដ្ឋកម្ម):
-   - Use punchy, high-adrenaline, ultra-short tactical dialogue:
-     * Urgent commands: "ប្រយ័ត្ន!", "បាញ់!", "ដកថយ!", "កុំកម្រើក!", "ទៅលឿន!", "រត់!", "តាមចាប់វា!", "លើកដៃឡើង!".`;
-    } else if (genreRegister === 'comedy') {
-        return `
-5. Comedy & Lively Register (រឿងកំប្លែង/កំប្លុកកំប្លែង):
-   - Use humorous, lively, and entertaining spoken Cambodian colloquialisms:
-     * Natural reactions: "អីយ៉ា!", "ងាប់ហើយ!", "កុំចេះដឹង!", "ពិតមែនហ្អេស?!", "កំប្លែងមែន!", "អញហើយ!".`;
-    } else {
-        return `
-5. Modern Romance, CEO & Urban Register (រឿងសម័យ/ស្នេហា/ប្រធានក្រុមហ៊ុន):
-   - Use natural, fluid, modern conversational Khmer:
-     * Natural pronouns & titles: "បង", "អូន", "លោកប្រធាន", "អ្នកនាង", "ឯង", "ខ្ញុំ", "ម៉ាក់", "ប៉ា".
-     * Real conversational dialogue:
-       - "你在干什么？" -> "ឯងធ្វើអីហ្នឹង?" / "បងធ្វើអីហ្នឹង?"
-       - "你没事吧？" -> "ឯងមិនអីទេ?" / "បងមិនអីទេ?"
-       - "别管我！" -> "កុំរវល់នឹងខ្ញុំ!" / "កុំចេះដឹង!"
-       - "对不起，我来晚了" -> "សុំទោស បងមកយឺត"
-       - "我喜欢你" -> "បងស្រឡាញ់អូន" / "ខ្ញុំចូលចិត្តឯង"
-       - "怎么办？" -> "ធ្វើម៉េចទៅ?"`;
-    }
-}
-
-const KHMER_DUBBING_RULES = `💎 ULTRA-CONCISE & READABLE KHMER DUBBING RULES (ខ្លី ខ្លឹម ងាយអាន ឥតទាក់ ដូចរឿងភាគទូរទស្សន៍):
-
-1. STRICT ULTRA-CONCISE LENGTH (ខ្លី ខ្លឹម ចំៗ កាត់ពាក្យវែងអន្លាយចោល):
-   - In Asian/Chinese dramas, speech is fast and compact (3 to 6 syllables). The Khmer dub MUST be equally SHORT and COMPACT (strictly 3 to 10 Khmer syllables max, 3 to 8 words per line).
-   - Never generate long sentences, textbook paragraphs, or multi-clause explanations.
-   - If dialogue is long, capture only the core punchline/meaning.
-
-2. ABSOLUTE BAN ON ROBOTIC & FORMAL TEXTBOOK WORDS (ហាមដាច់ខាតពាក្យអូសបន្លាយបែបសៀវភៅ):
-   - 🚫 BAN "តើ..." at the beginning of questions (e.g. ❌ "តើឯងធ្វើអ្វី?" -> ✅ "ឯងធ្វើអីហ្នឹង?").
-   - 🚫 BAN unnecessary past tense "បាន..." (e.g. ❌ "ខ្ញុំបានដឹងហើយ" -> ✅ "ខ្ញុំដឹងហើយ").
-   - 🚫 BAN continuous "កំពុងតែ..." (e.g. ❌ "កំពុងតែទៅ..." -> ✅ "កំពុងទៅ...").
-   - 🚫 BAN possessive "របស់អ្នក / របស់ខ្ញុំ" (e.g. ❌ "ដៃរបស់អ្នក" -> ✅ "ដៃឯង" / "ដៃបង").
-   - 🚫 BAN polite filler "សូមមេត្តា / សូម..." unless addressing kings or royal superiors.
-   - 🚫 BAN word-for-word translation ("ចំពោះរឿងនេះ", "គឺជារឿងដែល", "ដើម្បីធ្វើការ", "មានការ...").
-
-3. GOLDEN DUBBING REPLACEMENTS (គំរូពាក្យសន្ទនាភាពយន្តខ្លី):
-   - ❌ "តើអ្នកកំពុងតែធ្វើអ្វីនៅទីនេះ?" -> ✅ "ឯងធ្វើអីហ្នឹង?" / "បងធ្វើអី?"
-   - ❌ "តើមានរឿងអ្វីបានកើតឡើងចំពោះអ្នក?" -> ✅ "កើតអីហ្នឹង?" / "មានរឿងអី?"
-   - ❌ "តើនេះជាការពិតមែនទេ?" -> ✅ "ពិតមែនហ្អេស?!" / "មែនអត់?"
-   - ❌ "ខ្ញុំសូមអភ័យទោសដែលបានមកយឺត" -> ✅ "សុំទោស ខ្ញុំមកយឺត" / "សុំទោស បងមកយឺត"
-   - ❌ "កុំមានការព្រួយបារម្ភចំពោះខ្ញុំអី" -> ✅ "កុំបារម្ភពីខ្ញុំ" / "ទុកចិត្តចុះ"
-   - ❌ "តើអ្នកអាចប្រាប់ការពិតដល់ខ្ញុំបានទេ?" -> ✅ "ប្រាប់ការពិតមក" / "និយាយមក"
-   - ❌ "ខ្ញុំមិនអាចយល់ស្របនឹងរឿងនេះបានឡើយ" -> ✅ "ខ្ញុំមិនព្រមដាច់ខាត!" / "មិនអាចទេ!"
-   - ❌ "សូមជួយសង្គ្រោះជីវិតខ្ញុំផង" -> ✅ "ជួយផង!" / "ជួយខ្ញុំផង!"
-   - ❌ "តើឯងចង់ស្លាប់មែនទេ?" -> ✅ "ចង់ងាប់មែនទេ?!"
-   - ❌ "ខ្ញុំនឹងមិនលើកលែងទោសឲ្យអ្នកឡើយ" -> ✅ "កុំសង្ឃឹមថារួចខ្លួន!" / "ខ្ញុំមិនលើកលែងទេ!"
-   - ❌ "តើអ្នកចង់មានន័យថាយ៉ាងដូចម្ដេច?" -> ✅ "ចង់មានន័យថាម៉េច?"
-   - ❌ "កុំមកប៉ះពាល់រូបរាងកាយរបស់ខ្ញុំ" -> ✅ "កុំប៉ះខ្ញុំ!"
-   - ❌ "តើពួកយើងគួរតែធ្វើបែបណាទៅ?" -> ✅ "ធ្វើម៉េចទៅ?"
-   - ❌ "ខ្ញុំមិនចង់ឃើញមុខរបស់អ្នកទៀតឡើយ" -> ✅ "ទៅឲ្យឆ្ងាយ!" / "ចេញឲ្យផុតទៅ!"
-   - ❌ "សូមបិទមាត់របស់អ្នកភ្លាមទៅ" -> ✅ "បិទមាត់!" / "ស្ងាត់មាត់!"
-   - ❌ "ខ្ញុំមិនដែលគិតថាអ្នកជាមនុស្សបែបនេះសោះ" -> ✅ "ស្មានមិនដល់ថាឯងចឹងសោះ!"
-   - ❌ "អ្នកមិនចាំបាច់មកខ្វល់ខ្វាយពីខ្ញុំទេ" -> ✅ "កុំចេះដឹង!" / "កុំរវល់នឹងខ្ញុំ!"
-   - ❌ "តើអ្នកទៅណា?" -> ✅ "ទៅណា?" / "បងទៅណា?"
-   - ❌ "ខ្ញុំស្រឡាញ់អ្នកខ្លាំងណាស់" -> ✅ "បងស្រឡាញ់អូន" / "ខ្ញុំស្រឡាញ់ឯង"
-   - ❌ "ហេតុអ្វីបានជាអ្នកធ្វើបែបនេះ?" -> ✅ "ម៉េចធ្វើចឹង?!" / "ហេតុអីធ្វើចឹង?"
-   - ❌ "តើអ្នកសុខសប្បាយជាទេ?" -> ✅ "យ៉ាងម៉េចហើយ?" / "មិនអីទេហី?"
-   - ❌ "ឆាប់ចេញពីទីនេះភ្លាម" -> ✅ "ចេញភ្លាម!" / "ទៅឲ្យលឿន!"
-
-4. FLUID CONVERSATIONAL PARTICLES (ពាក្យបន្ថែមបែបសន្ទនាធម្មជាតិ):
-   - Localize Asian particles (的, 了, 吧, 呢, 啊, 嘛) into natural colloquial Khmer ("ហ្នឹង", "ហើយ", "តើ", "ចុះ", "មែនទេ", "ណា", "ហ្ហ៎ា", "អត់", "ហី", "ទៅ", "មក").
-
-5. SUBTITLE LEGIBILITY & SPACING (អានស្រួល មើលច្បាស់ក្នុង ១វិនាទី):
-   - Insert a clean standard space between grammatical clauses (e.g. "សុំទោស ខ្ញុំមកយឺត").
-   - DO NOT insert zero-width characters (ZWSP). Ensure clean standard UTF-8 Khmer text.
-   - Keep punctuation clean, minimal, and expressive (!, ?, ..., ?!).`;
-
 // 4. Transcription & Gemini Speech-to-Text Pipeline
 //
 // Long audio is split at natural pauses into ~3 minute chunks. Gemini's timestamps
@@ -1441,10 +1360,10 @@ function buildTranscribePrompt({ clipSec, glossaryHint, genreGuidance, previousL
     const contextHint = previousLines && previousLines.length
         ? `\n\nPREVIOUS DIALOGUE (context only, for consistent names and pronouns; do NOT repeat these lines):\n${previousLines.map(l => `- [${l.gender || '?'}] ${l.originalText || ''} => ${l.text}`).join('\n')}`
         : '';
-    return `You are an elite master film/TV dialogue adapter and dubbing director specializing in Asian and Chinese drama (C-Drama: 古装/宫斗/仙侠/武侠/现代甜宠/总裁/动作) localization into cinematic, natural, ultra-concise, and highly readable Khmer.
+    return `You are an elite master film/TV dialogue adapter and dubbing director specializing in Asian and Chinese drama (C-Drama: 古装/宫斗/仙侠/武侠/现代甜宠/总裁/动作) localization into cinematic, natural and highly readable Khmer.
 
 TASK:
-Listen to the audio carefully and transcribe and translate all spoken dialogue into SHORT, PUNCHY, and READABLE Khmer subtitles specifically optimized for professional voice dubbing and fast on-screen reading.
+Listen to the audio carefully and transcribe and translate all spoken dialogue into NATURAL, SPEAKABLE Khmer lines for professional voice dubbing, each one taking about as long to say as the original line.
 
 ${KHMER_DUBBING_RULES}
 ${glossaryHint}${contextHint}
@@ -1460,6 +1379,7 @@ TIMESTAMPS & ACTING RULES:
    - Only real spoken dialogue and narration. Skip background music, song lyrics, sound effects, breathing, and crowd noise.
    - Never invent, summarize, or skip dialogue. If the clip has no speech, return [].
    - "originalText" is the exact words spoken in the original language.
+   - Size each "text" to its own start-to-end duration: about ${KHMER_SYLLABLES_PER_SEC} Khmer syllables per second (a 2-second line is about ${Math.round(2 * KHMER_SYLLABLES_PER_SEC)} syllables).
    - "text" is written in Khmer script only: never leave a word in Chinese or put in a word from any other language or script (Arabic, Thai, Japanese...). Write names and places in Khmer letters.
 
 3. Speaker Gender & Emotion:
@@ -1475,7 +1395,7 @@ SCHEMA:
     "start": "00:00.00",
     "end": "00:02.50",
     "originalText": "Original spoken dialogue",
-    "text": "Short punchy Khmer translation",
+    "text": "Natural Khmer line sized to start-end",
     "gender": "Male",
     "emotion": "Neutral"
   }
@@ -2213,56 +2133,6 @@ app.post('/api/repair-subtitles', async (req, res) => {
 // merged line can never shift every following translation onto the wrong cue.
 const TRANSLATE_BATCH_SIZE = 50;
 
-// Mirrors the frontend parseSrtText() block rules so indexes line up 1:1.
-function parseSrtBlocksForTranslate(content) {
-    return content.trim().replace(/\r\n/g, '\n').split(/\n\s*\n/)
-        .map(block => {
-            const lines = block.split('\n');
-            if (lines.length < 3 || lines[1].split(' --> ').length !== 2) return null;
-            return lines.slice(2).join('\n')
-                .replace(/^\[(Male|Female|Hero|Heroine|Father|Mother|Villain|Queen|Elder|Child)(?::[^\]]+)?\]\s*/i, '')
-                .trim();
-        })
-        .filter(t => t !== null);
-}
-
-function buildTranslatePrompt({ lines, glossaryHint, genreGuidance, previousLines }) {
-    const contextHint = previousLines && previousLines.length
-        ? `\n\nPREVIOUS DIALOGUE (context only, for consistent names and pronouns; do NOT translate or output these):\n${previousLines.map(l => `- [${l.gender || '?'}] ${l.source} => ${l.text}`).join('\n')}`
-        : '';
-    return `You are an elite master film/TV dialogue adapter and dubbing director specializing in Asian and Chinese drama (C-Drama: 古装/宫斗/仙侠/武侠/现代甜宠/总裁/动作) localization into cinematic, natural, ultra-concise, and highly readable Khmer.
-
-TASK:
-Translate each dialogue line into SHORT, PUNCHY, and READABLE Khmer dialogue specifically crafted for voice dubbing and clean on-screen subtitle reading.
-
-${KHMER_DUBBING_RULES}
-${glossaryHint}${contextHint}
-
-LINE MATCHING & EMOTION RULES:
-1. Exact 1-to-1 Line Match:
-   - Output exactly one item for every input line, using the same "i" number. Never merge, split, skip, or reorder lines.
-   - Use the neighbouring lines as context, but translate each line on its own.
-   - Keep each translation strictly 3 to 10 syllables (3 to 8 words).
-
-2. Speaker Gender & Emotional Acting Detection:
-   - Assign "gender": "Male" or "Female" - the gender of the character speaking the line, from context, pronouns and relationships.
-   - Assign the dramatic emotion: "Neutral", "Angry", "Sad", "Whisper", "Excited", "Royal", "Romantic", "Fear".${genreGuidance}
-
-3. Output Format:
-   - Return ONLY a valid JSON array of objects:
-[
-  {
-    "i": 0,
-    "text": "Short Khmer translation",
-    "gender": "Male",
-    "emotion": "Neutral"
-  }
-]
-
-LINES TO TRANSLATE:
-${JSON.stringify(lines)}`;
-}
-
 const TRANSLATE_RESPONSE_SCHEMA = {
     type: 'ARRAY',
     items: {
@@ -2329,7 +2199,7 @@ app.post('/api/translate-srt', async (req, res) => {
                 contents: [{
                     role: 'user',
                     parts: [{ text: buildTranslatePrompt({
-                        lines: indexes.map(i => ({ i, text: sourceLines[i] })),
+                        lines: indexes.map(i => translatePromptLine(i, sourceLines[i])),
                         glossaryHint, genreGuidance, previousLines
                     }) }]
                 }],
@@ -2374,7 +2244,7 @@ app.post('/api/translate-srt', async (req, res) => {
                 for (let i = start; i < Math.min(start + TRANSLATE_BATCH_SIZE, sourceLines.length); i++) indexes.push(i);
                 const previousLines = [];
                 for (let i = Math.max(0, start - 4); i < start; i++) {
-                    if (results[i]) previousLines.push({ source: sourceLines[i], text: results[i].text, gender: results[i].gender });
+                    if (results[i]) previousLines.push({ source: sourceLines[i].text, text: results[i].text, gender: results[i].gender });
                 }
 
                 const attempt = async (idx) => {
@@ -2395,7 +2265,7 @@ app.post('/api/translate-srt', async (req, res) => {
                 if (!result.success) { failure = failure || result; return; }
 
                 // One follow-up pass for any lines the model skipped.
-                const missing = indexes.filter(i => !results[i] && sourceLines[i]);
+                const missing = indexes.filter(i => !results[i] && sourceLines[i].text);
                 if (missing.length) {
                     console.warn(`[Translate] Retrying ${missing.length} skipped line(s)`);
                     const retry = await attempt(missing);
@@ -2566,7 +2436,13 @@ app.post('/api/rewrite-dialogue', async (req, res) => {
 
     let modeInstruction = '';
     if (mode === 'shorten') {
-        modeInstruction = 'Make the Khmer subtitle dialogue ULTRA-SHORT (strictly 3 to 6 words / 3 to 7 syllables maximum), highly punchy, clear, and easy to read in 0.8 seconds. Drop all non-essential words while preserving the core emotional meaning.';
+        // Sized to the line's own slot when the caller sends its timing (slotDuration or
+        // start/end), at the same pace the translate prompts use; otherwise just "shorter".
+        const slotSec = lineSeconds(req.body);
+        const budget = slotSec
+            ? `at most ${khmerMaxSyllables(slotSec)} spoken syllables (about ${KHMER_SYLLABLES_PER_SEC} per second of its ${slotSec.toFixed(1)}s slot)`
+            : 'clearly fewer spoken syllables than the input';
+        modeInstruction = `Make the Khmer dialogue SHORTER and punchier: ${budget}. Cut filler particles and padding first; keep forms of address and pronouns (បង, អូន, លោក, ព្រះអង្គ ...), names and the core emotional meaning.`;
     } else if (mode === 'dramatic') {
         modeInstruction = 'Make the Khmer dialogue HIGHLY DRAMATIC, emotionally charged, intense, and cinematic. Use strong spoken drama vocabulary (កាច កម្សត់ ឬតានតឹង) suitable for professional voice dubbing.';
     } else if (mode === 'royal') {
@@ -2659,7 +2535,7 @@ app.post('/api/refactor-subtitles-batch', async (req, res) => {
 
     let modeInstruction = '';
     if (mode === 'shorten') {
-        modeInstruction = 'Make all Khmer dialogue ULTRA-SHORT (strictly 3 to 6 words / 3 to 7 syllables maximum per line), highly punchy, clear, and fast to read. Drop all unnecessary words, filler particles, and clauses while keeping the core meaning.';
+        modeInstruction = 'Make all Khmer dialogue SHORTER and punchier: each line shorter than its input, and within its "maxSyllables" when it has one. Cut filler particles, padding and extra clauses first; keep forms of address and pronouns (បង, អូន, លោក, ព្រះអង្គ ...), names and the core meaning.';
     } else if (mode === 'dramatic') {
         modeInstruction = 'Refactor all Khmer dialogue into HIGHLY DRAMATIC, intense, emotional, and cinematic spoken lines. Use expressive spoken vocabulary (កាច កម្សត់ តានតឹង) suitable for professional drama voice dubbing.';
     } else if (mode === 'royal') {
@@ -2693,12 +2569,18 @@ app.post('/api/refactor-subtitles-batch', async (req, res) => {
             const currentChunk = chunks[chunkIdx];
             const startGlobalIdx = chunkIdx * CHUNK_SIZE;
 
-            const inputLines = currentChunk.map((s, i) => ({
-                index: startGlobalIdx + i,
-                id: String(s.id || (startGlobalIdx + i)),
-                text: s.text || '',
-                originalText: s.originalText || ''
-            }));
+            // Editor subtitles carry textStart/textEnd: each line gets the syllable budget of
+            // its own slot, so no mode can grow a line past what fits at a natural pace.
+            const inputLines = currentChunk.map((s, i) => {
+                const seconds = lineSeconds(s);
+                return {
+                    index: startGlobalIdx + i,
+                    id: String(s.id || (startGlobalIdx + i)),
+                    text: s.text || '',
+                    originalText: s.originalText || '',
+                    ...(seconds ? { seconds: Number(seconds.toFixed(2)), maxSyllables: khmerMaxSyllables(seconds) } : {})
+                };
+            });
 
             const prompt = `You are an elite Cambodian film dubbing adapter, dialogue refactorer, and script doctor.
 
@@ -2712,11 +2594,13 @@ ${glossaryHint}
 
 SPECIFIC TRANSFORMATION EXAMPLES:
 - ❌ "ល្ងាចនេះអ្នកចង់ញ៉ាំអ្វី? ខ្ញុំនឹងធ្វើវាឱ្យមានរសជាតិឆ្ងាញ់" -> ✅ "ល្ងាចនេះចង់ញ៉ាំអី? ចាំខ្ញុំធ្វើឱ្យ"
-- ❌ "តើអ្នកកំពុងតែធ្វើអ្វីនៅទីនេះ?" -> ✅ "ឯងធ្វើអីហ្នឹង?" / "បងធ្វើអី?"
-- ❌ "តើមានរឿងអ្វីបានកើតឡើងចំពោះអ្នក?" -> ✅ "កើតអីហ្នឹង?" / "មានរឿងអី?"
+- ❌ "តើអ្នកកំពុងតែធ្វើអ្វីនៅទីនេះ?" -> ✅ "បងធ្វើអីនៅនេះ?"
+- ❌ "តើមានរឿងអ្វីបានកើតឡើងចំពោះអ្នក?" -> ✅ "មានរឿងអីកើតឡើង?"
 - ❌ "ខ្ញុំសូមអភ័យទោសដែលបានមកយឺត" -> ✅ "សុំទោស ខ្ញុំមកយឺត"
 - ❌ "កុំមានការព្រួយបារម្ភចំពោះខ្ញុំអី" -> ✅ "កុំបារម្ភពីខ្ញុំ" / "ទុកចិត្តចុះ"
 - ❌ "ខ្ញុំមិនអាចយល់ស្របនឹងរឿងនេះបានឡើយ" -> ✅ "ខ្ញុំមិនព្រមដាច់ខាត!"
+
+LINE LENGTH: "seconds" is how long a line lasts and "maxSyllables" its Khmer syllable budget - never go over it.
 
 OUTPUT FORMAT:
 Output ONLY a valid JSON array of objects with the exact schema below. Match every input index and ID. No markdown, no commentary.
@@ -2827,7 +2711,8 @@ app.post('/api/condense-fast-subtitles', async (req, res) => {
     if (requestId) activeTranscribeRequests.set(requestId, abortCtrl);
 
     try {
-        // ~3.5 spoken syllables per second is a relaxed dubbing pace.
+        // Same pace as the translate prompts, so a condensed line isn't held to a tighter
+        // budget than the one it was translated to (Edge voices speak ~5-6 syllables/s).
         const linesData = subtitles.map((s) => {
             const slot = Math.max(0.3, parseFloat(s.slotDuration) || 1.5);
             const speed = parseFloat(s.speed) || 1.0;
@@ -2836,7 +2721,7 @@ app.post('/api/condense-fast-subtitles', async (req, res) => {
                 text: String(s.text).trim(),
                 slotSeconds: Number(slot.toFixed(2)),
                 currentSpeed: `${speed.toFixed(2)}x`,
-                maxSyllables: Math.max(2, Math.round(slot * 3.5)),
+                maxSyllables: khmerMaxSyllables(slot),
                 ...(s.originalText ? { sourceText: String(s.originalText) } : {})
             };
         });
@@ -2856,7 +2741,7 @@ Rewrite each line ("text") into SHORT, NATURAL spoken dialogue that fits within 
 STRICT DUBBING CONSTRAINTS:
 1. Stay within each line's "maxSyllables" spoken syllables. Shorter is fine; never exceed it.
 2. Keep the exact emotional tone, dramatic intent, speaker register and key plot facts. It must sound like authentic, natural film/TV dialogue.
-3. Remove redundant pronouns, filler particles, formal padding and verbose structures.
+3. Keep forms of address and pronouns (បង, អូន, លោក, ព្រះអង្គ ...) and names unchanged - they carry who is talking to whom. Cut other words first: filler particles, formal padding and verbose structures.
 4. Write in ${targetLanguage} (the same language as "text"). "sourceText", when present, is the original-language line for meaning reference only.${registerGuidance}${glossaryHint}
 
 LINES TO CONDENSE:
