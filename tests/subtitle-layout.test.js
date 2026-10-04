@@ -268,3 +268,24 @@ test('burned-in Khmer lines stay inside the side margins', { skip: !FFMPEG && 'f
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+describe('word boundaries', () => {
+  const hasKhmerWords = (() => {
+    try { return [...new Intl.Segmenter('km', { granularity: 'word' }).segment('មនុស្សបែបនេះ')].length > 1; } catch (e) { return false; }
+  })();
+
+  test('a wrapped Khmer line breaks between words, never inside one', { skip: !hasKhmerWords && 'no Khmer word data in this ICU' }, () => {
+    const words = [...new Intl.Segmenter('km', { granularity: 'word' }).segment(LONG_KHMER)].map((s) => s.segment).filter((w) => w.trim());
+    for (const size of [100, 120, 150]) {
+      const lines = SL.wrapText(LONG_KHMER, size, 1000);
+      assert.ok(lines.length >= 2, `wraps at size ${size}`);
+      // Every line must be made of whole words (the segmenter's), so joining them back
+      // and re-splitting gives the same words.
+      for (const line of lines) {
+        const lineWords = [...new Intl.Segmenter('km', { granularity: 'word' }).segment(line)].map((s) => s.segment).filter((w) => w.trim());
+        for (const w of lineWords) assert.ok(words.includes(w), `"${w}" (size ${size}) is a piece of a word: ${JSON.stringify(lines)}`);
+      }
+      assert.equal(lines.join('').replace(/\s/g, ''), LONG_KHMER.replace(/\s/g, ''));
+    }
+  });
+});

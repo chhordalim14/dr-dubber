@@ -187,9 +187,40 @@
     return true;
   }
 
+  // Khmer is written without spaces between words. Intl.Segmenter('km') knows the word
+  // boundaries (ICU's Khmer dictionary, in both Chromium and Node), so a full line can
+  // break between two words instead of in the middle of one (មនុស្ស split as ម|នុស្ស).
+  // Where it isn't available the cluster rule below is used.
+  const khmerWords = (() => {
+    try {
+      return typeof Intl !== 'undefined' && Intl.Segmenter ? new Intl.Segmenter('km', { granularity: 'word' }) : null;
+    } catch (e) {
+      return null;
+    }
+  })();
+
+  // Where words start in the whole subtitle (a Set of indices), or null. Segmented once
+  // on the full text: a word cut off at the end of a half-built line would be split wrongly.
+  function wordStarts(text) {
+    if (!khmerWords) return null;
+    const starts = new Set();
+    for (const seg of khmerWords.segment(text)) starts.add(seg.index);
+    return starts;
+  }
+
+  // The last word start inside `line` (which begins at `offset` in the full text) where a
+  // new line may start, or -1.
+  function lastWordBreak(line, offset, starts) {
+    if (!starts) return -1;
+    for (let k = line.length - 1; k > 0; k--) {
+      if (starts.has(offset + k) && canBreakBefore(line, k)) return k;
+    }
+    return -1;
+  }
+
   // Greedy wrap into lines no wider than usableWidth (less WRAP_SLACK). Prefers the
-  // last space when it is close to the end of the line; otherwise breaks between
-  // Khmer clusters.
+  // last space when it is close to the end of the line, then the last word boundary;
+  // otherwise breaks between Khmer clusters.
   function wrapText(text, fontSize, usableWidth) {
     const clean = cleanText(text);
     if (!clean) return [];
@@ -200,6 +231,8 @@
     let width = 0;
     let lastSpace = -1;
     let lastSpaceWidth = 0;
+    let lineStart = 0; // where `line` begins in `clean` (for the word starts)
+    const starts = wordStarts(clean);
 
     const rescan = () => {
       width = 0;
@@ -234,9 +267,15 @@
         const head = line.substring(0, lastSpace).trim();
         if (head) lines.push(head);
         line = line.substring(lastSpace + 1);
+        lineStart += lastSpace + 1;
       } else {
-        let cut = line.length - 1;
-        while (cut > 0 && !canBreakBefore(line, cut)) cut--;
+        // The last word boundary, when little text would move down with it.
+        let cut = lastWordBreak(line, lineStart, starts);
+        if (cut > 0 && width - textWidth(line.substring(0, cut), size) >= maxWidth * 0.4) cut = -1;
+        if (cut <= 0) {
+          cut = line.length - 1;
+          while (cut > 0 && !canBreakBefore(line, cut)) cut--;
+        }
         if (cut <= 0) {
           // One unbreakable cluster wider than the line (only with absurd sizes):
           // wait for the next safe point instead of tearing the cluster.
@@ -244,7 +283,9 @@
         }
         const head = line.substring(0, cut).trim();
         if (head) lines.push(head);
-        line = line.substring(cut).replace(/^[ ​]+/, '');
+        const rest = line.substring(cut);
+        line = rest.replace(/^[ ​]+/, '');
+        lineStart += cut + rest.length - line.length;
       }
       rescan();
     }
