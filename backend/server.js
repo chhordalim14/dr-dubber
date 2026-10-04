@@ -1999,6 +1999,7 @@ app.post('/api/transcribe', async (req, res) => {
 
     try {
         const genreRegister = genre || dramaRegister || 'historical';
+        console.log(`[Transcribe] register: ${genreRegister}${videoName ? ` (${videoName})` : ''}`); // shows in server.log which register a dub used
         const promptOpts = {
             genreGuidance: getKhmerDramaRegisterGuidance(genreRegister),
             glossaryHint: glossary ? `\n\nCUSTOM CHARACTER / GLOSSARY DICTIONARY (STRICTLY USE THESE TRANSLATIONS):\n${typeof glossary === 'string' ? glossary : JSON.stringify(glossary, null, 2)}` : ''
