@@ -28,8 +28,11 @@ const PYTHON_ENV = { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' 
 const ttsCache = new Map();
 const TTS_CACHE_MAX_ENTRIES = 2000;
 const TTS_CACHE_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
+// 'trim1': clips now have Edge's silent lead/tail trimmed, so a cached entry made before
+// that (with a longer duration) must never be reused. Bump it if the trimming changes.
+const TTS_CACHE_VERSION = 'trim1';
 function getTtsCacheKey(text, voice, rate, pitch, volume, speed, emotion) {
-    const raw = `${text || ''}|${voice || ''}|${rate || ''}|${pitch || ''}|${volume || ''}|${speed || 1.0}|${emotion || 'Neutral'}`;
+    const raw = `${TTS_CACHE_VERSION}|${text || ''}|${voice || ''}|${rate || ''}|${pitch || ''}|${volume || ''}|${speed || 1.0}|${emotion || 'Neutral'}`;
     return crypto.createHash('md5').update(raw).digest('hex');
 }
 function setTtsCache(key, value) {
@@ -3275,7 +3278,7 @@ app.post('/api/generate-audio', (req, res) => {
 
         child = spawn(PYTHON_CMD, buildTtsArgv({
             script: pyScript, text, voice, rate: prosody.rate, pitch: prosody.pitch, volume: prosody.volume, output: outFile
-        }), { env: PYTHON_ENV });
+        }), { env: { ...PYTHON_ENV, DR_FFMPEG_PATH: getFFmpegBinary() } }); // FFmpeg trims each clip's silence
         trackProcess(child);
 
         let output = '';
@@ -3411,7 +3414,7 @@ app.post('/api/generate-batch-audio', async (req, res) => {
     fs.writeFileSync(batchJsonPath, JSON.stringify(uncachedTasks), 'utf8');
 
     const pyScript = getPythonScriptPath('tts_generator.py');
-    const child = spawn(PYTHON_CMD, [pyScript, '--batch', batchJsonPath, '--concurrency', '6'], { env: PYTHON_ENV });
+    const child = spawn(PYTHON_CMD, [pyScript, '--batch', batchJsonPath, '--concurrency', '6'], { env: { ...PYTHON_ENV, DR_FFMPEG_PATH: getFFmpegBinary() } }); // FFmpeg trims each clip's silence
     trackProcess(child);
 
     let output = '';

@@ -10,7 +10,10 @@ import struct
 import asyncio
 import argparse
 import json
+import re
+import shutil
 import subprocess
+from array import array
 import edge_tts
 
 VOICE_PRESETS = {
@@ -139,6 +142,164 @@ def get_audio_duration(file_path):
     except Exception:
         return 0.0
 
+# ── Silence trimming ──
+# Edge pads every clip with ~0.25s of silence before the voice and ~0.8s after it
+# (measured on km-KH Piseth and Sreymom). The app treats the whole file as the voice,
+# so the voice started ~0.25s after its subtitle, and the extra ~1s made short lines
+# look "rushed": they got sped up, or sent to Gemini to be shortened, when they already
+# fit. Edge can also leave a pause of a second or more at a mid-line '?' or '។'.
+TRIM_THRESHOLD_DB = -45.0   # quieter than this is silence (Edge's pads are digital silence)
+TRIM_MIN_SILENCE = 0.05     # quiet stretches shorter than this are part of a word (stops, breaths)
+TRIM_KEEP_LEAD = 0.04       # kept before the first sound so consonant onsets aren't clipped
+TRIM_KEEP_TAIL = 0.08       # kept after the last sound so word releases fade out naturally
+TRIM_LONG_PAUSE = 0.5       # interior pauses longer than this...
+TRIM_PAUSE_KEEP = 0.3       # ...are shortened to this
+TRIM_MIN_SPEECH = 0.15      # below this the "speech" is probably a click: keep the clip as Edge made it
+TRIM_MIN_SAVING = 0.02      # not worth a re-encode (a second MP3 generation) for less than this
+TRIM_WINDOW = 0.005         # analysis resolution
+TRIM_BITRATE = "64k"        # Edge sends 48k mono 24 kHz; a little headroom for the re-encode
+
+def log_stderr(message):
+    # stdout carries the JSON result the server parses, so diagnostics go to stderr.
+    try:
+        print(message, file=sys.stderr, flush=True)
+    except Exception:
+        pass
+
+def find_ffmpeg():
+    """The app's FFmpeg: the path the server passes, then backend/bin next to this script, then PATH."""
+    env_path = os.environ.get("DR_FFMPEG_PATH", "")
+    if env_path and os.path.isfile(env_path):
+        return env_path
+    exe = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+    bundled = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "bin", exe)
+    if os.path.isfile(bundled):
+        return os.path.abspath(bundled)
+    return shutil.which("ffmpeg")
+
+def _run_quiet(cmd, **kwargs):
+    # CREATE_NO_WINDOW: no console window flashing up for every voice line on Windows.
+    return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60,
+                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), **kwargs)
+
+def find_speech_spans(samples, sample_rate):
+    """[(start, end)] sample ranges that are louder than the threshold, joined across gaps shorter than TRIM_MIN_SILENCE."""
+    threshold = max(1, int(round(32768 * (10 ** (TRIM_THRESHOLD_DB / 20.0)))))
+    win = max(1, int(sample_rate * TRIM_WINDOW))
+    min_gap = int(sample_rate * TRIM_MIN_SILENCE)
+    spans = []
+    span_start = None
+    span_end = None
+    for i in range(0, len(samples), win):
+        chunk = samples[i:i + win]
+        if max(chunk) < threshold and -min(chunk) < threshold:
+            continue
+        # Sample-exact edges inside the loud window, so the kept padding is what we asked for.
+        loud = [j for j, s in enumerate(chunk) if s >= threshold or -s >= threshold]
+        first, last = i + loud[0], i + loud[-1] + 1
+        if span_start is None:
+            span_start, span_end = first, last
+        elif first - span_end >= min_gap:
+            spans.append((span_start, span_end))
+            span_start, span_end = first, last
+        else:
+            span_end = last
+    if span_start is not None:
+        spans.append((span_start, span_end))
+    return spans
+
+def plan_keep_ranges(spans, total, sample_rate):
+    """Sample ranges to keep: the speech plus short lead/tail pads, with long interior pauses shortened."""
+    lead = int(sample_rate * TRIM_KEEP_LEAD)
+    tail = int(sample_rate * TRIM_KEEP_TAIL)
+    long_pause = int(sample_rate * TRIM_LONG_PAUSE)
+    # Keep half of the shortened pause on each side, so the cut lands in the middle of the silence.
+    half_pause = int(sample_rate * TRIM_PAUSE_KEEP / 2)
+    ranges = []
+    cur_start = max(0, spans[0][0] - lead)
+    cur_end = spans[0][1]
+    for start, end in spans[1:]:
+        if start - cur_end > long_pause:
+            ranges.append((cur_start, cur_end + half_pause))
+            cur_start = start - half_pause
+        cur_end = end
+    ranges.append((cur_start, min(total, cur_end + tail)))
+    return ranges
+
+def trim_silence(path, ffmpeg=None):
+    """
+    Trim the silence Edge puts around a clip and shorten long interior pauses, in place.
+    Never loses a voice: on any failure, or when there's too little speech to trust, the
+    original file stays untouched. Returns {"trimmed": bool, "duration": seconds or None,
+    "original_duration": seconds or None, "reason": str}; duration is None when the file
+    wasn't changed (measure it the usual way).
+    """
+    result = {"trimmed": False, "duration": None, "original_duration": None, "reason": ""}
+    tmp_path = path + ".trim.tmp"
+    try:
+        ffmpeg = ffmpeg or find_ffmpeg()
+        if not ffmpeg:
+            result["reason"] = "ffmpeg not found"
+            log_stderr(f"[TTS trim] kept original (ffmpeg not found): {path}")
+            return result
+
+        # Decode to 16-bit mono PCM at the clip's own sample rate; the rate comes from the stream header.
+        dec = _run_quiet([ffmpeg, "-hide_banner", "-nostdin", "-i", path, "-vn", "-ac", "1", "-f", "s16le", "-acodec", "pcm_s16le", "pipe:1"])
+        header = dec.stderr.decode("utf-8", "replace")
+        rate_match = re.search(r"Audio:.*?(\d+) Hz", header)
+        if dec.returncode != 0 or not dec.stdout or not rate_match:
+            raise RuntimeError(f"decode failed (exit {dec.returncode})")
+        sample_rate = int(rate_match.group(1))
+        samples = array("h")
+        pcm = dec.stdout[:len(dec.stdout) - (len(dec.stdout) % 2)]
+        samples.frombytes(pcm)
+        if sys.byteorder == "big":
+            samples.byteswap()
+        total = len(samples)
+        result["original_duration"] = round(total / float(sample_rate), 3)
+
+        spans = find_speech_spans(samples, sample_rate)
+        if not spans or (spans[-1][1] - spans[0][0]) < TRIM_MIN_SPEECH * sample_rate:
+            result["reason"] = "too little speech detected"
+            log_stderr(f"[TTS trim] kept original (too little speech detected): {path}")
+            return result
+
+        ranges = plan_keep_ranges(spans, total, sample_rate)
+        kept = sum(end - start for start, end in ranges)
+        if total - kept < TRIM_MIN_SAVING * sample_rate:
+            result["reason"] = "nothing to trim"
+            return result
+
+        trimmed_pcm = b"".join(samples[start:end].tobytes() if sys.byteorder == "little" else _swapped(samples[start:end]) for start, end in ranges)
+        enc = _run_quiet([ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "error", "-y",
+                          "-f", "s16le", "-ar", str(sample_rate), "-ac", "1", "-i", "pipe:0",
+                          "-c:a", "libmp3lame", "-b:a", TRIM_BITRATE, "-ar", str(sample_rate), "-ac", "1",
+                          "-f", "mp3", tmp_path], input=trimmed_pcm)
+        if enc.returncode != 0 or not os.path.isfile(tmp_path) or os.path.getsize(tmp_path) == 0:
+            raise RuntimeError(f"encode failed (exit {enc.returncode}): {enc.stderr.decode('utf-8', 'replace').strip()[:300]}")
+        # Atomic swap: a reader never sees a half-written clip, and a failed swap leaves the original.
+        os.replace(tmp_path, path)
+        result["trimmed"] = True
+        # The encoder's LAME header records its delay/padding, so players and ffprobe
+        # decode exactly the samples we wrote.
+        result["duration"] = round(kept / float(sample_rate), 3)
+        return result
+    except Exception as e:
+        result["reason"] = str(e)
+        log_stderr(f"[TTS trim] kept original ({e}): {path}")
+        return result
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
+def _swapped(part):
+    part = array("h", part)
+    part.byteswap()
+    return part.tobytes()
+
 def sanitize_prosody(rate: str, pitch: str, volume: str):
     rate_str = rate if rate.startswith(("+", "-")) else f"+{rate}"
     if not rate_str.endswith("%"):
@@ -198,12 +359,17 @@ async def _generate_speech_core(text: str, voice: str, rate: str, pitch: str, vo
                 await asyncio.wait_for(communicate.save(output_path), timeout=TTS_TIMEOUT_SECONDS)
 
                 if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-                    duration = get_audio_duration(output_path)
+                    # Trim before measuring, so the duration the app plans with is the voice
+                    # itself. FFmpeg runs in a worker thread so batch lines keep streaming.
+                    trim = await asyncio.get_running_loop().run_in_executor(None, trim_silence, output_path)
+                    duration = trim.get("duration") or get_audio_duration(output_path)
                     return {
                         "success": True,
                         "file": output_path,
                         "size": os.path.getsize(output_path),
-                        "duration": duration
+                        "duration": duration,
+                        "trimmed": bool(trim.get("trimmed")),
+                        "untrimmedDuration": trim.get("original_duration")
                     }
                 else:
                     last_error = "Generated audio file is empty"
@@ -320,8 +486,19 @@ def main():
     parser.add_argument("--concurrency", type=int, default=6, help="Max concurrent TTS streams")
     parser.add_argument("--list-voices", action="store_true", help="List all available voices")
     parser.add_argument("--presets", action="store_true", help="List preset voices")
+    parser.add_argument("--trim-only", type=str, help="Only trim the silence around an existing MP3 clip (in place)")
 
     args = parser.parse_args()
+
+    if args.trim_only:
+        if not os.path.isfile(args.trim_only):
+            print(json.dumps({"success": False, "error": "File not found"}))
+            sys.exit(1)
+        trim = trim_silence(args.trim_only)
+        trim["success"] = True
+        trim["duration"] = trim.get("duration") or get_audio_duration(args.trim_only)
+        print(json.dumps(trim))
+        return
 
     if args.presets:
         print(json.dumps(VOICE_PRESETS))
