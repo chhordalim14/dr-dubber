@@ -1186,12 +1186,20 @@ function formatWait(ms) {
 async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { stayOnModel = false } = {}) {
     apiKey = String(apiKey || '').trim();
     const allModels = await getCandidateModels(apiKey, requestedModel, signal);
-    const candidateModels = stayOnModel ? allModels.slice(0, 1) : allModels;
     const body = JSON.stringify(payload);
     const gen = payload && payload.generationConfig;
     const plainBody = gen && (gen.responseMimeType || gen.responseSchema)
         ? JSON.stringify({ ...payload, generationConfig: (({ responseMimeType, responseSchema, ...rest }) => rest)(gen) })
         : body;
+    // Models already known not to return JSON can't serve a JSON request. With
+    // stayOnModel, staying on such a model meant every request failed with "No
+    // usable Gemini model" (e.g. gemini-3.5-transcribe, which has no JSON mode and
+    // answered the plain-text retry with nothing), so move to the next usable one.
+    const usableModels = plainBody !== body ? allModels.filter(m => !geminiNoJsonOutputModels.has(m)) : allModels;
+    if (stayOnModel && usableModels[0] && usableModels[0] !== allModels[0]) {
+        console.warn(`[Gemini] ${allModels[0]} can't return JSON for this request - using ${usableModels[0]} instead`);
+    }
+    const candidateModels = stayOnModel ? usableModels.slice(0, 1) : allModels;
 
     let primaryError = null; // first meaningful error, reported to the user
     let sawRateLimit = false;
@@ -1264,6 +1272,11 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { 
                         geminiNoJsonOutputModels.add(m);
                         console.warn(`[Gemini] ${m} replied without JSON - skipping it for JSON requests from now on. Reply began: ${text.slice(0, 200)}`);
                         if (!primaryError) primaryError = { status: 502, error: `${m} did not return the requested JSON.`, message: `${m} did not return the requested JSON. Reply began: ${text.slice(0, 160)}` };
+                        // stayOnModel offered only this model: try the next usable one now instead of failing the chunk.
+                        if (stayOnModel) {
+                            const next = allModels.find(x => !geminiNoJsonOutputModels.has(x) && !candidateModels.includes(x));
+                            if (next) candidateModels.push(next);
+                        }
                         break; // next model
                     }
                     const clean = JSON.stringify(value);
@@ -1281,8 +1294,9 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { 
             if (res.status === 400 && /API_KEY_INVALID|API key not valid|API key expired/i.test(errMsg)) {
                 return { success: false, status: 400, error: 'INVALID_API_KEY', message: errMsg };
             }
-            if (res.status === 403) {
-                return { success: false, status: 403, error: 'INVALID_API_KEY', message: errMsg };
+            // 401 "bound service account is deleted or disabled": the key is dead, not the model.
+            if (res.status === 403 || res.status === 401) {
+                return { success: false, status: res.status, error: 'INVALID_API_KEY', message: errMsg };
             }
             if (res.status === 400 && /payload size|exceeds the limit|too large/i.test(errMsg)) {
                 return { success: false, status: 413, code: 'AUDIO_TOO_LARGE', error: `Audio is too large for Gemini: ${errMsg}`, message: errMsg };
