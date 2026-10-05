@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const { spawn, exec, execFile } = require('child_process');
 
 // Prefer IPv4 for all Node-side network calls (Gemini, TTS tunnels, updates).
-// Electron 28 ships Node 18, whose fetch() connects to the first DNS answer only
+// Node 18 (Electron <=28) fetch() connected to the first DNS answer only
 // (no Happy Eyeballs). On networks with broken IPv6, Google's AAAA records come
 // first and every request dies with "fetch failed / ENETUNREACH".
 try { require('dns').setDefaultResultOrder('ipv4first'); } catch (e) {}
@@ -213,8 +213,8 @@ function createWindow() {
 
     mainWindow.maximize();
 
-    mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
-        console.log(`[Renderer Log] ${message}`);
+    mainWindow.webContents.on('console-message', (event) => {
+        console.log(`[Renderer Log] ${event.message}`);
     });
 
     mainWindow.loadURL(APP_ORIGIN);

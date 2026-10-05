@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
     // Platform info
@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     autoSaveSrt: (data) => ipcRenderer.invoke('app:autoSaveSrt', data),
     readFileAsBase64: (p) => ipcRenderer.invoke('app:readFileAsBase64', p),
     readFileAsText: (p) => ipcRenderer.invoke('app:readFileAsText', p),
+    // Electron 32+ has no File.path; frontend/js/electron-compat.js uses this to restore it.
+    getPathForFile: (file) => webUtils.getPathForFile(file),
     openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
     openExternalUrl: (url) => ipcRenderer.invoke('app:openExternal', url),
 
