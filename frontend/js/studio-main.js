@@ -28,6 +28,67 @@
       });
     })();
 
+    // ── Shared HTML escaping ──────────────────────────────────────────────
+    // Untrusted text (subtitle files, AI responses, file/folder names,
+    // project/preset JSON) must never be parsed as HTML. Use escHtml() for
+    // any value interpolated into an innerHTML/insertAdjacentHTML template
+    // (it is safe in both element bodies and quoted attributes). Declared as
+    // function declarations so they are hoisted and usable anywhere below.
+    function escHtml(str) {
+      return String(str ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+    }
+
+    // Rich text for the free-text overlay boxes: those are contentEditable
+    // and intentionally hold per-character colour runs (<span style="color:…">
+    // from execCommand foreColor) plus line breaks. Parse in an inert
+    // <template>, keep only that small set of tags with a colour-only style,
+    // and drop everything else (scripts, event handlers, urls, …) while
+    // keeping its text.
+    function sanitizeRichText(html) {
+      const tpl = document.createElement("template");
+      tpl.innerHTML = String(html ?? "");
+      const ALLOWED = new Set(["SPAN", "FONT", "B", "I", "U", "STRONG", "EM", "BR", "DIV", "P"]);
+      const safeColor = (v) => (/^[#(),.%\w\s-]{1,40}$/.test(v || "") ? v : "");
+      const clean = (node, out) => {
+        node.childNodes.forEach((child) => {
+          if (child.nodeType === Node.TEXT_NODE) {
+            out.appendChild(document.createTextNode(child.nodeValue));
+          } else if (child.nodeType === Node.ELEMENT_NODE) {
+            if (!ALLOWED.has(child.tagName)) {
+              if (child.tagName !== "SCRIPT" && child.tagName !== "STYLE") clean(child, out);
+              return;
+            }
+            const el = document.createElement(child.tagName.toLowerCase());
+            const color = safeColor(child.style && child.style.color) || (child.tagName === "FONT" ? safeColor(child.getAttribute("color")) : "");
+            if (color) el.style.color = color;
+            clean(child, el);
+            out.appendChild(el);
+          }
+        });
+        return out;
+      };
+      const wrap = document.createElement("div");
+      clean(tpl.content, wrap);
+      return wrap.innerHTML;
+    }
+
+    // The page is served from the local backend with webSecurity on, so media
+    // can't be loaded from file:// URLs. Turn a plain disk path (or a file://
+    // URL, converted back to a path) into the backend's streaming endpoint,
+    // which supports range requests. blob:, data: and http(s) URLs are kept.
+    function diskPathToMediaUrl(pathOrUrl) {
+      if (!pathOrUrl) return pathOrUrl;
+      const s = String(pathOrUrl);
+      if (/^(blob:|data:|https?:)/i.test(s)) return s;
+      let diskPath = s;
+      if (/^file:/i.test(s)) {
+        diskPath = s.replace(/^file:\/\//i, "");
+        try { diskPath = decodeURIComponent(diskPath); } catch (e) { }
+        if (/^\/[A-Za-z]:/.test(diskPath)) diskPath = diskPath.slice(1); // Windows: "/C:/..." -> "C:/..."
+      }
+      return `/api/audio?path=${encodeURIComponent(diskPath)}`;
+    }
+
     var VOXCMP2_KEY = "voxcmp2_settings";
     function _lucideCreateIcons(opts) {
       try {
@@ -773,46 +834,6 @@
     let globalSubtitleItalic = localStorage.getItem("aiDubberSubItalic") === "true";
     let globalSubtitleUnderline = localStorage.getItem("aiDubberSubUnderline") === "true";
     let globalSubtitleSize = parseInt(localStorage.getItem("aiDubberSubtitleSize") || "106", 10);
-
-    // ── DEV: Global fetch logger — remove before production build ─────────
-    (function () {
-      const _origFetch = window.fetch;
-      window.fetch = async function (url, options = {}) {
-        const method = (options.method || "GET").toUpperCase();
-        const ts = new Date().toISOString().slice(11, 23);
-        console.group(`%c[${ts}] FETCH ➜ ${method} ${url}`, "color:#7dd3fc;font-weight:bold");
-        if (options.body) {
-          try {
-            const parsed = JSON.parse(options.body);
-            console.log("%cPayload:", "color:#a78bfa", parsed);
-          } catch {
-            console.log("%cBody (raw):", "color:#a78bfa", String(options.body).slice(0, 300));
-          }
-        }
-        try {
-          const res = await _origFetch.apply(this, arguments);
-          const color = res.ok ? "#4ade80" : "#f87171";
-          console.log(`%cResponse: ${res.status} ${res.statusText}`, `color:${color};font-weight:bold`);
-          if (!res.ok) {
-            try {
-              const clone = res.clone();
-              clone.text().then(t => {
-                console.error("%c[Server Error Details]:", "color:#f87171;font-weight:bold", t);
-              }).catch(() => {});
-            } catch (e) {}
-          }
-          console.groupEnd();
-          return res;
-        } catch (err) {
-          if (err && err.name !== "AbortError") {
-            console.error("%cFetch FAILED:", "color:#f87171;font-weight:bold", err.message);
-          }
-          console.groupEnd();
-          throw err;
-        }
-      };
-    })();
-    // ──────────────────────────────────────────────────────────────────────
 
     // ── Multi-Project Tab System ──────────────────────────────────
     const colorDefaults = {
@@ -1768,11 +1789,11 @@
             <div class="shrink-0 w-2 h-2 rounded-full transition-all duration-150 ${isActive ? "bg-[var(--accent-primary)] shadow-[0_0_6px_var(--accent-primary)]" : "bg-[var(--border-light)] group-hover:bg-[var(--text-muted)]"}"></div>
 
             <!-- Name -->
-            <span class="flex-1 min-w-0 text-[11px] font-medium truncate ${isActive ? "text-[var(--accent-text)]" : "text-[var(--text-bright)]"}">${preset.name}</span>
+            <span class="flex-1 min-w-0 text-[11px] font-medium truncate ${isActive ? "text-[var(--accent-text)]" : "text-[var(--text-bright)]"}">${escHtml(preset.name)}</span>
 
             <!-- Auto-pin badge (always visible if active, hover-only otherwise) -->
             <button class="vp-auto-pin shrink-0 transition-all duration-150 rounded-full p-0.5 ${isAuto ? "text-yellow-400 opacity-100" : "text-[var(--text-muted)] opacity-0 group-hover:opacity-100 hover:text-yellow-400"
-          } hover:bg-[var(--bg-panel)]" data-name="${preset.name}" title="${isAuto ? "Auto-apply ON — click to remove" : "Set as auto-apply"}">
+          } hover:bg-[var(--bg-panel)]" data-name="${escHtml(preset.name)}" title="${isAuto ? "Auto-apply ON — click to remove" : "Set as auto-apply"}">
               <i data-lucide="zap" class="w-3 h-3 ${isAuto ? "fill-yellow-400" : ""} pointer-events-none"></i>
             </button>
 
@@ -2234,16 +2255,16 @@
         const swatchBg = preset.gradient || "linear-gradient(135deg, #06b6d4, #f97316)";
         const tagLabel = preset.tag || (isCustom ? "Custom" : "LUT");
         const delBtnHtml = isCustom
-          ? `<button class="ca-preset-del opacity-0 group-hover:opacity-100 flex items-center justify-center w-4 h-4 rounded-full bg-rose-500/80 hover:bg-rose-500 text-white transition-all ml-auto shrink-0" data-name="${preset.name}" title="Delete preset"><i data-lucide="x" class="w-2.5 h-2.5 pointer-events-none"></i></button>`
+          ? `<button class="ca-preset-del opacity-0 group-hover:opacity-100 flex items-center justify-center w-4 h-4 rounded-full bg-rose-500/80 hover:bg-rose-500 text-white transition-all ml-auto shrink-0" data-name="${escHtml(preset.name)}" title="Delete preset"><i data-lucide="x" class="w-2.5 h-2.5 pointer-events-none"></i></button>`
           : "";
 
         card.innerHTML = `
-          <div class="w-5 h-5 rounded-md shrink-0 shadow-sm relative overflow-hidden flex items-center justify-center border border-white/20" style="background: ${swatchBg}">
+          <div class="w-5 h-5 rounded-md shrink-0 shadow-sm relative overflow-hidden flex items-center justify-center border border-white/20" style="background: ${escHtml(swatchBg)}">
             <div class="ca-active-dot w-1.5 h-1.5 rounded-full bg-white shadow-[0_0_4px_#fff] ${isActive ? "" : "hidden"}"></div>
           </div>
           <div class="flex flex-col min-w-0 flex-1">
-            <span class="text-[10px] font-semibold text-slate-200 truncate leading-tight group-hover:text-white">${preset.name}</span>
-            <span class="text-[8px] text-slate-400 tracking-wider uppercase leading-none mt-0.5">${tagLabel}</span>
+            <span class="text-[10px] font-semibold text-slate-200 truncate leading-tight group-hover:text-white">${escHtml(preset.name)}</span>
+            <span class="text-[8px] text-slate-400 tracking-wider uppercase leading-none mt-0.5">${escHtml(tagLabel)}</span>
           </div>
           ${delBtnHtml}
         `;
@@ -2846,7 +2867,8 @@
       if (hasVideo) {
         if (staticLabel) staticLabel.style.display = "none"; // ← always hide when video is present
         if (name) {
-          const titleContent = name.length > 30 ? `<div class="proj-title-dynamic flex-1 overflow-hidden whitespace-nowrap marquee-wrapper"><span class="animate-marquee" title="${name}">${name}</span></div>` : `<span class="proj-title-dynamic truncate" title="${name}">${name}</span>`;
+          const safeName = escHtml(name);
+          const titleContent = name.length > 30 ? `<div class="proj-title-dynamic flex-1 overflow-hidden whitespace-nowrap marquee-wrapper"><span class="animate-marquee" title="${safeName}">${safeName}</span></div>` : `<span class="proj-title-dynamic truncate" title="${safeName}">${safeName}</span>`;
           videoTitle.insertAdjacentHTML("beforeend", titleContent);
         }
       } else {
@@ -2873,8 +2895,7 @@
             // Date.now() cache-bust on every tab switch, which forced a full
             // re-download of every clip each time - hundreds of parallel
             // media loads against a server that only allows ~6 connections.
-            const isLocalFile = baseUrl.startsWith("file:") || baseUrl.startsWith("blob:");
-            const fullUrl = isLocalFile ? baseUrl : baseUrl.startsWith("http") ? baseUrl : `http://localhost:3001${baseUrl}`;
+            const fullUrl = baseUrl.startsWith("file:") ? diskPathToMediaUrl(baseUrl) : baseUrl.startsWith("blob:") || baseUrl.startsWith("http") ? baseUrl : `http://localhost:3001${baseUrl}`;
             const audio = new Audio();
             // "metadata" not "auto": we only need duration up front. Fully
             // buffering every clip of every tab is what made switching to a
@@ -3323,7 +3344,7 @@
         btnAll.className = "group px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all duration-300 ease-out bg-red-600 border border-red-600 text-white shadow-md shadow-red-900/20 active:scale-[0.95] animate-pulse cursor-pointer";
         btnAll.innerHTML = `
             <i data-lucide="x-circle" class="w-[14px] h-[14px] shrink-0"></i>
-            <span class="hidden md:inline">${label}</span>
+            <span class="hidden md:inline">${escHtml(label)}</span>
             <span class="md:hidden">Stop</span>
           `;
         btnAll.title = "Stop the job running on all tabs";
@@ -4215,7 +4236,8 @@
           const sub = byId.get(String(u.id));
           if (!sub) return;
           sub.text = u.text;
-          if (!sub.speaker && u.speaker) sub.speaker = u.speaker;
+          // u.speaker comes straight from the AI response: keep it a short plain string.
+          if (!sub.speaker && u.speaker) sub.speaker = String(u.speaker).trim().slice(0, 40);
           if (sub.audioStatus && sub.audioStatus !== "idle") {
             // Voice was generated from the old (untranslated) text.
             sub.audioStatus = "idle";
@@ -5862,8 +5884,8 @@
                 : fonts
                   .map(
                     (font) => `
-            <button class="font-option w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--bg-hover)] hover:text-[var(--text-bright)] transition-colors truncate" style="font-family: '${font}'" data-font="${font}">
-              ${font}
+            <button class="font-option w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--bg-hover)] hover:text-[var(--text-bright)] transition-colors truncate" style="font-family: '${escHtml(font)}'" data-font="${escHtml(font)}">
+              ${escHtml(font)}
             </button>
           `,
                   )
@@ -6071,7 +6093,7 @@
     // The Promise wrapper!
     const customConfirm = (message, title = "Warning", buttonText = "Yes, Delete") => {
       return new Promise((resolve) => {
-        confirmTitle.innerHTML = `<i data-lucide="alert-triangle" class="w-5 h-5"></i> ${title}`;
+        confirmTitle.innerHTML = `<i data-lucide="alert-triangle" class="w-5 h-5"></i> ${escHtml(title)}`;
         confirmMessage.textContent = message;
         btnConfirmAction.textContent = buttonText;
         _lucideCreateIcons();
@@ -6155,28 +6177,28 @@
       <div class="blur-toolbar absolute ${toolbarPosClass} left-1/2 -translate-x-1/2 bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-xl shadow-2xl px-2.5 py-1.5 flex items-center gap-2.5 cursor-default z-[90] whitespace-nowrap select-none backdrop-blur-md" style="display: ${displayStyle}">
         <div class="flex items-center gap-2 shrink-0">
           <i data-lucide="droplet" class="w-3.5 h-3.5 text-indigo-400 shrink-0"></i>
-          <input type="range" class="blur-strength-input w-20 h-1.5 bg-[var(--border-light)] rounded-lg appearance-none cursor-pointer" style="accent-color: #6366f1" min="0" max="100" value="${box.strength}" data-id="${box.id}" />
-          <span class="text-xs font-mono text-[var(--text-secondary)] w-8 text-right tabular-nums shrink-0">${box.strength}%</span>
+          <input type="range" class="blur-strength-input w-20 h-1.5 bg-[var(--border-light)] rounded-lg appearance-none cursor-pointer" style="accent-color: #6366f1" min="0" max="100" value="${escHtml(box.strength)}" data-id="${escHtml(box.id)}" />
+          <span class="text-xs font-mono text-[var(--text-secondary)] w-8 text-right tabular-nums shrink-0">${escHtml(box.strength)}%</span>
         </div>
         <div class="w-px h-4 bg-[var(--border-color)] shrink-0"></div>
-        <button class="btn-apply-blur-all-box flex items-center gap-1.5 text-[var(--text-muted)] hover:text-amber-400 transition-colors px-1.5 py-1 rounded hover:bg-[var(--bg-hover)] whitespace-nowrap shrink-0" data-id="${box.id}" title="Apply blur boxes to all project tabs">
+        <button class="btn-apply-blur-all-box flex items-center gap-1.5 text-[var(--text-muted)] hover:text-amber-400 transition-colors px-1.5 py-1 rounded hover:bg-[var(--bg-hover)] whitespace-nowrap shrink-0" data-id="${escHtml(box.id)}" title="Apply blur boxes to all project tabs">
           <i data-lucide="layers" class="w-3.5 h-3.5 shrink-0"></i>
           <span class="text-[10px] font-medium whitespace-nowrap">All Tabs</span>
         </button>
         <div class="w-px h-4 bg-[var(--border-color)] shrink-0"></div>
-        <button class="btn-remove-blur flex items-center justify-center text-[var(--text-muted)] hover:text-rose-400 transition-colors p-1 rounded hover:bg-[var(--bg-hover)] shrink-0" data-id="${box.id}" title="Delete blur box">
+        <button class="btn-remove-blur flex items-center justify-center text-[var(--text-muted)] hover:text-rose-400 transition-colors p-1 rounded hover:bg-[var(--bg-hover)] shrink-0" data-id="${escHtml(box.id)}" title="Delete blur box">
           <i data-lucide="trash-2" class="w-3.5 h-3.5 shrink-0"></i>
         </button>
       </div>
       
-      <div class="blur-handle cursor-nw-resize absolute -top-2 -left-2 w-3.5 h-3.5 bg-white border-2 border-indigo-500 rounded-full z-50" style="display: ${handleStyle}" data-dir="nw" data-id="${box.id}"></div>
-      <div class="blur-handle cursor-n-resize absolute -top-2 left-1/2 -translate-x-1/2 w-3.5 h-3.5 bg-white border-2 border-indigo-500 rounded-full z-50" style="display: ${handleStyle}" data-dir="n" data-id="${box.id}"></div>
-      <div class="blur-handle cursor-ne-resize absolute -top-2 -right-2 w-3.5 h-3.5 bg-white border-2 border-indigo-500 rounded-full z-50" style="display: ${handleStyle}" data-dir="ne" data-id="${box.id}"></div>
-      <div class="blur-handle cursor-e-resize absolute top-1/2 -right-2 -translate-y-1/2 w-3.5 h-3.5 bg-white border-2 border-indigo-500 rounded-full z-50" style="display: ${handleStyle}" data-dir="e" data-id="${box.id}"></div>
-      <div class="blur-handle cursor-se-resize absolute -bottom-2 -right-2 w-3.5 h-3.5 bg-white border-2 border-indigo-500 rounded-full z-50" style="display: ${handleStyle}" data-dir="se" data-id="${box.id}"></div>
-      <div class="blur-handle cursor-s-resize absolute -bottom-2 left-1/2 -translate-x-1/2 w-3.5 h-3.5 bg-white border-2 border-indigo-500 rounded-full z-50" style="display: ${handleStyle}" data-dir="s" data-id="${box.id}"></div>
-      <div class="blur-handle cursor-sw-resize absolute -bottom-2 -left-2 w-3.5 h-3.5 bg-white border-2 border-indigo-500 rounded-full z-50" style="display: ${handleStyle}" data-dir="sw" data-id="${box.id}"></div>
-      <div class="blur-handle cursor-w-resize absolute top-1/2 -left-2 -translate-y-1/2 w-3.5 h-3.5 bg-white border-2 border-indigo-500 rounded-full z-50" style="display: ${handleStyle}" data-dir="w" data-id="${box.id}"></div>
+      <div class="blur-handle cursor-nw-resize absolute -top-2 -left-2 w-3.5 h-3.5 bg-white border-2 border-indigo-500 rounded-full z-50" style="display: ${handleStyle}" data-dir="nw" data-id="${escHtml(box.id)}"></div>
+      <div class="blur-handle cursor-n-resize absolute -top-2 left-1/2 -translate-x-1/2 w-3.5 h-3.5 bg-white border-2 border-indigo-500 rounded-full z-50" style="display: ${handleStyle}" data-dir="n" data-id="${escHtml(box.id)}"></div>
+      <div class="blur-handle cursor-ne-resize absolute -top-2 -right-2 w-3.5 h-3.5 bg-white border-2 border-indigo-500 rounded-full z-50" style="display: ${handleStyle}" data-dir="ne" data-id="${escHtml(box.id)}"></div>
+      <div class="blur-handle cursor-e-resize absolute top-1/2 -right-2 -translate-y-1/2 w-3.5 h-3.5 bg-white border-2 border-indigo-500 rounded-full z-50" style="display: ${handleStyle}" data-dir="e" data-id="${escHtml(box.id)}"></div>
+      <div class="blur-handle cursor-se-resize absolute -bottom-2 -right-2 w-3.5 h-3.5 bg-white border-2 border-indigo-500 rounded-full z-50" style="display: ${handleStyle}" data-dir="se" data-id="${escHtml(box.id)}"></div>
+      <div class="blur-handle cursor-s-resize absolute -bottom-2 left-1/2 -translate-x-1/2 w-3.5 h-3.5 bg-white border-2 border-indigo-500 rounded-full z-50" style="display: ${handleStyle}" data-dir="s" data-id="${escHtml(box.id)}"></div>
+      <div class="blur-handle cursor-sw-resize absolute -bottom-2 -left-2 w-3.5 h-3.5 bg-white border-2 border-indigo-500 rounded-full z-50" style="display: ${handleStyle}" data-dir="sw" data-id="${escHtml(box.id)}"></div>
+      <div class="blur-handle cursor-w-resize absolute top-1/2 -left-2 -translate-y-1/2 w-3.5 h-3.5 bg-white border-2 border-indigo-500 rounded-full z-50" style="display: ${handleStyle}" data-dir="w" data-id="${escHtml(box.id)}"></div>
     `;
 
         // Drag start
@@ -6631,17 +6653,17 @@
 
         textWrapper.innerHTML = `
             <div class="text-menu-bar absolute -top-10 bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-lg shadow-xl px-2 py-1 items-center gap-2 cursor-default z-[90]" style="display: ${displayStyle}">
-                <button class="btn-delete-text text-[var(--text-muted)] hover:text-red-500 transition-colors p-1" data-id="${item.id}" title="Delete Text"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                <button class="btn-delete-text text-[var(--text-muted)] hover:text-red-500 transition-colors p-1" data-id="${escHtml(item.id)}" title="Delete Text"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
             </div>
             
             <div contenteditable="true" class="text-overlay-input outline-none border-2 border-transparent focus:bg-black/40 rounded p-2 leading-tight"
-       style="color: ${item.color || "#ffffff"}; font-size: ${scaledFontSize}px; opacity: ${item.opacity !== undefined ? item.opacity / 100 : 1}; text-shadow: ${dynamicStroke}; font-family: '${item.fontFamily || "Kantumruy Pro"}', sans-serif; font-weight: ${item.bold ? "bold" : "normal"}; font-style: ${item.italic ? "italic" : "normal"}; text-decoration: ${item.underline ? "underline" : "none"}; min-width: 50px; text-align: center; white-space: pre;" data-id="${item.id}">${item.text}</div>
+       style="color: ${escHtml(item.color || "#ffffff")}; font-size: ${scaledFontSize}px; opacity: ${item.opacity !== undefined ? Number(item.opacity) / 100 : 1}; text-shadow: ${escHtml(dynamicStroke)}; font-family: '${escHtml(item.fontFamily || "Kantumruy Pro")}', sans-serif; font-weight: ${item.bold ? "bold" : "normal"}; font-style: ${item.italic ? "italic" : "normal"}; text-decoration: ${item.underline ? "underline" : "none"}; min-width: 50px; text-align: center; white-space: pre;" data-id="${escHtml(item.id)}">${sanitizeRichText(item.text)}</div>
                  
-            <div class="text-drag-handle absolute -bottom-6 cursor-move bg-blue-500 text-white rounded-full p-1.5 shadow-md items-center justify-center" data-id="${item.id}" style="display: ${displayStyle}">
+            <div class="text-drag-handle absolute -bottom-6 cursor-move bg-blue-500 text-white rounded-full p-1.5 shadow-md items-center justify-center" data-id="${escHtml(item.id)}" style="display: ${displayStyle}">
                 <i data-lucide="move" class="w-3 h-3"></i>
             </div>
 
-            <div class="text-resize-handle absolute -bottom-2 -right-2 cursor-se-resize bg-white text-blue-500 rounded-full p-1 shadow-md border border-gray-200 flex items-center justify-center" data-id="${item.id}" style="display: ${displayStyle}">
+            <div class="text-resize-handle absolute -bottom-2 -right-2 cursor-se-resize bg-white text-blue-500 rounded-full p-1 shadow-md border border-gray-200 flex items-center justify-center" data-id="${escHtml(item.id)}" style="display: ${displayStyle}">
                 <i data-lucide="scaling" class="w-3 h-3"></i>
             </div>
         `;
@@ -6956,7 +6978,7 @@
             : fonts
               .map(
                 (font) => `
-                <button class="overlay-font-option w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--bg-hover)] hover:text-[var(--text-bright)] transition-colors truncate" style="font-family: '${font}'" data-font="${font}">${font}</button>
+                <button class="overlay-font-option w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--bg-hover)] hover:text-[var(--text-bright)] transition-colors truncate" style="font-family: '${escHtml(font)}'" data-font="${escHtml(font)}">${escHtml(font)}</button>
               `,
               )
               .join("");
@@ -9357,7 +9379,7 @@
                   E${idx + 1}
                 </div>
                 <div class="flex flex-col min-w-0">
-                  <span class="text-xs font-semibold text-[var(--text-bright)] truncate">${p.file.name.replace(/</g, "&lt;")}</span>
+                  <span class="text-xs font-semibold text-[var(--text-bright)] truncate">${escHtml(p.file.name)}</span>
                   <span class="text-[10px] text-[var(--text-muted)] font-mono">${(p.duration || 0).toFixed(1)}s</span>
                 </div>
               </div>
@@ -10170,31 +10192,31 @@
       container.innerHTML = profiles
         .map(
           (p) => `
-          <div class="flex flex-col gap-3 p-4 rounded-xl bg-[var(--bg-base)] border border-[var(--border-light)] group relative">
+          <div class="flex flex-col gap-3 p-4 rounded-xl bg-[var(--bg-base)] border border-[var(--border-light)] group relative" data-vox-profile-id="${escHtml(p.id)}">
             <!-- Profile header row -->
             <div class="flex items-center gap-2">
               <input
                 type="color"
-                value="${p.color || "#6366f1"}"
-                onchange="voxCmp2SaveField('${p.id}','color',this.value)"
+                value="${escHtml(p.color || "#6366f1")}"
+                data-vox-field="color"
                 title="Voice profile color — used in dropdowns and A1 audio items"
                 class="w-8 h-8 shrink-0 rounded-full border border-[var(--border-light)] bg-[var(--bg-panel)] cursor-pointer p-0.5 [&::-webkit-color-swatch-wrapper]:rounded-full [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:rounded-full [&::-webkit-color-swatch]:border-none [&::-moz-color-swatch]:rounded-full [&::-moz-color-swatch]:border-none"
               />
               <input
                 type="text"
-                value="${p.label.replace(/"/g, "&quot;")}"
-                onchange="voxCmp2SaveField('${p.id}','label',this.value)"
+                value="${escHtml(p.label)}"
+                data-vox-field="label"
                 class="flex-1 bg-[var(--bg-panel)] border border-[var(--border-light)] rounded-lg px-2.5 py-1.5 text-sm font-semibold text-[var(--text-bright)] outline-none focus:border-violet-400 transition-colors font-khmer"
                 placeholder="Profile name"
               />
               <select
-                onchange="voxCmp2SaveField('${p.id}','gender',this.value)"
+                data-vox-field="gender"
                 class="bg-[var(--bg-panel)] border border-[var(--border-light)] rounded-lg px-2 py-1.5 text-xs text-[var(--text-primary)] outline-none focus:border-violet-400 transition-colors"
               >
                 <option value="Male"   ${p.gender === "Male" ? "selected" : ""}>Male</option>
                 <option value="Female" ${p.gender === "Female" ? "selected" : ""}>Female</option>
               </select>
-              <button onclick="voxCmp2DeleteProfile('${p.id}')"
+              <button data-vox-action="delete"
                 class="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-red-400 hover:bg-red-500/10 border border-transparent hover:border-red-500/20 transition-all active:scale-90">
                 <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
               </button>
@@ -10204,22 +10226,22 @@
               <label class="text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wider">Control Instruction</label>
               <textarea
                 rows="2"
-                onchange="voxCmp2SaveField('${p.id}','instruction',this.value)"
+                data-vox-field="instruction"
                 class="w-full bg-[var(--bg-panel)] border border-[var(--border-light)] rounded-lg px-3 py-2 text-xs text-[var(--text-primary)] resize-none outline-none focus:border-violet-400 transition-colors"
                 placeholder="e.g. Speak calmly with a deep tone..."
-              >${p.instruction}</textarea>
+              >${escHtml(p.instruction)}</textarea>
             </div>
             <!-- Audio Profile -->
             <div class="flex items-center gap-2">
               <div class="flex-1 bg-[var(--bg-panel)] border border-[var(--border-light)] rounded-lg px-3 py-1.5 text-xs font-mono text-[var(--text-muted)] truncate">
-                <span id="voxcpm2-audio-name-${p.id}">${p.audioName || "No audio profile selected"}</span>
+                <span id="voxcpm2-audio-name-${escHtml(p.id)}">${escHtml(p.audioName || "No audio profile selected")}</span>
               </div>
-              <button id="voxcmp2-play-btn-${p.id}" onclick="voxCmp2PlayAudio('${p.id}')"
+              <button id="voxcmp2-play-btn-${escHtml(p.id)}" data-vox-action="play"
                 class="p-1.5 rounded-lg border transition-all active:scale-90 ${p.audioPath ? "bg-violet-500/10 border-violet-500/30 text-violet-400 hover:bg-violet-500/20" : "bg-[var(--bg-hover)] border-[var(--border-light)] text-[var(--text-muted)] opacity-40 cursor-not-allowed"}"
                 ${p.audioPath ? "" : "disabled"} title="Preview voice clone">
                 <i data-lucide="circle-play" class="w-4 h-4"></i>
               </button>
-              <button onclick="voxCmp2BrowseAudio('${p.id}')"
+              <button data-vox-action="browse"
                 class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--bg-hover)] border border-[var(--border-light)] text-[var(--text-primary)] hover:brightness-110 transition-all active:scale-95 whitespace-nowrap shrink-0">
                 <i data-lucide="music" class="w-3.5 h-3.5 text-violet-400"></i> Browse .mp3/.wav
               </button>
@@ -10228,6 +10250,15 @@
         `,
         )
         .join("");
+      container.querySelectorAll("[data-vox-profile-id]").forEach((card) => {
+        const profileId = card.getAttribute("data-vox-profile-id");
+        card.querySelectorAll("[data-vox-field]").forEach((el) => {
+          el.addEventListener("change", (e) => voxCmp2SaveField(profileId, el.getAttribute("data-vox-field"), e.target.value));
+        });
+        card.querySelector('[data-vox-action="delete"]')?.addEventListener("click", () => voxCmp2DeleteProfile(profileId));
+        card.querySelector('[data-vox-action="play"]')?.addEventListener("click", () => voxCmp2PlayAudio(profileId));
+        card.querySelector('[data-vox-action="browse"]')?.addEventListener("click", () => voxCmp2BrowseAudio(profileId));
+      });
       if (window.lucide) _lucideCreateIcons({ root: container });
     }
 
@@ -10417,7 +10448,7 @@
             <div class="api-key-row flex justify-between items-center bg-[var(--bg-base)] border border-[var(--border-light)] p-2.5 rounded-lg transition-colors duration-300">
                 <div class="flex items-center gap-3">
                     <span class="text-xs font-mono text-[var(--text-secondary)] bg-[var(--bg-panel)] px-2 py-1 rounded border border-[var(--border-color)]">Key ${i + 1}</span>
-                    <span class="text-sm font-mono text-[var(--text-primary)]">${key.substring(0, 8)}...${key.substring(key.length - 4)}</span>
+                    <span class="text-sm font-mono text-[var(--text-primary)]">${escHtml(key.substring(0, 8))}...${escHtml(key.substring(key.length - 4))}</span>
                 </div>
                 <div class="flex items-center gap-1">
                     <button data-copy-index="${i}" title="Copy" class="btn-copy-apikey text-[var(--text-secondary)] hover:text-[var(--accent-primary)] transition-colors p-1"><i data-lucide="copy" class="w-4 h-4"></i></button>
@@ -10565,8 +10596,8 @@
                 <div class="flex flex-col gap-1">
                     <label class="text-[10px] font-medium text-[var(--text-secondary)] tracking-wider uppercase">${key.replace(/([A-Z])/g, " $1")}</label>
                     <div class="flex items-center gap-2 bg-[var(--bg-base)] border border-[var(--border-light)] rounded p-1.5 focus-within:border-[var(--accent-primary)] transition-colors">
-                        <input type="color" value="${currentColor}" data-key="${key}" class="theme-color-input w-6 h-6 cursor-pointer rounded bg-transparent border-0 shrink-0" />
-                        <span class="text-[11px] font-mono text-[var(--text-muted)] uppercase">${currentColor}</span>
+                        <input type="color" value="${escHtml(currentColor)}" data-key="${key}" class="theme-color-input w-6 h-6 cursor-pointer rounded bg-transparent border-0 shrink-0" />
+                        <span class="text-[11px] font-mono text-[var(--text-muted)] uppercase">${escHtml(currentColor)}</span>
                     </div>
                 </div>
               `;
@@ -10943,11 +10974,11 @@
         .map(
           (lang, idx) => `
           <button
-            data-lang="${lang}"
+            data-lang="${escHtml(lang)}"
             class="lang-option w-full text-left px-3 py-2 text-xs transition-all duration-200 flex items-center justify-between ${lang === targetLanguage ? "bg-[var(--accent-primary)] text-white font-semibold shadow-sm" : "text-[var(--text-primary)] hover:bg-[var(--bg-hover)] hover:pl-4 font-medium"
             }"
           >
-            ${lang}
+            ${escHtml(lang)}
             ${lang === targetLanguage ? `<i data-lucide="check" class="w-3.5 h-3.5 text-white"></i>` : ""}
           </button>
           ${idx === 0 ? `<div class="mx-2 my-1 border-t border-[var(--border-color)] opacity-50"></div>` : ""}
@@ -11084,7 +11115,7 @@
         const btn = document.createElement("button");
         btn.className = "toast-link-btn mt-1.5 flex items-center gap-1 text-[11px] font-semibold text-blue-400 hover:text-blue-300 underline underline-offset-2 transition-colors";
         btn.style.fontFamily = "'Kantumruy Pro', sans-serif";
-        btn.innerHTML = `<i data-lucide="external-link" class="w-3 h-3"></i> ${options.linkText}`;
+        btn.innerHTML = `<i data-lucide="external-link" class="w-3 h-3"></i> ${escHtml(options.linkText)}`;
         btn.onclick = () => window.electronAPI?.openExternalUrl(options.linkUrl);
         messageEl.insertAdjacentElement("afterend", btn);
       }
@@ -11245,7 +11276,7 @@
 
       if (label) {
         const longText = (opt?.label || "").length > 14; // rough width threshold before it'd get clipped
-        label.innerHTML = `<span class="shrink-0">${icon}</span><span class="vox-label-text ${longText ? "vox-marquee" : "truncate"}" data-marquee-text="${opt?.label || ""}">${longText ? "" : opt?.label || ""}</span>`;
+        label.innerHTML = `<span class="shrink-0">${icon}</span><span class="vox-label-text ${longText ? "vox-marquee" : "truncate"}" data-marquee-text="${escHtml(opt?.label || "")}">${longText ? "" : escHtml(opt?.label || "")}</span>`;
       }
 
       list?.querySelectorAll(".vox-row-opt").forEach((b) => {
@@ -11280,12 +11311,12 @@
         .map((o) => {
           const isMale = o.isMale ?? false;
           const icon = isMale ? "♂" : "♀";
-          const iconStyle = o.color ? `style="color:${o.color}"` : "";
+          const iconStyle = o.color ? `style="color:${escHtml(o.color)}"` : "";
           const iconClass = o.color ? "w-3 text-center shrink-0" : `text-${isMale ? "blue" : "pink"}-400 w-3 text-center shrink-0`;
           const longText = (o.label || "").length > 20; // list row is wider than the trigger, higher threshold
-          return `<button type="button" data-value="${o.value}" class="vox-row-opt w-full text-left flex items-center gap-2 px-2 py-1.5 rounded hover:bg-[var(--bg-hover)] transition-colors text-sm text-[var(--text-primary)] font-khmer overflow-hidden">
+          return `<button type="button" data-value="${escHtml(o.value)}" class="vox-row-opt w-full text-left flex items-center gap-2 px-2 py-1.5 rounded hover:bg-[var(--bg-hover)] transition-colors text-sm text-[var(--text-primary)] font-khmer overflow-hidden">
               <span class="${iconClass}" ${iconStyle}>${icon}</span>
-              <span class="flex-1 min-w-0 ${longText ? "vox-marquee" : "truncate"}" data-marquee-text="${o.label}">${longText ? "" : o.label}</span>
+              <span class="flex-1 min-w-0 ${longText ? "vox-marquee" : "truncate"}" data-marquee-text="${escHtml(o.label)}">${longText ? "" : escHtml(o.label)}</span>
               <i data-lucide="check" class="vox-opt-check w-3 h-3 text-[var(--accent-primary)] shrink-0 transition-opacity opacity-0"></i>
             </button>`;
         })
@@ -11400,20 +11431,20 @@
       editModalContent.innerHTML = activeEditData
         .map(
           (item, index) => `
-          <div class="flex flex-col gap-3 p-4 bg-[var(--bg-base)] border border-[var(--border-light)] rounded-lg relative group" data-id="${item.id}">
+          <div class="flex flex-col gap-3 p-4 bg-[var(--bg-base)] border border-[var(--border-light)] rounded-lg relative group" data-id="${escHtml(item.id)}">
             <div class="absolute -top-2.5 -left-2.5 bg-[var(--accent-primary)] text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-md">#${index + 1}</div>
             <div class="grid grid-cols-2 gap-4">
               <div class="flex flex-col gap-1">
                 <label class="text-[11px] text-[var(--text-secondary)] font-medium">Start Time</label>
-                <input type="text" value="${item.editStart}" class="edit-start-input w-full bg-[var(--bg-panel)] border border-[var(--border-light)] text-[var(--text-primary)] rounded p-1.5 outline-none font-mono text-xs">
+                <input type="text" value="${escHtml(item.editStart)}" class="edit-start-input w-full bg-[var(--bg-panel)] border border-[var(--border-light)] text-[var(--text-primary)] rounded p-1.5 outline-none font-mono text-xs">
               </div>
               <div class="flex flex-col gap-1">
                 <label class="text-[11px] text-[var(--text-secondary)] font-medium">End Time</label>
-                <input type="text" value="${item.editEnd}" class="edit-end-input w-full bg-[var(--bg-panel)] border border-[var(--border-light)] text-[var(--text-primary)] rounded p-1.5 outline-none font-mono text-xs">
+                <input type="text" value="${escHtml(item.editEnd)}" class="edit-end-input w-full bg-[var(--bg-panel)] border border-[var(--border-light)] text-[var(--text-primary)] rounded p-1.5 outline-none font-mono text-xs">
               </div>
             </div>
             <div class="flex flex-col gap-1">
-              <textarea rows="2" class="edit-text-input w-full bg-[var(--bg-panel)] border border-[var(--border-light)] text-[var(--text-bright)] rounded p-2 outline-none font-khmer text-sm resize-none">${item.editText}</textarea>
+              <textarea rows="2" class="edit-text-input w-full bg-[var(--bg-panel)] border border-[var(--border-light)] text-[var(--text-bright)] rounded p-2 outline-none font-khmer text-sm resize-none">${escHtml(item.editText)}</textarea>
             </div>
           </div>
         `,
@@ -11635,10 +11666,11 @@
             const isMale = (p.gender || "").toLowerCase() === "male";
             const icon = isMale ? "♂" : "♀";
             const colorClass = isMale ? "text-blue-400" : "text-pink-400";
-            const label = p.label || p.name;
-            const labelHtml = label.length > 14 ? `<div class="flex-1 overflow-hidden whitespace-nowrap marquee-wrapper"><span class="vox-marquee-text vox-marquee-inner" title="${label}">${label}</span></div>` : `<span class="truncate" title="${label}">${label}</span>`;
-            const swatch = `<span class="w-2.5 h-2.5 rounded-full shrink-0 border border-white/20" style="background-color:${p.color || "#6366f1"}"></span>`;
-            return `<button data-value="${p.id || p.name}" class="bulk-vox-opt w-full text-left flex items-center gap-2 px-2 py-1.5 rounded hover:bg-[var(--bg-hover)] transition-colors text-xs text-[var(--text-primary)] font-khmer">${swatch}<span class="${colorClass} w-3 text-center shrink-0">${icon}</span>${labelHtml}</button>`;
+            const label = String(p.label || p.name || "");
+            const safeLabel = escHtml(label);
+            const labelHtml = label.length > 14 ? `<div class="flex-1 overflow-hidden whitespace-nowrap marquee-wrapper"><span class="vox-marquee-text vox-marquee-inner" title="${safeLabel}">${safeLabel}</span></div>` : `<span class="truncate" title="${safeLabel}">${safeLabel}</span>`;
+            const swatch = `<span class="w-2.5 h-2.5 rounded-full shrink-0 border border-white/20" style="background-color:${escHtml(p.color || "#6366f1")}"></span>`;
+            return `<button data-value="${escHtml(p.id || p.name)}" class="bulk-vox-opt w-full text-left flex items-center gap-2 px-2 py-1.5 rounded hover:bg-[var(--bg-hover)] transition-colors text-xs text-[var(--text-primary)] font-khmer">${swatch}<span class="${colorClass} w-3 text-center shrink-0">${icon}</span>${labelHtml}</button>`;
           })
           .join("");
 
@@ -11656,7 +11688,7 @@
           bulkVoxTrigger.classList.add(isMale ? "text-blue-400" : "text-pink-400", isMale ? "border-blue-400/30" : "border-pink-400/30", isMale ? "bg-blue-500/5" : "bg-pink-500/5");
           const icon = isMale ? "♂" : "♀";
           const colorClass = isMale ? "text-blue-400" : "text-pink-400";
-          if (bulkVoxLabel) bulkVoxLabel.innerHTML = `<span class="${colorClass} w-3 text-center shrink-0">${icon}</span><span class="truncate">${selected.label || selected.name}</span>`;
+          if (bulkVoxLabel) bulkVoxLabel.innerHTML = `<span class="${colorClass} w-3 text-center shrink-0">${icon}</span><span class="truncate">${escHtml(selected.label || selected.name)}</span>`;
           closeBulkVoxDropdown();
         };
 
@@ -11737,12 +11769,18 @@
         return new RegExp(pattern, isOptActive(optCase) ? "g" : "gi");
       };
 
+      // Match on the raw text and escape each piece, so a match can never
+      // split an HTML entity and nothing from the subtitle is parsed as HTML.
       const highlightText = (text, regex) => {
         regex.lastIndex = 0;
-        return text
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(regex, (m) => `<mark class="bg-amber-400/30 text-amber-300 rounded px-0.5">${m}</mark>`);
+        const str = String(text ?? "");
+        let out = "";
+        let last = 0;
+        for (const m of str.matchAll(regex)) {
+          out += escHtml(str.slice(last, m.index)) + `<mark class="bg-amber-400/30 text-amber-300 rounded px-0.5">${escHtml(m[0])}</mark>`;
+          last = m.index + m[0].length;
+        }
+        return out + escHtml(str.slice(last));
       };
 
       const setNavButtons = (enabled) => {
@@ -12967,13 +13005,13 @@
                   style="background:rgba(99,102,241,.15);color:var(--accent-text)">${fi + 1}</span>
                 <i data-lucide="file-text" class="w-3.5 h-3.5 text-amber-400 shrink-0"></i>
                 ${f.fileName.length > 28
-                ? `<div class="srt-name-marquee srt-file-name"><span class="text-[11px] text-[var(--text-primary)] font-medium">${f.fileName}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${f.fileName}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span></div>`
-                : `<span class="text-[11px] text-[var(--text-primary)] font-medium truncate flex-1" title="${f.fileName}">${f.fileName}</span>`
+                ? `<div class="srt-name-marquee srt-file-name"><span class="text-[11px] text-[var(--text-primary)] font-medium">${escHtml(f.fileName)}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${escHtml(f.fileName)}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span></div>`
+                : `<span class="text-[11px] text-[var(--text-primary)] font-medium truncate flex-1" title="${escHtml(f.fileName)}">${escHtml(f.fileName)}</span>`
               }
                 ${assigned
                 ? `<span class="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full shrink-0 font-medium ${isAuto ? "badge-auto" : "badge-manual"}">
                       <i data-lucide="${isAuto ? "wand-2" : "user"}" class="w-2.5 h-2.5"></i>
-                      <span class="max-w-[110px] truncate">${assigned.projName}</span>
+                      <span class="max-w-[110px] truncate">${escHtml(assigned.projName)}</span>
                     </span>`
                 : `<span class="text-[10px] px-2 py-0.5 rounded-full shrink-0 badge-skip">unassigned</span>`
               }
@@ -13006,9 +13044,9 @@
                   <span class="w-2 h-2 rounded-full shrink-0 ${hasSubs ? "bg-emerald-400" : isActive ? "bg-[var(--accent-primary)]" : "bg-[var(--border-light)]"}"></span>
                   <div class="flex flex-col min-w-0">
                     ${nameNeedsScroll
-                ? `<div class="srt-name-marquee"><span>${videoName}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${videoName}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span></div>`
-                : `<span class="text-[11px] font-semibold text-[var(--text-primary)] leading-tight truncate" title="${videoName}">
-                           ${isActive ? '<span style="color:var(--accent-text)">★</span> ' : ""}${videoName}
+                ? `<div class="srt-name-marquee"><span>${escHtml(videoName)}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${escHtml(videoName)}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span></div>`
+                : `<span class="text-[11px] font-semibold text-[var(--text-primary)] leading-tight truncate" title="${escHtml(videoName)}">
+                           ${isActive ? '<span style="color:var(--accent-text)">★</span> ' : ""}${escHtml(videoName)}
                          </span>`
               }
                     ${isActive ? '<span style="font-size:9px;color:var(--accent-text);line-height:1;margin-top:1px">Active tab</span>' : ""}
@@ -13027,7 +13065,7 @@
                   const sc = srtMatchScore(f.fileName, proj?.file?.name || "");
                   const hint = sc >= 60 ? " ✦" : sc >= 30 ? " ·" : "";
                   const label = f.fileName.length > 40 ? f.fileName.slice(0, 38) + "…" : f.fileName;
-                  return `<option value="${fi}" ${slot.fileIndex === fi ? "selected" : ""}>${fi + 1}. ${label}${hint}</option>`;
+                  return `<option value="${fi}" ${slot.fileIndex === fi ? "selected" : ""}>${fi + 1}. ${escHtml(label)}${hint}</option>`;
                 })
                 .join("")}
                 </select>
@@ -13089,8 +13127,8 @@
                     ${isChecked ? "checked" : ""} ${wouldExceed ? "disabled" : ""} />
                   <i data-lucide="file-text" class="w-3.5 h-3.5 text-amber-400 shrink-0"></i>
                   ${f.fileName.length > 28
-                  ? `<div class="srt-name-marquee srt-file-name"><span class="text-[11px] text-[var(--text-primary)] font-medium">${f.fileName}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${f.fileName}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span></div>`
-                  : `<span class="text-[11px] text-[var(--text-primary)] font-medium truncate flex-1">${f.fileName}</span>`
+                  ? `<div class="srt-name-marquee srt-file-name"><span class="text-[11px] text-[var(--text-primary)] font-medium">${escHtml(f.fileName)}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${escHtml(f.fileName)}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span></div>`
+                  : `<span class="text-[11px] text-[var(--text-primary)] font-medium truncate flex-1">${escHtml(f.fileName)}</span>`
                 }
                   ${wouldExceed ? `<span class="text-[9px] px-1.5 py-0.5 rounded-md badge-skip shrink-0">slots full</span>` : isChecked ? `<span class="text-[9px] px-1.5 py-0.5 rounded-md shrink-0 font-semibold" style="background:rgba(251,191,36,.13);color:#fbbf24;border:1px solid rgba(251,191,36,.3)">new tab</span>` : ""}
                 `;
@@ -14157,7 +14195,7 @@
       if (sub.audioStatus === "generating") {
         // Replaced with full Tailwind classes instead of regex replace
         audioBlock.className = "audio-timeline-item absolute rounded text-[10px] text-white overflow-hidden transition-colors cursor-move select-none z-10 px-1 flex items-center shadow-sm bg-indigo-600/50 border border-indigo-400/50 animate-pulse";
-        audioBlock.innerHTML = `<i data-lucide="loader-2" class="w-3 h-3 mr-1 animate-spin shrink-0"></i><span class="truncate">${sub.text}</span>`;
+        audioBlock.innerHTML = `<i data-lucide="loader-2" class="w-3 h-3 mr-1 animate-spin shrink-0"></i><span class="truncate">${escHtml(sub.text)}</span>`;
       } else if (sub.audioStatus === "ready") {
         // FIX: Added the missing hover classes (hover:bg-indigo-400/40 hover:border-indigo-300)
         audioBlock.className = "audio-timeline-item absolute rounded text-[10px] text-white overflow-hidden transition-colors cursor-move select-none z-10 px-1 flex items-center shadow-sm bg-indigo-500/90 border border-indigo-300/60 hover:bg-indigo-400/40 hover:border-indigo-300";
@@ -14192,7 +14230,7 @@
         };
       } else if (sub.audioStatus === "error") {
         audioBlock.className = "audio-timeline-item absolute rounded text-[10px] text-white overflow-hidden transition-colors cursor-move select-none z-10 px-1 flex items-center shadow-sm bg-red-500/80";
-        audioBlock.innerHTML = `<i data-lucide="alert-triangle" class="w-3 h-3 mr-1 shrink-0"></i><span class="truncate">${sub.text}</span>`;
+        audioBlock.innerHTML = `<i data-lucide="alert-triangle" class="w-3 h-3 mr-1 shrink-0"></i><span class="truncate">${escHtml(sub.text)}</span>`;
       } else {
         audioBlock.remove();
         return;
@@ -14411,26 +14449,26 @@
             <td class="px-4 py-2 font-mono text-xs ${timeTextColor} transition-colors">${formatTime(parseFloat(sub.textEnd))}</td>
             <td class="px-4 py-2">
                 ${sub.originalText ? `<div class="text-[11px] text-[var(--text-muted)] font-mono truncate max-w-[420px] mb-1 flex items-center gap-1.5 opacity-80 select-none">
-                  ${sub.speaker ? `<span class="text-[9px] px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-sans font-semibold shrink-0">${sub.speaker}</span>` : ''}
-                  <span class="truncate">${sub.originalText.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</span>
+                  ${sub.speaker ? `<span class="text-[9px] px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-sans font-semibold shrink-0">${escHtml(sub.speaker)}</span>` : ''}
+                  <span class="truncate">${escHtml(sub.originalText)}</span>
                 </div>` : ''}
                 <div class="flex items-center gap-1">
-                  <input type="text" value="${sub.text.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&#39;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}" class="subtitle-text-input flex-1 bg-transparent border-none outline-none font-khmer text-[13px] ${textInputColor} group-hover:text-[var(--text-bright)] focus:ring-2 focus:ring-[var(--accent-primary)] focus:bg-[var(--bg-base)] rounded px-2 py-1 -ml-2 transition-all">
-                  <button type="button" onclick="triggerAiRewrite('${sub.id}')" title="⚡ AI Polish / Refactor this line" class="opacity-0 group-hover:opacity-60 hover:!opacity-100 p-1 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/15 rounded transition-all shrink-0 cursor-pointer">
+                  <input type="text" value="${escHtml(sub.text)}" class="subtitle-text-input flex-1 bg-transparent border-none outline-none font-khmer text-[13px] ${textInputColor} group-hover:text-[var(--text-bright)] focus:ring-2 focus:ring-[var(--accent-primary)] focus:bg-[var(--bg-base)] rounded px-2 py-1 -ml-2 transition-all">
+                  <button type="button" title="⚡ AI Polish / Refactor this line" class="btn-row-ai-rewrite opacity-0 group-hover:opacity-60 hover:!opacity-100 p-1 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/15 rounded transition-all shrink-0 cursor-pointer">
                     <i data-lucide="wand-2" class="w-3.5 h-3.5"></i>
                   </button>
                 </div>
             </td>
-            <td class="px-4 py-2 overflow-visible relative z-[1]" onclick="event.stopPropagation()">
+            <td class="voice-cell px-4 py-2 overflow-visible relative z-[1]">
               <!-- Voice Select Wrap -->
-              <div class="relative vox-row-wrap w-fit" data-id="${sub.id}">
+              <div class="relative vox-row-wrap w-fit" data-id="${escHtml(sub.id)}">
                 <button
                   class="vox-row-trigger w-full flex items-center justify-between gap-1.5 bg-[var(--bg-base)] border rounded text-xs px-2 h-[26px] outline-none cursor-pointer transition-colors min-w-[130px] ${voiceSelectColor} ${typeof bouncingGenderId !== "undefined" && bouncingGenderId === sub.id ? "animate-cute-bounce" : ""}"
                 >
-                  <span class="vox-row-label font-khmer truncate flex items-center gap-1">${selectedOpt?.label || ""}</span>
+                  <span class="vox-row-label font-khmer truncate flex items-center gap-1">${escHtml(selectedOpt?.label || "")}</span>
                   <i data-lucide="chevron-down" class="vox-row-chevron w-3 h-3 shrink-0 transition-transform duration-300"></i>
                 </button>
-                <input type="hidden" class="select-gender" data-id="${sub.id}" value="${selectedOpt?.value || ""}" />
+                <input type="hidden" class="select-gender" data-id="${escHtml(sub.id)}" value="${escHtml(selectedOpt?.value || "")}" />
                 <div class="vox-row-panel absolute z-[999] top-full mt-1 left-0 rounded-lg border border-[var(--border-light)] bg-[var(--bg-panel)] shadow-xl overflow-hidden grid grid-rows-[0fr] transition-[grid-template-rows] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] min-w-[130px]">
                   <div class="overflow-hidden">
                     <div class="vox-row-list flex flex-col p-1 gap-0.5 overflow-y-auto custom-scrollbar max-h-48"></div>
@@ -14445,6 +14483,9 @@
                 ${sub.audioStatus === "error" ? `<div class="flex justify-center" title="Generation failed. Try again."><i data-lucide="alert-triangle" class="w-4 h-4 text-red-500"></i></div>` : ""}
             </td>
           `;
+
+        tr.querySelector(".btn-row-ai-rewrite")?.addEventListener("click", () => window.triggerAiRewrite(String(sub.id)));
+        tr.querySelector(".voice-cell")?.addEventListener("click", (e) => e.stopPropagation());
 
         // --- ROW CHECKBOX LOGIC ---
         const checkbox = tr.querySelector(".row-checkbox");
@@ -14525,7 +14566,7 @@
             const t1Block = document.getElementById(`ui-t1-${sub.id}`);
             if (t1Block) {
               const handle = t1Block.querySelector(".cursor-e-resize");
-              t1Block.innerHTML = e.target.value;
+              t1Block.textContent = e.target.value;
               t1Block.title = e.target.value;
               if (handle) t1Block.appendChild(handle);
             }
@@ -14647,8 +14688,8 @@
               btn.innerHTML = `
                 <div class="flex items-center gap-1.5">
                   <span class="text-[9px] font-bold px-1 py-0.2 rounded ${opt.isMale ? "text-blue-400 bg-blue-500/15" : "text-pink-400 bg-pink-500/15"}">${opt.isMale ? "M" : "F"}</span>
-                  ${opt.color ? `<span class="w-2 h-2 rounded-full shrink-0 border border-white/20" style="background-color: ${opt.color}"></span>` : ""}
-                  <span class="truncate">${opt.label}</span>
+                  ${opt.color ? `<span class="w-2 h-2 rounded-full shrink-0 border border-white/20" style="background-color: ${escHtml(opt.color)}"></span>` : ""}
+                  <span class="truncate">${escHtml(opt.label)}</span>
                 </div>
                 ${opt.selected ? '<i data-lucide="check" class="w-3 h-3 text-violet-400 shrink-0"></i>' : ""}
               `;
@@ -14836,7 +14877,7 @@
 
               const _ttsBase = sub.audioUrl.split("&t=")[0];
               const isLocal = _ttsBase.startsWith("blob:") || _ttsBase.startsWith("file:");
-              const _ttsUrl = isLocal ? _ttsBase : (_ttsBase.startsWith("http") ? _ttsBase : `http://localhost:3001${_ttsBase}`) + `&_play=${Date.now()}`;
+              const _ttsUrl = isLocal ? diskPathToMediaUrl(_ttsBase) : (_ttsBase.startsWith("http") ? _ttsBase : `http://localhost:3001${_ttsBase}`) + `&_play=${Date.now()}`;
               const testAudio = new Audio(_ttsUrl);
               testAudio.playbackRate = sub.speed || 1.0;
               testAudio.play();
@@ -14949,7 +14990,7 @@
         t1Block.style.top = "4px";
         t1Block.style.bottom = "4px";
         t1Block.title = sub.text;
-        t1Block.innerHTML = sub.text;
+        t1Block.textContent = sub.text;
 
         // Wire up MOVE listener
         t1Block.addEventListener("mousedown", (e) => {
@@ -15178,7 +15219,7 @@
             <i data-lucide="audio-lines" class="w-3 h-3 mr-1 opacity-80 shrink-0"></i>
             <span class="detached-speed-label font-mono text-[9px] shrink-0">${(a.speed || 1.0).toFixed(1)}x</span>
             <span class="font-mono text-[9px] ml-1.5 opacity-60 shrink-0">V:${(a.volume ?? 1.0).toFixed(1)}</span>
-            <span class="truncate flex-1 ml-1">${a.text || "Detached"}</span>
+            <span class="truncate flex-1 ml-1">${escHtml(a.text || "Detached")}</span>
             ${a.reverb?.enabled ? `<span class="rvb-badge ml-1 text-[8px] font-bold text-purple-200 bg-purple-500/40 border border-purple-400/50 rounded px-0.5 leading-tight shrink-0">RVB</span>` : ""}
             <button class="detached-audio-delete pointer-events-auto hover:text-red-200 ml-1 shrink-0" title="Delete this audio clip">
               <i data-lucide="trash-2" class="w-3 h-3"></i>
@@ -17134,7 +17175,7 @@
         let blobUrl;
 
         if (isElectronFile) {
-          // Electron gives us a file:// URL directly
+          // Electron gives us a backend /api/audio URL directly
           blobUrl = f.url;
         } else {
           blobUrl = URL.createObjectURL(f);
@@ -19877,7 +19918,7 @@
                         const warmBaseUrl = warmSub.audioUrl.split("&t=")[0];
                         const warmCacheBust = Date.now() + Math.random();
                         const isWarmLocal = warmBaseUrl.startsWith("file:") || warmBaseUrl.startsWith("blob:");
-                        const warmFullUrl = isWarmLocal ? warmBaseUrl : (warmBaseUrl.startsWith("http") ? warmBaseUrl : `http://localhost:3001${warmBaseUrl}`) + `&_warm=${warmCacheBust}`;
+                        const warmFullUrl = isWarmLocal ? diskPathToMediaUrl(warmBaseUrl) : (warmBaseUrl.startsWith("http") ? warmBaseUrl : `http://localhost:3001${warmBaseUrl}`) + `&_warm=${warmCacheBust}`;
                         const warmAudio = new Audio();
                         warmAudio.preload = "auto";
                         warmAudio.src = warmFullUrl;
@@ -20269,7 +20310,7 @@
                 const baseUrl = sub.audioUrl.split("&t=")[0];
                 const cacheBust = Date.now();
                 const isLocalFile = baseUrl.startsWith("file:") || baseUrl.startsWith("blob:");
-                const fullUrl = isLocalFile ? baseUrl : (baseUrl.startsWith("http") ? baseUrl : `http://localhost:3001${baseUrl}`) + `&_play=${cacheBust}`;
+                const fullUrl = isLocalFile ? diskPathToMediaUrl(baseUrl) : (baseUrl.startsWith("http") ? baseUrl : `http://localhost:3001${baseUrl}`) + `&_play=${cacheBust}`;
                 audio = new Audio();
                 audio.preload = "auto";
                 audio.src = fullUrl;
@@ -20358,7 +20399,7 @@
                 const baseUrl = a.url.split("&t=")[0];
                 const cacheBust = Date.now();
                 const isLocalFile = baseUrl.startsWith("file:") || baseUrl.startsWith("blob:");
-                const fullUrl = isLocalFile ? baseUrl : (baseUrl.startsWith("http") ? baseUrl : `http://localhost:3001${baseUrl}`) + `&_play=${cacheBust}`;
+                const fullUrl = isLocalFile ? diskPathToMediaUrl(baseUrl) : (baseUrl.startsWith("http") ? baseUrl : `http://localhost:3001${baseUrl}`) + `&_play=${cacheBust}`;
                 audio = new Audio();
                 audio.preload = "auto";
                 audio.src = fullUrl;
@@ -21378,7 +21419,7 @@
                 </button>
             </div>
 
-            <div id="ui-bgm-track" onmousedown="startDrag(event, 'bgm', 'move')" class="absolute rounded border text-[10px] text-white overflow-hidden whitespace-nowrap transition-shadow cursor-move select-none ${isSelected ? "ring-2 ring-green-400 z-20 shadow-lg" : "z-10 hover:brightness-110"} bg-purple-600 border-purple-400" style="left: ${startPercent}%; width: ${widthPercent}%; top: 4px; bottom: 4px;" title="${bgmTrack.name}">
+            <div id="ui-bgm-track" class="absolute rounded border text-[10px] text-white overflow-hidden whitespace-nowrap transition-shadow cursor-move select-none ${isSelected ? "ring-2 ring-green-400 z-20 shadow-lg" : "z-10 hover:brightness-110"} bg-purple-600 border-purple-400" style="left: ${startPercent}%; width: ${widthPercent}%; top: 4px; bottom: 4px;" title="${escHtml(bgmTrack.name)}">
 
                 <!-- Fade-In gradient overlay -->
                 <div class="absolute top-0 bottom-0 left-0 pointer-events-none" style="width:${fadeInPct}%; background: linear-gradient(to right, rgba(0,0,0,0.7), transparent);"></div>
@@ -21388,7 +21429,7 @@
                 <!-- Track label (sits above gradients) -->
                 <div class="relative z-10 flex items-center px-2 h-full gap-1 pointer-events-none">
                     <i data-lucide="music" class="w-3 h-3 mr-1 opacity-70 shrink-0"></i>
-                    <span class="truncate">${bgmTrack.name}</span>
+                    <span class="truncate">${escHtml(bgmTrack.name)}</span>
                     <span class="font-mono text-[9px] ml-1 opacity-60 shrink-0">V:${(bgmTrack.volume ?? 0.5).toFixed(1)}</span>
                     ${fadeIn > 0 ? `<span class="font-mono text-[9px] opacity-70 shrink-0 text-purple-200">▶${fadeIn.toFixed(1)}s</span>` : ""}
                     ${fadeOut > 0 ? `<span class="font-mono text-[9px] opacity-70 shrink-0 text-purple-200">◀${fadeOut.toFixed(1)}s</span>` : ""}
@@ -21411,10 +21452,12 @@
                 </div>
             </div>
 
-            <div onmousedown="startDrag(event, null, 'resize-track', 'a2')" class="absolute bottom-0 left-0 right-0 h-1 cursor-s-resize hover:bg-[var(--accent-primary)] z-40 transition-colors"></div>
+            <div id="a2-track-resize-handle" class="absolute bottom-0 left-0 right-0 h-1 cursor-s-resize hover:bg-[var(--accent-primary)] z-40 transition-colors"></div>
         </div>`;
 
       timelineTracks.insertAdjacentHTML("beforeend", trackA2HTML);
+      document.getElementById("ui-bgm-track").addEventListener("mousedown", (e) => startDrag(e, "bgm", "move"));
+      document.getElementById("a2-track-resize-handle").addEventListener("mousedown", (e) => startDrag(e, null, "resize-track", "a2"));
       _lucideCreateIcons();
 
       // ── Mute button ──
@@ -23218,15 +23261,15 @@
               <div class="flex items-start justify-between gap-2">
                 <div class="flex items-center gap-2 min-w-0">
                   ${statusIcon}
-                  <span class="text-[11px] font-medium text-[var(--text-bright)] truncate">${item.config.outputFileName}</span>
+                  <span class="text-[11px] font-medium text-[var(--text-bright)] truncate">${escHtml(item.config.outputFileName)}</span>
                 </div>
                 <div class="flex items-center gap-1.5 shrink-0">
                   ${_extBadge}
                   <span class="text-[9px] font-semibold px-1.5 py-0.5 rounded ${badgeClass}">${statusLabel}</span>
-                  ${!isRunning && !queueRunning ? `<button onclick="window.removeQueueItem('${item._key}')" class="p-0.5 rounded text-[var(--text-muted)] hover:text-red-400 hover:bg-[var(--bg-hover)] transition-all" title="Remove"><i data-lucide="x" class="w-3 h-3"></i></button>` : ""}
+                  ${!isRunning && !queueRunning ? `<button class="queue-item-remove p-0.5 rounded text-[var(--text-muted)] hover:text-red-400 hover:bg-[var(--bg-hover)] transition-all" title="Remove"><i data-lucide="x" class="w-3 h-3"></i></button>` : ""}
                 </div>
               </div>
-              <div class="text-[10px] text-[var(--text-muted)] truncate">${item.projectLabel}</div>
+              <div class="text-[10px] text-[var(--text-muted)] truncate">${escHtml(item.projectLabel)}</div>
               ${isRunning
               ? `
   <div class="flex items-center gap-2 mt-1">
@@ -23236,7 +23279,7 @@
     <span class="queue-item-progress-pct text-[10px] text-[var(--accent-primary)] font-bold w-8 text-right">${Math.round(item.progress || 0)}%</span>
   </div>`
               : item.status === "done"
-                ? `<div class="text-[10px] text-green-400">✓ Saved to ${item.config.exportPath}</div>`
+                ? `<div class="text-[10px] text-green-400">✓ Saved to ${escHtml(item.config.exportPath)}</div>`
                 : ""
             }
             `;
@@ -23245,6 +23288,16 @@
         const renderQueueList = () => {
           const list = document.getElementById("queue-list");
           if (!list) return;
+          // Delegated "Remove" click for the per-item × buttons (no inline onclick).
+          if (!list.dataset.removeBound) {
+            list.dataset.removeBound = "1";
+            list.addEventListener("click", (e) => {
+              const btn = e.target.closest(".queue-item-remove");
+              if (!btn) return;
+              const itemEl = btn.closest("[data-queue-key]");
+              if (itemEl) window.removeQueueItem(itemEl.dataset.queueKey);
+            });
+          }
 
           // ── Empty state ──
           if (renderQueue.length === 0) {
@@ -23780,7 +23833,10 @@
           titleAiFiles.forEach((f, idx) => {
             const row = document.createElement("div");
             row.className = "flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-[var(--bg-hover)] text-[11px] text-[var(--text-secondary)]";
-            row.innerHTML = `<span class="truncate flex-1">${f.name}</span>`;
+            const nameEl = document.createElement("span");
+            nameEl.className = "truncate flex-1";
+            nameEl.textContent = f.name;
+            row.appendChild(nameEl);
             const rm = document.createElement("button");
             rm.innerHTML = '<i data-lucide="x" class="w-3 h-3"></i>';
             rm.className = "text-[var(--text-muted)] hover:text-red-400 shrink-0 ml-2";
@@ -25912,11 +25968,13 @@
       container.innerHTML = "";
       (window.videoOverlays || []).forEach((item) => {
         let url = item.blobUrl || (item.file ? URL.createObjectURL(item.file) : null);
+        // A file:// URL kept from an older session would no longer load.
+        if (url && /^file:/i.test(url)) url = diskPathToMediaUrl(url);
 
-        // Restore from full disk path if loaded from Preset
+        // Restore from full disk path if loaded from Preset: stream it through
+        // the backend (file:// is blocked); blob: and http(s) URLs are kept.
         if (!url && item.videoPath) {
-          const isMac = navigator.platform.toUpperCase().includes("MAC") || navigator.userAgent.includes("Mac");
-          url = item.videoPath.startsWith("file://") || item.videoPath.startsWith("http") || item.videoPath.startsWith("blob:") ? item.videoPath : `file://${isMac ? "" : "/"}${item.videoPath.replace(/\\/g, "/")}`;
+          url = diskPathToMediaUrl(item.videoPath);
         }
 
         if (!url) return;

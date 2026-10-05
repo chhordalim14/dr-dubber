@@ -758,6 +758,24 @@
       btnStart.classList.remove('opacity-50', 'cursor-not-allowed');
     }
 
+    // Row buttons use one delegated listener (no inline onclick attributes).
+    if (!list.dataset.daiActionsBound) {
+      list.dataset.daiActionsBound = '1';
+      list.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-dai-action]');
+        if (!btn || !list.contains(btn)) return;
+        const id = btn.getAttribute('data-dai-item');
+        const fn = {
+          preview: 'previewItem',
+          export: 'exportItemSrt',
+          dubber: 'sendItemToDubber',
+          retry: 'retryItem',
+          remove: 'removeItem'
+        }[btn.getAttribute('data-dai-action')];
+        if (fn) window.daiStudio[fn](id);
+      });
+    }
+
     list.innerHTML = state.queue.map((item, idx) => {
       let statusBadge = '';
       if (item.status === 'completed') {
@@ -827,17 +845,17 @@
           <td class="px-3 py-3 text-right">
             <div class="flex items-center justify-end gap-1.5">
               ${item.status === 'completed' ? `
-                <button onclick="window.daiStudio.previewItem('${item.id}')"
+                <button data-dai-action="preview" data-dai-item="${escapeHtml(item.id)}"
                   title="Preview / Edit Subtitle Cues"
                   class="p-1.5 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)] hover:bg-indigo-500/20 hover:border-indigo-400 hover:text-indigo-300 text-[var(--text-secondary)] transition-all">
                   <i data-lucide="eye" class="w-3.5 h-3.5"></i>
                 </button>
-                <button onclick="window.daiStudio.exportItemSrt('${item.id}')"
+                <button data-dai-action="export" data-dai-item="${escapeHtml(item.id)}"
                   title="Download .SRT"
                   class="p-1.5 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)] hover:bg-emerald-500/20 hover:border-emerald-400 hover:text-emerald-300 text-[var(--text-secondary)] transition-all">
                   <i data-lucide="download" class="w-3.5 h-3.5"></i>
                 </button>
-                <button onclick="window.daiStudio.sendItemToDubber('${item.id}')"
+                <button data-dai-action="dubber" data-dai-item="${escapeHtml(item.id)}"
                   title="Load into DR Dubber Tab"
                   class="p-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/25 text-amber-300 transition-all flex items-center gap-1 text-[11px] font-bold">
                   <i data-lucide="plus-circle" class="w-3.5 h-3.5"></i>
@@ -845,13 +863,13 @@
                 </button>
               ` : ''}
               ${item.status === 'failed' ? `
-                <button onclick="window.daiStudio.retryItem('${item.id}')"
+                <button data-dai-action="retry" data-dai-item="${escapeHtml(item.id)}"
                   title="Retry"
                   class="p-1.5 rounded-lg border border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 transition-all">
                   <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
                 </button>
               ` : ''}
-              <button onclick="window.daiStudio.removeItem('${item.id}')"
+              <button data-dai-action="remove" data-dai-item="${escapeHtml(item.id)}"
                 title="Remove from queue"
                 class="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-rose-400 hover:bg-[var(--bg-hover)] transition-all">
                 <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
@@ -1332,11 +1350,17 @@
             <input type="text"
               class="w-full h-7 px-2 rounded border border-[var(--border-light)] bg-[var(--bg-base)] text-xs text-[var(--text-primary)] focus:border-indigo-400 outline-none font-khmer"
               value="${escapeHtml(cue.text || '')}"
-              onchange="window.daiStudio.updateCueText(${cue.id}, this.value)" />
+              data-cue-idx="${idx}" />
           </td>
         </tr>
       `;
     }).join('');
+
+    tableBody.querySelectorAll('input[data-cue-idx]').forEach((input) => {
+      const cue = cues[Number(input.getAttribute('data-cue-idx'))];
+      if (!cue) return;
+      input.addEventListener('change', (e) => window.daiStudio.updateCueText(cue.id, e.target.value));
+    });
   }
 
   function updateCueText(cueId, newText) {
@@ -2188,12 +2212,17 @@
         <td class="px-3 py-2 font-semibold text-[var(--text-primary)]">${escapeHtml(item.original)}</td>
         <td class="px-3 py-2 font-khmer text-indigo-300 font-bold">${escapeHtml(item.khmer)}</td>
         <td class="px-3 py-2 text-right">
-          <button onclick="window.daiStudio.removeGlossaryItem(${idx})" class="p-1 rounded text-rose-400 hover:bg-rose-500/10 transition-colors">
+          <button data-glossary-idx="${idx}" class="p-1 rounded text-rose-400 hover:bg-rose-500/10 transition-colors">
             <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
           </button>
         </td>
       </tr>
     `).join('');
+
+    body.querySelectorAll('button[data-glossary-idx]').forEach((btn) => {
+      const idx = Number(btn.getAttribute('data-glossary-idx'));
+      btn.addEventListener('click', () => window.daiStudio.removeGlossaryItem(idx));
+    });
 
     if (window.lucide && typeof window.lucide.createIcons === 'function') {
       window.lucide.createIcons();
@@ -2288,18 +2317,18 @@
               ${idx + 1}
             </span>
             <div class="flex flex-col min-w-0">
-              <span class="font-mono text-xs text-slate-200 select-all truncate">${masked}</span>
+              <span class="font-mono text-xs text-slate-200 select-all truncate">${escapeHtml(masked)}</span>
               <span data-dai-keystatus="${idx}" class="text-[10px] text-emerald-400 flex items-center gap-1 min-w-0">
                 <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0"></span> Active Key Pool
               </span>
             </div>
           </div>
           <div class="flex items-center gap-1 shrink-0">
-            <button type="button" title="Copy Key" onclick="window.daiStudio && window.daiStudio.copyApiKey(${idx})"
+            <button type="button" title="Copy Key" data-dai-key-action="copy" data-dai-key-idx="${idx}"
               class="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-white hover:bg-slate-700/50 transition-colors">
               <i data-lucide="copy" class="w-3.5 h-3.5"></i>
             </button>
-            <button type="button" title="Remove Key" onclick="window.daiStudio && window.daiStudio.removeApiKey(${idx})"
+            <button type="button" title="Remove Key" data-dai-key-action="remove" data-dai-key-idx="${idx}"
               class="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-rose-400 hover:bg-rose-500/10 transition-colors">
               <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
             </button>
@@ -2307,6 +2336,16 @@
         </div>
       `;
     }).join('');
+
+    listEl.querySelectorAll('button[data-dai-key-action]').forEach((btn) => {
+      const idx = Number(btn.getAttribute('data-dai-key-idx'));
+      const action = btn.getAttribute('data-dai-key-action');
+      btn.addEventListener('click', () => {
+        if (!window.daiStudio) return;
+        if (action === 'copy') window.daiStudio.copyApiKey(idx);
+        else window.daiStudio.removeApiKey(idx);
+      });
+    });
 
     if (window.lucide && typeof window.lucide.createIcons === 'function') {
       window.lucide.createIcons();
