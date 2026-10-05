@@ -72,6 +72,15 @@
       return wrap.innerHTML;
     }
 
+    // A voice clip whose play position is already at (or past) its end has nothing left
+    // to play. play() on such a clip restarts it from 0:00, and a line stays "active" a
+    // little past the end of its voice, so every line used to end with its first word
+    // again ("...មកវិញឲ្យឆាប់យប់"). The playback loops skip play() when this is true.
+    function voiceClipFinishedAt(audio, position) {
+      const dur = audio && audio.duration;
+      return Number.isFinite(dur) && dur > 0 && position >= dur - 0.05;
+    }
+
     // The page is served from the local backend with webSecurity on, so media
     // can't be loaded from file:// URLs. Turn a plain disk path (or a file://
     // URL, converted back to a path) into the backend's streaming endpoint,
@@ -20334,6 +20343,7 @@
                   const liveOffset = mainVideo.currentTime - start;
                   const liveSeekTo = liveOffset * actualSpeed;
                   if (liveOffset < 0 || liveOffset > (end - start + 0.2)) return;
+                  if (voiceClipFinishedAt(audio, liveSeekTo)) return;
                   if (Math.abs(audio.currentTime - liveSeekTo) > 0.2) {
                     audio.currentTime = liveSeekTo;
                   }
@@ -20343,7 +20353,9 @@
                   }
                 };
 
-                if (audio.readyState >= 3) {
+                if (voiceClipFinishedAt(audio, seekTo)) {
+                  // This line's voice already played to the end: don't restart it.
+                } else if (audio.readyState >= 3) {
                   if (Math.abs(audio.currentTime - seekTo) > 0.2) {
                     audio.currentTime = seekTo;
                   }
@@ -20422,13 +20434,16 @@
                   const liveOffset = mainVideo.currentTime - start;
                   const liveSeekTo = liveOffset * actualSpeed + fileOffset;
                   if (liveOffset < 0 || liveOffset > end - start) return;
+                  if (voiceClipFinishedAt(audio, liveSeekTo)) return;
                   if (Math.abs(audio.currentTime - liveSeekTo) > 0.2) {
                     audio.currentTime = liveSeekTo;
                   }
                   audio.play().catch((e) => console.log("Detached A1 play delayed:", e));
                 };
 
-                if (audio.readyState >= 3) {
+                if (voiceClipFinishedAt(audio, seekTo)) {
+                  // This clip already played to the end: don't restart it.
+                } else if (audio.readyState >= 3) {
                   if (Math.abs(audio.currentTime - seekTo) > 0.2) {
                     audio.currentTime = seekTo;
                   }
