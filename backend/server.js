@@ -2197,12 +2197,19 @@ app.post('/api/transcribe', async (req, res) => {
                 let out = transcribeCacheGet(cacheKey);
                 if (out && stayOnModel && out.fellBack) out = null; // made by a fallback model earlier: redo it
                 if (out) console.log(`[Transcribe] Chunk ${i + 1}/${chunks.length} reused from previous attempt`);
+                // "High demand" (503) is Google overloading one model for everyone; another key
+                // gets the same answer, but another model usually doesn't. After two busy answers
+                // in a row, let this part move to the next model instead of failing it.
+                let busyRounds = 0;
                 for (let retry = 0; !out || !out.ok; retry++) {
+                    const holdModel = !!stayOnModel && busyRounds < 2;
+                    if (stayOnModel && !holdModel && busyRounds === 2) console.warn(`[Transcribe] ${model} is overloaded - part ${i + 1} may use another Gemini model`);
                     out = await tryKeysOnce(keys, (key) => transcribeClipWithGemini({
                         apiKey: key, model, audioBase64: clipBase64, mimeType: clipMime, clipSec,
                         promptOpts: { ...promptOpts, previousLines: laneCues.slice(-4) },
-                        signal: abortCtrl.signal, stayOnModel: !!stayOnModel
+                        signal: abortCtrl.signal, stayOnModel: holdModel
                     }));
+                    busyRounds = out.ok ? 0 : (out.result && (out.result.code === 'OVERLOADED' || Number(out.result.status) === 503) ? busyRounds + 1 : 0);
                     if (out.ok || failure || !isTransientGeminiFailure(out.result) || retry >= geminiRetryLimit(out.result)) break;
                     const wait = geminiRetryWaitMs(out.result, retry);
                     const why = out.result.code === 'NETWORK_ERROR' ? 'Connection problem' : out.result.error === 'RATE_LIMIT_EXCEEDED' ? 'Google rate limit' : 'Google is busy';
