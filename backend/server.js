@@ -67,6 +67,8 @@ const {
     USER_DESKTOP_OUTPUTS, PYTHON_DIR, LOGS_DIR,
     MIME_MAP, resolveLocalFilePath
 } = require('./lib/paths');
+const security = require('./lib/security');
+const { isNetworkPath, isServableMedia, isAudioFile } = security;
 // Everything the server prints also goes to <storage>/logs/server.log (see lib/server-log.js).
 require('./lib/server-log').installServerLog(LOGS_DIR);
 const { FOREIGN_SCRIPT_RE, stripForeignScript, collapseRepeatedPartSuffix, buildTtsArgv } = require('./lib/text-rules');
@@ -291,15 +293,17 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// No cross-origin access: this server only needs to answer the app's own
-// renderer (same-origin, since it's loaded from http://localhost:PORT).
-// Previously `app.use(cors())` reflected every origin, which combined with
-// the unauthenticated /api/audio (arbitrary local file read) and
-// /api/open-folder (shell exec) routes let any webpage open in a normal
-// browser read local files or run commands on the user's machine while
-// this app was running. Do not re-add a permissive cors() call here.
+// No cross-origin access: this server only answers the app's own window.
+// Every request must come to localhost/127.0.0.1 on our port, from our own
+// origin, and carry the per-launch token cookie that main.js puts in the
+// Electron session (see lib/security.js). Do not re-add cors(), and do not
+// add express.urlencoded(): form-encoded POSTs are what other websites can
+// send to localhost without a CORS preflight.
+app.disable('x-powered-by');
+app.use(security.hostAndOriginGuard(PORT));
+app.use(security.securityHeaders(path.join(ROOT_DIR, 'frontend', 'index.html')));
+app.use(security.tokenAuth());
 app.use(express.json({ limit: '100mb' }));
-app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
 // Static files
 app.use(express.static(path.join(ROOT_DIR, 'frontend')));
@@ -333,7 +337,11 @@ function resolveAudioOutputFile(tempPath, index) {
     const subId = index || Date.now();
     const fileName = `subtitle_${subId}_${Date.now()}.mp3`;
 
-    if (!tempPath) {
+    if (!tempPath || typeof tempPath !== 'string' || isNetworkPath(tempPath)) {
+        return path.join(AUDIO_CACHE_DIR, fileName);
+    }
+    // The TTS generator deletes and rewrites this file, so a file target must be audio.
+    if (path.extname(tempPath) && !isAudioFile(tempPath)) {
         return path.join(AUDIO_CACHE_DIR, fileName);
     }
 
@@ -374,6 +382,10 @@ app.use('/api/audio', (req, res) => {
 
     if (!filePath || !fs.existsSync(filePath)) {
         return res.status(404).send('File not found');
+    }
+    // Only media, subtitle, image and font files are ever streamed to the page.
+    if (!isServableMedia(filePath)) {
+        return res.status(403).send('File type not allowed');
     }
 
     try {
@@ -438,6 +450,8 @@ app.use('/api/audio', (req, res) => {
 // Transcribe Audio Destination Resolver & Saver
 function getTranscribeDestinations(customFolder, sourceFilePath) {
     const destinations = [];
+    if (isNetworkPath(customFolder)) customFolder = null;
+    if (isNetworkPath(sourceFilePath)) sourceFilePath = null;
     if (customFolder && typeof customFolder === 'string' && customFolder.trim()) {
         try {
             const trimmed = customFolder.trim();
@@ -834,9 +848,10 @@ app.post('/api/remove-vocals', upload.any(), async (req, res) => {
     if (engine === 'demucs' && !useGPU) {
         pyArgs.push('--device', 'cpu');
     }
-    const demucsFolder = (req.body.demucsFolder || '').trim();
-    const demucsSegment = (req.body.demucsSegment || '').trim();
-    const spleeterFolder = (req.body.spleeterFolder || '').trim();
+    // These folders hold a Python install that gets executed: never accept a network share.
+    const demucsFolder = isNetworkPath(req.body.demucsFolder) ? '' : String(req.body.demucsFolder || '').trim();
+    const demucsSegment = /^\d{1,3}(\.\d+)?$/.test(String(req.body.demucsSegment || '').trim()) ? String(req.body.demucsSegment).trim() : '';
+    const spleeterFolder = isNetworkPath(req.body.spleeterFolder) ? '' : String(req.body.spleeterFolder || '').trim();
     if (demucsFolder) pyArgs.push('--demucs-folder', demucsFolder);
     if (demucsSegment) pyArgs.push('--segment', demucsSegment);
     if (spleeterFolder) pyArgs.push('--spleeter-folder', spleeterFolder);
@@ -2976,7 +2991,7 @@ app.post('/api/cancel-transcribe', (req, res) => {
 // 4b. Whisper Local Verification & Transcription Endpoints
 app.get('/api/check-whisper-folder', (req, res) => {
     const folderPath = req.query.path;
-    if (!folderPath || !fs.existsSync(folderPath)) {
+    if (!folderPath || typeof folderPath !== 'string' || isNetworkPath(folderPath) || !fs.existsSync(folderPath)) {
         return res.json({ valid: false, missing: ['Folder does not exist'] });
     }
     const isWin = process.platform === 'win32';
@@ -2993,75 +3008,9 @@ app.get('/api/check-whisper-folder', (req, res) => {
     });
 });
 
-app.post('/api/transcribe-whisper', async (req, res) => {
-    const { whisperFolder, audioPath, videoPath, model = 'medium', device = 'auto', language } = req.body;
-    if (!whisperFolder || !fs.existsSync(whisperFolder)) {
-        return res.status(400).json({ success: false, error: 'Whisper folder not found' });
-    }
-    const inputAudio = audioPath || videoPath;
-    if (!inputAudio || !fs.existsSync(inputAudio)) {
-        return res.status(400).json({ success: false, error: 'Input audio not found' });
-    }
-
-    const outSrt = path.join(AUDIO_CACHE_DIR, `whisper_${Date.now()}.srt`);
-    const isWin = process.platform === 'win32';
-    const runnerFile = isWin ? 'run.bat' : 'run.sh';
-    const runnerPath = path.join(whisperFolder, runnerFile);
-    const args = ['--audio', inputAudio, '--output_srt', outSrt, '--model', model, '--device', device];
-    if (language && String(language).toLowerCase() !== 'auto') args.push('--language', language);
-
-    let child;
-    let stderrBuffer = '';
-    let stdoutBuffer = '';
-    try {
-        if (fs.existsSync(runnerPath)) {
-            child = isWin
-                ? spawn('cmd.exe', ['/c', runnerPath, ...args], { cwd: whisperFolder, windowsHide: true, env: PYTHON_ENV })
-                : spawn('bash', [runnerPath, ...args], { cwd: whisperFolder, env: PYTHON_ENV });
-        } else {
-            const pyScript = path.join(whisperFolder, 'transcribe.py');
-            child = spawn(PYTHON_CMD, [pyScript, ...args], { cwd: whisperFolder, windowsHide: true, env: PYTHON_ENV });
-        }
-        trackProcess(child);
-    } catch (spawnErr) {
-        return res.status(500).json({ success: false, error: 'Failed to start Whisper process: ' + spawnErr.message });
-    }
-
-    // transcribe.py prints a progress line per subtitle cue. If nothing reads
-    // stdout, the OS pipe buffer fills up on long videos, Python blocks on
-    // write(), and this request would hang forever waiting for 'close'.
-    const stdoutDecoder = new StringDecoder('utf8');
-    const stderrDecoder = new StringDecoder('utf8');
-    child.stdout.on('data', (d) => {
-        stdoutBuffer += stdoutDecoder.write(d);
-    });
-
-    child.stderr.on('data', (d) => {
-        stderrBuffer += stderrDecoder.write(d);
-    });
-
-    child.on('error', (err) => {
-        if (!res.headersSent) res.status(500).json({ success: false, error: err.message });
-    });
-
-    child.on('close', (code) => {
-        if (res.headersSent) return;
-        if (code === 0 && fs.existsSync(outSrt)) {
-            try {
-                const srtText = fs.readFileSync(outSrt, 'utf8');
-                res.json({ success: true, srtText, srtPath: outSrt });
-            } catch (e) {
-                res.status(500).json({ success: false, error: 'Failed to read SRT: ' + e.message });
-            }
-        } else {
-            const cleanError = stderrBuffer.trim();
-            res.status(500).json({
-                success: false,
-                error: cleanError ? cleanError.split('\n').pop() || `Whisper exited with code ${code}` : `Whisper exited with code ${code}`
-            });
-        }
-    });
-});
+// (POST /api/transcribe-whisper was removed: the app runs local Whisper via
+// main.js IPC, and an HTTP route that executes a script from a caller-chosen
+// folder is not something this server should offer.)
 
 // ── 10 CHARACTER AUTO-SPEAKER PRESETS (Edge-TTS Neural Engine) ──────────
 const CHARACTER_PRESETS = {
@@ -3630,6 +3579,9 @@ app.post('/api/save-audio-file', express.json({ limit: '50mb' }), (req, res) => 
         if (!audioBase64) {
             return res.status(400).json({ success: false, error: 'No audioBase64 provided' });
         }
+        if (filePath && !isAudioFile(filePath)) {
+            return res.status(400).json({ success: false, error: 'filePath must be an audio file (.mp3, .wav, ...)' });
+        }
         const targetFile = filePath || resolveAudioOutputFile(tempPath, index);
         fs.mkdirSync(path.dirname(targetFile), { recursive: true });
         const buffer = Buffer.from(audioBase64, 'base64');
@@ -3918,17 +3870,25 @@ app.post('/api/unify-names', async (req, res) => {
     }
 });
 
-// Safe server listener that never crashes on duplicate instances
-const server = app.listen(PORT, () => {
-    console.log(`[DR Dubber Pro Server] Listening on http://localhost:${PORT} (outgoing HTTPS via ${fetchBackend()})`);
-});
+// Loopback only: the API reads, writes and launches local files, so it must
+// never be reachable from other machines on the network.
+const server = app.listen(PORT, '127.0.0.1');
 
-server.on('error', (err) => {
-    if (err.code === 'EADDRINUSE') {
-        console.log(`[DR Dubber Pro Server] Port ${PORT} already active. Reusing running server instance.`);
-    } else {
+// main.js waits on this before loading the window. If the port is taken, some
+// other program owns http://localhost:PORT and the app must not load its page.
+app.locals.ready = new Promise((resolve, reject) => {
+    server.once('listening', () => {
+        console.log(`[DR Dubber Pro Server] Listening on http://localhost:${PORT} (127.0.0.1 only; outgoing HTTPS via ${fetchBackend()})`);
+        if (require.main === module) {
+            console.log(`[DR Dubber Pro Server] Open http://localhost:${PORT}/?t=${security.getApiToken()} in your browser to sign in.`);
+        }
+        resolve();
+    });
+    server.once('error', (err) => {
         console.error('[DR Dubber Pro Server Error]', err);
-    }
+        reject(err);
+    });
 });
+app.locals.ready.catch(() => {});
 
 module.exports = app;

@@ -5,6 +5,7 @@
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { isNetworkPath } = require('./security');
 
 const ROOT_DIR = path.resolve(__dirname, '..', '..');
 const STORAGE_BASE = process.env.APP_STORAGE_DIR || path.join(ROOT_DIR, 'storage');
@@ -58,6 +59,9 @@ function resolveLocalFilePath(inputPath) {
     if (!inputPath || typeof inputPath !== 'string') return null;
     let p = inputPath.trim();
     if (!p) return null;
+    // Network shares (\\host\share) are never opened: on Windows even checking
+    // one sends the user's credentials to that host.
+    if (isNetworkPath(p)) return null;
 
     // 1. Direct match on disk
     try {
@@ -110,6 +114,7 @@ function resolveLocalFilePath(inputPath) {
     if (p.includes('%')) {
         try {
             const decoded = decodeURIComponent(p);
+            if (isNetworkPath(decoded)) return null;
             if (fs.existsSync(decoded)) return decoded;
             p = decoded;
         } catch (e) {}
@@ -119,6 +124,8 @@ function resolveLocalFilePath(inputPath) {
     if (process.platform === 'win32') {
         p = p.replace(/^\/([a-zA-Z]:)/, '$1');
     }
+
+    if (isNetworkPath(p)) return null;
 
     // 7. Final check
     try {

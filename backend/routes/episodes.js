@@ -4,6 +4,7 @@
 const express = require('express');
 const fs = require('fs');
 const { resolveLocalFilePath } = require('../lib/paths');
+const { isNetworkPath } = require('../lib/security');
 
 module.exports = function createEpisodesRouter({ episodeJoiner }) {
     const router = express.Router();
@@ -20,6 +21,7 @@ module.exports = function createEpisodesRouter({ episodeJoiner }) {
 
     router.post('/join', async (req, res) => {
         const { parts, outDir, seriesName, partNumbers } = req.body || {};
+        if (!outDir || typeof outDir !== 'string' || isNetworkPath(outDir)) return res.json({ success: false, error: 'No output folder' });
         try {
             const jobId = await episodeJoiner.start({ parts, outDir: resolveLocalFilePath(outDir) || outDir, seriesName, partNumbers });
             res.json({ success: true, jobId });

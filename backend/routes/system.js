@@ -5,8 +5,10 @@
 const express = require('express');
 const fs = require('fs');
 const os = require('os');
+const path = require('path');
 const { execFile } = require('child_process');
 const { EXPORTS_DIR, LOGS_DIR } = require('../lib/paths');
+const { isNetworkPath } = require('../lib/security');
 
 const VOICE_PRESETS = {
     "km-KH-PisethNeural": { "name": "Khmer - Piseth (Male)", "gender": "Male", "lang": "km-KH" },
@@ -28,7 +30,10 @@ const VOICE_PRESETS = {
 };
 
 function openFolderSafely(folder, res) {
-    if (!folder || typeof folder !== 'string' || !fs.existsSync(folder)) {
+    // Folders only: handing a file (or a network share) to open/explorer would launch it.
+    let isDir = false;
+    try { isDir = typeof folder === 'string' && !isNetworkPath(folder) && fs.statSync(folder).isDirectory(); } catch (e) {}
+    if (!isDir) {
         return res.status(400).json({ success: false, error: 'Folder not found' });
     }
     // Previously: exec(`${openCmd} "${folder}"`), which built a shell command
@@ -39,7 +44,9 @@ function openFolderSafely(folder, res) {
     // into a second command, regardless of what characters it contains. This
     // also works whether server.js is run standalone (`node backend/server.js`)
     // or loaded inside Electron's main process, unlike electron's `shell.openPath`.
-    const cmd = process.platform === 'darwin' ? 'open' : (process.platform === 'win32' ? 'explorer' : 'xdg-open');
+    // Absolute paths so a program planted earlier on PATH can't stand in for the real one.
+    const cmd = process.platform === 'darwin' ? '/usr/bin/open'
+        : (process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:\\Windows', 'explorer.exe') : 'xdg-open');
     execFile(cmd, [folder], () => {
         // Windows' explorer.exe can return a non-zero exit code even when it
         // successfully opened the folder, so don't treat that as failure.

@@ -10,8 +10,8 @@ echo.
 npm.cmd start
 if %errorlevel% neq 0 (
     echo.
-    echo [Fallback] Launching Studio in Browser Mode...
-    start http://localhost:5890
+    echo [Fallback] Starting the Studio server for Browser Mode...
+    echo Open the sign-in link it prints below in your browser.
     node backend/server.js
 )
 pause

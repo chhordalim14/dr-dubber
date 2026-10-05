@@ -43,6 +43,10 @@ def ensure_ffmpeg_in_path():
                                 extra_paths.append(sub_path)
             except Exception:
                 pass
+    # Folders above are the app's own and go first on PATH. The guesses below
+    # include drive-root folders any Windows user can create (C:\\ffmpeg), so
+    # they go last and can never shadow python or a system tool.
+    bundled_count = len(extra_paths)
     prog_files = os.environ.get("ProgramFiles", "C:\\Program Files")
     prog_files_x86 = os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")
     extra_paths.extend([
@@ -58,14 +62,14 @@ def ensure_ffmpeg_in_path():
 
     current_path = os.environ.get("PATH", "")
     current_set = {os.path.abspath(p).lower() for p in current_path.split(os.pathsep) if p}
-    to_add = [
-        p for p in extra_paths
-        if os.path.isdir(p)
-        and ("app.asar" not in p.lower() or "app.asar.unpacked" in p.lower())
-        and os.path.abspath(p).lower() not in current_set
-    ]
-    if to_add:
-        os.environ["PATH"] = os.pathsep.join(to_add + [current_path])
+    def usable(p):
+        return (os.path.isdir(p)
+                and ("app.asar" not in p.lower() or "app.asar.unpacked" in p.lower())
+                and os.path.abspath(p).lower() not in current_set)
+    prepend = [p for p in extra_paths[:bundled_count] if usable(p)]
+    append = [p for p in extra_paths[bundled_count:] if usable(p)]
+    if prepend or append:
+        os.environ["PATH"] = os.pathsep.join(prepend + ([current_path] if current_path else []) + append)
 
 ensure_ffmpeg_in_path()
 

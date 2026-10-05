@@ -6,6 +6,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const { resolveLocalFilePath, EXPORTS_DIR } = require('../lib/paths');
+const { isNetworkPath, safeOutputFileName } = require('../lib/security');
 
 module.exports = function createRenderRouter({ upload, renderVideo, cancelRender, getRenderProgress, audioRepair }) {
     const router = express.Router();
@@ -157,11 +158,14 @@ module.exports = function createRenderRouter({ upload, renderVideo, cancelRender
         }).filter(vid => vid.path && fs.existsSync(vid.path));
 
         // 4. Resolve output folder and file name
-        const ext = isAudioOnly ? (renderOpts.audioFormat || 'mp3') : 'mp4';
+        renderOpts.audioFormat = renderOpts.audioFormat === 'wav' ? 'wav' : 'mp3';
+        const ext = isAudioOnly ? renderOpts.audioFormat : 'mp4';
         const baseName = videoPath ? path.basename(videoPath, path.extname(videoPath)) : `audio_${Date.now()}`;
         const defaultOutputName = isAudioOnly ? `${baseName}_Dubbed.${ext}` : `${baseName}_DR_Dubbed.mp4`;
-        const finalName = renderOpts.outputFileName || defaultOutputName;
-        const targetFolder = renderOpts.exportPath || EXPORTS_DIR;
+        // The page sends a bare file name: keep it one name with the right extension
+        // so it can't point outside the export folder or at a non-media file.
+        const finalName = safeOutputFileName(renderOpts.outputFileName || defaultOutputName, [`.${ext}`], defaultOutputName);
+        const targetFolder = (renderOpts.exportPath && !isNetworkPath(renderOpts.exportPath)) ? renderOpts.exportPath : EXPORTS_DIR;
 
         try {
             if (!fs.existsSync(targetFolder)) {
@@ -170,7 +174,9 @@ module.exports = function createRenderRouter({ upload, renderVideo, cancelRender
         } catch (e) {
             console.error('[Render] Could not create export folder:', targetFolder, e);
         }
-        const outputPath = renderOpts.outputPath || path.join(targetFolder, finalName);
+        const outputPath = (renderOpts.outputPath && !isNetworkPath(renderOpts.outputPath) && path.extname(renderOpts.outputPath).toLowerCase() === `.${ext}`)
+            ? renderOpts.outputPath
+            : path.join(targetFolder, finalName);
 
         const shouldShowSubs = renderOpts.showSubtitles !== undefined
             ? (renderOpts.showSubtitles === true || renderOpts.showSubtitles === 'true')

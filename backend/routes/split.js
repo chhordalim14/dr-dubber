@@ -3,6 +3,7 @@
 // service object. Extracted verbatim out of server.js.
 const express = require('express');
 const { resolveLocalFilePath } = require('../lib/paths');
+const { isNetworkPath } = require('../lib/security');
 
 module.exports = function createSplitRouter({ videoSplitter }) {
     const router = express.Router();
@@ -21,7 +22,7 @@ module.exports = function createSplitRouter({ videoSplitter }) {
         const { file, outDir, partCount, baseName } = req.body || {};
         const src = resolveLocalFilePath(file);
         if (!src) return res.json({ success: false, error: 'File not found' });
-        if (!outDir) return res.json({ success: false, error: 'No output folder' });
+        if (!outDir || typeof outDir !== 'string' || isNetworkPath(outDir)) return res.json({ success: false, error: 'No output folder' });
         try {
             const jobId = await videoSplitter.start({ file: src, outDir, partCount, baseName });
             res.json({ success: true, jobId });

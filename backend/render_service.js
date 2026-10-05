@@ -486,7 +486,7 @@ function buildSubtitleAss(cues, options, canvasW, canvasH) {
     }
 
     const face = resolveSubtitleFace(s.font, bold);
-    const fontName = face ? face.fontName : s.font;
+    const fontName = assSafeName(face ? face.fontName : s.font);
     const boldFlag = face ? face.boldFlag : (bold ? -1 : 0);
     // libass makes "Fontsize" the font's full Windows height (ascent + descent), CSS
     // makes font-size the em. Convert so the letters are as tall as in the preview.
@@ -553,7 +553,7 @@ function buildFreeTextAssFile(freeTexts, canvasW, canvasH, videoDuration, tempDi
     const events = freeTexts.map((t) => {
         const px = Math.round((w * (parseFloat(t.x) || 0)) / 100);
         const py = Math.round((h * (parseFloat(t.y) || 0)) / 100);
-        const fontName = t.fontFamily || 'Kantumruy Pro';
+        const fontName = assSafeName(t.fontFamily) || 'Kantumruy Pro';
         const fontSize = parseInt(t.fontSize, 10) || 28;
         const primaryColor = hexToAssColor(t.color, '&H00FFFFFF');
         const outlineColor = hexToAssColor(t.strokeColor, '&H00000000');
@@ -821,10 +821,16 @@ const ASPECT_PRESETS = {
     '720p': { w: 1280, h: 720 },
 };
 
+// Font names go into comma-separated ASS "Style:" lines.
+function assSafeName(name) {
+    return String(name || '').replace(/[,\r\n{}\\]/g, ' ').trim();
+}
+
 function hexToAssColor(hex, defaultVal = '&H00FFFFFF') {
     if (!hex || typeof hex !== 'string') return defaultVal;
-    if (hex.startsWith('&H') || hex.startsWith('&h')) return hex;
+    if (hex.startsWith('&H') || hex.startsWith('&h')) return /^&H[0-9A-F]{6,8}&?$/i.test(hex.trim()) ? hex.trim() : defaultVal;
     const clean = hex.replace('#', '').trim();
+    if (!/^[0-9a-fA-F]{3}$|^[0-9a-fA-F]{6}$|^[0-9a-fA-F]{8}$/.test(clean)) return defaultVal;
     if (clean.length === 3) {
         const r = clean[0] + clean[0];
         const g = clean[1] + clean[1];
@@ -1042,10 +1048,11 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             error: null
         };
 
-        const tempDir = path.join(os.tmpdir(), 'dr_dubber_render_' + Date.now());
-        fs.mkdirSync(tempDir, { recursive: true });
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dr_dubber_render_'));
 
         // Ensure output parent directory exists
+        // A failed render only cleans up a file it created itself, never one that was already there.
+        const outputPreexisted = options._outputPreexisted !== undefined ? options._outputPreexisted : fs.existsSync(outputPath);
         const outDir = path.dirname(outputPath);
         if (!fs.existsSync(outDir)) {
             try { fs.mkdirSync(outDir, { recursive: true }); } catch (e) { }
@@ -1588,8 +1595,9 @@ async function renderVideo(options, onProgress, onComplete, onError) {
 
                 let chromaFilter = '';
                 if (ov.chromaKey && ov.chromaKey.enabled) {
-                    const rawColor = ov.chromaKey.color || '#00ff00';
-                    const hexColor = rawColor.replace('#', '0x');
+                    // Goes straight into -filter_complex, so only a plain #RRGGBB is accepted.
+                    const rawColor = /^#?[0-9a-fA-F]{6}$/.test(String(ov.chromaKey.color || '').trim()) ? String(ov.chromaKey.color).trim() : '#00ff00';
+                    const hexColor = '0x' + rawColor.replace('#', '');
                     const tolerance = parseFloat(ov.chromaKey.tolerance);
                     const safeTol = Math.min(255, Math.max(0, isNaN(tolerance) ? 80 : tolerance));
                     // FFmpeg chromakey similarity typically ranges 0.05 to 0.40
@@ -1792,11 +1800,12 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                             if (c === chosenEncoder) _detectedEncoders[k] = false;
                         }
                     }
-                    try { if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch (e) { }
+                    try { if (!outputPreexisted && fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch (e) { }
                     return renderVideo({
                         ...options,
                         encoder: 'libx264',
-                        _isRetry: true
+                        _isRetry: true,
+                        _outputPreexisted: outputPreexisted
                     }, onProgress, onComplete, onError);
                 }
 
@@ -1818,11 +1827,12 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             cleanupTempDir();
             if (chosenEncoder !== 'libx264' && !options._isRetry && currentRenderJob.status !== 'cancelled') {
                 console.warn(`[Render Auto-Fallback] Hardware encoder "${chosenEncoder}" process error: ${err.message}. Retrying with libx264...`);
-                try { if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch (e) { }
+                try { if (!outputPreexisted && fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch (e) { }
                 return renderVideo({
                     ...options,
                     encoder: 'libx264',
-                    _isRetry: true
+                    _isRetry: true,
+                    _outputPreexisted: outputPreexisted
                 }, onProgress, onComplete, onError);
             }
             currentRenderJob.status = 'error';
