@@ -297,7 +297,7 @@
   function keyStatusView(s) {
     if (!s) return { color: 'emerald', text: 'Ready' };
     if (s.state === 'invalid') return { color: 'rose', text: 'Rejected by Google (invalid or expired key)' };
-    if (s.state === 'daily') return { color: 'rose', text: `Daily quota used up · resets in ${formatWaitShort(s.retryAfterMs)}` };
+    if (s.state === 'daily') return { color: 'rose', text: `Google reported daily limit · rechecking in ${formatWaitShort(s.retryAfterMs)}` };
     if (s.state === 'cooling') return { color: 'amber', text: `Rate-limited · free again in ${formatWaitShort(s.retryAfterMs)}` };
     if (s.state === 'partial') {
       const out = s.models.map(m => `${m.model.replace(/^gemini-/, '')} ${m.daily ? 'out today' : `wait ${formatWaitShort(m.retryAfterMs)}`}`);
@@ -344,7 +344,7 @@
       ? `${keys.length} API Key${keys.length > 1 ? 's' : ''} Active`
       : ready > 0
         ? `${ready}/${keys.length} Keys Ready`
-        : allDaily ? `Daily Quota Used Up · resets in ${formatWaitShort(soonest)}` : `All Keys Rate-Limited · ${formatWaitShort(soonest)}`;
+        : allDaily ? `Daily Limit Reported · rechecking in ${formatWaitShort(soonest)}` : `All Keys Rate-Limited · ${formatWaitShort(soonest)}`;
     const c = KEY_STATUS_CLASSES[color];
     badge.innerHTML = `<span class="w-2 h-2 rounded-full ${c.dot}${color === 'emerald' ? ' animate-pulse' : ''}"></span>
       <span>${escapeHtml(label)}</span>

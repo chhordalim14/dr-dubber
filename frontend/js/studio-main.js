@@ -16659,7 +16659,7 @@
         return `${plan.pieces.length} tab(s)`;
       }
 
-      const QUOTA_MSG = "The daily Gemini quota is used up. Press Continue after it resets, or add a key from another Google project.";
+      const QUOTA_MSG = "Google reports the daily Gemini quota used up on every key. Press Continue in 15 minutes (the app rechecks then), pick another Gemini model, or add a key from another Google project.";
       const RETRY_PASSES = 2;
       const tabNumbers = (list) => list.map((p) => projects.indexOf(p) + 1).join(", ");
 
