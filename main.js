@@ -1,10 +1,9 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const http = require('http');
 const crypto = require('crypto');
-const { spawn, exec } = require('child_process');
+const { spawn, exec, execFile } = require('child_process');
 
 // Prefer IPv4 for all Node-side network calls (Gemini, TTS tunnels, updates).
 // Electron 28 ships Node 18, whose fetch() connects to the first DNS answer only
@@ -24,6 +23,14 @@ app.commandLine.appendSwitch('enable-accelerated-mjpeg-decode');
 app.commandLine.appendSwitch('enable-features', 'VaapiVideoDecoder,CanvasOopRasterization');
 
 const PORT = 3001;
+const APP_ORIGIN = `http://localhost:${PORT}`;
+
+// Per-launch secret for the local backend. It only lives in this process and
+// in an HttpOnly cookie of the app's own session, so other programs and web
+// pages can't call the API (see backend/lib/security.js).
+const security = require('./backend/lib/security');
+const API_TOKEN = crypto.randomBytes(32).toString('hex');
+security.setApiToken(API_TOKEN);
 
 // Storage directories (safe for packaged app & dev)
 const ROOT_DIR = __dirname;
@@ -75,6 +82,105 @@ process.on('unhandledRejection', (reason) => {
     logCrash('unhandledRejection', reason);
 });
 
+// ── IPC + navigation security ─────────────────────────────────────────────
+// The preload bridge can read/write files and start local programs, so only
+// the app's own page (http://localhost:PORT) may use it. Anything else that
+// ends up in a window (an external site after a stray navigation, an iframe)
+// gets nothing.
+function isTrustedSender(event) {
+    const frame = event && event.senderFrame;
+    if (!frame) return false;
+    try { return new URL(frame.url).origin === APP_ORIGIN; } catch (e) { return false; }
+}
+
+function handle(channel, fn) {
+    ipcMain.handle(channel, (event, ...args) => {
+        if (!isTrustedSender(event)) throw new Error(`Blocked "${channel}" from an untrusted page`);
+        return fn(event, ...args);
+    });
+}
+
+function on(channel, fn) {
+    ipcMain.on(channel, (event, ...args) => {
+        if (isTrustedSender(event)) fn(event, ...args);
+    });
+}
+
+function isAppUrl(url) {
+    try { return new URL(url).origin === APP_ORIGIN; } catch (e) { return false; }
+}
+
+function isWebUrl(url) {
+    try { return ['https:', 'http:'].includes(new URL(url).protocol); } catch (e) { return false; }
+}
+
+app.on('web-contents-created', (event, contents) => {
+    contents.on('will-attach-webview', (e) => e.preventDefault());
+    // Links to websites open in the user's browser; the app window itself never leaves the app.
+    contents.setWindowOpenHandler(({ url }) => {
+        if (isWebUrl(url) && !isAppUrl(url)) shell.openExternal(url);
+        return { action: 'deny' };
+    });
+    const guardNavigation = (e, url) => {
+        if (isAppUrl(url)) return;
+        e.preventDefault();
+        if (isWebUrl(url)) shell.openExternal(url);
+    };
+    contents.on('will-navigate', guardNavigation);
+    contents.on('will-redirect', guardNavigation);
+});
+
+// Paths a user has OK'd for running (Whisper folder, VoxCPM2 script). The page
+// only stores a path string, so before the main process runs a program from a
+// path it hasn't run before, the user confirms it in a native dialog that page
+// scripts can't click through. Approvals are remembered in userData.
+const APPROVED_EXEC_FILE = path.join(userDataDir, 'approved-programs.json');
+
+function loadApprovedPrograms() {
+    try {
+        const list = JSON.parse(fs.readFileSync(APPROVED_EXEC_FILE, 'utf8'));
+        return new Set(Array.isArray(list) ? list : []);
+    } catch (e) {
+        return new Set();
+    }
+}
+
+function canonicalPath(p) {
+    try { return fs.realpathSync(p); } catch (e) { return path.resolve(p); }
+}
+
+const pendingApprovals = new Map();
+
+// Async on purpose: the backend runs in this process, so a blocking dialog would
+// stall every request. Parallel jobs for the same path share one prompt.
+async function confirmProgramRun(targetPath, what) {
+    if (security.isNetworkPath(targetPath)) return false;
+    const shownPath = canonicalPath(targetPath);
+    const key = normalizePathForCompare(shownPath);
+    if (loadApprovedPrograms().has(key)) return true;
+    if (pendingApprovals.has(key)) return pendingApprovals.get(key);
+    const ask = (async () => {
+        const opts = {
+            type: 'warning',
+            buttons: ['Cancel', 'Allow and run'],
+            defaultId: 0,
+            cancelId: 0,
+            title: 'DR Dubber Pro',
+            message: `Allow DR Dubber Pro to run ${what}?`,
+            detail: `${shownPath}\n\nOnly allow this if you installed it yourself. You will only be asked once for this location.`
+        };
+        const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+        const { response } = parent ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts);
+        if (response !== 1) return false;
+        const approved = loadApprovedPrograms();
+        approved.add(key);
+        try { fs.writeFileSync(APPROVED_EXEC_FILE, JSON.stringify([...approved], null, 2), 'utf8'); } catch (e) {}
+        return true;
+    })();
+    pendingApprovals.set(key, ask);
+    try { return await ask; } finally { pendingApprovals.delete(key); }
+}
+
 let mainWindow = null;
 
 function createWindow() {
@@ -96,7 +202,10 @@ function createWindow() {
             preload: path.join(ROOT_DIR, 'preload.js'),
             nodeIntegration: false,
             contextIsolation: true,
-            webSecurity: false,
+            sandbox: true,
+            webSecurity: true,
+            allowRunningInsecureContent: false,
+            webviewTag: false,
             spellcheck: false,
             backgroundThrottling: false
         }
@@ -108,7 +217,7 @@ function createWindow() {
         console.log(`[Renderer Log] ${message}`);
     });
 
-    mainWindow.loadURL(`http://localhost:${PORT}`);
+    mainWindow.loadURL(APP_ORIGIN);
 
     mainWindow.once('ready-to-show', () => {
         mainWindow.show();
@@ -133,25 +242,37 @@ if (!gotTheLock) {
     });
 
     app.whenReady().then(async () => {
+        // Only the app's own page gets permissions (clipboard etc.).
+        session.defaultSession.setPermissionRequestHandler((wc, permission, callback, details) => {
+            callback(isAppUrl((details && details.requestingUrl) || wc.getURL()));
+        });
+        session.defaultSession.setPermissionCheckHandler((wc, permission, requestingOrigin) => requestingOrigin === APP_ORIGIN);
+
         try {
-            require('./backend/server');
+            const server = require('./backend/server');
+            await server.locals.ready;
         } catch (e) {
-            console.log('[Server Startup Note]', e.message);
+            // If the port is taken, whatever answers on it is not our backend, and
+            // loading its page would hand it the preload bridge. Stop instead.
+            const inUse = e && e.code === 'EADDRINUSE';
+            dialog.showErrorBox(
+                'DR Dubber Pro could not start',
+                inUse
+                    ? `Port ${PORT} is already in use by another program (possibly a copy of the DR Dubber Pro server started from a terminal).\n\nClose that program and open DR Dubber Pro again.`
+                    : `The local engine failed to start:\n\n${e && e.message ? e.message : e}`
+            );
+            app.quit();
+            return;
         }
 
-        let retries = 15;
-        const checkReady = () => {
-            http.get(`http://localhost:${PORT}`, (res) => {
-                createWindow();
-            }).on('error', () => {
-                if (retries-- > 0) {
-                    setTimeout(checkReady, 100);
-                } else {
-                    createWindow();
-                }
-            });
-        };
-        checkReady();
+        await session.defaultSession.cookies.set({
+            url: APP_ORIGIN,
+            name: security.TOKEN_COOKIE,
+            value: API_TOKEN,
+            httpOnly: true,
+            sameSite: 'strict'
+        });
+        createWindow();
 
         app.on('activate', () => {
             if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -160,17 +281,17 @@ if (!gotTheLock) {
 }
 
 // IPC Handlers
-ipcMain.handle('app:getBackendPort', () => PORT);
+handle('app:getBackendPort', () => PORT);
 
 // The renderer previously had its own hardcoded `CURRENT_APP_VERSION = "1.0.0"`
 // string that never got updated when a new version was released, so the
 // About panel and update check always compared against a stale version
 // number regardless of what was actually built. app.getVersion() reads the
 // real version from package.json, so this can never drift out of sync again.
-ipcMain.handle('app:getVersion', () => app.getVersion());
+handle('app:getVersion', () => app.getVersion());
 
-ipcMain.handle('app:checkPathExists', (event, targetPath) => {
-    if (!targetPath) return { exists: true, path: AUDIO_CACHE_DIR };
+handle('app:checkPathExists', (event, targetPath) => {
+    if (!targetPath || typeof targetPath !== 'string' || security.isNetworkPath(targetPath)) return { exists: true, path: AUDIO_CACHE_DIR };
     try {
         if (!fs.existsSync(targetPath)) {
             fs.mkdirSync(targetPath, { recursive: true });
@@ -182,7 +303,7 @@ ipcMain.handle('app:checkPathExists', (event, targetPath) => {
 });
 
 // Always open top-level native file picker reliably
-ipcMain.handle('dialog:openFile', async (event, opts = {}) => {
+handle('dialog:openFile', async (event, opts = {}) => {
     try {
         const res = await dialog.showOpenDialog({
             title: opts.title || 'Open File',
@@ -211,7 +332,7 @@ ipcMain.handle('dialog:openFile', async (event, opts = {}) => {
     }
 });
 
-ipcMain.handle('dialog:openMultiFile', async (event, opts = {}) => {
+handle('dialog:openMultiFile', async (event, opts = {}) => {
     try {
         const res = await dialog.showOpenDialog({
             title: opts.title || 'Open Files',
@@ -242,7 +363,7 @@ ipcMain.handle('dialog:openMultiFile', async (event, opts = {}) => {
     }
 });
 
-ipcMain.handle('dialog:selectFolder', async (event, opts = {}) => {
+handle('dialog:selectFolder', async (event, opts = {}) => {
     try {
         const res = await dialog.showOpenDialog({
             title: opts.title || 'Select Folder',
@@ -263,9 +384,9 @@ ipcMain.handle('dialog:selectFolder', async (event, opts = {}) => {
     }
 });
 
-ipcMain.handle('app:saveSrt', async (event, { content, filePath, defaultPath }) => {
+handle('app:saveSrt', async (event, { content, filePath, defaultPath }) => {
     try {
-        let target = filePath;
+        let target = (typeof filePath === 'string' && path.extname(filePath).toLowerCase() === '.srt' && !security.isNetworkPath(filePath)) ? filePath : null;
         if (!target) {
             const res = await dialog.showSaveDialog({
                 title: 'Save SRT Subtitles',
@@ -282,22 +403,30 @@ ipcMain.handle('app:saveSrt', async (event, { content, filePath, defaultPath }) 
     }
 });
 
-ipcMain.handle('app:saveTextFile', async (event, { content, filePath }) => {
+// Always asks where to save: the page proposes a file name, the user picks the place.
+handle('app:saveTextFile', async (event, { content, defaultPath, title } = {}) => {
     try {
-        await fs.promises.writeFile(filePath, content, 'utf8');
-        return { success: true };
+        const suggested = path.basename(String(defaultPath || 'export.txt')).replace(/[\\/:*?"<>|]/g, '_');
+        const res = await dialog.showSaveDialog(mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined, {
+            title: typeof title === 'string' && title ? title : 'Save Text File',
+            defaultPath: path.join(app.getPath('desktop'), suggested.endsWith('.txt') ? suggested : `${suggested}.txt`),
+            filters: [{ name: 'Text Files', extensions: ['txt'] }]
+        });
+        if (res.canceled || !res.filePath) return { success: false, canceled: true };
+        await fs.promises.writeFile(res.filePath, String(content ?? ''), 'utf8');
+        return { success: true, filePath: res.filePath };
     } catch (e) {
         return { success: false, error: e.message };
     }
 });
 
-ipcMain.handle('app:autoSaveSrt', async (event, { content, fileName, mode, sourceFilePath, customFolderPath }) => {
+handle('app:autoSaveSrt', async (event, { content, fileName, mode, sourceFilePath, customFolderPath }) => {
     try {
         const cleanBase = (fileName || 'subtitles').replace(/[/\\?%*:|"<>]/g, '_');
         const srtFileName = cleanBase.endsWith('.srt') ? cleanBase : `${cleanBase}.srt`;
 
-        let targetDir = customFolderPath;
-        if (mode === 'source' && sourceFilePath) {
+        let targetDir = security.isNetworkPath(customFolderPath) ? null : customFolderPath;
+        if (mode === 'source' && sourceFilePath && !security.isNetworkPath(sourceFilePath)) {
             targetDir = path.dirname(sourceFilePath);
         }
         if (!targetDir) targetDir = EXPORTS_DIR;
@@ -324,10 +453,13 @@ ipcMain.handle('app:autoSaveSrt', async (event, { content, fileName, mode, sourc
     }
 });
 
-ipcMain.handle('app:readFileAsBase64', async (event, filePath) => {
+handle('app:readFileAsBase64', async (event, filePath) => {
     try {
         if (!filePath || typeof filePath !== 'string') {
             return { success: false, error: 'Invalid file path' };
+        }
+        if (!security.isAudioFile(filePath)) {
+            return { success: false, error: 'Only audio files can be read' };
         }
         if (!fs.existsSync(filePath)) {
             return { success: false, error: `File does not exist: ${filePath}` };
@@ -351,8 +483,9 @@ ipcMain.handle('app:readFileAsBase64', async (event, filePath) => {
     }
 });
 
-ipcMain.handle('app:readFileAsText', async (event, filePath) => {
+handle('app:readFileAsText', async (event, filePath) => {
     try {
+        if (typeof filePath !== 'string' || security.isNetworkPath(filePath) || !/\.(srt|vtt|ass|ssa|txt)$/i.test(filePath)) return null;
         return await fs.promises.readFile(filePath, 'utf8');
     } catch (e) {
         return null;
@@ -453,7 +586,7 @@ async function clearDirContents(dir, protectedPaths = new Set()) {
 // size/clear here are real operations against real disk usage.
 const CACHE_DIRS = [AUDIO_CACHE_DIR, path.join(STORAGE_BASE, 'separated'), path.join(STORAGE_BASE, 'uploads'), path.join(STORAGE_BASE, 'preview_cache'), path.join(STORAGE_BASE, 'audio_repair')];
 
-ipcMain.handle('app:getHardwareSpecs', async () => {
+handle('app:getHardwareSpecs', async () => {
     return {
         cpu: os.cpus()[0]?.model || 'Unknown CPU',
         cores: os.cpus().length,
@@ -462,33 +595,52 @@ ipcMain.handle('app:getHardwareSpecs', async () => {
     };
 });
 
-ipcMain.handle('app:getDriveSpace', async () => {
+handle('app:getDriveSpace', async () => {
     return (await getDriveSpaceInfo(STORAGE_BASE)) || { freeGB: 0, totalGB: 0 };
 });
 
-ipcMain.handle('app:getCacheSize', async (event, payload) => {
+handle('app:getCacheSize', async (event, payload) => {
     const protectedPaths = new Set((payload?.protectedFiles || []).map(normalizePathForCompare));
     let totalBytes = 0;
     for (const dir of CACHE_DIRS) totalBytes += await getDirSizeBytes(dir, protectedPaths);
     return { sizeMB: Math.round(totalBytes / (1024 * 1024)), success: true };
 });
 
-ipcMain.handle('app:clearCache', async (event, payload) => {
+handle('app:clearCache', async (event, payload) => {
     const protectedPaths = new Set((payload?.protectedFiles || []).map(normalizePathForCompare));
     for (const dir of CACHE_DIRS) await clearDirContents(dir, protectedPaths);
     return { success: true, message: 'Cache cleared successfully' };
 });
 
-ipcMain.handle('app:openExternal', async (event, targetUrl) => {
-    if (targetUrl) shell.openExternal(targetUrl);
-    return true;
+// Web links open in the browser. A file:// URL is only used by the page to show
+// an output folder, so it must be an existing local folder (never a file, which
+// the OS would launch, and never a network share). Other schemes are refused.
+handle('app:openExternal', async (event, targetUrl) => {
+    if (typeof targetUrl !== 'string' || !targetUrl) return false;
+    let url;
+    try { url = new URL(targetUrl); } catch (e) { return false; }
+    if (url.protocol === 'https:' || url.protocol === 'http:') {
+        await shell.openExternal(url.href);
+        return true;
+    }
+    if (url.protocol === 'file:' && !security.isNetworkPath(targetUrl)) {
+        let dir = decodeURIComponent(url.pathname);
+        if (process.platform === 'win32') dir = dir.replace(/^\/([a-zA-Z]:)/, '$1');
+        try {
+            if (fs.statSync(dir).isDirectory()) {
+                await shell.openPath(dir);
+                return true;
+            }
+        } catch (e) {}
+    }
+    return false;
 });
 
 // preload.js exposes getDeviceFingerprint()/confirmQuit() but neither had a
 // matching handler here, so every call rejected at runtime with
 // "No handler registered for 'app:getDeviceFingerprint'" (etc).
 const DEVICE_ID_FILE = path.join(userDataDir, 'device_id.txt');
-ipcMain.handle('app:getDeviceFingerprint', async () => {
+handle('app:getDeviceFingerprint', async () => {
     try {
         if (fs.existsSync(DEVICE_ID_FILE)) {
             const existing = fs.readFileSync(DEVICE_ID_FILE, 'utf8').trim();
@@ -502,7 +654,7 @@ ipcMain.handle('app:getDeviceFingerprint', async () => {
     }
 });
 
-ipcMain.handle('app:confirmQuit', async () => {
+handle('app:confirmQuit', async () => {
     return { confirmed: true };
 });
 
@@ -516,15 +668,15 @@ function killProcessTree(child) {
     if (!child || !child.pid) return;
     try {
         if (process.platform === 'win32') {
-            exec(`taskkill /pid ${child.pid} /T /F`, () => {});
+            execFile(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe'), ['/pid', String(child.pid), '/T', '/F'], () => {});
         } else {
             try { process.kill(-child.pid, 'SIGKILL'); } catch (e) { child.kill('SIGKILL'); }
         }
     } catch (e) {}
 }
 
-ipcMain.handle('whisper:checkFolder', async (event, folderPath) => {
-    if (!folderPath || !fs.existsSync(folderPath)) {
+handle('whisper:checkFolder', async (event, folderPath) => {
+    if (!folderPath || typeof folderPath !== 'string' || security.isNetworkPath(folderPath) || !fs.existsSync(folderPath)) {
         return { valid: false, missing: ['Folder does not exist'] };
     }
     const isWin = process.platform === 'win32';
@@ -541,19 +693,33 @@ ipcMain.handle('whisper:checkFolder', async (event, folderPath) => {
     };
 });
 
-ipcMain.handle('whisper:transcribe', async (event, { id, whisperFolder, audioPath, videoPath, model, device, language, beamSize }) => {
-    if (!whisperFolder || !fs.existsSync(whisperFolder)) {
+handle('whisper:transcribe', async (event, { id, whisperFolder, audioPath, videoPath, model, device, language, beamSize }) => {
+    if (!whisperFolder || typeof whisperFolder !== 'string' || security.isNetworkPath(whisperFolder) || !fs.existsSync(whisperFolder)) {
         return { success: false, error: 'Whisper folder not found' };
     }
     const inputAudio = audioPath || videoPath;
-    if (!inputAudio || !fs.existsSync(inputAudio)) {
+    if (!inputAudio || typeof inputAudio !== 'string' || security.isNetworkPath(inputAudio) || !fs.existsSync(inputAudio)) {
         return { success: false, error: 'Input audio not found' };
     }
+    // Options are passed on a command line: allow plain names only.
+    const SAFE_OPTION = /^[A-Za-z0-9._-]{1,40}$/;
+    if ((model && !SAFE_OPTION.test(model)) || (device && !SAFE_OPTION.test(device)) || (language && !SAFE_OPTION.test(language))) {
+        return { success: false, error: 'Invalid Whisper model, device or language' };
+    }
+    beamSize = beamSize ? Math.min(10, Math.max(1, parseInt(beamSize, 10) || 1)) : null;
+    const jobTag = /^[A-Za-z0-9-]{1,64}$/.test(String(id || '')) ? id : 'job';
 
-    const outSrt = path.join(AUDIO_CACHE_DIR, `whisper_${Date.now()}_${id || 'job'}.srt`);
+    const outSrt = path.join(AUDIO_CACHE_DIR, `whisper_${Date.now()}_${jobTag}.srt`);
     const isWin = process.platform === 'win32';
     const runnerFile = isWin ? 'run.bat' : 'run.sh';
     const runnerPath = path.join(whisperFolder, runnerFile);
+    // cmd.exe re-parses its command line, so on Windows no argument may contain its special characters.
+    if (isWin && [runnerPath, inputAudio, outSrt].some(a => /[&|<>^%!"]/.test(a))) {
+        return { success: false, error: 'The Whisper folder or audio file path contains a character Windows cannot pass safely (& | < > ^ % ! "). Rename it and try again.' };
+    }
+    if (!(await confirmProgramRun(whisperFolder, 'the local Whisper installation in this folder'))) {
+        return { success: false, error: 'Running Whisper from this folder was not allowed.' };
+    }
     
     return new Promise((resolve) => {
         let child;
@@ -572,7 +738,7 @@ ipcMain.handle('whisper:transcribe', async (event, { id, whisperFolder, audioPat
             const pyEnv = { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' };
             if (fs.existsSync(runnerPath)) {
                 if (isWin) {
-                    child = spawn('cmd.exe', ['/c', runnerPath, ...args], { cwd: whisperFolder, windowsHide: true, env: pyEnv });
+                    child = spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/c', runnerPath, ...args], { cwd: whisperFolder, windowsHide: true, env: pyEnv });
                 } else {
                     child = spawn('bash', [runnerPath, ...args], { cwd: whisperFolder, env: pyEnv });
                 }
@@ -645,7 +811,7 @@ ipcMain.handle('whisper:transcribe', async (event, { id, whisperFolder, audioPat
     });
 });
 
-ipcMain.handle('whisper:cancel', async (event, id) => {
+handle('whisper:cancel', async (event, id) => {
     if (id && activeWhisperJobs.has(id)) {
         const job = activeWhisperJobs.get(id);
         const child = job.child || job;
@@ -668,8 +834,8 @@ ipcMain.handle('whisper:cancel', async (event, id) => {
 let activeVoxServerJob = null;
 let activeVoxServerPort = 8808;
 
-ipcMain.handle('voxcpm2:startServer', async (event, opts = {}) => {
-    let rawPath = (opts && opts.pythonPath) ? opts.pythonPath.trim().replace(/^["']|["']$/g, '').trim() : '';
+handle('voxcpm2:startServer', async (event, opts = {}) => {
+    let rawPath = (opts && typeof opts.pythonPath === 'string') ? opts.pythonPath.trim().replace(/^["']|["']$/g, '').trim() : '';
 
     if (activeVoxServerJob && activeVoxServerJob.child && !activeVoxServerJob.child.killed) {
         return { success: true, status: 'running', port: activeVoxServerPort, message: `Running on port ${activeVoxServerPort}` };
@@ -730,7 +896,11 @@ ipcMain.handle('voxcpm2:startServer', async (event, opts = {}) => {
         }
     }
 
-    const port = opts.port || 8808;
+    if (security.isNetworkPath(scriptPath) || !(await confirmProgramRun(scriptPath, 'this VoxCPM2 server script'))) {
+        return { success: false, error: 'Running this VoxCPM2 script was not allowed.' };
+    }
+
+    const port = Number.isInteger(Number(opts.port)) && Number(opts.port) >= 1024 && Number(opts.port) <= 65535 ? Number(opts.port) : 8808;
     activeVoxServerPort = port;
 
     const env = Object.assign({}, process.env, {
@@ -787,7 +957,7 @@ ipcMain.handle('voxcpm2:startServer', async (event, opts = {}) => {
     }
 });
 
-ipcMain.handle('voxcpm2:stopServer', async () => {
+handle('voxcpm2:stopServer', async () => {
     if (activeVoxServerJob && activeVoxServerJob.child) {
         killProcessTree(activeVoxServerJob.child);
         activeVoxServerJob = null;
@@ -796,12 +966,12 @@ ipcMain.handle('voxcpm2:stopServer', async () => {
     return { success: true, status: 'stopped' };
 });
 
-ipcMain.handle('voxcpm2:serverStatus', async () => {
+handle('voxcpm2:serverStatus', async () => {
     const isRunning = !!(activeVoxServerJob && activeVoxServerJob.child && !activeVoxServerJob.child.killed);
     return { running: isRunning, port: activeVoxServerPort, ready: isRunning };
 });
 
-ipcMain.on('voxcpm2:writeLog', (event, msg) => {
+on('voxcpm2:writeLog', (event, msg) => {
     // Renderer log mirror
 });
 
@@ -827,7 +997,7 @@ function savePresetsToDisk(presets) {
     fs.writeFileSync(PRESETS_FILE, JSON.stringify(presets, null, 2), 'utf8');
 }
 
-ipcMain.handle('preset:save', async (event, preset) => {
+handle('preset:save', async (event, preset) => {
     try {
         if (!preset || typeof preset !== 'object') {
             return { success: false, error: 'Invalid preset' };
@@ -844,10 +1014,10 @@ ipcMain.handle('preset:save', async (event, preset) => {
         return { success: false, error: e.message };
     }
 });
-ipcMain.handle('preset:load', async () => {
+handle('preset:load', async () => {
     return loadPresetsFromDisk();
 });
-ipcMain.handle('preset:delete', async (event, id) => {
+handle('preset:delete', async (event, id) => {
     try {
         const presets = loadPresetsFromDisk().filter(p => p.id !== id);
         savePresetsToDisk(presets);
@@ -858,21 +1028,21 @@ ipcMain.handle('preset:delete', async (event, id) => {
 });
 
 // Window controls
-ipcMain.on('window:minimize', () => {
+on('window:minimize', () => {
     if (mainWindow) mainWindow.minimize();
 });
-ipcMain.on('window:maximize', () => {
+on('window:maximize', () => {
     if (mainWindow) {
         if (mainWindow.isMaximized()) mainWindow.unmaximize();
         else mainWindow.maximize();
     }
 });
-ipcMain.on('window:close', () => {
+on('window:close', () => {
     if (mainWindow) mainWindow.close();
 });
 // Taskbar progress (0..1 shows the bar, a negative value removes it), so a long batch
 // can be followed from the taskbar while the app is minimised.
-ipcMain.on('window:setProgress', (event, value) => {
+on('window:setProgress', (event, value) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setProgressBar(Number(value));
 });
 
