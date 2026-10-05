@@ -1149,10 +1149,11 @@ function parseGeminiQuotaError(errData, errMsg) {
         if (d && typeof d.retryDelay === 'string' && isFinite(parseFloat(d.retryDelay))) retryMs = Math.ceil(parseFloat(d.retryDelay) * 1000);
     }
     if (retryMs === null) {
-        const m = /retry in\s*([\d.]+)\s*s/i.exec(errMsg || '');
-        if (m) retryMs = Math.ceil(parseFloat(m[1]) * 1000);
+        // "Please retry in 33.2s" or, for a daily limit, "Please retry in 20h3m39.5s".
+        const m = /retry in\s*(?:(\d+)h)?\s*(?:(\d+)m(?!s))?\s*(?:([\d.]+)s)?/i.exec(errMsg || '');
+        if (m && (m[1] || m[2] || m[3])) retryMs = Math.ceil(((+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (parseFloat(m[3]) || 0)) * 1000);
     }
-    // A daily limit can still come with a short retryDelay - it is wrong for it, the day wins.
+    // A daily limit can still come with a short retryDelay; quotaCooldownUntil only trusts long ones.
     const daily = quotaIds.some(id => /PerDay/i.test(id)) || /per\s*-?day|daily quota|requests per day/i.test(errMsg || '');
     return { daily, retryMs, quotaIds };
 }
@@ -1183,6 +1184,9 @@ function dailyCooldownUntil(strikeKey, now = Date.now()) {
 }
 
 function quotaCooldownUntil(quota, now = Date.now(), strikeKey = null) {
+    // Google states when the daily window frees up ("Please retry in 20h3m39s" - a rolling
+    // window, not midnight Pacific). When it gives a long wait, that is the answer.
+    if (quota.daily && quota.retryMs != null && quota.retryMs > 10 * 60 * 1000) return now + quota.retryMs + 60 * 1000;
     if (quota.daily) return strikeKey ? dailyCooldownUntil(strikeKey, now) : now + msUntilPacificMidnight(now) + 60 * 1000;
     const wait = quota.retryMs != null ? quota.retryMs : RATE_LIMIT_COOLDOWN_MS;
     return now + Math.min(2 * 60 * 1000, Math.max(5000, wait)) + 500;
@@ -1215,7 +1219,12 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { 
     if (stayOnModel && usableModels[0] && usableModels[0] !== allModels[0]) {
         console.warn(`[Gemini] ${allModels[0]} can't return JSON for this request - using ${usableModels[0]} instead`);
     }
-    const candidateModels = stayOnModel ? usableModels.slice(0, 1) : allModels;
+    // stayOnModel waits out a per-minute limit on the chosen model, but a model that is out
+    // for the DAY on this key won't come back for hours (Google: "retry in 20h"). Each model
+    // has its own daily allowance, so use the next one instead of stopping the whole job.
+    const dailyOut = (m) => { const c = geminiModelCooldowns.get(`${apiKey}|${m}`); return !!(c && c.daily && c.until > Date.now()); };
+    const stayPool = usableModels.filter(m => !dailyOut(m));
+    const candidateModels = stayOnModel ? (stayPool.length ? stayPool : usableModels).slice(0, 1) : allModels;
 
     let primaryError = null; // first meaningful error, reported to the user
     let sawRateLimit = false;
@@ -1340,6 +1349,13 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { 
                 allDaily = allDaily && quota.daily;
                 console.warn(`[Gemini] ${m} on key …${apiKey.slice(-4)}: ${quota.daily ? 'daily quota used up' : 'per-minute limit'}` +
                     ` (${quota.quotaIds[0] || 'quota'}) - skipping it for ${formatWait(until - Date.now())}`);
+                if (stayOnModel && quota.daily) {
+                    const next = usableModels.find(x => !dailyOut(x) && !candidateModels.includes(x));
+                    if (next) {
+                        console.warn(`[Gemini] ${m} is out for the day on key …${apiKey.slice(-4)} - continuing with ${next}`);
+                        candidateModels.push(next);
+                    }
+                }
                 break; // the key's other models have their own limits
             }
             // 503 "high demand" / overloaded: switch straight to the next model. The caller
@@ -1811,7 +1827,7 @@ function keysCoolingResult(keys) {
     const n = keys.length;
     const message = isDailyQuota
         ? `Google reports the daily free Gemini quota used up on all ${n} API key(s). The app checks again in ${formatWait(retryAfterMs)}` +
-          `${retryAfterMs > 2 * 60 * 60 * 1000 ? ' (it resets at midnight Pacific time)' : ''}. ` +
+          '. ' +
           'To continue now: pick another Gemini model (each has its own daily limit), or add a key from another Google project.'
         : `All ${n} API key(s) are rate-limited by Google - free again in ${formatWait(retryAfterMs)}.`;
     return { ok: false, result: { success: false, status: 429, error: 'RATE_LIMIT_EXCEEDED', isDailyQuota, retryAfterMs, message } };
