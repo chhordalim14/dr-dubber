@@ -10,7 +10,9 @@ const start = src.indexOf('    const todo = [...pendingItems];');
 const end = src.indexOf('    // Stopped (and maybe already restarted)');
 const workerBlock = src.slice(start, end);
 
-async function runBatch({ keys, tabs, deadKeys = [] }) {
+// keyStatus: what the server reports per key ('ok' | 'daily' | 'invalid'); addLater: keys the
+// user adds in Settings while the batch runs ({ key, afterMs }).
+async function runBatch({ keys, tabs, deadKeys = [], keyStatus = {}, addLater = [] }) {
     const state = { isBatchRunning: true, batchAbortController: { signal: { aborted: false } }, runningItemIds: new Set() };
     const pendingItems = Array.from({ length: tabs }, (_, i) => ({ id: `i${i}`, fileName: `tab${i + 1}`, status: 'pending' }));
     const apiKeys = keys;
@@ -32,6 +34,15 @@ async function runBatch({ keys, tabs, deadKeys = [] }) {
         if (deadKeys.includes(opts.apiKeys[0])) throw Object.assign(new Error('daily quota'), { isDailyQuota: true });
         Object.assign(item, { status: 'completed', by: opts.apiKeys[0] });
     };
+    const pool = [...keys];
+    const getActiveApiKeys = () => [...pool];
+    for (const { key, afterMs } of addLater) global.setTimeout(() => pool.push(key), afterMs);
+    const getBackendBase = () => 'http://localhost:3001';
+    const fetch = async (url, init) => {
+        const sent = JSON.parse(init.body).keys;
+        return { json: async () => ({ keys: sent.map((k) => ({ suffix: k.slice(-4), state: keyStatus[k] || 'ok', models: [] })) }) };
+    };
+    const setTimeout = (fn, ms) => global.setTimeout(fn, Math.min(ms, 15)); // the 5 s spare-key wait, sped up
     let quotaOut; // eslint-disable-line prefer-const
     await eval(`(async () => { ${workerBlock.replace('let quotaOut = false;', 'quotaOut = false;')} })()`);
     return { items: pendingItems, quotaOut, maxParallel, calls, toasts };
@@ -71,6 +82,28 @@ describe('Batch Transcribe, one key per tab', () => {
         const r = await runBatch({ keys: ['k1', 'k2', 'k3', 'k4', 'k5', 'k6', 'k7'], tabs: 6, deadKeys: ['k2'] });
         assert.ok(r.items.every((i) => i.status === 'completed'));
         assert.ok(r.items.some((i) => i.by === 'k7'));
+    });
+
+    test('12 keys, 6 tabs: 6 at a time, keys 7-12 replace ones that run out', async () => {
+        const keys = Array.from({ length: 12 }, (_, i) => `k${i + 1}`);
+        const r = await runBatch({ keys, tabs: 12, deadKeys: ['k1', 'k2'] });
+        assert.equal(r.maxParallel, 6);
+        assert.ok(r.items.every((i) => i.status === 'completed'));
+        assert.ok(!r.items.some((i) => i.by === 'k1' || i.by === 'k2'));
+        assert.ok(r.items.some((i) => ['k7', 'k8', 'k9', 'k10', 'k11', 'k12'].includes(i.by)));
+    });
+
+    test('a spare that is rejected or already out for today is skipped', async () => {
+        const keys = ['k1', 'k2', 'k3', 'k4', 'k5', 'k6', 'k7', 'k8', 'k9'];
+        const r = await runBatch({ keys, tabs: 6, deadKeys: ['k1'], keyStatus: { k7: 'invalid', k8: 'daily' } });
+        assert.ok(r.items.every((i) => i.status === 'completed'));
+        assert.ok(!r.items.some((i) => i.by === 'k7' || i.by === 'k8'));
+    });
+
+    test('a key added in Settings while the batch runs is picked up', async () => {
+        const r = await runBatch({ keys: ['k1', 'k2'], tabs: 6, deadKeys: ['k1'], addLater: [{ key: 'k-new', afterMs: 30 }] });
+        assert.ok(r.items.every((i) => i.status === 'completed'));
+        assert.ok(r.items.some((i) => i.by === 'k-new'));
     });
 
     test('every key out of quota: stops and says so', async () => {

@@ -943,9 +943,40 @@
     const keyStride = Math.max(1, Math.floor(apiKeys.length / concurrency));
     const batchAbort = state.batchAbortController;
     const todo = [...pendingItems];
-    // keyPerTab: worker w owns key w; keys beyond the parallel count replace a key that runs
-    // out of its daily quota.
-    const spareKeys = keyPerTab ? apiKeys.slice(concurrency) : [];
+    // keyPerTab: worker w owns key w; the other keys replace a key that runs out of its daily
+    // quota. The key list is read live (keys added while the batch runs are used), and a
+    // spare is chosen by what the server knows about it: never a rejected key or one already
+    // out for today on this model, fully ready keys first.
+    const ownedKeys = new Set(keyPerTab ? apiKeys.slice(0, concurrency) : []);
+    const outKeys = new Set(); // ran out of daily quota during this batch
+    const takeSpareKey = async () => {
+      const candidates = getActiveApiKeys().filter((k) => !ownedKeys.has(k) && !outKeys.has(k));
+      if (!candidates.length) return null;
+      let statuses = [];
+      try {
+        const res = await fetch(`${getBackendBase()}/api/gemini-key-status`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ keys: candidates })
+        });
+        statuses = (await res.json()).keys || [];
+      } catch (e) { /* no statuses: take the first candidate */ }
+      const rank = (st) => {
+        if (!st) return 1;
+        if (st.state === 'invalid' || st.state === 'daily') return 9;
+        if ((st.models || []).some((m) => m.daily && m.model === model)) return 9;
+        return st.state === 'ok' ? 0 : 1;
+      };
+      const best = candidates
+        .map((k, i) => ({ k, r: rank(statuses[i]) }))
+        .filter((c) => c.r < 9)
+        .sort((a, b) => a.r - b.r)[0];
+      if (!best || ownedKeys.has(best.k)) return null; // another worker took it meanwhile
+      ownedKeys.add(best.k);
+      return best.k;
+    };
+    let activeWorkers = concurrency;
+    let waitingWorkers = 0;
     let stopToastShown = false;
 
     // Every key out of its daily quota: the remaining files would all fail the same way, so they
@@ -957,20 +988,38 @@
       let ownKey = keyPerTab ? apiKeys[w] : null;
       while (todo.length || (keyPerTab && inFlight)) {
         if (!state.isBatchRunning || state.batchAbortController?.signal.aborted || quotaOut) return;
+        // keyPerTab worker whose key ran out with no spare: wait for one (a key added in
+        // Settings counts) while other workers are still going. When every worker is stuck
+        // or nothing is left to do, stop.
+        if (keyPerTab && !ownKey) {
+          waitingWorkers++;
+          try {
+            while (!ownKey) {
+              if (!state.isBatchRunning || batchAbort.signal.aborted || quotaOut || waitingWorkers >= activeWorkers || (!todo.length && !inFlight)) return;
+              await new Promise((r) => setTimeout(r, 5000));
+              ownKey = await takeSpareKey();
+            }
+          } finally {
+            waitingWorkers--;
+          }
+          console.warn(`[DAI Batch] Worker ${w + 1} continues with key …${ownKey.slice(-4)}.`);
+          continue;
+        }
         if (!todo.length) {
           await new Promise((r) => setTimeout(r, 500));
           continue;
         }
         const item = todo.shift();
         inFlight++;
-        const offset = (pendingItems.indexOf(item) * keyStride) % apiKeys.length;
+        const liveKeys = getActiveApiKeys(); // keys added while the batch runs are backups too
+        const offset = (pendingItems.indexOf(item) * keyStride) % Math.max(1, liveKeys.length);
         state.runningItemIds.add(item.id);
         if (item.autoApplyToTab) window.dubberBridge?.setTabWorking(item.targetTab, true);
         try {
           await processSingleBatchItem(item, {
             // keyPerTab: own key first, the others only as backups (one request at a time), so a
             // rate-limited key passes the next chunk to an idle key instead of waiting.
-            apiKeys: ownKey ? [ownKey, ...apiKeys.filter((k) => k !== ownKey)] : [...apiKeys.slice(offset), ...apiKeys.slice(0, offset)],
+            apiKeys: ownKey ? [ownKey, ...liveKeys.filter((k) => k !== ownKey)] : [...liveKeys.slice(offset), ...liveKeys.slice(0, offset)],
             maxLanes: keyPerTab ? 1 : null,
             stayOnModel: keyPerTab,
             model,
@@ -990,11 +1039,13 @@
             // quota, and this worker carries on with a spare key (or stops).
             Object.assign(item, { status: 'pending', error: null, progress: 0 });
             todo.unshift(item);
-            ownKey = spareKeys.shift() || null;
-            console.warn(`[DAI Batch] Key ${w + 1} is out of daily quota${ownKey ? ' - using a spare key' : ''}.`);
+            const lostKey = ownKey;
+            outKeys.add(lostKey);
+            ownedKeys.delete(lostKey);
+            ownKey = await takeSpareKey();
+            console.warn(`[DAI Batch] Key …${lostKey.slice(-4)} is out of daily quota${ownKey ? ` - using spare key …${ownKey.slice(-4)}` : ' - waiting for a free key'}.`);
             renderQueueTable();
-            if (!ownKey) return;
-            continue;
+            continue; // no spare: the top of the loop waits for one
           }
           item.status = 'failed';
           item.error = err.message || 'Processing failed';
@@ -1012,7 +1063,7 @@
         }
       }
     };
-    await Promise.all(Array.from({ length: concurrency }, (_, w) => worker(w)));
+    await Promise.all(Array.from({ length: concurrency }, (_, w) => worker(w).finally(() => { activeWorkers--; })));
     // keyPerTab: every key ran out of its daily quota with files left.
     if (keyPerTab && todo.length && !batchAbort.signal.aborted) {
       quotaOut = true;
