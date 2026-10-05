@@ -1867,6 +1867,12 @@ async function tryKeysOnce(keys, call) {
         }
         // A dead connection affects every key the same way: don't cycle through them.
         if (out.result && out.result.code === 'NETWORK_ERROR') return out;
+        // "High demand" (503) is Google overloading the model for everyone, not this key.
+        // Asking every other key right away got the same answer and still spent requests
+        // from each key's daily allowance (one overload: 5 rounds x 6 keys per chunk, and
+        // the whole pool was "daily quota used up" without much real work done). Return,
+        // and let the caller's backoff retry on this key.
+        if (out.result && (out.result.code === 'OVERLOADED' || Number(out.result.status) === 503)) return out;
         if (isTransientGeminiFailure(out.result)) {
             if (out.result.error === 'RATE_LIMIT_EXCEEDED') {
                 const daily = !!out.result.isDailyQuota;
