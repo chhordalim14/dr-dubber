@@ -4184,7 +4184,7 @@
     window.describeRepair = describeRepair;
 
     const btnFixMissing = document.getElementById("btn-fix-missing");
-    let fixMissingAllRun = null; // { stopped, requestId } while "Fix Missing: All Tabs" runs
+    let fixMissingAllRun = null; // { stopped, requestIds } while "Fix Missing: All Tabs" runs
 
     const getGeminiKeys = () => JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]").filter(Boolean);
     const projectTabName = (p) => p.tabTitle || (p.file?.name || p.name || `Tab ${projects.indexOf(p) + 1}`).replace(/\.[^/.]+$/, "");
@@ -4195,7 +4195,8 @@
 
     // Repairs one tab's subtitles. Returns { ok, changed, report, error, isDailyQuota, cancelled }.
     // onNote gets the backend's progress notes ("Double-checking 3 stretch(es)…").
-    async function fixMissingForProject(targetProject, { apiKeys, requestId = crypto.randomUUID(), onNote } = {}) {
+    // maxLanes: requests this tab may run at once (null: the server's default, every key).
+    async function fixMissingForProject(targetProject, { apiKeys, requestId = crypto.randomUUID(), onNote, maxLanes = null } = {}) {
       const source = liveSubtitlesOf(targetProject);
       if (!source.length) return { ok: true, changed: 0, skipped: "no subtitles" };
 
@@ -4225,6 +4226,7 @@
             apiKeys,
             model: localStorage.getItem("aiDubberModel") || "gemini-2.5-flash",
             requestId,
+            ...(maxLanes ? { maxLanes } : {}),
           }),
         });
         const data = await res.json();
@@ -4361,22 +4363,31 @@
     // ── Fix Missing: All Tabs ───────────────────────────────────────────────
     // Runs Fix Missing on every tab that has subtitles, one tab at a time (each tab already
     // spreads its checks over all API keys, and one at a time is kinder to a free quota).
+    // keyPerTab (Dub Whole Series): every tab at once, like its Transcribe. The keys are shared
+    // out between the tabs (9 keys, 5 tabs: four tabs get 2, one gets 1) and a tab's own keys
+    // are its lanes, so each key - its own Google project - carries about one request at a time;
+    // the other keys are only backups. One tab after another, a busy Google held up the whole
+    // series for each tab.
     // Stops early when every key is out of its daily quota: the other tabs would only fail too.
     // Started from the "All Tabs" menu; resolves with { checked, fixedLines, quotaOut, stopped }.
+    const FIX_MISSING_MAX_PARALLEL = 6; // tabs checked at once with keyPerTab (Batch Transcribe's cap)
+
     function stopFixMissingAll() {
       if (!fixMissingAllRun) return;
-      // Cancel the tab being checked; the loop ends after it.
+      // Cancel the tabs being checked; no other tab starts.
       fixMissingAllRun.stopped = true;
-      fetch("http://localhost:3001/api/cancel-transcribe", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ requestId: fixMissingAllRun.requestId }),
-      }).catch(() => { });
+      fixMissingAllRun.requestIds.forEach((requestId) => {
+        fetch("http://localhost:3001/api/cancel-transcribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ requestId }),
+        }).catch(() => { });
+      });
       allTabsJobLabel = "Stopping…";
       updateTranscribeAllButtonState();
     }
 
-    async function fixMissingAllTabs() {
+    async function fixMissingAllTabs({ keyPerTab = false } = {}) {
       if (fixMissingAllRun || btnFixMissing?.dataset.busy === "1") return null;
       if (typeof saveCurrentProjectState === "function") saveCurrentProjectState();
       const targets = projects.filter((p) => liveSubtitlesOf(p).length > 0);
@@ -4390,38 +4401,58 @@
         return null;
       }
 
-      fixMissingAllRun = { stopped: false, requestId: null };
+      const run = { stopped: false, requestIds: new Set() };
+      fixMissingAllRun = run;
       const ownsJob = !allTabsJob; // inside "Transcribe, then Fix Missing" the pipeline owns the button
       if (ownsJob) allTabsJob = "fix";
-      showToast(`Fix Missing: checking ${targets.length} tab(s) one by one…`, "info");
+      const workerCount = keyPerTab ? Math.max(1, Math.min(FIX_MISSING_MAX_PARALLEL, apiKeys.length, targets.length)) : 1;
+      showToast(workerCount > 1 ? `Fix Missing: checking ${targets.length} tab(s) at once…` : `Fix Missing: checking ${targets.length} tab(s) one by one…`, "info");
       const results = [];
       let quotaMessage = "";
       let stopped = false;
-      try {
-        for (let i = 0; i < targets.length && !fixMissingAllRun.stopped; i++) {
-          const proj = targets[i];
+      let next = 0;
+      const setLabel = () => {
+        allTabsJobLabel = workerCount > 1 ? `Stop · Fixing ${results.length}/${targets.length} tabs` : `Stop · Fixing ${next}/${targets.length}`;
+        updateTranscribeAllButtonState();
+      };
+      const worker = async (w) => {
+        // keyPerTab: this worker's own keys first (one lane each), the others as backups.
+        const own = apiKeys.filter((k, i) => i % workerCount === w);
+        const keys = keyPerTab ? [...own, ...apiKeys.filter((k, i) => i % workerCount !== w)] : apiKeys;
+        while (next < targets.length && !run.stopped && !quotaMessage) {
+          const proj = targets[next++];
           const tabNo = projects.indexOf(proj) + 1;
-          fixMissingAllRun.requestId = crypto.randomUUID();
-          allTabsJobLabel = `Stop · Fixing ${i + 1}/${targets.length}`;
-          updateTranscribeAllButtonState();
-          const r = await fixMissingForProject(proj, { apiKeys, requestId: fixMissingAllRun.requestId });
-          if (r.cancelled) break;
+          const requestId = crypto.randomUUID();
+          run.requestIds.add(requestId);
+          setLabel();
+          let r;
+          try {
+            r = await fixMissingForProject(proj, { apiKeys: keys, requestId, maxLanes: keyPerTab ? own.length : null });
+          } finally {
+            run.requestIds.delete(requestId);
+          }
+          if (r.cancelled) return;
           results.push({ proj, tabNo, r });
+          setLabel();
           const problem = r.ok ? repairProblem(r.report) : r.error;
           if (r.isDailyQuota || r.report?.quotaError) {
-            quotaMessage = r.report?.quotaError || r.error;
-            break;
+            quotaMessage = quotaMessage || r.report?.quotaError || r.error;
+            return;
           }
           if (r.ok && r.changed) showToast(`Tab ${tabNo} "${projectTabName(proj)}": ${describeRepair(r.report)}${problem ? ` (${problem})` : ""}`, "success");
           else if (problem) showToast(`Tab ${tabNo} "${projectTabName(proj)}": ${problem}`, "warning");
         }
+      };
+      try {
+        await Promise.all(Array.from({ length: workerCount }, (_, w) => worker(w)));
       } finally {
-        stopped = fixMissingAllRun.stopped;
+        stopped = run.stopped;
         fixMissingAllRun = null;
         if (ownsJob) allTabsJob = null;
         allTabsJobLabel = "";
         updateTranscribeAllButtonState();
       }
+      results.sort((a, b) => a.tabNo - b.tabNo);
 
       const fixedTabs = results.filter((x) => x.r.ok && x.r.changed);
       const fixedLines = fixedTabs.reduce((n, x) => n + x.r.changed, 0);
@@ -16271,6 +16302,7 @@
     const SERIES_KEY = "aiDubberSeriesRun";
     let seriesRun = null; // { stopped, step, joinJobId, splitJobId } while the pipeline runs
     let cancelSeriesBackgroundJoin = () => { }; // set by Dub Whole Series below
+    let stopSeriesBackgroundExport = () => { }; // set by Dub Whole Series below
 
     // Called from stopAllTabsJob (the All Tabs Stop button and this window's Stop button).
     // Transcribe is stopped by stopAllTabsJob itself.
@@ -16284,8 +16316,11 @@
       cancelSeriesBackgroundJoin();
       if (seriesRun.splitJobId) post("http://localhost:3001/api/split/cancel", { jobId: seriesRun.splitJobId });
       if (seriesRun.step === "generate" && (isGeneratingAudioAll || voxQueueRunning)) generateSelectedAudioAllProjects();
+      if (seriesRun.step === "generate") cancelFastCondenseRequests(); // "Shortening rushed lines"
       if (seriesRun.step === "isolate" && isIsolatingBgmAll) isolateBgmAllProjects({ skipConfirm: true });
-      if (seriesRun.step === "export") window.seriesRenderApi?.stop();
+      // A finished part rendering while the next one is dubbed stops too (Continue renders the
+      // rest of it).
+      stopSeriesBackgroundExport();
     }
 
     (() => {
@@ -16325,6 +16360,31 @@
         } catch (e) { }
       };
 
+      // Hands-free exports of this session: part (its plan object) -> { items, run, rendering, result }.
+      // A part's queue items (and so its export) only live in this session's render queue.
+      const seriesExports = new Map();
+      const exportComplete = (r) => !!(r && r.total && r.done === r.total);
+      // Parts whose hands-free export started this session and isn't complete yet, in part order.
+      const unfinishedExports = () => (plan ? plan.parts.map((p, k) => k).filter((k) => !plan.parts[k].exported && seriesExports.has(plan.parts[k])) : []);
+
+      // A part hands-free was to export (autoExport) but that isn't exported lost its export when
+      // the app closed: the render queue and the part's tabs are gone. Dub it again instead of
+      // leaving a hole in the series.
+      let lostExportsNote = "";
+      if (plan) {
+        const lost = plan.parts.map((p, k) => k).filter((k) => plan.parts[k].status === "done" && plan.parts[k].autoExport && !plan.parts[k].exported);
+        if (lost.length) {
+          lost.forEach((k) => {
+            plan.parts[k].status = "joined";
+            delete plan.parts[k].autoExport;
+          });
+          // Its tabs are gone: Continue must not take whatever tabs are open for its export.
+          if (plan.lastDone && lost.includes(plan.lastDone.index)) plan.lastDone = null;
+          savePlan();
+          lostExportsNote = `Part ${lost.map((k) => k + 1).join(", ")} wasn't fully exported when the app closed, so ${lost.length === 1 ? "it is" : "they are"} dubbed again.`;
+        }
+      }
+
       // Remembered settings.
       try {
         const prefs = JSON.parse(localStorage.getItem("aiDubberSeriesPrefs") || "null");
@@ -16343,9 +16403,22 @@
       };
       // Hands-free: each finished part is exported and the next part starts by itself.
       const handsFree = () => !!$("ds-handsfree")?.checked;
-      // A finished part whose hands-free export didn't complete, with its tabs still open.
-      const exportPending = () => !!(handsFree() && plan && unfinishedIndex() < 0 && plan.lastDone && !plan.parts[plan.lastDone.index].exported && projects.length);
-      $("ds-handsfree")?.addEventListener("change", () => savePrefs());
+      // A finished part whose hands-free export didn't complete, with its tabs still open (tabs
+      // open after its own were closed belong to something else).
+      const exportPending = () => !!(handsFree() && plan && unfinishedIndex() < 0 && plan.lastDone && !plan.parts[plan.lastDone.index].exported && projects.length &&
+        !seriesExports.get(plan.parts[plan.lastDone.index])?.tabsClosed);
+      // The part whose export Continue finishes first: an earlier part's, else the open one's.
+      const exportPendingPart = () => Math.min(plan.lastDone.index, ...unfinishedExports()) + 1;
+      $("ds-handsfree")?.addEventListener("change", () => {
+        savePrefs();
+        // Switched off: parts not exported yet are the user's to export (one already rendering
+        // finishes).
+        if (!handsFree() && plan) {
+          plan.parts.forEach((p) => { if (p.autoExport && !p.exported && !seriesExports.has(p)) delete p.autoExport; });
+          savePlan();
+        }
+        render();
+      });
       // The genre picks the Khmer register Transcribe uses (royal court words or modern speech).
       // It is the app's one saved genre (same as the genre button and the DAI window), shown
       // here so it can be checked before Start. Transcribe reads it when the step starts.
@@ -16403,7 +16476,14 @@
           else if (p.status === "planned" && joiningIndices().includes(i)) state = `<span class="text-sky-400">waiting to join</span>`;
           else if (p.status === "preview" || p.status === "planned") state = `<span class="text-[var(--text-muted)]">${p.status === "planned" ? "not joined yet" : ""}</span>`;
           else if (p.status === "failed") state = `<span class="text-red-400" title="${esc(p.error)}">join failed</span>`;
-          else if (p.status === "done") state = `<span class="text-emerald-400">✓ dubbed</span>`;
+          else if (p.status === "done") {
+            const job = plan && seriesExports.get(p);
+            const r = job?.result;
+            if (job?.rendering) state = `<span class="text-sky-400">✓ dubbed · exporting</span>`;
+            else if (p.exported) state = `<span class="text-emerald-400">✓ dubbed & exported</span>`;
+            else if (r && !exportComplete(r)) state = `<span class="text-amber-400" title="${r.done} of ${r.total} tab(s) exported">✓ dubbed · export failed</span>`;
+            else state = `<span class="text-emerald-400">✓ dubbed</span>`;
+          }
           else if (i === u) state = running ? `<span class="text-violet-300">working…</span>` : `<span class="text-amber-400">stopped - Continue</span>`;
           else state = `<span class="text-[var(--text-secondary)]">joined, waiting</span>`;
           const tabs = Math.max(1, Math.min(MAX_PROJECT_TABS, Math.round(p.duration / (splitMinutes() * 60))));
@@ -16440,8 +16520,12 @@
         const joining = joiningIndices();
         const note = $("ds-note");
         let noteText = "";
-        if (plan && !running && u < 0 && nextIdx < 0 && !toJoin.length && !joining.length) noteText = "All parts are dubbed ✓ Start over to dub another series.";
-        else if (plan && !running && u < 0 && (nextIdx >= 0 || joining.length) && plan.lastDone) noteText = `Export part ${plan.lastDone.index + 1} first if you haven't - Next part closes its tabs.`;
+        if (plan && !running && lostExportsNote) noteText = lostExportsNote;
+        else if (plan && !running && u < 0 && nextIdx < 0 && !toJoin.length && !joining.length) noteText = "All parts are dubbed ✓ Start over to dub another series.";
+        else if (plan && !running && u < 0 && (nextIdx >= 0 || joining.length) && plan.lastDone) {
+          noteText = !handsFree() ? `Export part ${plan.lastDone.index + 1} first if you haven't - Next part closes its tabs.`
+            : exportPending() ? `Continue exports what is left of part ${exportPendingPart()}, then goes on with the next part.` : "";
+        }
         note.textContent = noteText;
         note.classList.toggle("hidden", !noteText);
 
@@ -16462,10 +16546,10 @@
           btnStart.disabled = false;
           btnStart.textContent = "Stop joining";
           btnNext.classList.remove("hidden");
-          btnNext.textContent = exportPending() ? `Export part ${plan.lastDone.index + 1} again` : u >= 0 ? `Continue part ${u + 1}` : `Next part: ${(nextIdx >= 0 ? nextIdx : joining[0]) + 1} of ${plan.parts.length}`;
+          btnNext.textContent = exportPending() ? `Export part ${exportPendingPart()} again` : u >= 0 ? `Continue part ${u + 1}` : `Next part: ${(nextIdx >= 0 ? nextIdx : joining[0]) + 1} of ${plan.parts.length}`;
         } else {
           btnStart.classList.add("hidden");
-          const label = exportPending() ? `Export part ${plan.lastDone.index + 1} again` : u >= 0 ? `Continue part ${u + 1}` : nextIdx >= 0 ? `Next part: ${nextIdx + 1} of ${plan.parts.length}` : joining.length ? `Next part: ${joining[0] + 1} of ${plan.parts.length}` : toJoin.length ? "Continue joining" : "";
+          const label = exportPending() ? `Export part ${exportPendingPart()} again` : u >= 0 ? `Continue part ${u + 1}` : nextIdx >= 0 ? `Next part: ${nextIdx + 1} of ${plan.parts.length}` : joining.length ? `Next part: ${joining[0] + 1} of ${plan.parts.length}` : toJoin.length ? "Continue joining" : "";
           btnNext.textContent = label;
           btnNext.classList.toggle("hidden", !label);
         }
@@ -16520,6 +16604,7 @@
 
       async function withRun(fn) {
         seriesRun = { stopped: false, step: null, joinJobId: null, splitJobId: null };
+        lostExportsNote = ""; // shown until the series goes on
         allTabsJob = "series";
         setLabel("Dub series");
         try {
@@ -16707,7 +16792,7 @@
         if (stillEmpty.length) throw new Error(`Tab ${tabNumbers(stillEmpty)} could not be transcribed after ${RETRY_PASSES + 1} tries. Press Continue to try again.`);
 
         setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Fix missing lines`);
-        const f = getGeminiKeys().length ? await fixMissingAllTabs() : null;
+        const f = getGeminiKeys().length ? await fixMissingAllTabs({ keyPerTab: true }) : null;
         checkStop();
         if (f?.stopped) throw stoppedError();
         if (f?.quotaOut) throw new Error(QUOTA_MSG);
@@ -16855,13 +16940,15 @@
           if (plan.stepState[name]?.state === "done") continue;
           await runStep(name, fn);
         }
+        const autoExport = handsFree();
         plan.parts[i].status = "done";
+        if (autoExport) plan.parts[i].autoExport = true; // see lostExportsNote
         plan.lastDone = { index: i, steps: plan.stepState };
         plan.current = null;
         plan.stepState = null;
         plan.pieces = null;
         savePlan();
-        if (handsFree()) return; // exportAndContinue() takes it from here
+        if (autoExport) return; // exportAndContinue() takes it from here
         const next = [nextPartIndex(), ...joiningIndices(), ...partsToJoin()].find((k) => k >= 0) ?? -1;
         showToast(next >= 0
           ? `Part ${i + 1} of ${plan.parts.length} is dubbed ✓ Export it, then press Next part in Dub Whole Series.`
@@ -16869,42 +16956,98 @@
         modal.classList.remove("hidden");
       }
 
-      // Hands-free: export the finished part through the render queue, close its tabs and dub
-      // the next part - until every part is done. An export that doesn't finish stops here with
-      // the tabs still open, so nothing is closed before it is saved.
+      // Hands-free: export each finished part through the render queue and dub the next part
+      // while it renders - until every part is done. The part's tabs are put in the render queue
+      // first (a queue item holds everything its render needs), so closing them can't change
+      // what is rendered. Exports run one at a time in part order: a part's export starts only
+      // once the one before it is complete. A tab that fails is rendered again; if it still
+      // fails, the series pauses before the next export with the newest part's tabs open, and
+      // Continue tries the rest again.
       async function exportAndContinue() {
         while (handsFree() && plan?.lastDone && !plan.parts[plan.lastDone.index].exported) {
           const i = plan.lastDone.index;
           if (!window.seriesRenderApi) throw new Error("The render queue is not ready.");
-          seriesRun.step = "export";
-          setLabel(`Part ${i + 1}/${plan.parts.length} · Exporting ${projects.length} tab(s)`);
-          let r;
-          try {
-            r = await window.seriesRenderApi.exportAllTabs(`${plan.outDir}|part${i + 1}`);
-          } finally {
-            if (seriesRun) seriesRun.step = null;
-          }
-          checkStop();
-          if (!r.total || r.done < r.total) {
-            throw new Error(`Part ${i + 1}: ${r.done} of ${r.total} tab(s) exported${r.failed ? ` (${r.failed} failed)` : ""}. Export the rest from the render queue, then press Next part.`);
-          }
-          plan.parts[i].exported = true;
-          savePlan();
-          render();
+          for (const k of unfinishedExports()) if (k !== i) await finishPartExport(k);
+          queuePartExport(i);
           if (![nextPartIndex(), ...joiningIndices(), ...partsToJoin()].some((k) => k >= 0)) {
+            await finishPartExport(i);
             showToast(`All ${plan.parts.length} parts are dubbed and exported ✓`, "success");
             modal.classList.remove("hidden");
             return;
           }
-          showToast(`Part ${i + 1} exported ✓ Starting part ${i + 2}.`, "success");
-          for (let k = projects.length - 1; k >= 0; k--) closeProjectTab(k); // exported: safe to close
+          // Waited for (and what failed tried again) before the next part is exported.
+          renderPartExport(i).then((r) => {
+            if (!exportComplete(r) && !r.stopped) showToast(`Part ${i + 1}: ${r.done} of ${r.total} tab(s) exported (${r.failed} failed). They are tried again before the next part is exported.`, "warning");
+          }).catch(() => { });
+          for (let k = projects.length - 1; k >= 0; k--) closeProjectTab(k); // in the render queue: safe to close
+          seriesExports.get(plan.parts[i]).tabsClosed = true;
           await ensureNextPartJoined();
           await startBackgroundJoin(partsToJoin());
           const idx = nextPartIndex();
           if (idx < 0) return;
+          showToast(`Part ${i + 1} is exporting in the background. Starting part ${idx + 1}.`, "success");
           await runPart(idx);
         }
       }
+
+      // Puts the open tabs of finished part i in the render queue (once; nothing renders yet).
+      function queuePartExport(i) {
+        const part = plan.parts[i];
+        if (seriesExports.has(part)) return;
+        const items = window.seriesRenderApi.queueAllTabs(`${plan.outDir}|part${i + 1}`);
+        if (!items.length) throw new Error(`Part ${i + 1}: no tab to export.`);
+        seriesExports.set(part, { items, run: null, rendering: false, result: null, tabsClosed: false });
+        part.autoExport = true;
+        savePlan();
+      }
+
+      // Renders part i's queue items (or joins the render already going). Resolves with the
+      // render queue's result; a part whose every tab rendered is marked exported.
+      function renderPartExport(i) {
+        const part = plan.parts[i];
+        const job = seriesExports.get(part);
+        if (job.run) return job.run;
+        job.rendering = true;
+        render();
+        job.run = window.seriesRenderApi.renderItems(job.items)
+          .then((r) => {
+            job.result = r;
+            if (exportComplete(r)) {
+              part.exported = true;
+              if (plan?.parts.includes(part)) savePlan();
+            }
+            return r;
+          })
+          .finally(() => {
+            job.rendering = false;
+            job.run = null;
+            render();
+          });
+        return job.run;
+      }
+
+      // Waits until part i is exported: for the render already going, then renders what is
+      // missing once more - unless the render queue was stopped while waiting. Throws when tabs
+      // are still missing (Continue tries them again).
+      async function finishPartExport(i) {
+        const job = seriesExports.get(plan.parts[i]);
+        setLabel(`Part ${i + 1}/${plan.parts.length} · Exporting ${job.items.length} tab(s)`);
+        const waited = !!job.run;
+        let r = waited ? await job.run : job.result;
+        checkStop();
+        if (!exportComplete(r) && !(waited && r.stopped)) {
+          r = await renderPartExport(i);
+          checkStop();
+        }
+        if (exportComplete(r)) return;
+        throw new Error(r.stopped
+          ? `Part ${i + 1}'s export was stopped (${r.done} of ${r.total} tab(s) exported). Press Continue to export the rest.`
+          : `Part ${i + 1}: ${r.done} of ${r.total} tab(s) exported${r.failed ? ` (${r.failed} failed)` : ""}. The render queue shows why - fix it, then press Continue to try them again.`);
+      }
+
+      stopSeriesBackgroundExport = () => {
+        if ([...seriesExports.values()].some((job) => job.rendering)) window.seriesRenderApi?.stop();
+      };
 
       async function startBackgroundJoin(indices) {
         if (!plan || plan.bgJoin || !indices.length) return;
@@ -18130,8 +18273,11 @@
     }
 
     // Returns [{ id, condensedText }] or null (error already toasted unless quiet, or cancelled).
-    async function requestFastCondense(subs, { proj = projects[activeProjectIndex], quiet = false } = {}) {
-      const { keys, model } = getFastGeminiConfig();
+    // apiKeys: the keys in the order to use them (default: Settings' order).
+    async function requestFastCondense(subs, { proj = projects[activeProjectIndex], quiet = false, apiKeys = null } = {}) {
+      const config = getFastGeminiConfig();
+      const keys = apiKeys || config.keys;
+      const model = config.model;
       if (keys.length === 0) {
         if (!quiet) showToast("Please add at least one Gemini API Key in Settings.", "error");
         return null;
@@ -18262,7 +18408,10 @@
     // fixes as the Fast Audio window, without the window: move the line's end into the free
     // time before the next line (no text change), then have Gemini shorten the lines that are
     // still clearly rushed. Shortened lines are left "idle" for Generate to voice again.
+    // The tabs are shortened at once, one API key each (like the series' Transcribe): one tab
+    // after another, a busy Google held up the whole step for every tab in turn.
     const SERIES_FIT_SPEED = 1.3; // only lines that clearly sound rushed are rewritten
+    const SERIES_FIT_MAX_PARALLEL = 6; // tabs shortened at once (Batch Transcribe's cap)
     async function fitFastLinesAllTabs({ onProgress = () => { }, checkStop = () => { } } = {}) {
       saveCurrentProjectState(); // the open tab's edits live in `subtitles`
       const tabDuration = (proj) => (proj.duration > 0 ? proj.duration : Infinity); // not the open tab's length
@@ -18289,36 +18438,63 @@
 
       const total = [...toShorten.values()].reduce((n, l) => n + l.length, 0);
       let shortened = 0, done = 0;
-      if (total && getFastGeminiConfig().keys.length) {
-        for (const [proj, list] of toShorten) {
-          // One request per tab chunk: ids are only unique within a tab.
-          for (let i = 0; i < list.length; i += FAST_CONDENSE_CHUNK) {
-            checkStop();
-            const chunk = list.slice(i, i + FAST_CONDENSE_CHUNK);
-            onProgress(done, total);
-            const results = await requestFastCondense(chunk, { proj, quiet: true });
-            done += chunk.length;
-            (results || []).forEach((r) => {
-              const sub = chunk.find((s) => String(s.id) === String(r.id));
-              const text = String(r.condensedText || "").trim();
-              if (!sub || !text || text === String(sub.text).trim() || !isSpeakableText(text)) return;
-              sub.text = text;
-              sub.speed = 1.0;
-              sub.audioStatus = "idle"; // Generate voices it again
-              sub._fitShortened = true;
-              shortened++;
-            });
+      const keys = getFastGeminiConfig().keys;
+      if (total && keys.length) {
+        const tabs = [...toShorten];
+        let next = 0;
+        let stopError = null; // the first Stop: no worker starts another request after it
+        const worker = async (w) => {
+          // This worker's own key first, the others as backups.
+          const apiKeys = [keys[w], ...keys.filter((k, i) => i !== w)];
+          while (next < tabs.length && !stopError) {
+            const [proj, list] = tabs[next++];
+            // One request per tab chunk: ids are only unique within a tab.
+            for (let i = 0; i < list.length && !stopError; i += FAST_CONDENSE_CHUNK) {
+              try {
+                checkStop();
+              } catch (e) {
+                stopError = stopError || e;
+                return;
+              }
+              const chunk = list.slice(i, i + FAST_CONDENSE_CHUNK);
+              onProgress(done, total);
+              const results = await requestFastCondense(chunk, { proj, quiet: true, apiKeys });
+              done += chunk.length;
+              (results || []).forEach((r) => {
+                const sub = chunk.find((s) => String(s.id) === String(r.id));
+                const text = String(r.condensedText || "").trim();
+                if (!sub || !text || text === String(sub.text).trim() || !isSpeakableText(text)) return;
+                sub.text = text;
+                sub.speed = 1.0;
+                sub.audioStatus = "idle"; // Generate voices it again
+                sub._fitShortened = true;
+                shortened++;
+              });
+            }
           }
+        };
+        // Every worker is waited for, so no answer lands in a tab after this returns.
+        await Promise.all(Array.from({ length: Math.min(SERIES_FIT_MAX_PARALLEL, keys.length, tabs.length) }, (_, w) => worker(w)));
+        onProgress(done, total);
+        // Stopped: the open tab still shows what was changed before the Stop (its next save
+        // would otherwise write the old lines back).
+        if (stopError) {
+          refreshActiveTabFromProject();
+          throw stopError;
         }
       }
 
+      refreshActiveTabFromProject();
+      return { extended, shortened, rushed: total };
+    }
+
+    function refreshActiveTabFromProject() {
       const active = projects[activeProjectIndex];
       if (active) {
         subtitles = active.subtitles.map((s) => ({ ...s }));
         renderSubtitles();
         updateContextualControls();
       }
-      return { extended, shortened, rushed: total };
     }
 
     // After the shortened lines are voiced again: fit each one's speed to its slot and count
@@ -18337,12 +18513,7 @@
           if (analyzeSubPace(sub).effectiveSpeed >= SERIES_FIT_SPEED) stillRushed++;
         }
       }
-      const active = projects[activeProjectIndex];
-      if (active) {
-        subtitles = active.subtitles.map((s) => ({ ...s }));
-        renderSubtitles();
-        updateContextualControls();
-      }
+      refreshActiveTabFromProject();
       return stillRushed;
     }
 
@@ -24224,9 +24395,11 @@
           }
         };
 
+        let queueStops = 0; // every Stop, so Dub Whole Series doesn't render again what was stopped
         const stopRenderQueue = async () => {
           if (!queueRunning) return;
           queueStopRequested = true;
+          queueStops++;
 
           // Abort the currently running job's fetch
           const runningItem = renderQueue.find((i) => i.status === "running");
@@ -24438,12 +24611,13 @@
         document.getElementById("btn-start-queue")?.addEventListener("click", () => runRenderQueue());
 
         // Dub Whole Series (hands-free): every tab of the finished part into the render queue -
-        // MP4, or MP3 for a tab without video - rendered with the same settings as
-        // "All to Queue". Returns { total, done, failed, cancelled } for those items.
+        // MP4, or MP3 for a tab without video - with the same settings as "All to Queue".
+        // A queue item holds everything its render needs (files on disk, not the tab), so the
+        // tabs can be closed while it renders. Returns the part's queue items.
         const SERIES_AUDIO_FILE_RE = /\.(mp3|wav|m4a|m4b|aac|flac|ogg|oga|opus|wma|ac3|eac3|dts|aif|aiff|caf|mp2|mka|amr|ape|wv|ra|weba)$/i;
         // tag: which series part these exports belong to - a retry reuses that part's finished
         // exports instead of rendering them again.
-        const exportAllTabsForSeries = async (tag = null) => {
+        const queueAllTabsForSeries = (tag = null) => {
           window._isSavingForRender = true;
           saveCurrentProjectState();
           window._isSavingForRender = false;
@@ -24465,17 +24639,35 @@
           });
           updateQueueBadge();
           renderQueueList();
-          while (queueRunning) await new Promise((r) => setTimeout(r, 1000)); // the user's own queue run first
-          if ([...items].some((i) => i.status === "pending")) await runRenderQueue(items);
-          const list = [...items];
+          return [...items];
+        };
+
+        // Renders a hands-free part's queue items, after the user's own queue run if one is going.
+        // Items that failed or were stopped before are rendered again, and one that fails now gets
+        // a second try - unless the queue is stopped. Returns { total, done, failed, cancelled,
+        // stopped } for those items.
+        const renderSeriesItems = async (items) => {
+          const again = (statuses) => items.forEach((i) => {
+            if (statuses.includes(i.status)) Object.assign(i, { status: "pending", progress: 0 });
+          });
+          again(["error", "cancelled"]);
+          const stopsBefore = queueStops;
+          for (let attempt = 0; attempt < 2 && queueStops === stopsBefore; attempt++) {
+            if (attempt) again(["error"]);
+            while (queueRunning) await new Promise((r) => setTimeout(r, 1000));
+            if (queueStops !== stopsBefore || !items.some((i) => i.status === "pending")) break;
+            await runRenderQueue(new Set(items));
+          }
+          renderQueueList();
           return {
-            total: list.length,
-            done: list.filter((i) => i.status === "done").length,
-            failed: list.filter((i) => i.status === "error").length,
-            cancelled: list.filter((i) => i.status === "cancelled" || i.status === "pending").length,
+            total: items.length,
+            done: items.filter((i) => i.status === "done").length,
+            failed: items.filter((i) => i.status === "error").length,
+            cancelled: items.filter((i) => i.status === "cancelled" || i.status === "pending").length,
+            stopped: queueStops !== stopsBefore,
           };
         };
-        window.seriesRenderApi = { exportAllTabs: exportAllTabsForSeries, stop: stopRenderQueue };
+        window.seriesRenderApi = { queueAllTabs: queueAllTabsForSeries, renderItems: renderSeriesItems, stop: stopRenderQueue };
 
         // Initial render of empty queue UI
         renderQueueList();

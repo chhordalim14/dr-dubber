@@ -987,6 +987,10 @@ function resolveGeminiModel(modelName) {
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 const GEMINI_ATTEMPT_TIMEOUT_MS = 240000;
+// Short text-only requests (shorten rushed lines, re-translate up to 40 lines, read the names)
+// answer well within this. When Google is overloaded such a request can hang with no answer at
+// all, and waiting the full 4 minutes held up a whole Dub Whole Series step each time.
+const GEMINI_TEXT_TIMEOUT_MS = 120000;
 const geminiModelListCache = new Map(); // apiKey -> { at, models: Set<string> }
 
 // Ask Google which models this key can actually call, so we never burn retries on
@@ -1203,7 +1207,8 @@ function formatWait(ms) {
 // rate-limited model then comes back as a rate limit the caller waits out, instead of the
 // request moving to another model - for transcription, where another model splits the
 // dialogue differently (fewer, longer lines).
-async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { stayOnModel = false } = {}) {
+// timeoutMs: how long one attempt may take before it counts as a dead connection.
+async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { stayOnModel = false, timeoutMs = GEMINI_ATTEMPT_TIMEOUT_MS } = {}) {
     apiKey = String(apiKey || '').trim();
     const allModels = await getCandidateModels(apiKey, requestedModel, signal);
     const body = JSON.stringify(payload);
@@ -1257,7 +1262,7 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { 
                     // Key in a header, not the URL: URLs end up in proxy logs and error messages.
                     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
                     body: geminiNoJsonModeModels.has(m) ? plainBody : body
-                }, signal, GEMINI_ATTEMPT_TIMEOUT_MS);
+                }, signal, timeoutMs);
             } catch (fetchErr) {
                 if (fetchErr.name === 'AbortError' && signal && signal.aborted) throw fetchErr;
                 const cause = fetchErr.cause && (fetchErr.cause.code || fetchErr.cause.message);
@@ -1929,13 +1934,14 @@ async function tryKeysOnce(keys, call) {
     return transientOut || lastOut;
 }
 
-// Try each key, and wait/retry on "busy" like the main pass does.
-async function geminiWithKeys(keys, call, signal) {
+// Try each key, and wait/retry on "busy" like the main pass does. retries: rounds after the
+// first (at most the main pass's GEMINI_RETRY_DELAYS_MS.length).
+async function geminiWithKeys(keys, call, signal, { retries = 2 } = {}) {
     let out = null;
     for (let retry = 0; ; retry++) {
         out = await tryKeysOnce(keys, call);
         if (out.ok || !isTransientGeminiFailure(out.result)) return out;
-        if (retry >= Math.min(2, geminiRetryLimit(out.result))) return out;
+        if (retry >= Math.min(retries, geminiRetryLimit(out.result))) return out;
         await sleepAbortable(geminiRetryWaitMs(out.result, retry), signal);
     }
 }
@@ -1954,7 +1960,7 @@ async function retranslateCues(targets, allCues, { keys, model, promptOpts, glos
             generationConfig: { responseMimeType: 'application/json', responseSchema: TRANSLATE_RESPONSE_SCHEMA, maxOutputTokens: 16384 }
         };
         const out = await geminiWithKeys(keys, async (key) => {
-            const r = await executeGeminiGenerate(key, model, payload, signal);
+            const r = await executeGeminiGenerate(key, model, payload, signal, { timeoutMs: GEMINI_TEXT_TIMEOUT_MS });
             return r.success ? { ok: true, items: parseJsonArrayLoose(r.text) || [] } : { ok: false, result: r };
         }, signal);
         if (!out.ok) return { fixed, error: out.result };
@@ -2294,8 +2300,11 @@ app.post('/api/transcribe', async (req, res) => {
 // 4a. Fix Missing: repair an existing subtitle list (any project, any engine) in place -
 // re-transcribe only stretches with no subtitles, re-translate only lines without Khmer.
 app.post('/api/repair-subtitles', async (req, res) => {
-    const { subtitles, videoPath, duration, genre = 'historical', dramaRegister, glossary, apiKey, apiKeys, model = 'gemini-2.0-flash', requestId, checkGaps = true } = req.body || {};
+    // maxLanes: requests this tab may run at once. Dub Whole Series checks every tab at the same
+    // time, each with as many lanes as keys of its own (listed first; the rest are only backups).
+    const { subtitles, videoPath, duration, genre = 'historical', dramaRegister, glossary, apiKey, apiKeys, model = 'gemini-2.0-flash', requestId, checkGaps = true, maxLanes = TRANSCRIBE_MAX_LANES } = req.body || {};
     if (!Array.isArray(subtitles)) return res.status(400).json({ success: false, error: 'No subtitles provided.' });
+    const laneCap = Math.max(1, Math.min(TRANSCRIBE_MAX_LANES, parseInt(maxLanes, 10) || TRANSCRIBE_MAX_LANES));
     const keyPool = [apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])].map(k => String(k || '').trim()).filter((k, i, a) => k && a.indexOf(k) === i);
     if (!keyPool.length) return res.status(400).json({ success: false, error: 'INVALID_API_KEY', message: 'Gemini API key is required.' });
 
@@ -2324,7 +2333,7 @@ app.post('/api/repair-subtitles', async (req, res) => {
 
         const report = await repairTranscript({
             cues, sourceFile: hasSource ? sourceFile : null, totalSec, keys: keyPool, model, promptOpts, glossary, workDir,
-            signal: abortCtrl.signal, progress, checkGaps: checkGaps !== false && hasSource
+            signal: abortCtrl.signal, progress, checkGaps: checkGaps !== false && hasSource, maxLanes: laneCap
         });
         if (!hasSource && checkGaps !== false) report.gapsSkipped = 'Video file not available on disk - only re-translated lines.';
 
@@ -2984,26 +2993,20 @@ Return ONLY a JSON array with one object per input line: [{ "id": "<same id>", "
             }
         };
 
-        // Rotate through keys: a bad or rate-limited key falls through to the next one.
-        let result = null;
-        for (const k of keyPool) {
-            result = await executeGeminiGenerate(k, model, payload, abortCtrl.signal);
-            if (result.success) break;
-        }
-
-        if (!result || !result.success) {
-            return res.status(result?.status || 500).json({
-                success: false,
-                error: result?.error || 'CONDENSE_FAILED',
-                message: result?.message || 'Failed to condense dialogue with Gemini'
-            });
-        }
-
-        // Loose: a model without JSON mode may wrap the array in a ```json fence.
-        const parsed = parseJsonArrayLoose(result.text);
-        if (!Array.isArray(parsed)) {
-            return res.status(502).json({ success: false, error: 'JSON_PARSE_ERROR', message: 'Gemini did not return a list of lines.' });
-        }
+        // The first key is the caller's own (Dub Whole Series gives every tab its own); a bad,
+        // rate-limited or used-up key hands over to the least busy other key. "High demand" is
+        // waited out on the same key with the main pass's backoff: asking every key and every
+        // model at once got the same answer from each and used up their daily quota.
+        const out = await geminiWithKeys(keyPool, async (key) => {
+            const r = await executeGeminiGenerate(key, model, payload, abortCtrl.signal, { timeoutMs: GEMINI_TEXT_TIMEOUT_MS });
+            if (!r.success) return { ok: false, result: r };
+            // Loose: a model without JSON mode may wrap the array in a ```json fence.
+            const parsed = parseJsonArrayLoose(r.text);
+            if (!Array.isArray(parsed)) return { ok: false, result: { status: 502, error: 'JSON_PARSE_ERROR', message: 'Gemini did not return a list of lines.' } };
+            return { ok: true, parsed };
+        }, abortCtrl.signal, { retries: GEMINI_RETRY_DELAYS_MS.length });
+        if (!out.ok) return geminiFailureResponse(res, out.result);
+        const parsed = out.parsed;
 
         // Keep only well-formed items for ids we actually asked about (first answer per id wins).
         const requestedIds = new Set(linesData.map(l => l.id));
@@ -3907,7 +3910,7 @@ app.post('/api/unify-names', async (req, res) => {
                     generationConfig: { responseMimeType: 'application/json', responseSchema: NAMES_RESPONSE_SCHEMA, temperature: 0, maxOutputTokens: 16384 }
                 };
                 const out = await geminiWithKeys(workerKeys, async (key) => {
-                    const r = await executeGeminiGenerate(key, model, payload, abortCtrl.signal);
+                    const r = await executeGeminiGenerate(key, model, payload, abortCtrl.signal, { timeoutMs: GEMINI_TEXT_TIMEOUT_MS });
                     if (!r.success) return { ok: false, result: r };
                     const parsed = extractJsonValue(r.text);
                     if (!Array.isArray(parsed)) return { ok: false, result: { status: 502, error: 'Gemini returned an unreadable name list. Please try again.' } };
