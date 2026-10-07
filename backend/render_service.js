@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { getFFmpegBinary, getFFprobeBinary } = require('./ffmpeg_env');
+const { buildTextBlurFilters, probeDisplaySize } = require('./lib/text-blur');
 
 let activeRenderProcess = null;
 
@@ -1031,6 +1032,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         videoDuration: optVideoDuration,
         overlayImages = [],
         blurBoxes = [],
+        textBlurs = [], // burned-in subtitles to blur: [{ start, end, x, y, w, h }] (s, % of the source frame)
         videoOverlays = [],
         freeTexts = [],
         videoPan,
@@ -1369,6 +1371,18 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         // Video Filters: Color Filters, Presets, Flips, User Crop, Scaling & Subtitle Burning
         let videoInTag = '0:v';
         const vFilters = [];
+
+        // Burned-in subtitles found by the text detector: blurred on the source picture (before
+        // flip/crop/scale, so the blur stays on the text), only while they show.
+        if (Array.isArray(textBlurs) && textBlurs.length && videoPath) {
+            const size = await probeDisplaySize(videoPath, getFFprobeBinary());
+            const tb = size && buildTextBlurFilters(textBlurs, { ...size, inTag: videoInTag });
+            if (tb) {
+                filterComplex.push(...tb.parts);
+                videoInTag = tb.outTag;
+                console.log(`[Render] Blurring on-screen subtitles: ${tb.segments} time range(s) in ${tb.boxes} box(es)`);
+            }
+        }
 
         // Flips
         const flippedH = isFlippedH || flipHorizontal;
@@ -1729,7 +1743,16 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             }
         }
 
-        args.push('-filter_complex', filterComplex.join(';'));
+        // A long graph (one blur per on-screen subtitle box) goes in a file: Windows cuts a
+        // command line off at 32K characters.
+        const filterGraph = filterComplex.join(';');
+        if (filterGraph.length > 8000) {
+            const graphFile = path.join(tempDir, 'filter_graph.txt');
+            fs.writeFileSync(graphFile, filterGraph, 'utf8');
+            args.push('-/filter_complex', graphFile);
+        } else {
+            args.push('-filter_complex', filterGraph);
+        }
         args.push('-map', `[${finalVideoTag}]`);
         args.push('-map', '[clean_audio]');
         if (softSrtInputIndex >= 0) {

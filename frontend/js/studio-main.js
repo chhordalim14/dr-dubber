@@ -940,6 +940,12 @@
         renderAbortController: null,
         renderProgress: 0,
         renderOriginalBtnHTML: null,
+        // Burned-in subtitles to blur ({ videoPath, segments, row, enabled }) and the job finding them.
+        textBlur: null,
+        isDetectingText: false,
+        textDetectJobId: null,
+        textDetectProgress: 0,
+        textDetectError: null,
       };
     }
 
@@ -2748,6 +2754,9 @@
 
       // Apply transforms to canvas immediately
       if (typeof updateVideoTransforms === "function") updateVideoTransforms();
+      // This tab's subtitle blur (its own lines and on/off; the layer resizes on loadedmetadata).
+      updateDetectTextButton();
+      updateTextBlurPreview(true);
 
       // ── 5. Restore subtitle styles ──
       globalSubtitleColor = p.subtitleColor;
@@ -5005,6 +5014,7 @@
       if (isTranscribingAll) transcribeAllProjects(); // while running, this call stops it
       stopFixMissingAll();
       stopUnifyNames();
+      stopDetectTextAll();
       stopSeriesRun();
     }
 
@@ -5043,6 +5053,7 @@
       menuAction("btn-all-tabs-fix-missing", fixMissingAllTabs);
       menuAction("btn-all-tabs-pipeline", transcribeThenFixMissingAll);
       menuAction("btn-all-tabs-unify-names", unifyNamesAllTabs);
+      menuAction("btn-all-tabs-blur-text", () => detectTextAllProjects());
       menuAction("btn-all-tabs-translate", () => window.daiStudio?.translateAllTabs());
     }
 
@@ -6407,6 +6418,269 @@
         e.stopPropagation();
         applyBlurBoxesToAllProjects(btnApplyBlurAll);
       });
+    }
+
+    // ── Blur on-screen subtitles ────────────────────────────────────────────
+    // The tab's video is scanned for burned-in subtitles (backend /api/detect-text, a Python
+    // text detector) and each line is blurred only while it shows - in this preview and in the
+    // export (render config `textBlurs`). proj.textBlur = { videoPath, segments, row, enabled },
+    // segments [{ start, end, x, y, w, h }] in seconds and % of the source frame. The blur sits on
+    // the source picture, so zoom, flip, pan and crop carry it along like the video itself.
+    const TEXT_DETECT_POLL_MS = 1500;
+    let textDetectAllRun = null; // { stopped, promise } while subtitles are found for several tabs
+
+    // What a tab's export blurs: the lines found in its current video, if switched on.
+    function activeTextBlurs(proj) {
+      const tb = proj && proj.textBlur;
+      if (!tb || tb.enabled === false || !Array.isArray(tb.segments) || !tb.segments.length) return [];
+      if (tb.videoPath && proj.videoFilePath && tb.videoPath !== proj.videoFilePath) return [];
+      return tb.segments;
+    }
+    window.activeTextBlurs = activeTextBlurs;
+
+    // Lines showing at time t. Segments are sorted by start, and a line only overlaps its
+    // neighbours (one subtitle row), so a few steps back from the binary search are enough.
+    function textBlursAt(segs, t) {
+      let lo = 0, hi = segs.length - 1, last = -1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (segs[mid].start <= t) { last = mid; lo = mid + 1; } else hi = mid - 1;
+      }
+      const out = [];
+      for (let i = last; i >= 0 && i > last - 6; i--) if (segs[i].end > t) out.push(segs[i]);
+      return out;
+    }
+
+    // The preview layer covers the picture inside the <video> (object-contain) and takes the
+    // video's zoom/flip transform; it sits in the same pan/stretch/crop stack as the video.
+    let _textBlurKey = null;
+    let _textBlurLayerH = 0;
+    function syncTextBlurLayer() {
+      const layer = document.getElementById("text-blur-layer");
+      const canvas = document.getElementById("workspace-canvas");
+      if (!layer || !canvas) return;
+      const vw = mainVideo.videoWidth, vh = mainVideo.videoHeight, cw = canvas.clientWidth, ch = canvas.clientHeight;
+      if (!vw || !vh || !cw || !ch) {
+        layer.style.display = "none";
+        return;
+      }
+      const fit = Math.min(cw / vw, ch / vh);
+      const w = vw * fit, h = vh * fit;
+      Object.assign(layer.style, {
+        display: "", left: `${(cw - w) / 2}px`, top: `${(ch - h) / 2}px`, width: `${w}px`, height: `${h}px`,
+        transform: mainVideo.style.transform || "", transformOrigin: "center center",
+      });
+      if (Math.abs(_textBlurLayerH - h) > 0.5) {
+        _textBlurLayerH = h;
+        updateTextBlurPreview(true); // blur and soft edge are sized in pixels
+      }
+    }
+
+    // Shows the lines active at the playhead (called every frame; only touches the DOM on change).
+    function updateTextBlurPreview(force = false) {
+      const layer = document.getElementById("text-blur-layer");
+      if (!layer) return;
+      const segs = activeTextBlurs(projects[activeProjectIndex]);
+      const active = segs.length && mainVideo.src ? textBlursAt(segs, mainVideo.currentTime) : [];
+      const key = active.map((s) => `${s.start}:${s.x}:${s.w}`).join("|");
+      if (!force && key === _textBlurKey) return;
+      _textBlurKey = key;
+      while (layer.children.length < active.length) {
+        const el = document.createElement("div");
+        el.className = "absolute";
+        layer.appendChild(el);
+      }
+      [...layer.children].forEach((el, i) => {
+        const s = active[i];
+        if (!s) {
+          el.style.display = "none";
+          return;
+        }
+        // Same look as the export: blur a sixth of the line height, soft edges.
+        const hPx = (s.h / 100) * _textBlurLayerH;
+        const feather = Math.max(2, hPx * 0.13).toFixed(1);
+        const blur = `blur(${Math.max(2, hPx * 0.12).toFixed(1)}px)`;
+        const mask = `linear-gradient(to right, transparent, #000 ${feather}px, #000 calc(100% - ${feather}px), transparent), ` +
+          `linear-gradient(to bottom, transparent, #000 ${feather}px, #000 calc(100% - ${feather}px), transparent)`;
+        Object.assign(el.style, {
+          display: "", left: `${s.x}%`, top: `${s.y}%`, width: `${s.w}%`, height: `${s.h}%`,
+          backdropFilter: blur, webkitBackdropFilter: blur,
+          maskImage: mask, webkitMaskImage: mask, maskComposite: "intersect", webkitMaskComposite: "source-in",
+        });
+      });
+    }
+
+    function updateDetectTextButton() {
+      const label = document.getElementById("text-detect-text");
+      if (!label) return;
+      const proj = projects[activeProjectIndex];
+      const status = document.getElementById("text-blur-status");
+      const wrap = document.getElementById("text-blur-toggle-wrap");
+      const toggle = document.getElementById("text-blur-toggle");
+      const tb = proj && proj.textBlur && (!proj.videoFilePath || proj.textBlur.videoPath === proj.videoFilePath) ? proj.textBlur : null;
+      label.textContent = proj && proj.isDetectingText ? `Finding subtitles ${proj.textDetectProgress || 0}% · Stop` : tb ? "Find Subtitles Again" : "Blur Subtitles";
+      let note = "";
+      if (proj && proj.isDetectingText) note = "Reading the video for burned-in subtitles…";
+      else if (proj && proj.textDetectError) note = `Not done: ${proj.textDetectError}`;
+      else if (tb) note = tb.segments.length ? `${tb.segments.length} subtitle line(s) - each blurred only while it shows${tb.enabled === false ? " (off)" : ""}` : "No burned-in subtitles found in this video.";
+      if (status) {
+        status.textContent = note;
+        status.classList.toggle("hidden", !note);
+        status.classList.toggle("text-red-400", !!(proj && proj.textDetectError && !proj.isDetectingText));
+      }
+      if (wrap) wrap.classList.toggle("hidden", !(tb && tb.segments.length) || !!(proj && proj.isDetectingText));
+      if (toggle) toggle.checked = !!tb && tb.enabled !== false;
+    }
+
+    // Finds the burned-in subtitles of one tab's video. A tab already being read returns that
+    // same run. Resolves with { ok, lines } | { ok: false, cancelled } | { ok: false, error }.
+    function detectTextForProject(proj, { quiet = false } = {}) {
+      if (!proj) return Promise.resolve({ ok: false, error: "No tab." });
+      if (proj._textDetectPromise) return proj._textDetectPromise;
+      const videoPath = proj.videoFilePath || (proj.file && proj.file.path) || null;
+      if (!videoPath || proj.isAudioOnly) return Promise.resolve({ ok: false, error: "This tab has no video file on disk." });
+      const refresh = () => {
+        renderProjectTabs();
+        if (proj === projects[activeProjectIndex]) updateDetectTextButton();
+      };
+      const run = (async () => {
+        proj.isDetectingText = true;
+        proj.textDetectProgress = 0;
+        proj.textDetectError = null;
+        refresh();
+        try {
+          const start = await (await fetch("http://localhost:3001/api/detect-text", {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ videoPath }),
+          })).json();
+          if (!start.success) throw new Error(start.error || "Could not start reading the video.");
+          proj.textDetectJobId = start.jobId;
+          let st = start;
+          let misses = 0;
+          while (st.status === "queued" || st.status === "running") {
+            await new Promise((r) => setTimeout(r, TEXT_DETECT_POLL_MS));
+            if (!proj.isDetectingText) return { ok: false, cancelled: true }; // stopped, or the tab was closed
+            const next = await fetch(`http://localhost:3001/api/detect-text-status?jobId=${encodeURIComponent(start.jobId)}`).then((r) => r.json()).catch(() => null);
+            if (!next) {
+              if (++misses >= 20) throw new Error("Lost touch with the local server.");
+              continue;
+            }
+            misses = 0;
+            st = next;
+            if (st.status === "unknown") throw new Error("The app restarted while the video was read - run it again.");
+            proj.textDetectProgress = st.progress || 0;
+            if (proj === projects[activeProjectIndex]) updateDetectTextButton();
+          }
+          if (st.status === "cancelled") return { ok: false, cancelled: true };
+          if (st.status !== "done" || !st.result) throw new Error(st.error || "Reading the video failed.");
+          const segments = (st.result.segments || []).slice().sort((a, b) => a.start - b.start);
+          const keepOff = proj.textBlur && proj.textBlur.videoPath === videoPath && proj.textBlur.enabled === false;
+          proj.textBlur = { videoPath, segments, row: st.result.row || null, enabled: !keepOff };
+          if (!quiet) {
+            showToast(segments.length
+              ? `Blur Subtitles: ${segments.length} subtitle line(s) found - each is blurred only while it shows, in the preview and the export.`
+              : "Blur Subtitles: no burned-in subtitles found in this video.", segments.length ? "success" : "info");
+          }
+          return { ok: true, lines: segments.length };
+        } catch (e) {
+          proj.textDetectError = e.message;
+          if (!quiet) showToast(`Blur Subtitles: ${e.message}`, "error");
+          return { ok: false, error: e.message };
+        } finally {
+          proj.isDetectingText = false;
+          proj.textDetectJobId = null;
+          proj._textDetectPromise = null;
+          refresh();
+          if (proj === projects[activeProjectIndex]) updateTextBlurPreview(true);
+        }
+      })();
+      proj._textDetectPromise = run;
+      return run;
+    }
+
+    function stopDetectText(proj) {
+      if (!proj || !proj.isDetectingText) return;
+      const jobId = proj.textDetectJobId;
+      proj.isDetectingText = false; // the poll loop ends at its next tick
+      if (jobId) {
+        fetch("http://localhost:3001/api/cancel-detect-text", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jobId }),
+        }).catch(() => { });
+      }
+    }
+
+    // Every tab with a video (the server reads them one after another). Joins a run already
+    // going. Resolves with { ok, total, done, failed: [tabs], lines, stopped } or { ok: false, reason }.
+    function detectTextAllProjects({ quiet = false, only = null } = {}) {
+      if (textDetectAllRun) return textDetectAllRun.promise;
+      const targets = projects.filter((p) => !p.isAudioOnly && (p.videoFilePath || (p.file && p.file.path)) && (!only || only.includes(p)));
+      if (!targets.length) {
+        if (!quiet) showToast("No tab has a video file to read.", "warning");
+        return Promise.resolve({ ok: false, reason: "no-video", total: 0, done: 0, failed: [], lines: 0 });
+      }
+      const run = { stopped: false };
+      const ownsJob = !allTabsJob; // inside Dub Whole Series the series owns the All Tabs button
+      if (ownsJob) allTabsJob = "blurtext";
+      let finished = 0;
+      const setLabel = () => {
+        if (!ownsJob) return;
+        allTabsJobLabel = `Stop · Finding subtitles ${finished}/${targets.length}`;
+        updateTranscribeAllButtonState();
+      };
+      setLabel();
+      run.promise = (async () => {
+        try {
+          const results = await Promise.all(targets.map((p) => detectTextForProject(p, { quiet: true }).then((r) => {
+            finished++;
+            setLabel();
+            return r;
+          })));
+          const failed = targets.filter((p, i) => !results[i].ok && !results[i].cancelled);
+          const done = results.filter((r) => r.ok).length;
+          const lines = results.reduce((n, r) => n + (r.lines || 0), 0);
+          if (!quiet) {
+            if (run.stopped) showToast("Blur Subtitles stopped.", "warning");
+            else showToast(`Blur Subtitles: ${lines} subtitle line(s) found in ${done} of ${targets.length} tab(s)${failed.length ? ` - tab ${failed.map((p) => projects.indexOf(p) + 1).join(", ")} failed: ${failed[0].textDetectError}` : ""}.`, failed.length ? "warning" : "success");
+          }
+          return { ok: true, total: targets.length, done, failed, lines, stopped: run.stopped };
+        } finally {
+          textDetectAllRun = null;
+          if (ownsJob) {
+            allTabsJob = null;
+            allTabsJobLabel = "";
+            updateTranscribeAllButtonState();
+          }
+        }
+      })();
+      textDetectAllRun = run;
+      return run.promise;
+    }
+
+    function stopDetectTextAll() {
+      if (!textDetectAllRun) return;
+      textDetectAllRun.stopped = true;
+      projects.forEach(stopDetectText);
+    }
+
+    document.getElementById("btn-detect-text")?.addEventListener("click", () => {
+      const proj = projects[activeProjectIndex];
+      if (!proj) return showToast("Open a video first.", "warning");
+      if (proj.isDetectingText) stopDetectText(proj);
+      else detectTextForProject(proj);
+    });
+    document.getElementById("text-blur-toggle")?.addEventListener("change", (e) => {
+      const proj = projects[activeProjectIndex];
+      if (!proj || !proj.textBlur) return;
+      proj.textBlur.enabled = e.target.checked;
+      updateTextBlurPreview(true);
+      updateDetectTextButton();
+    });
+    mainVideo.addEventListener("loadedmetadata", () => {
+      syncTextBlurLayer();
+      updateTextBlurPreview(true);
+    });
+    mainVideo.addEventListener("seeked", () => updateTextBlurPreview());
+    if (window.ResizeObserver && document.getElementById("workspace-canvas")) {
+      new ResizeObserver(() => syncTextBlurLayer()).observe(document.getElementById("workspace-canvas"));
     }
 
     // Initial Render
@@ -16296,7 +16570,8 @@
     // ── Dub Whole Series ───────────────────────────────────────────────────
     // One button for the whole series workflow. Join Episodes into parts of about N minutes,
     // then one part at a time: Split it into pieces, open the pieces as tabs, Transcribe all
-    // tabs (DAI batch), Generate voices for all tabs, Isolate BGM for all tabs. Every step runs
+    // tabs (DAI batch), Generate voices for all tabs, Isolate BGM for all tabs, Blur the burned-in
+    // subtitles (found while the other steps run). Every step runs
     // the same code as its own button. The plan and each step's result are kept in localStorage,
     // so after a Stop, a quota pause or an app restart, Continue picks up where it stopped.
     const SERIES_KEY = "aiDubberSeriesRun";
@@ -16318,6 +16593,7 @@
       if (seriesRun.step === "generate" && (isGeneratingAudioAll || voxQueueRunning)) generateSelectedAudioAllProjects();
       if (seriesRun.step === "generate") cancelFastCondenseRequests(); // "Shortening rushed lines"
       if (seriesRun.step === "isolate" && isIsolatingBgmAll) isolateBgmAllProjects({ skipConfirm: true });
+      stopDetectTextAll(); // reading the tabs for subtitles runs beside the other steps
       // A finished part rendering while the next one is dubbed stops too (Continue renders the
       // rest of it).
       stopSeriesBackgroundExport();
@@ -16343,9 +16619,9 @@
       const clampNum = (v, lo, hi, dflt) => Math.min(hi, Math.max(lo, Math.round(parseFloat(v) || dflt)));
       const joinMinutes = () => clampNum($("ds-join-minutes").value, 5, 180, 50);
       const splitMinutes = () => clampNum($("ds-split-minutes").value, 3, 60, 7);
-      const STEP_NAMES = { split: "Split into tabs", load: "Open as tabs", transcribe: "Transcribe", generate: "Generate voices", isolate: "Isolate BGM" };
-      const STEP_ORDER = ["split", "load", "transcribe", "generate", "isolate"];
-      const OPTIONAL_STEPS = ["transcribe", "generate", "isolate"];
+      const STEP_NAMES = { split: "Split into tabs", load: "Open as tabs", transcribe: "Transcribe", generate: "Generate voices", isolate: "Isolate BGM", blurtext: "Blur subtitles" };
+      const STEP_ORDER = ["split", "load", "transcribe", "generate", "isolate", "blurtext"];
+      const OPTIONAL_STEPS = ["transcribe", "generate", "isolate", "blurtext"];
 
       let scan = null; // /api/episodes/scan result for a newly chosen folder
       let plan = null; // persisted: { folder, seriesName, outDir, joinMinutes, parts, current, stepState, pieces, lastDone }
@@ -16913,6 +17189,28 @@
         return note;
       }
 
+      // Burned-in subtitles: found in every tab (started when the tabs opened) and each blurred
+      // only while it shows. A tab that can't be read gets one more try; if it still fails the
+      // series pauses instead of exporting it with the old subtitles showing.
+      async function blurTextStep() {
+        const r = await detectTextAllProjects({ quiet: true });
+        checkStop();
+        if (r.ok === false) throw new Error(r.reason === "no-video" ? "No tab has a video to read for subtitles." : "Blur subtitles did not start.");
+        if (r.stopped) throw stoppedError();
+        if (r.failed.length) {
+          setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Blur subtitles again: tab ${tabNumbers(r.failed)}`);
+          const again = await detectTextAllProjects({ quiet: true, only: r.failed });
+          checkStop();
+          if (again.stopped) throw stoppedError();
+          if (again.failed && again.failed.length) {
+            throw new Error(`Tab ${tabNumbers(again.failed)}: the subtitles could not be found (${again.failed[0].textDetectError || "unknown error"}). Fix it, or switch "Blur subtitles" off, then press Continue.`);
+          }
+        }
+        const withLines = projects.filter((p) => activeTextBlurs(p).length);
+        const lines = withLines.reduce((n, p) => n + activeTextBlurs(p).length, 0);
+        return withLines.length ? `${lines} subtitle line(s) blurred in ${withLines.length} of ${projects.length} tab(s)` : "no burned-in subtitles found";
+      }
+
       async function runPart(i) {
         if (plan.current !== i || !plan.stepState) {
           plan.current = i;
@@ -16936,7 +17234,10 @@
           ["load", ...OPTIONAL_STEPS].forEach((k) => delete plan.stepState[k]);
           await runStep("load", loadStep);
         }
-        for (const [name, fn] of [["transcribe", transcribeStep], ["generate", generateStep], ["isolate", isolateStep]]) {
+        // The subtitles are found while the part is transcribed and voiced (CPU work beside
+        // network work); the "blurtext" step at the end only waits for it.
+        if (wanted("blurtext") && plan.stepState.blurtext?.state !== "done") detectTextAllProjects({ quiet: true }).catch(() => { });
+        for (const [name, fn] of [["transcribe", transcribeStep], ["generate", generateStep], ["isolate", isolateStep], ["blurtext", blurTextStep]]) {
           if (plan.stepState[name]?.state === "done") continue;
           await runStep(name, fn);
         }
@@ -20436,6 +20737,7 @@
           updateSubtitleDisplay();
         }
       }
+      updateTextBlurPreview(); // burned-in subtitles blurred while they show
 
       if (duration > 0 && mainVideo.src) {
         const currentTime = mainVideo.currentTime;
@@ -22474,6 +22776,7 @@
             if (p.generateAbortController) p.generateAbortController.abort();
             if (p.isolateAbortController) p.isolateAbortController.abort();
             if (p.renderAbortController) p.renderAbortController.abort();
+            stopDetectText(p);
           });
 
           // ── STEP 2: Release ALL blob URLs for every project (video + BGM) ──
@@ -23140,6 +23443,7 @@
               renderEngine: localStorage.getItem("aiDubberRenderEngine") || "cpu",
               videoDuration: projDuration,
               blurBoxes: cleanBlurBoxes,
+              textBlurs: activeTextBlurs(targetProject), // burned-in subtitles, blurred while they show
               // Size and bold/italic/underline: the live values the preview draws with (a video
               // preset can change them without saving them to localStorage).
               subtitleSize: globalSubtitleSize,
@@ -23688,6 +23992,7 @@
               renderEngine: localStorage.getItem("aiDubberRenderEngine") || "cpu",
               videoDuration: projDuration,
               blurBoxes: cleanBlurBoxes,
+              textBlurs: activeTextBlurs(proj), // burned-in subtitles, blurred while they show
               // Size and bold/italic/underline: the live values the preview draws with (a video
               // preset can change them without saving them to localStorage).
               subtitleSize: globalSubtitleSize,
@@ -25027,6 +25332,7 @@
         // Apply both the zoom scale and the flip scales at the exact same time
         mainVideo.style.transform = `scale(${zoom}) ${flipStr.trim()}`;
         mainVideo.style.transformOrigin = "center center";
+        syncTextBlurLayer(); // the subtitle blur follows the picture
       }
 
       // 4. Crop Logic (Untouched and Safe!)
@@ -25292,7 +25598,7 @@
           isActive ? "bg-[var(--accent-primary)]/15 text-[var(--accent-text)] font-semibold border-t-2 border-t-[var(--accent-primary)]" : "hover:bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-[var(--text-primary)] border-t-2 border-t-transparent",
         ].join(" ");
         btn.title = proj.tabTitle ? `${proj.tabTitle} (${proj.file?.name || `Video ${i + 1}`})` : proj.file?.name || `Video ${i + 1}`;
-        const isWorking = proj.isTranscribing || proj.isGeneratingAudio || proj.isIsolatingBgm || proj.isFixingMissing || proj.isBatchTranscribing;
+        const isWorking = proj.isTranscribing || proj.isGeneratingAudio || proj.isIsolatingBgm || proj.isFixingMissing || proj.isBatchTranscribing || proj.isDetectingText;
         const dotClass = proj.subtitles.length > 0 ? "bg-emerald-400" : isWorking ? "bg-yellow-400 animate-pulse" : "bg-[var(--border-light)]";
 
         btn.innerHTML = `
@@ -25368,6 +25674,7 @@
       if (p.generateAbortController) p.generateAbortController.abort();
       if (p.isolateAbortController) p.isolateAbortController.abort();
       if (p.renderAbortController) p.renderAbortController.abort();
+      stopDetectText(p); // and the server stops reading its video
 
       // Flip the flags FIRST. The BGM-isolate poller is the only thing that
       // settles its own await-ed promise (it rejects with AbortError when

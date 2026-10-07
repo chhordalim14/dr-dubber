@@ -3703,6 +3703,18 @@ app.use('/api', require('./routes/preview')({ previewService }));
 app.use('/api/episodes', require('./routes/episodes')({ episodeJoiner }));
 app.use('/api/split', require('./routes/split')({ videoSplitter }));
 app.use('/api', require('./routes/render')({ upload, renderVideo, cancelRender, getRenderProgress, audioRepair }));
+// On-screen subtitle detection (the render blurs them while they show).
+const textDetect = require('./text_detect_service').createTextDetectService({
+    pythonCmd: PYTHON_CMD,
+    pythonEnv: PYTHON_ENV,
+    scriptPath: getPythonScriptPath('text_detector.py'),
+    requirementsPath: getPythonScriptPath('requirements-textdetect.txt'),
+    ffmpegPath: getFFmpegBinary(),
+    cacheDir: path.join(STORAGE_BASE, 'text_detect'),
+    trackProcess,
+    killProcessTree,
+});
+app.use('/api', require('./routes/text-detect')({ textDetect }));
 
 // Khmer movie/drama title generator. Reads the story from the dialogue (the open
 // project and/or uploaded SRT files), sampled evenly from start to end so the model

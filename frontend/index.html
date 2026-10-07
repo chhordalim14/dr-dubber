@@ -1614,6 +1614,8 @@
                 <video id="main-video"
                   class="hidden w-full h-full object-contain transition-transform duration-500 ease-in-out"
                   loop></video>
+                <!-- Burned-in subtitles blurred while they show: sized to the picture, same transform as the video -->
+                <div id="text-blur-layer" class="absolute pointer-events-none transition-transform duration-500 ease-in-out" style="display: none"></div>
               </div>
             </div>
 
@@ -1892,6 +1894,17 @@
               <span id="text-apply-blur-all" class="truncate">Blur to All</span>
             </button>
           </div>
+          <div class="flex items-center gap-2">
+            <button id="btn-detect-text" title="Find the burned-in subtitles in this tab's video and blur each one only while it shows - in the preview and the export"
+              class="group flex-1 min-w-0 flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-amber-500/10 border border-[var(--border-light)] hover:border-amber-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
+              <i data-lucide="scan-text" class="w-4 h-4 text-amber-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+              <span id="text-detect-text" class="truncate">Blur Subtitles</span>
+            </button>
+            <label id="text-blur-toggle-wrap" class="hidden flex items-center gap-1.5 text-[11px] text-[var(--text-secondary)] cursor-pointer shrink-0" title="Blur the found subtitles in the preview and the export">
+              <input id="text-blur-toggle" type="checkbox" class="accent-amber-500" checked> On
+            </label>
+          </div>
+          <p id="text-blur-status" class="hidden text-[10px] text-[var(--text-muted)] leading-tight -mt-1"></p>
         </div>
 
         <!-- Deck 4: Output & Actions -->
@@ -2293,6 +2306,10 @@
                 <button id="btn-all-tabs-unify-names" class="w-full text-left px-2.5 py-1.5 text-xs flex items-start gap-2 rounded-lg hover:bg-white/[0.08] text-slate-200 cursor-pointer transition-colors">
                   <i data-lucide="spell-check" class="w-3.5 h-3.5 text-rose-300 shrink-0 mt-0.5"></i>
                   <span class="flex flex-col"><span class="font-medium">Make names consistent…</span><span class="text-[10px] text-slate-400">Same Khmer name for each character and place in every tab</span></span>
+                </button>
+                <button id="btn-all-tabs-blur-text" class="w-full text-left px-2.5 py-1.5 text-xs flex items-start gap-2 rounded-lg hover:bg-white/[0.08] text-slate-200 cursor-pointer transition-colors">
+                  <i data-lucide="scan-text" class="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5"></i>
+                  <span class="flex flex-col"><span class="font-medium">Blur subtitles in all tabs</span><span class="text-[10px] text-slate-400">Find the burned-in subtitles; blur each only while it shows</span></span>
                 </button>
                 <div class="my-1.5 border-t border-white/[0.08]"></div>
                 <button id="btn-all-tabs-translate" class="w-full text-left px-2.5 py-1.5 text-xs flex items-start gap-2 rounded-lg hover:bg-white/[0.08] text-slate-200 cursor-pointer transition-colors">
@@ -3432,7 +3449,7 @@
         <button id="ds-close" class="text-[var(--text-secondary)] hover:text-[var(--text-bright)] transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
       </div>
       <div class="p-5 flex flex-col gap-4 overflow-y-auto custom-scrollbar">
-        <p class="text-xs text-[var(--text-secondary)] leading-relaxed">Choose the folder with the episodes and press <b>Start</b>. The app joins the episodes into parts, then works on one part at a time: splits it into pieces, opens them as tabs, transcribes, makes the Khmer voices and isolates the BGM. When a part is finished, export it, then press <b>Next part</b>. You can close this window while it works.</p>
+        <p class="text-xs text-[var(--text-secondary)] leading-relaxed">Choose the folder with the episodes and press <b>Start</b>. The app joins the episodes into parts, then works on one part at a time: splits it into pieces, opens them as tabs, transcribes, makes the Khmer voices, isolates the BGM and blurs the old burned-in subtitles. When a part is finished, export it, then press <b>Next part</b>. You can close this window while it works.</p>
         <div class="flex items-center gap-2">
           <button id="ds-pick" class="shrink-0 whitespace-nowrap px-3 py-2 rounded-lg text-xs font-semibold bg-violet-600 text-white hover:brightness-110 active:scale-[0.97] transition-all flex items-center gap-1.5"><i data-lucide="folder-open" class="w-4 h-4"></i> Choose Folder</button>
           <span id="ds-folder" class="text-xs text-[var(--text-muted)] truncate font-mono">No folder selected</span>
@@ -3453,6 +3470,7 @@
             <label class="flex items-center gap-1.5 cursor-pointer"><input id="ds-step-transcribe" type="checkbox" class="accent-violet-500" checked> Transcribe</label>
             <label class="flex items-center gap-1.5 cursor-pointer"><input id="ds-step-generate" type="checkbox" class="accent-violet-500" checked> Generate voices</label>
             <label class="flex items-center gap-1.5 cursor-pointer"><input id="ds-step-isolate" type="checkbox" class="accent-violet-500" checked> Isolate BGM</label>
+            <label class="flex items-center gap-1.5 cursor-pointer" title="Find the burned-in (Chinese) subtitles and blur each one only while it shows. Runs while the part is transcribed and voiced."><input id="ds-step-blurtext" type="checkbox" class="accent-violet-500" checked> Blur subtitles</label>
             <label class="flex items-center gap-1.5 ml-auto" title="The Khmer register Transcribe uses. Same setting as the genre button and the DAI window.">
               <span class="text-[var(--text-secondary)]">Drama Style:</span>
               <select id="ds-genre"

@@ -1,0 +1,21 @@
+# On-screen subtitle detection (backend/python/text_detector.py), in the bundled python_env.
+# Install with --no-deps:
+#   python -m pip install --no-deps -r backend/python/requirements-textdetect.txt
+# Every dependency is listed here instead: left to itself pip picks numpy 2 / protobuf 7,
+# which break Spleeter (numpy < 2) and TensorFlow 2.12 (protobuf < 5) in the same env.
+# Already there for TensorFlow / Spleeter (any version in range is kept):
+numpy>=1.22,<=1.24.3
+protobuf>=3.20.3,<5
+flatbuffers>=2.0
+packaging
+pillow
+six
+# New for the detector:
+onnxruntime==1.30.0
+opencv-python-headless==4.11.0.86
+pyclipper==1.4.0
+shapely==2.1.2
+PyYAML==6.0.3
+tqdm==4.70.1
+colorama==0.4.6
+rapidocr-onnxruntime==1.4.4
