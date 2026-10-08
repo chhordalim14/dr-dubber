@@ -74,3 +74,5 @@ Thumbs.db
 C:\\*
 storage/preview_cache/
 storage/audio_repair/
+storage/text_detect/
+storage/batch_results/

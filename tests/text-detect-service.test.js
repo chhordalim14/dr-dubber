@@ -48,7 +48,7 @@ function makeService({ depsOk = true, installFixes = true } = {}) {
     return { svc, videos, children, killed, calls, dir };
 }
 
-const result = { row: { y: 66, h: 7 }, segments: [{ start: 1, end: 2, x: 30, y: 66, w: 40, h: 7 }], width: 1080, height: 1920, duration: 10, seconds: 3 };
+const result = { row: { y: 66, h: 7 }, segments: [{ start: 1, end: 2, x: 30, y: 66, w: 40, h: 7 }], lines: [{ start: 1.08, end: 1.96, x: 32, w: 36, text: '我不知道' }], width: 1080, height: 1920, duration: 10, seconds: 3 };
 
 describe('subtitle text detection jobs', () => {
     test('a job runs, reports progress, and keeps the result', async () => {
@@ -66,6 +66,7 @@ describe('subtitle text detection jobs', () => {
         assert.equal(st.status, 'done');
         assert.equal(st.progress, 100);
         assert.deepEqual(st.result.segments, result.segments);
+        assert.deepEqual(st.result.lines, result.lines);
     });
 
     test('one video at a time; asking again for a video in line joins its job', async () => {

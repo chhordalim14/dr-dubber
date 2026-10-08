@@ -631,6 +631,25 @@ app.post('/api/save-srt', (req, res) => {
     res.json({ success: true, filePath: savedPath });
 });
 
+// Finished Batch Transcribe parts (see lib/batch-results.js): asked before a part is sent to
+// Gemini, saved when it is done.
+const { loadBatchResult, saveBatchResult } = require('./lib/batch-results');
+const BATCH_RESULTS_DIR = path.join(STORAGE_BASE, 'batch_results');
+
+app.post('/api/batch-result/get', (req, res) => {
+    const saved = loadBatchResult(BATCH_RESULTS_DIR, req.body && req.body.sourceFilePath);
+    res.json({ success: true, found: !!saved, result: saved || undefined });
+});
+
+app.post('/api/batch-result/save', (req, res) => {
+    const { sourceFilePath, result } = req.body || {};
+    try {
+        res.json({ success: saveBatchResult(BATCH_RESULTS_DIR, sourceFilePath, result) });
+    } catch (e) {
+        res.json({ success: false, error: e.message });
+    }
+});
+
 // --- BGM ISOLATION ---
 const { cacheKeyForFile, lookupCachedStems, storeStems, pruneBgmCache, jobStatusFor, pickSeparatorThreads, killProcessTree } = require('./lib/bgm-cache');
 // Engines: Spleeter 2stems (the default: ~40 s for a 9-minute tab), Demucs
@@ -1140,6 +1159,15 @@ function extractJsonValue(raw) {
 // hit its limit is skipped until it resets, while the key's other models keep working.
 const geminiModelCooldowns = new Map();
 
+// Google's 503 "high demand" (or no answer in time) is a model overloaded for everyone, not one
+// key's limit: model -> when it was last busy. For a minute after, requests ask the models that
+// are answering first, instead of every part asking the busy one again and waiting.
+const geminiBusyModels = new Map();
+const GEMINI_BUSY_MEMORY_MS = 60 * 1000;
+function isGeminiModelBusy(m) {
+    return Date.now() - (geminiBusyModels.get(m) || 0) < GEMINI_BUSY_MEMORY_MS;
+}
+
 // Google's 429 body says exactly which limit was hit and how long to wait:
 //   details: [{ '@type': '...QuotaFailure', violations: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier' }] },
 //             { '@type': '...RetryInfo', retryDelay: '55s' }]
@@ -1229,7 +1257,10 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { 
     // has its own daily allowance, so use the next one instead of stopping the whole job.
     const dailyOut = (m) => { const c = geminiModelCooldowns.get(`${apiKey}|${m}`); return !!(c && c.daily && c.until > Date.now()); };
     const stayPool = usableModels.filter(m => !dailyOut(m));
-    const candidateModels = stayOnModel ? (stayPool.length ? stayPool : usableModels).slice(0, 1) : allModels;
+    const firstChoice = stayOnModel ? (stayPool.length ? stayPool : usableModels)[0] : allModels[0];
+    // Models Google just said are busy go last (still tried if every model is busy).
+    const candidateModels = stayOnModel ? [firstChoice].filter(Boolean)
+        : [...allModels.filter(m => !isGeminiModelBusy(m)), ...allModels.filter(isGeminiModelBusy)];
 
     let primaryError = null; // first meaningful error, reported to the user
     let sawRateLimit = false;
@@ -1265,6 +1296,18 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { 
                 }, signal, timeoutMs);
             } catch (fetchErr) {
                 if (fetchErr.name === 'AbortError' && signal && signal.aborted) throw fetchErr;
+                if (fetchErr.code === 'TIMEOUT') {
+                    // No answer in time over a working connection: Google is too busy to answer
+                    // this model now - the same as a 503, not a dead network. Stop here: each
+                    // other model could hang just as long. The caller retries, asking the models
+                    // that are answering first.
+                    geminiBusyModels.set(m, Date.now());
+                    console.warn(`[Gemini] ${m}: ${fetchErr.message} - Google is busy`);
+                    const msg = `${fetchErr.message} - Google is busy`;
+                    const cooling = (x) => { const c = geminiModelCooldowns.get(`${apiKey}|${x}`); return !!(c && c.until > Date.now()); };
+                    const otherModelsLimited = !stayOnModel && !usableModels.some(x => x !== m && !cooling(x));
+                    return { success: false, status: 503, code: 'OVERLOADED', error: msg, message: msg, ...(otherModelsLimited ? { otherModelsLimited } : {}) };
+                }
                 const cause = fetchErr.cause && (fetchErr.cause.code || fetchErr.cause.message);
                 const msg = fetchErr.code === 'TIMEOUT'
                     ? fetchErr.message
@@ -1312,9 +1355,9 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { 
                     }
                     const clean = JSON.stringify(value);
                     if (cand && cand.content) cand.content.parts = [{ text: clean }];
-                    return { success: true, json, text: clean, finishReason: cand?.finishReason, modelUsed: m, fellBack: idx > 0 };
+                    return { success: true, json, text: clean, finishReason: cand?.finishReason, modelUsed: m, fellBack: m !== firstChoice };
                 }
-                return { success: true, json, text, finishReason: cand?.finishReason, modelUsed: m, fellBack: idx > 0 };
+                return { success: true, json, text, finishReason: cand?.finishReason, modelUsed: m, fellBack: m !== firstChoice };
             }
 
             let errData = {};
@@ -1367,6 +1410,7 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { 
             // backs off and retries if every model is busy.
             if (res.status === 503 || /high demand|overloaded|UNAVAILABLE/i.test(errMsg)) {
                 sawOverload = true;
+                geminiBusyModels.set(m, Date.now());
                 if (!primaryError) primaryError = { status: 503, code: 'OVERLOADED', error: errMsg, message: errMsg };
                 break;
             }
@@ -1393,7 +1437,10 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { 
                 : `Key …${apiKey.slice(-4)} is rate-limited by Google - free again in ${formatWait(retryAfterMs)}.`
         };
     }
-    return { success: false, ...(primaryError || { status: 500, error: 'No usable Gemini model for this API key.', message: 'No usable Gemini model for this API key.' }) };
+    // Busy, and this key's other models are out of their limit (e.g. the free tier's 20 requests
+    // a day per model): another key may still have those models - tryKeysOnce asks it.
+    const otherModelsLimited = sawOverload && sawRateLimit;
+    return { success: false, ...(primaryError || { status: 500, error: 'No usable Gemini model for this API key.', message: 'No usable Gemini model for this API key.' }), ...(otherModelsLimited ? { otherModelsLimited } : {}) };
 }
 
 // ── Khmer Dubbing & Subtitle Dialogue Engine ──────────────────────────
@@ -1609,7 +1656,7 @@ SCHEMA:
 }
 
 // Transcribe one clip; returns cues with times relative to the clip start.
-async function transcribeClipWithGemini({ apiKey, model, audioBase64, mimeType, clipSec, promptOpts, signal, stayOnModel = false }) {
+async function transcribeClipWithGemini({ apiKey, model, audioBase64, mimeType, clipSec, promptOpts, signal, stayOnModel = false, timeoutMs = GEMINI_ATTEMPT_TIMEOUT_MS }) {
     const payload = {
         contents: [{
             role: 'user',
@@ -1628,7 +1675,7 @@ async function transcribeClipWithGemini({ apiKey, model, audioBase64, mimeType, 
     let lastRaw = '';
     // A malformed JSON reply is usually a one-off; ask once more before giving up.
     for (let attempt = 0; attempt < 2; attempt++) {
-        const result = await executeGeminiGenerate(apiKey, model, payload, signal, { stayOnModel });
+        const result = await executeGeminiGenerate(apiKey, model, payload, signal, { stayOnModel, timeoutMs });
         if (!result.success) return { ok: false, result };
         lastRaw = result.text || '';
         const items = parseJsonArrayLoose(lastRaw);
@@ -1696,6 +1743,22 @@ function geminiRetryLimit(result) {
     return result && result.code === 'NETWORK_ERROR' ? 1 : GEMINI_RETRY_DELAYS_MS.length;
 }
 
+// "Busy" - a 503 "high demand", or no answer in time - is Google's side, for everyone, and
+// clears by itself. Failing a part after 4 tries (about 2 minutes) made its whole tab start
+// over at the end of the batch, again and again (a 2-3 hour movie took 5 hours), so busy
+// answers are retried for up to GEMINI_BUSY_RETRY_BUDGET_MS, at most 30s apart.
+const GEMINI_BUSY_RETRY_BUDGET_MS = 30 * 60 * 1000;
+const GEMINI_BUSY_MAX_WAIT_MS = 30 * 1000;
+function isGeminiBusy(result) {
+    return !!result && result.code !== 'NETWORK_ERROR' && (result.code === 'OVERLOADED' || Number(result.status) === 503);
+}
+// otherRetries: retries so far for failures that are not "busy" (those keep geminiRetryLimit).
+function geminiShouldRetry(result, otherRetries, startedAt, busyBudgetMs = GEMINI_BUSY_RETRY_BUDGET_MS) {
+    if (!isTransientGeminiFailure(result)) return false;
+    if (isGeminiBusy(result)) return Date.now() - startedAt < busyBudgetMs;
+    return otherRetries < geminiRetryLimit(result);
+}
+
 function sleepAbortable(ms, signal) {
     return new Promise((resolve, reject) => {
         if (signal && signal.aborted) return reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }));
@@ -1727,6 +1790,7 @@ function geminiFailureResponse(res, result) {
     const code = result.error === 'RATE_LIMIT_EXCEEDED' || result.error === 'INVALID_API_KEY' ? result.error : null;
     return res.status(result.status || 500).json({
         success: false,
+        status: result.status || 500, // lets the app tell a busy Google (retry) from a bad key
         error: code || result.error || result.message || 'GENERATION_FAILED',
         message: result.message || result.error,
         isDailyQuota: !!result.isDailyQuota,
@@ -1748,6 +1812,9 @@ const REPAIR_TRANSLATE_BATCH = 40;
 // The gap double-check is an extra pass on top of a finished transcript: when Google is slow it
 // could add many minutes, so it stops starting new checks after this long (lines found so far stay).
 const REPAIR_GAP_BUDGET_MS = 2 * 60 * 1000;
+// Re-translating lines that came back without Khmer waits out a busy Google this long (per batch
+// of lines) - a few minutes, not the main pass's 30: Fix Missing can still do them later.
+const REPAIR_BUSY_BUDGET_MS = 3 * 60 * 1000;
 
 function cueNeedsTranslation(cue) {
     const text = String(cue.text || '').trim();
@@ -1844,7 +1911,8 @@ function geminiRetryWaitMs(result, retry) {
     if (result && result.error === 'RATE_LIMIT_EXCEEDED' && result.retryAfterMs != null) {
         return Math.min(90 * 1000, Math.max(2000, result.retryAfterMs + 500));
     }
-    return GEMINI_RETRY_DELAYS_MS[Math.min(retry, GEMINI_RETRY_DELAYS_MS.length - 1)];
+    const wait = GEMINI_RETRY_DELAYS_MS[Math.min(retry, GEMINI_RETRY_DELAYS_MS.length - 1)];
+    return isGeminiBusy(result) ? Math.min(wait, GEMINI_BUSY_MAX_WAIT_MS) : wait;
 }
 
 // For the API key list in Settings / DAI Studio: what each key can do right now.
@@ -1913,7 +1981,15 @@ async function tryKeysOnce(keys, call) {
         // from each key's daily allowance (one overload: 5 rounds x 6 keys per chunk, and
         // the whole pool was "daily quota used up" without much real work done). Return,
         // and let the caller's backoff retry on this key.
-        if (out.result && (out.result.code === 'OVERLOADED' || Number(out.result.status) === 503)) return out;
+        // Except when this key's only model left was the busy one (its others hit their limit):
+        // another key can skip the busy model and use one it still has quota for. Seen with 10
+        // keys: a part asked one key's busy model every 30s for 9+ minutes while the other keys
+        // still had gemini-3.6/3.7-flash requests left.
+        if (out.result && (out.result.code === 'OVERLOADED' || Number(out.result.status) === 503)) {
+            if (!out.result.otherModelsLimited) return out;
+            if (!transientOut || transientOut.result.error === 'RATE_LIMIT_EXCEEDED') transientOut = out;
+            continue;
+        }
         if (isTransientGeminiFailure(out.result)) {
             if (out.result.error === 'RATE_LIMIT_EXCEEDED') {
                 const daily = !!out.result.isDailyQuota;
@@ -1935,14 +2011,20 @@ async function tryKeysOnce(keys, call) {
 }
 
 // Try each key, and wait/retry on "busy" like the main pass does. retries: rounds after the
-// first (at most the main pass's GEMINI_RETRY_DELAYS_MS.length).
-async function geminiWithKeys(keys, call, signal, { retries = 2 } = {}) {
+// first (at most the main pass's GEMINI_RETRY_DELAYS_MS.length). busyBudgetMs: keep retrying
+// "busy" that long instead (part of a transcription, which must not give up on a busy Google);
+// without it busy answers use up the retries like any other failure.
+async function geminiWithKeys(keys, call, signal, { retries = 2, busyBudgetMs = 0 } = {}) {
     let out = null;
+    const startedAt = Date.now();
+    let otherRetries = 0;
     for (let retry = 0; ; retry++) {
         out = await tryKeysOnce(keys, call);
         if (out.ok || !isTransientGeminiFailure(out.result)) return out;
-        if (retry >= Math.min(retries, geminiRetryLimit(out.result))) return out;
-        await sleepAbortable(geminiRetryWaitMs(out.result, retry), signal);
+        const busy = busyBudgetMs > 0 && isGeminiBusy(out.result);
+        if (busy ? Date.now() - startedAt >= busyBudgetMs : otherRetries >= Math.min(retries, geminiRetryLimit(out.result))) return out;
+        await sleepAbortable(geminiRetryWaitMs(out.result, busy ? retry : otherRetries), signal);
+        if (!busy) otherRetries++;
     }
 }
 
@@ -1962,7 +2044,7 @@ async function retranslateCues(targets, allCues, { keys, model, promptOpts, glos
         const out = await geminiWithKeys(keys, async (key) => {
             const r = await executeGeminiGenerate(key, model, payload, signal, { timeoutMs: GEMINI_TEXT_TIMEOUT_MS });
             return r.success ? { ok: true, items: parseJsonArrayLoose(r.text) || [] } : { ok: false, result: r };
-        }, signal);
+        }, signal, { busyBudgetMs: REPAIR_BUSY_BUDGET_MS });
         if (!out.ok) return { fixed, error: out.result };
         const byIndex = new Map(out.items.map(it => [Number(it && it.i), it]));
         for (const { cue, index } of batch) {
@@ -2020,10 +2102,15 @@ async function repairTranscript({ cues, sourceFile, totalSec, keys, model, promp
                 if (code !== 0 || !fs.existsSync(clipFile)) continue;
                 const clipBase64 = fs.readFileSync(clipFile).toString('base64');
                 const before = existing.filter(c => c._end <= w.start + 0.5).slice(-4);
+                // The double-check is optional: a busy or slow Google gets only what is left of
+                // its budget (and each try at most that long, 45s at least), not the 30 minutes
+                // the main transcription waits - a part sat in "Double-checking" for 20+ minutes.
+                const left = () => Math.max(1, budgetEnd - Date.now());
                 const out = await geminiWithKeys(laneKeys, (key) => transcribeClipWithGemini({
                     apiKey: key, model, audioBase64: clipBase64, mimeType: 'audio/mp3', clipSec,
-                    promptOpts: { ...promptOpts, previousLines: before }, signal, stayOnModel
-                }), signal);
+                    promptOpts: { ...promptOpts, previousLines: before }, signal, stayOnModel,
+                    timeoutMs: Math.min(GEMINI_ATTEMPT_TIMEOUT_MS, Math.max(45000, left()))
+                }), signal, { busyBudgetMs: left() });
                 report.gapsChecked++;
                 setGapNote();
                 if (!out.ok) {
@@ -2093,7 +2180,7 @@ app.post('/api/transcribe', async (req, res) => {
         partIndex,
         customFolder,
         sourceFilePath,
-        apiSaver = false,
+        apiSaver = true,
         stayOnModel = false,
         // Requests this file may run at once. With 1, the extra keys are only backups: a
         // rate-limited key hands the next chunk to the least busy other key (Dub Whole Series
@@ -2205,22 +2292,32 @@ app.post('/api/transcribe', async (req, res) => {
                 if (out) console.log(`[Transcribe] Chunk ${i + 1}/${chunks.length} reused from previous attempt`);
                 // "High demand" (503) is Google overloading one model for everyone; another key
                 // gets the same answer, but another model usually doesn't. After two busy answers
-                // in a row, let this part move to the next model instead of failing it.
+                // in a row - or right away when it was busy for another part in the last minute -
+                // let this part move to the next model instead of failing it.
                 let busyRounds = 0;
+                let warnedBusy = false;
+                let otherRetries = 0;
+                const chunkStartedAt = Date.now();
                 for (let retry = 0; !out || !out.ok; retry++) {
-                    const holdModel = !!stayOnModel && busyRounds < 2;
-                    if (stayOnModel && !holdModel && busyRounds === 2) console.warn(`[Transcribe] ${model} is overloaded - part ${i + 1} may use another Gemini model`);
+                    const holdModel = !!stayOnModel && busyRounds < 2 && !isGeminiModelBusy(resolveGeminiModel(model));
+                    if (stayOnModel && !holdModel && !warnedBusy) {
+                        warnedBusy = true;
+                        console.warn(`[Transcribe] ${model} is overloaded - part ${i + 1} may use another Gemini model`);
+                    }
                     out = await tryKeysOnce(keys, (key) => transcribeClipWithGemini({
                         apiKey: key, model, audioBase64: clipBase64, mimeType: clipMime, clipSec,
                         promptOpts: { ...promptOpts, previousLines: laneCues.slice(-4) },
                         signal: abortCtrl.signal, stayOnModel: holdModel
                     }));
-                    busyRounds = out.ok ? 0 : (out.result && (out.result.code === 'OVERLOADED' || Number(out.result.status) === 503) ? busyRounds + 1 : 0);
-                    if (out.ok || failure || !isTransientGeminiFailure(out.result) || retry >= geminiRetryLimit(out.result)) break;
-                    const wait = geminiRetryWaitMs(out.result, retry);
+                    const busy = !out.ok && isGeminiBusy(out.result);
+                    busyRounds = busy ? busyRounds + 1 : 0;
+                    if (out.ok || failure || !geminiShouldRetry(out.result, otherRetries, chunkStartedAt)) break;
+                    const wait = geminiRetryWaitMs(out.result, busy ? retry : otherRetries);
                     const why = out.result.code === 'NETWORK_ERROR' ? 'Connection problem' : out.result.error === 'RATE_LIMIT_EXCEEDED' ? 'Google rate limit' : 'Google is busy';
-                    progress.note = `${why} - retrying part ${i + 1} in ${Math.round(wait / 1000)}s (${retry + 1}/${geminiRetryLimit(out.result)})`;
+                    const tries = busy ? `try ${retry + 2}` : `${otherRetries + 1}/${geminiRetryLimit(out.result)}`;
+                    progress.note = `${why} - retrying part ${i + 1} in ${Math.round(wait / 1000)}s (${tries})`;
                     console.warn(`[Transcribe] ${progress.note}: ${out.result.error}`);
+                    if (!busy) otherRetries++;
                     await sleepAbortable(wait, abortCtrl.signal);
                 }
                 // A cut-off or empty reply isn't cached, so a re-run asks Gemini again instead of reusing the hole.
@@ -2356,7 +2453,7 @@ app.post('/api/repair-subtitles', async (req, res) => {
 //
 // Lines are sent in numbered batches and matched back by number, so a dropped or
 // merged line can never shift every following translation onto the wrong cue.
-const TRANSLATE_BATCH_SIZE = 50;
+const TRANSLATE_BATCH_SIZE = 75;
 
 const TRANSLATE_RESPONSE_SCHEMA = {
     type: 'ARRAY',
@@ -2474,15 +2571,19 @@ app.post('/api/translate-srt', async (req, res) => {
 
                 const attempt = async (idx) => {
                     let r = null;
+                    let otherRetries = 0;
+                    const startedAt = Date.now();
                     for (let retry = 0; ; retry++) {
                         const out = await tryKeysOnce(keys, async (key) => {
                             const res = await translateBatch(key, idx, previousLines);
                             return res.success ? { ok: true, res } : { ok: false, result: res };
                         });
                         r = out.ok ? out.res : out.result;
-                        if (r.success || failure || !isTransientGeminiFailure(r) || retry >= geminiRetryLimit(r)) return r;
-                        const wait = geminiRetryWaitMs(r, retry);
+                        if (r.success || failure || !geminiShouldRetry(r, otherRetries, startedAt)) return r;
+                        const busy = isGeminiBusy(r);
+                        const wait = geminiRetryWaitMs(r, busy ? retry : otherRetries);
                         console.warn(`[Translate] ${r.error === 'RATE_LIMIT_EXCEEDED' ? 'Rate-limited' : 'Google busy'}, retrying lines ${idx[0] + 1}-${idx[idx.length - 1] + 1} in ${Math.round(wait / 1000)}s: ${r.message || r.error}`);
+                        if (!busy) otherRetries++;
                         await sleepAbortable(wait, abortCtrl.signal);
                     }
                 };
@@ -2518,81 +2619,6 @@ app.post('/api/translate-srt', async (req, res) => {
         res.status(500).json({ success: false, error: e.message });
     } finally {
         if (requestId) activeTranscribeRequests.delete(requestId);
-    }
-});
-
-// 4b. Khmer Movie Title Suggestions (DAI-Transcribe Suite)
-app.post('/api/suggest-movie-titles', async (req, res) => {
-    const {
-        title,
-        contextText,
-        genre = 'all',
-        apiKey,
-        apiKeys,
-        model = 'gemini-2.0-flash'
-    } = req.body;
-
-    if (!title || !title.trim()) {
-        return res.status(400).json({ success: false, error: 'Movie title is required.' });
-    }
-
-    const key = (apiKey && apiKey.trim()) || (Array.isArray(apiKeys) && apiKeys[0]);
-    if (!key) {
-        return res.status(400).json({ success: false, error: 'INVALID_API_KEY', message: 'Gemini API Key is required.' });
-    }
-
-    const abortCtrl = new AbortController();
-    try {
-        const prompt = `You are a master Cambodian film distributor, creative director, and localization expert specializing in translating foreign movie and drama titles into captivating, prestigious, and culturally resonant Khmer titles for Cambodian audiences and box office.
-
-ORIGINAL TITLE: "${title.trim()}"
-${genre ? `GENRE / REGISTER: ${genre}` : ''}
-${contextText ? `STORY CONTEXT / SUBTITLE SAMPLE / SYNOPSIS:\n${String(contextText).slice(0, 3000)}` : ''}
-
-TASK:
-Analyze the title, genre, and story context, and produce the top 10 catchy, authentic, and cinematic Khmer titles.
-Distribute them across styles:
-- 👑 រឿងបុរាណ / រាជវាំង / វីរបុរស (Royal & Epic)
-- 💖 ស្នេហាផ្អែមល្ហែម / មនោសញ្ចេតនា (Sweet Romance & Drama)
-- ⚔️ សកម្មភាព / កក្រើក / រំភើប (Action & Thriller)
-- ⚡ ចំណងជើងទាក់ទាញ / Viral (Catchy & Viral)
-- 🎭 ក្បួនភាពយន្តខ្មែរ (Classic Khmer Cinema Style)
-
-REQUIREMENTS:
-1. High-standard Khmer spelling and phonetic beauty. Use natural Khmer poetic rhythm.
-2. For each title, provide:
-   - "khmerTitle": The exact title in Khmer script (e.g. "វាសនានាគរាជមាស", "ស្នេហ៍ឆ្លងភព")
-   - "englishTranslation": Literal or meaning in English
-   - "category": One of "Royal & Epic", "Romance & Drama", "Action & Thriller", "Catchy & Viral", "Classic Cinema"
-   - "tagline": A short punchy promotional catchphrase in Khmer (ពាក្យស្លោក)
-   - "whyItWorks": Brief explanation (in English or Khmer) why this title sells well to Cambodian audiences.
-
-Output strictly valid JSON array of objects with the exact schema:
-[
-  {
-    "khmerTitle": "...",
-    "englishTranslation": "...",
-    "category": "...",
-    "tagline": "...",
-    "whyItWorks": "..."
-  }
-]`;
-
-        const payload = {
-            contents: [{ role: 'user', parts: [{ text: prompt }] }],
-            generationConfig: {
-                responseMimeType: 'application/json',
-                temperature: 0.7
-            }
-        };
-
-        const result = await executeGeminiGenerate(key, model, payload, abortCtrl.signal);
-        if (!result.success) return res.status(500).json(result);
-
-        const titles = parseJsonArrayLoose(result.text);
-        res.json({ success: true, titles: Array.isArray(titles) ? titles : [], rawText: result.text });
-    } catch (e) {
-        res.status(500).json({ success: false, error: e.message });
     }
 });
 

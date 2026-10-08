@@ -10,7 +10,7 @@
   // State
   const state = {
     isOpen: false,
-    activeTab: 'batch', // 'batch' | 'translator' | 'titles'
+    activeTab: 'batch', // 'batch' | 'translator'
     queue: [],
     isBatchRunning: false,
     batchAbortController: null,
@@ -37,15 +37,6 @@
       progress: { done: 0, total: 0 }
     },
 
-    // Tab 3: Title Suggestions State
-    titles: {
-      originalTitle: '',
-      contextText: '',
-      subtitlesFile: null,
-      genre: 'all',
-      isLoading: false,
-      results: []
-    },
 
     // Character Glossary
     glossary: []
@@ -258,7 +249,7 @@
 
   function switchTab(tabName) {
     state.activeTab = tabName;
-    ['batch', 'translator', 'titles'].forEach(t => {
+    ['batch', 'translator'].forEach(t => {
       const btn = $(`dai-tab-btn-${t}`);
       const pane = $(`dai-pane-${t}`);
       if (btn && pane) {
@@ -360,7 +351,6 @@
     const badge = $('dai-api-key-badge');
     const modelSelect = $('dai-model-select');
     const transModelSelect = $('dai-trans-model-select');
-    const titlesModelSelect = $('dai-titles-model-select');
 
     if (badge) {
       badge.onclick = () => openApiKeyModal();
@@ -381,7 +371,7 @@
       }
     }
 
-    [modelSelect, transModelSelect, titlesModelSelect].forEach(sel => {
+    [modelSelect, transModelSelect].forEach(sel => {
       if (sel) {
         if ([...sel.options].some(o => o.value === model)) {
           sel.value = model;
@@ -893,6 +883,17 @@
   // Max files transcribed at the same time (also capped by the number of API keys).
   const BATCH_MAX_PARALLEL_FILES = 6;
 
+  // A tab that failed for a passing reason is tried again right away, up to TAB_RETRIES more
+  // times, instead of waiting for every other tab to finish first (Dub Whole Series' "again"
+  // pass). Passing: Google busy or slow, a server hiccup (5xx), a per-minute rate limit. Not:
+  // a bad key, the daily quota, blocked or too-large audio, no speech.
+  const TAB_RETRIES = 2;
+  function isRetryableTabError(err) {
+    if (!err || err.name === 'AbortError' || err.isDailyQuota || err.code === 'INVALID_API_KEY') return false;
+    const status = Number(err.status);
+    return status === 429 || status >= 500;
+  }
+
   // onlyIds (Set of queue item ids) limits the batch to those items; the Start button
   // passes a click event, which means "everything pending".
   async function startBatch(onlyIds, { maxParallel = null, keyPerTab = false } = {}) {
@@ -907,6 +908,7 @@
     }
 
     const pendingItems = state.queue.filter(q => (q.status === 'pending' || q.status === 'failed') && (!onlyIds || onlyIds.has(q.id)));
+    pendingItems.forEach((q) => { q.retries = 0; }); // TAB_RETRIES count per run
     if (pendingItems.length === 0) {
       showToast('No pending files to process in the queue.', 'info');
       return;
@@ -1047,6 +1049,14 @@
             renderQueueTable();
             continue; // no spare: the top of the loop waits for one
           }
+          if (isRetryableTabError(err) && (item.retries || 0) < TAB_RETRIES && !quotaOut) {
+            item.retries = (item.retries || 0) + 1;
+            console.warn(`[DAI Batch] ${item.fileName} failed (${err.message}) - trying again now (${item.retries}/${TAB_RETRIES})`);
+            Object.assign(item, { status: 'pending', error: null, progress: 0 });
+            todo.unshift(item); // this worker takes it again next
+            renderQueueTable();
+            continue;
+          }
           item.status = 'failed';
           item.error = err.message || 'Processing failed';
           console.error(`[DAI Batch] Error processing ${item.fileName}:`, err);
@@ -1141,6 +1151,25 @@
     }
   }
 
+  // The result kept by /api/batch-result/save for this file (unchanged since), or null.
+  async function loadSavedBatchResult(backendBase, filePath, signal) {
+    try {
+      const res = await fetch(`${backendBase}/api/batch-result/get`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sourceFilePath: filePath }),
+        signal
+      });
+      const data = await res.json();
+      return data.found && data.result && Array.isArray(data.result.data) && data.result.data.length
+        ? { success: true, ...data.result }
+        : null;
+    } catch (e) {
+      if (e.name === 'AbortError') throw e;
+      return null; // can't ask: transcribe as usual
+    }
+  }
+
   async function processSingleBatchItem(item, opts) {
     const { apiKeys, model, genre, glossaryDict, customFolder, signal, stayOnModel = false, maxLanes = null } = opts;
     const backendBase = getBackendBase();
@@ -1150,125 +1179,144 @@
       status: 'extracting', progress: 0, progressText: 'Extracting Audio...', progressNote: '',
       startedAt: Date.now(), extractStartedAt: Date.now(), transcribeStartedAt: 0, repairStartedAt: 0,
       chunkDone: 0, chunkTotal: 0, repairDone: 0, repairTotal: 0, elapsedMs: 0,
-      apiSaver: localStorage.getItem('aiDubberApiSaver') === 'true'
+      apiSaver: localStorage.getItem('aiDubberApiSaver') !== 'false'
     });
     renderQueueTable();
 
-    let audioPath = null;
-    let audioBase64 = null;
+    // Finished in an earlier run (before a restart, or a second Start Batch): use that result
+    // instead of sending the part to Gemini again.
+    let transcribeResult = item.filePath ? await loadSavedBatchResult(backendBase, item.filePath, signal) : null;
+    item.reusedSaved = !!transcribeResult;
+    if (item.reusedSaved) {
+      console.log(`[DAI Batch] ${item.fileName}: using the result saved by an earlier run (no Gemini request)`);
+    } else {
+      let audioPath = null;
+      let audioBase64 = null;
 
-    if (item.filePath) {
-      // Local path available on Electron
-      const ext = (item.fileExt || '').toLowerCase();
-      if (['mp3', 'wav', 'm4a'].includes(ext)) {
-        audioPath = item.filePath;
-      } else {
+      if (item.filePath) {
+        // Local path available on Electron
+        const ext = (item.fileExt || '').toLowerCase();
+        if (['mp3', 'wav', 'm4a'].includes(ext)) {
+          audioPath = item.filePath;
+        } else {
+          const extractRes = await fetch(`${backendBase}/api/extract-audio`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              videoPath: item.filePath,
+              videoName: item.fileName,
+              partIndex: item.partIndex || 1,
+              customFolder,
+              sourceFilePath: item.filePath
+            }),
+            signal
+          });
+          const extractData = await extractRes.json();
+          if (!extractData.success || !extractData.audioPath) {
+            throw new Error(extractData.error || 'Failed to extract audio with FFmpeg');
+          }
+          audioPath = extractData.audioPath;
+        }
+      } else if (item.rawFile) {
+        // Browser File object (upload via FormData)
+        const formData = new FormData();
+        formData.append('videoFile', item.rawFile);
+        formData.append('videoName', item.fileName);
+        formData.append('partIndex', '1');
+        formData.append('customFolder', customFolder);
+
         const extractRes = await fetch(`${backendBase}/api/extract-audio`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            videoPath: item.filePath,
-            videoName: item.fileName,
-            partIndex: item.partIndex || 1,
-            customFolder,
-            sourceFilePath: item.filePath
-          }),
+          body: formData,
           signal
         });
         const extractData = await extractRes.json();
         if (!extractData.success || !extractData.audioPath) {
-          throw new Error(extractData.error || 'Failed to extract audio with FFmpeg');
+          throw new Error(extractData.error || 'Failed to extract audio from uploaded file');
         }
         audioPath = extractData.audioPath;
+      } else {
+        throw new Error('No valid file source found for this queue item');
       }
-    } else if (item.rawFile) {
-      // Browser File object (upload via FormData)
-      const formData = new FormData();
-      formData.append('videoFile', item.rawFile);
-      formData.append('videoName', item.fileName);
-      formData.append('partIndex', '1');
-      formData.append('customFolder', customFolder);
 
-      const extractRes = await fetch(`${backendBase}/api/extract-audio`, {
-        method: 'POST',
-        body: formData,
-        signal
-      });
-      const extractData = await extractRes.json();
-      if (!extractData.success || !extractData.audioPath) {
-        throw new Error(extractData.error || 'Failed to extract audio from uploaded file');
-      }
-      audioPath = extractData.audioPath;
-    } else {
-      throw new Error('No valid file source found for this queue item');
-    }
+      // Step 2: Gemini Transcribe & Translate
+      item.status = 'transcribing';
+      item.progress = 10;
+      item.progressText = 'Transcribing with Gemini...';
+      item.transcribeStartedAt = Date.now();
+      renderQueueTable();
 
-    // Step 2: Gemini Transcribe & Translate
-    item.status = 'transcribing';
-    item.progress = 10;
-    item.progressText = 'Transcribing with Gemini...';
-    item.transcribeStartedAt = Date.now();
-    renderQueueTable();
+      // Start progress polling
+      const pollInterval = setInterval(async () => {
+        try {
+          const pRes = await fetch(`${backendBase}/api/transcribe-progress?requestId=${encodeURIComponent(item.requestId)}`);
+          const pData = await pRes.json();
+          if (pData.success && pData.total > 0) {
+            // Only store what the server said; updateProgressDom() turns it into % every second.
+            item.chunkDone = pData.done;
+            item.chunkTotal = pData.total;
+            // After the last chunk the server double-checks gaps / fills missing Khmer, and says so in
+            // `note` with "(x/y)" (also "Google is busy - retrying..." while waiting).
+            item.progressNote = pData.note || '';
+            if (pData.done >= pData.total && !item.repairStartedAt) item.repairStartedAt = Date.now();
+            const m = item.repairStartedAt && /\((\d+)\/(\d+)\)/.exec(item.progressNote);
+            item.repairDone = m ? +m[1] : 0;
+            item.repairTotal = m ? +m[2] : 0;
+          }
+        } catch (e) {}
+      }, 1500);
 
-    // Start progress polling
-    const pollInterval = setInterval(async () => {
       try {
-        const pRes = await fetch(`${backendBase}/api/transcribe-progress?requestId=${encodeURIComponent(item.requestId)}`);
-        const pData = await pRes.json();
-        if (pData.success && pData.total > 0) {
-          // Only store what the server said; updateProgressDom() turns it into % every second.
-          item.chunkDone = pData.done;
-          item.chunkTotal = pData.total;
-          // After the last chunk the server double-checks gaps / fills missing Khmer, and says so in
-          // `note` with "(x/y)" (also "Google is busy - retrying..." while waiting).
-          item.progressNote = pData.note || '';
-          if (pData.done >= pData.total && !item.repairStartedAt) item.repairStartedAt = Date.now();
-          const m = item.repairStartedAt && /\((\d+)\/(\d+)\)/.exec(item.progressNote);
-          item.repairDone = m ? +m[1] : 0;
-          item.repairTotal = m ? +m[2] : 0;
-        }
-      } catch (e) {}
-    }, 1500);
+        const transcribeRes = await fetch(`${backendBase}/api/transcribe`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            audioPath,
+            videoName: item.fileName,
+            duration: item.duration || 60,
+            genre,
+            dramaRegister: genre,
+            glossary: glossaryDict,
+            apiKey: apiKeys[0],
+            apiKeys,
+            model,
+            requestId: item.requestId,
+            customFolder,
+            sourceFilePath: item.filePath,
+            apiSaver: localStorage.getItem('aiDubberApiSaver') !== 'false',
+            stayOnModel,
+            ...(maxLanes ? { maxLanes } : {})
+          }),
+          signal
+        });
 
-    let transcribeResult = null;
-    try {
-      const transcribeRes = await fetch(`${backendBase}/api/transcribe`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          audioPath,
-          videoName: item.fileName,
-          duration: item.duration || 60,
-          genre,
-          dramaRegister: genre,
-          glossary: glossaryDict,
-          apiKey: apiKeys[0],
-          apiKeys,
-          model,
-          requestId: item.requestId,
-          customFolder,
-          sourceFilePath: item.filePath,
-          apiSaver: localStorage.getItem('aiDubberApiSaver') === 'true',
-          stayOnModel,
-          ...(maxLanes ? { maxLanes } : {})
-        }),
-        signal
-      });
-
-      transcribeResult = await transcribeRes.json();
-    } finally {
-      clearInterval(pollInterval);
+        transcribeResult = await transcribeRes.json();
+      } finally {
+        clearInterval(pollInterval);
+      }
     }
 
     if (!transcribeResult || !transcribeResult.success) {
       const err = new Error(transcribeResult?.message || transcribeResult?.error || 'Gemini transcription failed');
       err.isDailyQuota = !!transcribeResult?.isDailyQuota;
+      err.status = transcribeResult?.status;
+      err.code = transcribeResult?.error;
       throw err;
     }
 
     const rawCues = transcribeResult.data || transcribeResult.subtitles || transcribeResult.cues || [];
     if (!Array.isArray(rawCues) || rawCues.length === 0) {
       throw new Error('No spoken dialogue detected in audio.');
+    }
+    if (!item.reusedSaved && item.filePath) {
+      fetch(`${backendBase}/api/batch-result/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sourceFilePath: item.filePath,
+          result: { data: rawCues, repair: transcribeResult.repair || {}, fallbackModels: transcribeResult.fallbackModels || [] }
+        })
+      }).catch((e) => console.warn('[DAI Batch] Could not keep the result for a later run:', e));
     }
 
     // Standardize cues
@@ -1295,8 +1343,8 @@
     item.status = 'completed';
     item.progress = 100;
     item.elapsedMs = Date.now() - item.startedAt;
-    learnTranscribeRate(item);
-    item.progressText = 'Completed';
+    if (!item.reusedSaved) learnTranscribeRate(item); // a reused result says nothing about speed
+    item.progressText = item.reusedSaved ? 'Completed (saved from an earlier run)' : 'Completed';
 
     // Auto-save SRT file
     try {
@@ -1798,67 +1846,93 @@
     progressBox?.classList.remove('hidden');
 
     let doneTabs = 0, changedLines = 0, stoppedFor = null;
-    for (let n = 0; n < jobs.length; n++) {
-      const job = jobs[n];
-      if (!state.translator.isRunning) break;
-      if (bridge.isTabBusy(job.ref)) {
-        job.status = 'skipped';
-        job.note = 'busy (transcribing or voicing)';
-        renderTabJobs();
-        continue;
-      }
-      job.status = 'running';
-      renderTabJobs();
-      if (progressLabel) progressLabel.textContent = `Tab ${n + 1}/${jobs.length}: ${job.name} (${job.lines.length} lines)…`;
-      if (progressBar) progressBar.style.width = `${Math.round((n / jobs.length) * 100)}%`;
-      const requestId = `daitr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      state.translator.requestId = requestId;
-      try {
-        const srtText = job.lines
-          .map((l, i) => `${i + 1}\n${formatSrtTimestamp(l.textStart)} --> ${formatSrtTimestamp(l.textEnd)}\n${cleanSource(l.source)}`)
-          .join('\n\n');
-        const res = await fetch(`${getBackendBase()}/api/translate-srt`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ srtText, genre, dramaRegister: genre, glossary: glossaryDict, apiKey: apiKeys[0], apiKeys, model, requestId }),
-          signal: state.translator.abortController.signal
-        });
-        const data = await res.json();
-        if (data.error === 'CANCELLED') throw Object.assign(new Error('stopped'), { name: 'AbortError' });
-        if (!data.success || !Array.isArray(data.data)) {
-          throw Object.assign(new Error(data.message || data.error || 'Translation failed'), { code: data.error });
-        }
-        const results = job.lines
-          .map((l, i) => data.data[i] && { id: l.id, text: data.data[i].text, gender: data.data[i].gender, emotion: data.data[i].emotion })
-          .filter(Boolean);
-        const changed = bridge.applyTabTranslation(job.ref, results);
-        if (changed < 0) {
+    const transConcurrency = Math.max(1, Math.min(3, jobs.length));
+    let nextJobIdx = 0;
+    const retryJobs = []; // tabs that failed for a passing reason: taken before new ones
+    // Stop cancels every tab still translating on the server (see stopSubtitleTranslation).
+    state.translator.batchRequestIds = new Set();
+    const updateTransProgress = () => {
+      if (progressLabel) progressLabel.textContent = `Translating: ${doneTabs}/${jobs.length} tabs completed…`;
+      if (progressBar) progressBar.style.width = `${Math.round((doneTabs / jobs.length) * 100)}%`;
+    };
+    updateTransProgress();
+
+    const transWorker = async (w) => {
+      const ownKey = apiKeys[w % apiKeys.length];
+      const workerKeys = [ownKey, ...apiKeys.filter((k) => k !== ownKey)];
+      while (retryJobs.length || nextJobIdx < jobs.length) {
+        if (!state.translator.isRunning || stoppedFor) break;
+        const n = retryJobs.length ? retryJobs.shift() : nextJobIdx++;
+        const job = jobs[n];
+        if (bridge.isTabBusy(job.ref)) {
           job.status = 'skipped';
-          job.note = 'tab was closed';
-        } else {
-          job.status = 'done';
-          job.note = `${results.length}/${job.lines.length} translated`;
-          doneTabs++;
-          changedLines += changed;
-        }
-        renderTranslatorResultsTable(job.lines.map((l, i) => ({ textStart: l.textStart, textEnd: l.textEnd, text: data.data[i]?.text || l.source })));
-      } catch (err) {
-        job.status = 'failed';
-        if (err.name === 'AbortError' || !state.translator.isRunning) {
-          job.note = 'stopped';
+          job.note = 'busy (transcribing or voicing)';
           renderTabJobs();
-          break;
+          continue;
         }
-        job.note = err.message;
-        // Out of quota or bad keys: every remaining tab would fail the same way.
-        if (/RATE_LIMIT|QUOTA|INVALID_API_KEY/i.test(`${err.code || ''} ${err.message}`)) {
-          stoppedFor = err.message;
-          renderTabJobs();
-          break;
+        job.status = 'running';
+        renderTabJobs();
+        const requestId = `daitr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        state.translator.batchRequestIds.add(requestId);
+        try {
+          const srtText = job.lines
+            .map((l, i) => `${i + 1}\n${formatSrtTimestamp(l.textStart)} --> ${formatSrtTimestamp(l.textEnd)}\n${cleanSource(l.source)}`)
+            .join('\n\n');
+          const res = await fetch(`${getBackendBase()}/api/translate-srt`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ srtText, genre, dramaRegister: genre, glossary: glossaryDict, apiKey: workerKeys[0], apiKeys: workerKeys, model, requestId }),
+            signal: state.translator.abortController.signal
+          });
+          const data = await res.json();
+          if (data.error === 'CANCELLED') throw Object.assign(new Error('stopped'), { name: 'AbortError' });
+          if (!data.success || !Array.isArray(data.data)) {
+            throw Object.assign(new Error(data.message || data.error || 'Translation failed'), { code: data.error, status: data.status });
+          }
+          const results = job.lines
+            .map((l, i) => data.data[i] && { id: l.id, text: data.data[i].text, gender: data.data[i].gender, emotion: data.data[i].emotion })
+            .filter(Boolean);
+          const changed = bridge.applyTabTranslation(job.ref, results);
+          if (changed < 0) {
+            job.status = 'skipped';
+            job.note = 'tab was closed';
+          } else {
+            job.status = 'done';
+            job.note = `${results.length}/${job.lines.length} translated`;
+            doneTabs++;
+            changedLines += changed;
+          }
+          renderTranslatorResultsTable(job.lines.map((l, i) => ({ textStart: l.textStart, textEnd: l.textEnd, text: data.data[i]?.text || l.source })));
+        } catch (err) {
+          job.status = 'failed';
+          if (err.name === 'AbortError' || !state.translator.isRunning) {
+            job.note = 'stopped';
+            renderTabJobs();
+            break;
+          }
+          job.note = err.message;
+          // Out of quota or bad keys: every remaining tab would fail the same way.
+          if (/RATE_LIMIT|QUOTA|INVALID_API_KEY/i.test(`${err.code || ''} ${err.message}`)) {
+            stoppedFor = err.message;
+            renderTabJobs();
+            break;
+          }
+          if (isRetryableTabError(err) && (job.retries || 0) < TAB_RETRIES) {
+            job.retries = (job.retries || 0) + 1;
+            job.status = 'pending';
+            job.note = `trying again (${job.retries}/${TAB_RETRIES}): ${err.message}`;
+            retryJobs.unshift(n);
+            renderTabJobs();
+            continue;
+          }
+        } finally {
+          state.translator.batchRequestIds.delete(requestId);
         }
+        updateTransProgress();
+        renderTabJobs();
       }
-      renderTabJobs();
-    }
+    };
+    await Promise.all(Array.from({ length: transConcurrency }, (_, w) => transWorker(w)));
 
     const stopped = !state.translator.isRunning;
     state.translator.isRunning = false;
@@ -1980,14 +2054,16 @@
       state.translator.abortController.abort();
     }
     // Aborting the fetch doesn't stop the server's Gemini calls.
-    if (state.translator.requestId) {
+    const requestIds = [state.translator.requestId, ...(state.translator.batchRequestIds || [])].filter(Boolean);
+    for (const requestId of requestIds) {
       fetch(`${getBackendBase()}/api/cancel-transcribe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestId: state.translator.requestId })
+        body: JSON.stringify({ requestId })
       }).catch(() => {});
-      state.translator.requestId = null;
     }
+    state.translator.requestId = null;
+    state.translator.batchRequestIds?.clear();
     state.translator.isRunning = false;
     updateTranslatorButtons();
   }
@@ -2044,186 +2120,6 @@
         </tr>
       `;
     }).join('');
-  }
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // TAB 3: KHMER MOVIE TITLE SUGGESTIONS
-  // ──────────────────────────────────────────────────────────────────────────
-
-  function setupTitlesEvents() {
-    $('dai-titles-btn-suggest')?.addEventListener('click', analyzeAndSuggestTitles);
-    $('dai-titles-btn-clear')?.addEventListener('click', clearTitlesForm);
-    $('dai-titles-results')?.addEventListener('click', (e) => {
-      const btn = e.target.closest('[data-title-action]');
-      if (!btn) return;
-      const title = btn.dataset.title || '';
-      if (btn.dataset.titleAction === 'apply') applyTitleToProject(title);
-      else navigator.clipboard.writeText(title).then(() => showToast(`Copied title: ${title}`, 'success'));
-    });
-
-    const dropzone = $('dai-titles-dropzone');
-    const fileInput = $('dai-titles-file-input');
-    if (dropzone && fileInput) {
-      const useContextFile = async (file) => {
-        const text = await file.text();
-        const contextArea = $('dai-titles-context-input');
-        if (contextArea) contextArea.value = text.slice(0, 4000);
-        showToast(`Extracted dialogue from ${file.name} for story context!`, 'info');
-      };
-      dropzone.onclick = () => fileInput.click();
-      fileInput.onchange = async (e) => {
-        const file = e.target.files?.[0];
-        if (file) useContextFile(file);
-      };
-      acceptFileDrop(dropzone, useContextFile);
-    }
-  }
-
-  async function analyzeAndSuggestTitles() {
-    const titleInput = $('dai-titles-original-input');
-    const contextInput = $('dai-titles-context-input');
-    const genreSelect = $('dai-titles-genre-select');
-    const modelSelect = $('dai-titles-model-select');
-    const resultsContainer = $('dai-titles-results');
-
-    const title = titleInput?.value.trim() || '';
-    const contextText = contextInput?.value.trim() || '';
-    const genre = genreSelect?.value || 'all';
-    const model = modelSelect?.value || getActiveModel();
-
-    if (!title && !contextText) {
-      showToast('Please enter an Original Movie Title or provide Story Context.', 'warning');
-      return;
-    }
-
-    const apiKeys = getActiveApiKeys();
-    if (apiKeys.length === 0) {
-      showToast('Please add your Gemini API Key in Settings ➔ General.', 'error');
-      document.getElementById('btn-open-settings')?.click();
-      return;
-    }
-
-    const btn = $('dai-titles-btn-suggest');
-    const btnLabel = $('dai-titles-btn-label');
-    const btnIcon = $('dai-titles-btn-icon');
-
-    if (btn) btn.disabled = true;
-    if (btnLabel) btnLabel.textContent = 'Analyzing & Generating...';
-    if (btnIcon) btnIcon.classList.add('animate-spin');
-
-    try {
-      const backendBase = getBackendBase();
-      const res = await fetch(`${backendBase}/api/suggest-movie-titles`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: title || 'Untitled Project',
-          contextText,
-          genre,
-          apiKey: apiKeys[0],
-          apiKeys,
-          model
-        })
-      });
-
-      const data = await res.json();
-      if (!data.success || !Array.isArray(data.titles) || data.titles.length === 0) {
-        throw new Error(data.error || 'Failed to generate title suggestions');
-      }
-
-      state.titles.results = data.titles;
-      renderTitlesResults(data.titles);
-      showToast('Top 10 Khmer Movie Titles generated!', 'success');
-    } catch (err) {
-      showToast(`Error: ${err.message}`, 'error');
-    } finally {
-      if (btn) btn.disabled = false;
-      if (btnLabel) btnLabel.textContent = '✨ Analyze & Suggest Titles';
-      if (btnIcon) btnIcon.classList.remove('animate-spin');
-    }
-  }
-
-  function clearTitlesForm() {
-    const titleInput = $('dai-titles-original-input');
-    const contextInput = $('dai-titles-context-input');
-    const resultsContainer = $('dai-titles-results');
-    if (titleInput) titleInput.value = '';
-    if (contextInput) contextInput.value = '';
-    if (resultsContainer) resultsContainer.innerHTML = '';
-  }
-
-  function renderTitlesResults(titles) {
-    const container = $('dai-titles-results');
-    if (!container) return;
-
-    container.innerHTML = titles.map((item, idx) => {
-      let categoryBadge = '';
-      const cat = (item.category || '').toLowerCase();
-      if (cat.includes('royal') || cat.includes('epic')) {
-        categoryBadge = 'bg-amber-500/15 border-amber-500/30 text-amber-300';
-      } else if (cat.includes('romance') || cat.includes('drama')) {
-        categoryBadge = 'bg-pink-500/15 border-pink-500/30 text-pink-300';
-      } else if (cat.includes('action') || cat.includes('thriller')) {
-        categoryBadge = 'bg-rose-500/15 border-rose-500/30 text-rose-300';
-      } else {
-        categoryBadge = 'bg-indigo-500/15 border-indigo-500/30 text-indigo-300';
-      }
-
-      return `
-        <div class="p-3.5 rounded-xl border border-[var(--border-light)] bg-[var(--bg-base)] flex flex-col gap-2 hover:border-indigo-400/50 transition-all group">
-          <div class="flex items-center justify-between">
-            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold border uppercase tracking-wider ${categoryBadge}">
-              ${escapeHtml(item.category || 'Movie Title')}
-            </span>
-            <div class="flex items-center gap-1.5 opacity-90 group-hover:opacity-100">
-              <button data-title-action="copy" data-title="${escapeHtml(item.khmerTitle)}"
-                class="px-2 py-1 rounded-md text-[11px] font-semibold border border-[var(--border-light)] hover:bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-white transition-all flex items-center gap-1">
-                <i data-lucide="copy" class="w-3 h-3"></i> Copy
-              </button>
-              <button data-title-action="apply" data-title="${escapeHtml(item.khmerTitle)}"
-                class="px-2 py-1 rounded-md text-[11px] font-bold bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 hover:bg-indigo-500/30 transition-all flex items-center gap-1">
-                <i data-lucide="check" class="w-3 h-3"></i> Apply to Tab
-              </button>
-            </div>
-          </div>
-
-          <div class="flex flex-col">
-            <h3 class="text-base font-bold text-white font-khmer leading-snug">
-              ${escapeHtml(item.khmerTitle)}
-            </h3>
-            ${item.englishTranslation ? `
-              <span class="text-xs text-[var(--text-muted)] font-mono">
-                ${escapeHtml(item.englishTranslation)}
-              </span>
-            ` : ''}
-          </div>
-
-          ${item.tagline ? `
-            <div class="p-2 rounded-lg bg-[var(--bg-hover)]/40 border border-[var(--border-color)] text-xs text-amber-200/90 font-khmer italic">
-              "${escapeHtml(item.tagline)}"
-            </div>
-          ` : ''}
-
-          ${item.whyItWorks ? `
-            <p class="text-[11px] text-[var(--text-secondary)] leading-relaxed">
-              ${escapeHtml(item.whyItWorks)}
-            </p>
-          ` : ''}
-        </div>
-      `;
-    }).join('');
-
-    if (window.lucide && typeof window.lucide.createIcons === 'function') {
-      window.lucide.createIcons();
-    }
-  }
-
-  function applyTitleToProject(khmerTitle) {
-    if (window.dubberBridge && window.dubberBridge.renameActiveTab(khmerTitle)) {
-      showToast(`Applied title to Tab: "${khmerTitle}"`, 'success');
-    } else {
-      navigator.clipboard.writeText(khmerTitle).then(() => showToast(`Copied title: ${khmerTitle}`, 'success'));
-    }
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -2486,14 +2382,19 @@
     // Top Tabs
     $('dai-tab-btn-batch')?.addEventListener('click', () => switchTab('batch'));
     $('dai-tab-btn-translator')?.addEventListener('click', () => switchTab('translator'));
-    $('dai-tab-btn-titles')?.addEventListener('click', () => switchTab('titles'));
+    // Title suggestions live in one place: the Khmer Movie Title drawer (top bar), which also
+    // reads the open project's story. This tab button just opens it.
+    $('dai-tab-btn-titles')?.addEventListener('click', () => {
+      closeDaiTranscribeModal();
+      document.getElementById('btn-open-title-ai')?.click();
+    });
 
     // Model Select Synchronization
     const onModelChange = (e) => {
       const val = e.target.value;
       if (!val) return;
       localStorage.setItem('aiDubberModel', val);
-      ['dai-model-select', 'dai-trans-model-select', 'dai-titles-model-select'].forEach(id => {
+      ['dai-model-select', 'dai-trans-model-select'].forEach(id => {
         const el = $(id);
         if (el && el !== e.target) el.value = val;
       });
@@ -2507,7 +2408,6 @@
     };
     $('dai-model-select')?.addEventListener('change', onModelChange);
     $('dai-trans-model-select')?.addEventListener('change', onModelChange);
-    $('dai-titles-model-select')?.addEventListener('change', onModelChange);
 
     // Genre: both dropdowns change the app's one saved genre and follow it when it changes
     // anywhere else (studio genre button, Dub Whole Series).
@@ -2676,7 +2576,6 @@
 
     // Setup Tab 2 & Tab 3
     setupTranslatorEvents();
-    setupTitlesEvents();
   }
 
   // Expose global controller
@@ -2714,8 +2613,7 @@
     closeApiKeyModal,
     addApiKey,
     removeApiKey,
-    copyApiKey,
-    applyTitleToProject
+    copyApiKey
   };
 
   // Auto-init once DOM ready

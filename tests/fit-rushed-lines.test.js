@@ -10,6 +10,10 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'js', 'studio
 const start = src.indexOf('    const FAST_SPEED_THRESHOLD = 1.15;');
 const end = src.indexOf('    // ── Timeline changes ──');
 const fastBlock = src.slice(start, end);
+// The voice's room for a line (a line matched to the video may speak past its text), from the
+// same file; and the Khmer text as said (the pace estimate of a line not voiced yet uses it).
+const voiceSlotSrc = src.slice(src.indexOf('    const VOICE_GAP = '), src.indexOf('    // Bottom margin (% of the video height)'));
+const KhmerSpeech = require('../frontend/js/khmer-speech.js');
 
 // keys: the API keys in Settings. delayMs: how long each fake Gemini answer takes (to see
 // requests overlap). env.maxParallel: most requests that were running at once.
@@ -18,7 +22,7 @@ function makeEnv({ condense, keys = ['k1'], delayMs = 0 }) {
     projects: [], activeProjectIndex: -1, subtitles: [], activeAudios: {}, duration: 0,
     requests: [], running: 0, maxParallel: 0, cancelled: [],
   };
-  const factory = new Function('env', 'condense', 'keysJson', 'delayMs', `
+  const factory = new Function('env', 'condense', 'keysJson', 'delayMs', 'KhmerSpeech', `
     let { projects, activeProjectIndex, subtitles, activeAudios, duration } = env;
     const saveCurrentProjectState = () => { }, renderSubtitles = () => { }, updateContextualControls = () => { };
     const showToast = () => { }, saveStateToPast = () => { }, saveProjectStateDirectly = () => { };
@@ -27,7 +31,7 @@ function makeEnv({ condense, keys = ['k1'], delayMs = 0 }) {
     const localStorage = { getItem: (k) => (k === 'aiDubberApiKeys' ? keysJson : null) };
     const document = { getElementById: () => null, querySelector: () => null };
     const CSS = { escape: (s) => s };
-    const window = {};
+    const window = { KhmerSpeech };
     const fetch = async (url, opts) => {
       const body = JSON.parse(opts.body);
       if (url.endsWith('/api/cancel-transcribe')) {
@@ -41,10 +45,11 @@ function makeEnv({ condense, keys = ['k1'], delayMs = 0 }) {
       env.running--;
       return { json: async () => ({ success: true, results: condense(body.subtitles) }) };
     };
+    ${voiceSlotSrc}
     ${fastBlock}
-    return { fitFastLinesAllTabs, refitShortenedLinesAllTabs, analyzeSubPace, setProjects: (p) => { projects = p; }, setActive: (i, live) => { activeProjectIndex = i; subtitles = live; }, getLive: () => subtitles };
+    return { fitFastLinesAllTabs, refitShortenedLinesAllTabs, analyzeSubPace, settleMatchedSubtitles, setProjects: (p) => { projects = p; }, setActive: (i, live) => { activeProjectIndex = i; subtitles = live; }, getLive: () => subtitles };
   `);
-  return { env, api: factory(env, condense, JSON.stringify(keys), delayMs) };
+  return { env, api: factory(env, condense, JSON.stringify(keys), delayMs, KhmerSpeech) };
 }
 
 // A line: text slot [start, end], voice of baseDur seconds.
@@ -66,6 +71,31 @@ describe('fit rushed lines (Dub Whole Series)', () => {
     assert.equal(env.requests.length, 0);
     assert.ok(parseFloat(tab.subtitles[0].textEnd) >= 2.6, 'end moved into the free time');
     assert.equal(tab.subtitles[0].speed, 1.0);
+  });
+
+  test('a line matched to the video: its voice uses the time up to the next line, its text keeps the video\'s times', async () => {
+    const { env, api } = makeEnv({ condense: () => [] });
+    // On screen 0-1.2 s (the video's own line), voice 2.6 s, next line at 5 s.
+    const a = { ...line('a', 0, 1.2, 2.6), screenMatched: true, voiceRoom: '4.90' };
+    const tab = { duration: 60, subtitles: [a, { ...line('b', 5, 6, 0.9), screenMatched: true, voiceRoom: '55.00' }] };
+    api.setProjects([tab]);
+    assert.ok(api.analyzeSubPace(a).effectiveSpeed < 1.15, 'not counted as rushed');
+    const r = await api.fitFastLinesAllTabs();
+    assert.equal(r.extended, 0);
+    assert.equal(env.requests.length, 0);
+    assert.equal(a.textEnd, '1.2', 'shown exactly while the video\'s line is');
+    assert.equal(a.speed, 1);
+  });
+
+  test('a matched line whose voice runs into the next line is still sped up (not past the next line)', async () => {
+    const { api } = makeEnv({ condense: () => [] });
+    const a = { ...line('a', 0, 1.2, 4.0), screenMatched: true, voiceRoom: '2.90' };
+    const tab = { duration: 60, subtitles: [a, { ...line('b', 3, 4, 0.9), screenMatched: true }] };
+    api.setProjects([tab]);
+    await api.fitFastLinesAllTabs();
+    assert.equal(a.textEnd, '1.2');
+    assert.ok(parseFloat(a.audioEnd) <= 3, `voice ends by the next line (${a.audioEnd})`);
+    assert.ok(a.speed > 1.3 && a.speed < 1.5, `just fast enough (${a.speed})`);
   });
 
   test('a line with no room is shortened by Gemini and left idle to be voiced again', async () => {
@@ -152,5 +182,40 @@ describe('fit rushed lines (Dub Whole Series)', () => {
     assert.equal(api.refitShortenedLinesAllTabs(), 0);
     assert.equal(tab.subtitles[0].speed, 1.0);
     assert.equal(tab.subtitles[0]._fitShortened, undefined);
+  });
+});
+
+// A subtitle matched to the video's own line (Match Subtitles to Video) appears with the line and
+// stays up while its voice speaks - never into the next subtitle.
+describe('matched subtitles follow their voice', () => {
+  const matched = (id, start, screenLen, audioEnd, extra = {}) => ({
+    id, textStart: String(start), textEnd: (start + screenLen).toFixed(2), screenLen: String(screenLen), screenMatched: true,
+    audioStatus: audioEnd == null ? 'idle' : 'ready', audioStart: String(start), audioEnd: audioEnd == null ? undefined : String(audioEnd), ...extra,
+  });
+
+  test('the voice outlasts the line: the subtitle stays until the voice ends', () => {
+    const { api } = makeEnv({ condense: () => [] });
+    const subs = [matched('a', 0, 1.2, 2.6), matched('b', 5, 1.0, 5.8)];
+    assert.equal(api.settleMatchedSubtitles(subs, 60), 1);
+    assert.equal(subs[0].textEnd, '2.75');
+    assert.equal(subs[1].textEnd, '6.00', 'a voice shorter than its line: the line\'s time');
+  });
+
+  test('never into the next subtitle; never shorter than the video\'s line', () => {
+    const { api } = makeEnv({ condense: () => [] });
+    const subs = [matched('a', 0, 1.2, 3.4), matched('b', 3, 1.0, 3.5)];
+    api.settleMatchedSubtitles(subs, 60);
+    assert.equal(subs[0].textEnd, '2.95');
+    const lone = [matched('c', 0, 2.0, 0.8)];
+    api.settleMatchedSubtitles(lone, 60);
+    assert.equal(lone[0].textEnd, '2.00');
+  });
+
+  test('no voice yet, or not matched: left as it is', () => {
+    const { api } = makeEnv({ condense: () => [] });
+    const subs = [matched('a', 0, 1.2, null), { id: 'b', textStart: '2', textEnd: '3', audioStatus: 'ready', audioEnd: '6' }];
+    assert.equal(api.settleMatchedSubtitles(subs, 60), 0);
+    assert.equal(subs[0].textEnd, '1.20');
+    assert.equal(subs[1].textEnd, '3');
   });
 });

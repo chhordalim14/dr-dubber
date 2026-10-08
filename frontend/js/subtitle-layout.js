@@ -335,6 +335,81 @@
     return Math.min(n - 1, Math.max(0, idx));
   }
 
+  // Ends of a phrase: a piece of a subtitle best ends after one of these.
+  const PHRASE_END_RE = /[។៕៖,，.!?！？;；:：…]/;
+
+  // Splits a subtitle's text into consecutive pieces of about `shares` of its width each
+  // (shares add up to 1), for a subtitle shown over several on-screen lines of the video
+  // (see screen-sync.js). Pieces start at a space or a Khmer word start, never before a
+  // vowel sign; a break after a phrase end or a space is preferred when it is close.
+  // Returns the pieces, or null when the text has too few places to break.
+  function splitByShares(text, shares) {
+    const clean = cleanText(text);
+    const n = Array.isArray(shares) ? shares.length : 0;
+    if (n < 2 || !clean) return null;
+    const widths = [0]; // widths[k]: width of clean.slice(0, k), in em
+    for (let k = 0; k < clean.length; k++) widths.push(widths[k] + charWidth(clean[k], 1, k > 0 ? clean[k - 1] : ''));
+    const total = widths[clean.length] || 1;
+    const starts = wordStarts(clean);
+    const cands = [];
+    for (let k = 1; k < clean.length; k++) {
+      if (isBreakSpace(clean[k])) continue;
+      const afterSpace = isBreakSpace(clean[k - 1]);
+      if (!afterSpace && starts && !starts.has(k)) continue;
+      if (!canBreakBefore(clean, k)) continue;
+      const before = clean.slice(0, k).trimEnd();
+      cands.push({ k, good: afterSpace || PHRASE_END_RE.test(before[before.length - 1] || '') });
+    }
+    const sum = shares.reduce((a, s) => a + (toNumber(s) > 0 ? toNumber(s) : 0), 0) || 1;
+    const cuts = [];
+    let from = 0, acc = 0;
+    for (let q = 0; q < n - 1; q++) {
+      acc += (toNumber(shares[q]) > 0 ? toNumber(shares[q]) : 0) / sum;
+      const target = acc * total;
+      const left = n - 2 - q; // cuts still to make after this one
+      let pick = -1, pickCost = Infinity;
+      for (let c = from; c < cands.length - left; c++) {
+        const cost = Math.abs(widths[cands[c].k] - target) / total - (cands[c].good ? 0.08 : 0);
+        if (cost < pickCost) { pick = c; pickCost = cost; }
+      }
+      if (pick < 0) return null;
+      cuts.push(cands[pick].k);
+      from = pick + 1;
+    }
+    const pieces = [];
+    let at = 0;
+    for (const k of cuts.concat(clean.length)) {
+      pieces.push(clean.slice(at, k).trim());
+      at = k;
+    }
+    return pieces.every(Boolean) ? pieces : null;
+  }
+
+  // What a subtitle puts on screen: [{ start, end, text }]. Usually itself; a subtitle
+  // matched to several on-screen lines of the video (screenParts: [{ from, to, share }],
+  // from/to as fractions of screenLen, the time those lines show from its start - or of its
+  // own time without one - so moving it carries them along) shows its text split between
+  // their times. The last piece stays up to the subtitle's end (which may follow its voice
+  // past the video's line). The preview and the export both use this.
+  function displayCues(sub) {
+    const s = sub || {};
+    const start = toNumber(s.textStart) || 0;
+    const end = Math.max(start, toNumber(s.textEnd) || 0);
+    const whole = [{ start, end, text: s.text == null ? '' : String(s.text) }];
+    const parts = Array.isArray(s.screenParts) ? s.screenParts : null;
+    if (!parts || parts.length < 2) return whole;
+    const pieces = splitByShares(s.text, parts.map((p) => p && p.share));
+    if (!pieces) return whole;
+    const screenLen = toNumber(s.screenLen);
+    const len = screenLen > 0 ? Math.min(screenLen, end - start) : end - start;
+    const at = (f) => start + Math.min(1, Math.max(0, toNumber(f) || 0)) * len;
+    return parts.map((p, i) => ({
+      start: at(p.from),
+      end: i === parts.length - 1 ? end : at(p.to),
+      text: pieces[i],
+    })).filter((c) => c.end > c.start);
+  }
+
   // Normalises the subtitle style a render request carries. The editor sends
   // subtitleSize / subtitleColor; older callers sent subtitleFontSize /
   // subtitleFontColor. The names the editor sends win, then the old names, then the
@@ -395,6 +470,8 @@
     layoutSubtitle,
     chunkTimes,
     chunkIndexAt,
+    splitByShares,
+    displayCues,
     resolveStyle,
     previewPxToVideoPx,
   };

@@ -11,7 +11,7 @@ const crypto = require('crypto');
 const { spawn: realSpawn, execFile: realExecFile } = require('child_process');
 const { StringDecoder } = require('string_decoder');
 
-const DETECTOR_VERSION = 1; // bump when text_detector.py's results change: old cached results are ignored
+const DETECTOR_VERSION = 4; // bump when text_detector.py's results change: old cached results are ignored
 const JOB_KEEP_MS = 30 * 60 * 1000;
 
 function createTextDetectService({
@@ -106,7 +106,7 @@ function createTextDetectService({
             if (job.status !== 'running') return; // cancelled meanwhile
             if (buf.trim().startsWith('{')) { try { last = JSON.parse(buf.trim()); } catch (e) { } }
             if (last && last.success) {
-                const result = { row: last.row || null, segments: last.segments || [], width: last.width, height: last.height, duration: last.duration, seconds: last.seconds };
+                const result = { row: last.row || null, segments: last.segments || [], lines: last.lines || [], width: last.width, height: last.height, duration: last.duration, seconds: last.seconds };
                 try { fs.writeFileSync(cacheFile(job.key), JSON.stringify(result)); } catch (e) { }
                 log.log(`[Text detect] ${path.basename(job.videoPath)}: ${result.segments.length} subtitle line(s)${result.row ? ` in the row at ${result.row.y}%` : ', no subtitles'} (${result.seconds}s)`);
                 return finish(job, { status: 'done', progress: 100, result });

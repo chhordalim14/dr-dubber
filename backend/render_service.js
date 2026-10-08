@@ -651,7 +651,10 @@ function buildClipAudioFilters(item, voiceVolume) {
 
     if (offset > 0 || (dur !== null && dur > 0)) {
         if (dur !== null && dur > 0) {
-            const sourceDuration = (dur * speed).toFixed(3);
+            // The clip's length comes from times kept to 1/100 s (and a voice length the TTS
+            // server rounds too), so it can be a few ms short of the voice: a little slack, or
+            // the last sound of a line is cut off.
+            const sourceDuration = (dur * speed + 0.05).toFixed(3);
             afParts.push(`atrim=start=${offset.toFixed(3)}:duration=${sourceDuration}`, 'asetpts=PTS-STARTPTS');
         } else if (offset > 0) {
             afParts.push(`atrim=start=${offset.toFixed(3)}`, 'asetpts=PTS-STARTPTS');

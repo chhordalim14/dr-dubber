@@ -5054,6 +5054,7 @@
       menuAction("btn-all-tabs-pipeline", transcribeThenFixMissingAll);
       menuAction("btn-all-tabs-unify-names", unifyNamesAllTabs);
       menuAction("btn-all-tabs-blur-text", () => detectTextAllProjects());
+      menuAction("btn-all-tabs-sync-screen", () => syncSubtitlesAllProjects());
       menuAction("btn-all-tabs-translate", () => window.daiStudio?.translateAllTabs());
     }
 
@@ -5603,7 +5604,11 @@
           }
         }
 
-        if (activeSub && activeSub.text.trim() !== "") {
+        // A subtitle matched to several of the video's own lines shows a piece of its text
+        // during each (Match Subtitles to Video); between them, nothing.
+        const activeCue = activeSub ? subCues(activeSub).find((c) => currentTime >= c.start && currentTime <= c.end) : null;
+
+        if (activeSub && activeCue && activeCue.text.trim() !== "") {
           const baseSize = globalSubtitleSize;
 
           const vWidth = mainVideo.videoWidth || 1080;
@@ -5660,14 +5665,14 @@
           // --- 4. Cached Smart Wrap (Only recalculate if text, size, or video size changes) ---
           // The wrap/chunk rules live in subtitle-layout.js and the export burns in exactly
           // the same lines, so what is seen here is what the exported video shows.
-          if (!activeSub._cachedChunks || activeSub._cachedText !== activeSub.text || activeSub._cachedBaseSize !== baseSize || activeSub._cachedVWidth !== vWidth || activeSub._cachedVHeight !== vHeight) {
-            const layout = SubLayout.layoutSubtitle(activeSub.text, { baseSize, videoWidth: vWidth, videoHeight: vHeight });
+          if (!activeSub._cachedChunks || activeSub._cachedText !== activeCue.text || activeSub._cachedBaseSize !== baseSize || activeSub._cachedVWidth !== vWidth || activeSub._cachedVHeight !== vHeight) {
+            const layout = SubLayout.layoutSubtitle(activeCue.text, { baseSize, videoWidth: vWidth, videoHeight: vHeight });
             const escapeLine = (line) => line.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
             const chunks = layout.chunks.map((lines) => lines.map(escapeLine).join("<br>"));
             if (chunks.length === 0) chunks.push("");
 
             activeSub._cachedChunks = chunks;
-            activeSub._cachedText = activeSub.text;
+            activeSub._cachedText = activeCue.text;
             activeSub._cachedBaseSize = baseSize;
             activeSub._cachedVWidth = vWidth;
             activeSub._cachedVHeight = vHeight;
@@ -5677,7 +5682,7 @@
 
           // --- 5. Dynamic Time Division (Live Swap) ---
           // Same split as the export: each chunk gets an equal share of the line's time.
-          const currentChunkIdx = SubLayout.chunkIndexAt(activeSub.textStart, activeSub.textEnd, chunks.length, currentTime);
+          const currentChunkIdx = SubLayout.chunkIndexAt(activeCue.start, activeCue.end, chunks.length, currentTime);
 
           subtitleText.innerHTML = chunks[currentChunkIdx].replace(/\\N/g, "<br>");
           subtitleOverlay.classList.remove("hidden");
@@ -6423,8 +6428,10 @@
     // ── Blur on-screen subtitles ────────────────────────────────────────────
     // The tab's video is scanned for burned-in subtitles (backend /api/detect-text, a Python
     // text detector) and each line is blurred only while it shows - in this preview and in the
-    // export (render config `textBlurs`). proj.textBlur = { videoPath, segments, row, enabled },
-    // segments [{ start, end, x, y, w, h }] in seconds and % of the source frame. The blur sits on
+    // export (render config `textBlurs`). proj.textBlur = { videoPath, segments, lines, row,
+    // width, height, enabled }, segments [{ start, end, x, y, w, h }] in seconds and % of the
+    // source frame; lines [{ start, end, x, w, text }]: each on-screen line as shown, to the frame
+    // (Match Subtitles to Video uses them). The blur sits on
     // the source picture, so zoom, flip, pan and crop carry it along like the video itself.
     const TEXT_DETECT_POLL_MS = 1500;
     let textDetectAllRun = null; // { stopped, promise } while subtitles are found for several tabs
@@ -6523,6 +6530,10 @@
       if (proj && proj.isDetectingText) note = "Reading the video for burned-in subtitles…";
       else if (proj && proj.textDetectError) note = `Not done: ${proj.textDetectError}`;
       else if (tb) note = tb.segments.length ? `${tb.segments.length} subtitle line(s) - each blurred only while it shows${tb.enabled === false ? " (off)" : ""}` : "No burned-in subtitles found in this video.";
+      // (Transcribed again since: the new lines carry no match, so no note.)
+      const synced = proj && proj.screenSync && (!proj.videoFilePath || proj.screenSync.videoPath === proj.videoFilePath)
+        && (subtitles || []).some((s) => s.screenMatched) ? proj.screenSync : null;
+      if (synced && !(proj && proj.isDetectingText)) note += `${note ? " · " : ""}${synced.matched} of ${synced.total} subtitle(s) matched to the video's lines`;
       if (status) {
         status.textContent = note;
         status.classList.toggle("hidden", !note);
@@ -6574,7 +6585,10 @@
           if (st.status !== "done" || !st.result) throw new Error(st.error || "Reading the video failed.");
           const segments = (st.result.segments || []).slice().sort((a, b) => a.start - b.start);
           const keepOff = proj.textBlur && proj.textBlur.videoPath === videoPath && proj.textBlur.enabled === false;
-          proj.textBlur = { videoPath, segments, row: st.result.row || null, enabled: !keepOff };
+          proj.textBlur = {
+            videoPath, segments, lines: st.result.lines || [], row: st.result.row || null,
+            width: st.result.width || 0, height: st.result.height || 0, enabled: !keepOff,
+          };
           if (!quiet) {
             showToast(segments.length
               ? `Blur Subtitles: ${segments.length} subtitle line(s) found - each is blurred only while it shows, in the preview and the export.`
@@ -6682,6 +6696,203 @@
     if (window.ResizeObserver && document.getElementById("workspace-canvas")) {
       new ResizeObserver(() => syncTextBlurLayer()).observe(document.getElementById("workspace-canvas"));
     }
+
+    // ── Match Subtitles to Video ────────────────────────────────────────────
+    // The transcription guesses each line's time from the audio. The video's own burned-in
+    // subtitles (found by Blur Subtitles: proj.textBlur.lines, each to the frame, with what it
+    // says) show when each line really is. Every subtitle whose original text is one of those
+    // lines takes its exact times (screen-sync.js); one that covers two on-screen lines shows
+    // its translation split between them (sub.screenParts, see SubtitleLayout.displayCues).
+    // Its voice starts with it. The subtitles are drawn on the row the old ones were on.
+
+    // What a subtitle shows, cached on it until its text, times or parts change.
+    function subCues(sub) {
+      const key = `${sub.text}|${sub.textStart}|${sub.textEnd}|${sub.screenParts ? JSON.stringify(sub.screenParts) : ""}`;
+      if (sub._cuesKey !== key) {
+        sub._cues = window.SubtitleLayout.displayCues(sub);
+        sub._cuesKey = key;
+      }
+      return sub._cues;
+    }
+
+    // How long a subtitle's voice may play from the subtitle's start: its own slot, except for
+    // a subtitle matched to the video's own line. That one shows only while the line does,
+    // which is often shorter than its Khmer speech, so its voice may run on into the free time
+    // before the next line (sub.voiceRoom, in seconds from its start, set when it was matched).
+    // Auto-Fit, Fit Duration and the Fast Audio tools fit voices to this, not to the text.
+    const VOICE_GAP = 0.1; // s left free before the next line
+    function voiceSlot(sub) {
+      const slot = (parseFloat(sub.textEnd) || 0) - (parseFloat(sub.textStart) || 0);
+      const room = sub.screenMatched ? parseFloat(sub.voiceRoom) : NaN;
+      return Number.isFinite(room) && room > slot ? room : slot;
+    }
+
+    // A subtitle matched to the video's own line appears with that line and stays up while its
+    // voice speaks (a subtitle gone while its voice still talks reads wrong): its end is the
+    // later of the line's end (screenLen from its start) and its voice's end, never into the
+    // next subtitle. Run again whenever voices change. Returns how many ends moved.
+    const TEXT_AFTER_VOICE = 0.15; // s a subtitle stays after its voice ends
+    function settleMatchedSubtitles(subs, projDur = Infinity) {
+      const sorted = [...(subs || [])].sort((a, b) => parseFloat(a.textStart) - parseFloat(b.textStart));
+      let moved = 0;
+      sorted.forEach((s, i) => {
+        if (!s.screenMatched) return;
+        const start = parseFloat(s.textStart) || 0;
+        const screenEnd = start + (parseFloat(s.screenLen) || Math.max(0.1, (parseFloat(s.textEnd) || 0) - start));
+        const voiceEnd = s.audioStatus === "ready" && parseFloat(s.audioEnd) > start ? parseFloat(s.audioEnd) + TEXT_AFTER_VOICE : screenEnd;
+        const next = sorted[i + 1];
+        const limit = Math.min(next ? parseFloat(next.textStart) - 0.05 : Infinity, projDur);
+        const end = Math.max(screenEnd, Math.min(voiceEnd, limit)).toFixed(2);
+        if (end !== String(s.textEnd)) {
+          s.textEnd = end;
+          moved++;
+        }
+      });
+      return moved;
+    }
+
+    // Bottom margin (% of the video height) that puts a one-line subtitle on the middle of the
+    // row the video's own subtitles sit on.
+    function marginForScreenRow(tb) {
+      const row = tb && tb.row;
+      if (!row) return null;
+      const textY = Number.isFinite(row.textY) ? row.textY : row.y + row.h * 0.19;
+      const textH = Number.isFinite(row.textH) ? row.textH : row.h * 0.62;
+      const w = tb.width || mainVideo.videoWidth || 1080, h = tb.height || mainVideo.videoHeight || 1920;
+      const lineBox = (window.SubtitleLayout.scaledFontSize(globalSubtitleSize, w, h) * window.SubtitleLayout.CSS_FONT_RATIO * window.SubtitleLayout.CSS_LINE_HEIGHT / h) * 100;
+      const margin = 100 - (textY + textH / 2) - lineBox / 2;
+      return Math.round(Math.min(50, Math.max(0, margin)) * 2) / 2;
+    }
+
+    // Retimes one tab's subtitles to its video's lines. Finds the lines first when the tab
+    // has none for its current video. Resolves with { ok, matched, total, parts } or
+    // { ok: false, error | cancelled }.
+    async function syncSubtitlesToScreen(proj, { quiet = false } = {}) {
+      if (!proj) return { ok: false, error: "No tab." };
+      const isActive = () => proj === projects[activeProjectIndex];
+      const videoPath = proj.videoFilePath || (proj.file && proj.file.path) || null;
+      const hasLines = () => proj.textBlur && Array.isArray(proj.textBlur.lines) && (!videoPath || proj.textBlur.videoPath === videoPath);
+      if (!hasLines()) {
+        const r = await detectTextForProject(proj, { quiet: true });
+        if (!r.ok) {
+          if (!quiet && !r.cancelled) showToast(`Match Subtitles: ${r.error}`, "error");
+          return r;
+        }
+      }
+      if (!proj.textBlur.lines.length) {
+        if (!quiet) showToast("Match Subtitles: this video has no burned-in subtitles to match.", "info");
+        return { ok: true, matched: 0, total: 0, parts: 0 };
+      }
+      if (isActive()) {
+        saveCurrentProjectState(); // the open tab's edits live in `subtitles`
+        saveStateToPast();
+      }
+      const subs = (proj.subtitles || []).slice().sort((a, b) => parseFloat(a.textStart) - parseFloat(b.textStart));
+      if (!subs.length) {
+        if (!quiet) showToast("Match Subtitles: transcribe this tab first.", "warning");
+        return { ok: false, error: "No subtitles yet." };
+      }
+
+      const matches = window.ScreenSync.matchSubtitles(
+        subs.map((s) => ({ start: s.textStart, end: s.textEnd, text: s.originalText || "" })),
+        proj.textBlur.lines,
+      );
+      const placed = window.ScreenSync.placeUnmatched(subs.map((s, i) => (matches[i]
+        ? { start: matches[i].start, end: matches[i].end, matched: true }
+        : { start: s.textStart, end: s.textEnd, matched: false })));
+      let matched = 0, parts = 0;
+      subs.forEach((s, i) => {
+        const m = matches[i];
+        const oldStart = parseFloat(s.textStart);
+        const start = placed[i].start, end = placed[i].end;
+        s.textStart = start.toFixed(2);
+        s.textEnd = Math.max(start + 0.1, end).toFixed(2);
+        s.screenMatched = !!m;
+        if (m) s.screenLen = (m.end - m.start).toFixed(3); // how long the video's line(s) show
+        else delete s.screenLen;
+        if (m && m.parts) {
+          const len = Math.max(0.01, m.end - m.start);
+          const r4 = (v) => Math.round(v * 10000) / 10000;
+          s.screenParts = m.parts.map((p) => ({ from: r4((p.start - m.start) / len), to: r4((p.end - m.start) / len), share: r4(p.share) }));
+          parts++;
+        } else delete s.screenParts;
+        if (m) matched++;
+        // The voice starts with its subtitle (and keeps its length: its speed is unchanged).
+        if (Math.abs(parseFloat(s.textStart) - oldStart) > 0.001 || !s.audioStart) {
+          const voiceLen = parseFloat(s.audioEnd) - parseFloat(s.audioStart);
+          const hasVoice = s.audioStatus === "ready" && voiceLen > 0;
+          s.audioStart = s.textStart;
+          s.audioEnd = hasVoice ? (parseFloat(s.textStart) + voiceLen).toFixed(2) : s.textEnd;
+        }
+      });
+      // A matched subtitle's voice may run on past its line, up to shortly before the next one.
+      const byStart = subs.slice().sort((a, b) => parseFloat(a.textStart) - parseFloat(b.textStart));
+      const tabEnd = proj.duration > 0 ? proj.duration : parseFloat(byStart[byStart.length - 1].textEnd) + 10;
+      byStart.forEach((s, i) => {
+        if (!s.screenMatched) return void delete s.voiceRoom;
+        const until = byStart[i + 1] ? parseFloat(byStart[i + 1].textStart) - VOICE_GAP : tabEnd;
+        s.voiceRoom = Math.max(parseFloat(s.textEnd) - parseFloat(s.textStart), until - parseFloat(s.textStart)).toFixed(2);
+      });
+      // Each voice fitted to its new room: 1.0x when it fits (a speed-up made for the old,
+      // shorter slot is undone), just fast enough to end before the next line when not.
+      byStart.forEach((s, i) => {
+        if (s.audioStatus === "ready" && s.baseAudioDuration) refitFastSubSpeed(s, byStart[i + 1] ? parseFloat(byStart[i + 1].textStart) : Infinity);
+      });
+      proj.subtitles = subs;
+      if (autoFitState > 0) applyAutoFitToSubtitlesArray(proj.subtitles, proj.detachedAudios || [], proj.duration > 0 ? proj.duration : Infinity);
+      settleMatchedSubtitles(proj.subtitles, proj.duration > 0 ? proj.duration : Infinity); // shown while its voice speaks
+
+      // Drawn where the old subtitles were.
+      const margin = marginForScreenRow(proj.textBlur);
+      if (margin !== null) {
+        proj.subtitleMarginV = margin;
+        if (isActive()) {
+          globalSubtitleMarginV = margin;
+          syncSubtitleControlsUI();
+        }
+      }
+      proj.screenSync = { videoPath, matched, total: subs.length, parts };
+      if (isActive()) {
+        refreshActiveTabFromProject();
+        _lastSubId = null;
+        updateSubtitleDisplay();
+        updateDetectTextButton();
+      }
+      if (!quiet) {
+        showToast(`Match Subtitles: ${matched} of ${subs.length} subtitle(s) now show exactly with the video's own lines${parts ? ` (${parts} split over two screens)` : ""}${matched < subs.length ? `; ${subs.length - matched} have no line on screen and keep their time` : ""}.`, matched ? "success" : "warning");
+      }
+      return { ok: true, matched, total: subs.length, parts };
+    }
+
+    // Every tab with subtitles and a video, one after another (detection runs on the server
+    // one video at a time anyway). Tabs already matched are skipped when `onlyNew`.
+    async function syncSubtitlesAllProjects({ quiet = false, onlyNew = false, only = null } = {}) {
+      saveCurrentProjectState(); // the open tab's lines live in `subtitles`
+      const targets = projects.filter((p) => !p.isAudioOnly && (p.videoFilePath || (p.file && p.file.path)) && (p.subtitles || []).length
+        && !(onlyNew && p.subtitles.some((s) => s.screenMatched)) && (!only || only.includes(p)));
+      let matched = 0, total = 0;
+      const failed = [];
+      for (const p of targets) {
+        const r = await syncSubtitlesToScreen(p, { quiet: true });
+        if (r.cancelled) break;
+        if (!r.ok) failed.push(p);
+        matched += r.matched || 0;
+        total += r.total || 0;
+      }
+      if (!quiet) {
+        showToast(targets.length
+          ? `Match Subtitles: ${matched} of ${total} subtitle(s) in ${targets.length} tab(s) matched to the video${failed.length ? ` - tab ${failed.map((p) => projects.indexOf(p) + 1).join(", ")} failed: ${failed[0].textDetectError || "no subtitles"}` : ""}.`
+          : "No tab has subtitles and a video to match.", failed.length || !targets.length ? "warning" : "success");
+      }
+      return { ok: true, tabs: targets.length, matched, total, failed };
+    }
+
+    document.getElementById("btn-sync-screen")?.addEventListener("click", () => {
+      const proj = projects[activeProjectIndex];
+      if (!proj) return showToast("Open a video first.", "warning");
+      if (proj.isDetectingText) return showToast("Still reading this video for its subtitles - one moment.", "info");
+      syncSubtitlesToScreen(proj);
+    });
 
     // Initial Render
     renderBlurBoxes();
@@ -16619,9 +16830,9 @@
       const clampNum = (v, lo, hi, dflt) => Math.min(hi, Math.max(lo, Math.round(parseFloat(v) || dflt)));
       const joinMinutes = () => clampNum($("ds-join-minutes").value, 5, 180, 50);
       const splitMinutes = () => clampNum($("ds-split-minutes").value, 3, 60, 7);
-      const STEP_NAMES = { split: "Split into tabs", load: "Open as tabs", transcribe: "Transcribe", generate: "Generate voices", isolate: "Isolate BGM", blurtext: "Blur subtitles" };
-      const STEP_ORDER = ["split", "load", "transcribe", "generate", "isolate", "blurtext"];
-      const OPTIONAL_STEPS = ["transcribe", "generate", "isolate", "blurtext"];
+      const STEP_NAMES = { split: "Split into tabs", load: "Open as tabs", transcribe: "Transcribe", match: "Match subtitles to video", generate: "Generate voices", isolate: "Isolate BGM", blurtext: "Blur subtitles" };
+      const STEP_ORDER = ["split", "load", "transcribe", "match", "generate", "isolate", "blurtext"];
+      const OPTIONAL_STEPS = ["transcribe", "match", "generate", "isolate", "blurtext"];
 
       let scan = null; // /api/episodes/scan result for a newly chosen folder
       let plan = null; // persisted: { folder, seriesName, outDir, joinMinutes, parts, current, stepState, pieces, lastDone }
@@ -17065,10 +17276,14 @@
         }
         const stillEmpty = emptyTabs();
         if (stillEmpty.length === projects.length) throw new Error("No tab could be transcribed.");
-        if (stillEmpty.length) throw new Error(`Tab ${tabNumbers(stillEmpty)} could not be transcribed after ${RETRY_PASSES + 1} tries. Press Continue to try again.`);
+        if (stillEmpty.length) {
+          console.warn(`[Dub Whole Series] Tab ${tabNumbers(stillEmpty)} could not be transcribed after ${RETRY_PASSES + 1} tries.`);
+          showToast(`Warning: Tab ${tabNumbers(stillEmpty)} had an issue - continuing with the other tabs.`, "warning");
+        }
 
-        setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Fix missing lines`);
-        const f = getGeminiKeys().length ? await fixMissingAllTabs({ keyPerTab: true }) : null;
+        // Only run Fix Missing if there are actually empty or un-translated lines, skipping redundant gap scans on clean tabs
+        const hasUntranslated = projects.some(p => liveSubtitlesOf(p).some(s => !isSpeakableText(s.text)));
+        const f = (hasUntranslated && getGeminiKeys().length) ? await fixMissingAllTabs({ keyPerTab: true }) : null;
         checkStop();
         if (f?.stopped) throw stoppedError();
         if (f?.quotaOut) throw new Error(QUOTA_MSG);
@@ -17092,6 +17307,27 @@
       // Every line with text must end up voiced: lines that failed are generated again
       // (only pending lines are sent), and the series pauses instead of moving on if some
       // still have no voice.
+      // Each subtitle takes the exact time of the video's own burned-in line, before the voices
+      // are made (a voice starts with its subtitle) - Match Subtitles to Video on every tab. The
+      // lines were found while the part was transcribed. A tab whose video can't be read gets one
+      // more try; if it still fails, its subtitles keep their transcribed times (the step says so).
+      async function matchStep() {
+        const r = await syncSubtitlesAllProjects({ quiet: true });
+        checkStop();
+        let failed = r.failed || [];
+        if (failed.length) {
+          setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Match subtitles again: tab ${tabNumbers(failed)}`);
+          const again = await syncSubtitlesAllProjects({ quiet: true, only: failed });
+          checkStop();
+          failed = again.failed || [];
+          r.matched += again.matched;
+          r.total += again.total;
+        }
+        if (!r.tabs) return "no tab has subtitles and a video";
+        const left = failed.length ? ` · tab ${tabNumbers(failed)} kept the transcribed times (${failed[0].textDetectError || "no subtitles found"})` : "";
+        return `${r.matched} of ${r.total} subtitle(s) matched in ${r.tabs} tab(s)${left}`;
+      }
+
       async function generateStep() {
         const missingVoice = () => projects.reduce((n, p) => n + liveSubtitlesOf(p).filter((s) => isSpeakableText(s.text) && (s.audioStatus !== "ready" || !s.file)).length, 0);
         const runGenerate = async () => {
@@ -17236,8 +17472,10 @@
         }
         // The subtitles are found while the part is transcribed and voiced (CPU work beside
         // network work); the "blurtext" step at the end only waits for it.
-        if (wanted("blurtext") && plan.stepState.blurtext?.state !== "done") detectTextAllProjects({ quiet: true }).catch(() => { });
-        for (const [name, fn] of [["transcribe", transcribeStep], ["generate", generateStep], ["isolate", isolateStep], ["blurtext", blurTextStep]]) {
+        // (Match Subtitles to Video uses the same lines, right after Transcribe.)
+        const needsLines = (wanted("blurtext") && plan.stepState.blurtext?.state !== "done") || (wanted("match") && plan.stepState.match?.state !== "done");
+        if (needsLines) detectTextAllProjects({ quiet: true }).catch(() => { });
+        for (const [name, fn] of [["transcribe", transcribeStep], ["match", matchStep], ["generate", generateStep], ["isolate", isolateStep], ["blurtext", blurTextStep]]) {
           if (plan.stepState[name]?.state === "done") continue;
           await runStep(name, fn);
         }
@@ -18051,7 +18289,8 @@
           const nextSub = sortedSubs[index + 1];
           const currentStartTime = parseFloat(sub.textStart || 0);
           const currentEndTime = parseFloat(sub.textEnd || sub.end || 0);
-          const slotDuration = currentEndTime > currentStartTime ? (currentEndTime - currentStartTime) : Infinity;
+          // The voice's room (voiceSlot): a line matched to the video may speak past its text.
+          const slotDuration = currentEndTime > currentStartTime ? voiceSlot(sub) : Infinity;
           let maxCollisionDuration;
 
           if (nextSub) {
@@ -18147,8 +18386,7 @@
       targetSubs.forEach((sub) => {
         if (sub.audioStatus === "ready" && sub.baseAudioDuration) {
           const tStart = parseFloat(sub.textStart || 0);
-          const tEnd = parseFloat(sub.textEnd || 0);
-          const slot = tEnd - tStart;
+          const slot = voiceSlot(sub); // a line matched to the video may speak past its text
           if (slot > 0.2) {
             // Find distance to following subtitle to guarantee no collision
             const nextSub = sorted.find(s => parseFloat(s.textStart || 0) > tStart);
@@ -18287,18 +18525,22 @@
     function analyzeSubPace(sub) {
       const tStart = parseFloat(sub.textStart) || 0;
       const tEnd = parseFloat(sub.textEnd) || 0;
-      const slot = Math.max(0.1, tEnd - tStart);
+      // The voice's room: its text's slot, or for a line matched to the video, up to the next
+      // line (voiceSlot) - its text shows exactly while the video's line does, its voice not.
+      const slot = Math.max(0.1, voiceSlot(sub));
+      const voiceEnd = tStart + slot;
+      const screenMatched = !!sub.screenMatched;
       // Audio normally starts with its text; if it was dragged inside the slot, fit to what's left of it.
       const rawAStart = parseFloat(sub.audioStart);
-      const aStart = Number.isFinite(rawAStart) && rawAStart >= tStart && rawAStart < tEnd ? rawAStart : tStart;
-      const fitDur = Math.max(0.1, tEnd - aStart);
+      const aStart = Number.isFinite(rawAStart) && rawAStart >= tStart && rawAStart < voiceEnd ? rawAStart : tStart;
+      const fitDur = Math.max(0.1, voiceEnd - aStart);
       const baseDur = parseFloat(sub.baseAudioDuration) || 0;
       const hasAudio = sub.audioStatus === "ready" && baseDur > 0;
       const playSpeed = parseFloat(sub.speed) || 1.0;
-      const speechDur = hasAudio ? baseDur : fastSpokenLength(sub.text) / FAST_EST_CHARS_PER_SEC;
+      const speechDur = hasAudio ? baseDur : fastSpokenLength(window.KhmerSpeech.normalizeForSpeech(sub.text)) / FAST_EST_CHARS_PER_SEC; // as said: numbers in words
       // With audio: the audible speed, or the speed it would need to end inside its slot. Without: an estimate.
       const effectiveSpeed = hasAudio ? Math.max(playSpeed, baseDur / fitDur) : speechDur / fitDur;
-      return { tStart, tEnd, aStart, slot, fitDur, baseDur, hasAudio, speechDur, effectiveSpeed, overflow: Math.max(0, speechDur - fitDur) };
+      return { tStart, tEnd, aStart, slot, fitDur, baseDur, hasAudio, speechDur, effectiveSpeed, screenMatched, overflow: Math.max(0, speechDur - fitDur) };
     }
 
     function isFastSub(sub) {
@@ -18320,6 +18562,7 @@
 
     // New text end that makes room for the speech, limited by the next line. null when there's no useful room.
     function getFastExtendEnd(pace, nextStart) {
+      if (pace.screenMatched) return null; // its text ends with the video's line; its voice already has the room
       const wanted = pace.aStart + pace.speechDur + 0.05;
       const newEnd = Math.min(nextStart - 0.05, wanted);
       return newEnd - pace.tEnd >= 0.2 ? newEnd : null;
@@ -19059,7 +19302,7 @@
         // ── SYNC END CHECK ──────────────────────────────────────────────
         if (matchAudioEndEnabled) {
           proj.subtitles.forEach((sub) => {
-            if (sub.audioStatus !== "ready" || sub.audioEnd == null) return;
+            if (sub.audioStatus !== "ready" || sub.audioEnd == null || sub.screenMatched) return; // matched: shows with the video's line
             const clampedEnd = Math.min(parseFloat(sub.audioEnd), projDuration).toFixed(2);
             if (parseFloat(sub.textEnd) !== parseFloat(clampedEnd)) {
               sub.textEnd = clampedEnd;
@@ -19068,6 +19311,8 @@
             }
           });
         }
+        // Lines matched to the video stay up while their voice speaks (whatever Sync End says).
+        if (settleMatchedSubtitles(proj.subtitles, projDuration)) changed = true;
 
         if (!changed) return;
 
@@ -19114,10 +19359,11 @@
 
     // Pure helper — mutates any subtitle array in place, returns count changed.
     // Shared by the manual toggle, the Stop handler, and the Generate-complete handler.
+    // (Not a subtitle matched to the video's own line: it shows exactly while that line does.)
     const applyMatchAudioEndToSubs = (subsArray, maxDuration = Infinity) => {
       let count = 0;
       subsArray.forEach((sub) => {
-        if (sub.audioStatus === "ready" && sub.audioEnd != null) {
+        if (sub.audioStatus === "ready" && sub.audioEnd != null && !sub.screenMatched) {
           const clampedEnd = Math.min(parseFloat(sub.audioEnd), maxDuration).toFixed(2);
           if (parseFloat(sub.textEnd) !== parseFloat(clampedEnd)) {
             sub.textEnd = clampedEnd;
@@ -19366,6 +19612,7 @@
             syncedCount = applyMatchAudioEndToSubs(projSubs, projDuration);
             if (syncedCount > 0) toastMsg += ` Sync End matched ${syncedCount} clip(s). 🔗`;
           }
+          settleMatchedSubtitles(projSubs, projDuration); // lines matched to the video: up while their voice speaks
 
           if (currentProj) currentProj.subtitles = projSubs.map((s) => ({ ...s }));
 
@@ -19444,13 +19691,10 @@
         };
       };
 
-      // 🇰🇭 Khmer Text Normalization & Clean Sentence Closure
-      let cleanText = (text || "").trim();
+      // 🇰🇭 Khmer text as it is said (numbers in words, ៗ, acronyms, pauses; a closing ? or !
+      // kept for the intonation) - see khmer-speech.js.
+      const cleanText = window.KhmerSpeech.normalizeForSpeech(text);
       const isKhmer = /[\u1780-\u17FF]/.test(cleanText);
-      if (isKhmer && cleanText) {
-        // Strip duplicate or conflicting punctuation and ensure a single clean sentence terminator
-        cleanText = cleanText.replace(/[!?.។៕\s]+$/, "") + "។";
-      }
 
       // If text is Khmer and no reference audio is used, avoid injecting English prompt context
       const effectiveInstruction = (isKhmer && !profile?.audioPath) ? "" : (profile?.instruction || "");
@@ -19716,7 +19960,7 @@
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                  text: sub.text,
+                  text: window.KhmerSpeech.normalizeForSpeech(sub.text), // as it is said (khmer-speech.js)
                   gender: sub.gender,
                   character: sub.character || sub.gender,
                   language: targetProject.targetLanguage || targetLanguage,
@@ -19971,13 +20215,15 @@
           const safeDur = targetProject.duration > 0 ? targetProject.duration : Infinity;
           matchedCount = applyMatchAudioEndToSubs(targetProject.subtitles, safeDur);
         }
+        // Lines matched to the video stay up while their voice speaks.
+        const settledCount = settleMatchedSubtitles(targetProject.subtitles, targetProject.duration > 0 ? targetProject.duration : Infinity);
 
         saveProjectStateDirectly(targetProject);
 
         if (projects[activeProjectIndex] === targetProject) {
           // Auto-Fit / Sync End changed timing on the stored copy; bring those fields to the
           // on-screen list without overwriting edits made there meanwhile.
-          targetProject.subtitles.forEach((s) => syncLiveAudio(s, matchAudioEndEnabled ? ["textEnd"] : []));
+          targetProject.subtitles.forEach((s) => syncLiveAudio(s, matchAudioEndEnabled || settledCount ? ["textEnd"] : []));
           renderSubtitles();
           updateContextualControls();
         }
@@ -20473,7 +20719,7 @@
           const isSyncEndAlreadyApplied = (subsArray, projDur) => {
             if (!matchAudioEndEnabled) return true;
             return subsArray.every((sub) => {
-              if (sub.audioStatus !== "ready" || sub.audioEnd == null) return true;
+              if (sub.audioStatus !== "ready" || sub.audioEnd == null || sub.screenMatched) return true;
               const clampedEnd = Math.min(parseFloat(sub.audioEnd), projDur).toFixed(2);
               return parseFloat(sub.textEnd) === parseFloat(clampedEnd);
             });
@@ -20499,6 +20745,7 @@
               console.log(`[SyncEnd/Vox] Tab "${proj.name || proj.fileName}" already synced — skipping.`);
             }
           }
+          settleMatchedSubtitles(proj.subtitles, projDuration); // lines matched to the video: up while their voice speaks
 
           if (projects[activeProjectIndex] === proj) {
             subtitles = proj.subtitles.map((s) => ({ ...s }));
@@ -20726,10 +20973,13 @@
 
         let activeId = null;
         if (activeSub) {
-          const totalDur = Math.max(0.01, parseFloat(activeSub.textEnd) - parseFloat(activeSub.textStart));
+          // Which piece of the subtitle is on screen (see subCues), then which chunk of it.
+          const cues = subCues(activeSub);
+          const cueIdx = cues.findIndex((c) => ct >= c.start && ct <= c.end);
+          const cue = cues[cueIdx];
           const numChunks = (activeSub._cachedChunks && activeSub._cachedChunks.length) || 1;
-          const chunkIdx = numChunks > 1 ? Math.min(numChunks - 1, Math.max(0, Math.floor(((ct - parseFloat(activeSub.textStart)) / totalDur) * numChunks))) : 0;
-          activeId = activeSub.id + "_" + chunkIdx;
+          const chunkIdx = cue && numChunks > 1 ? window.SubtitleLayout.chunkIndexAt(cue.start, cue.end, numChunks, ct) : 0;
+          activeId = activeSub.id + "_" + cueIdx + "_" + chunkIdx;
         }
 
         if (activeId !== _lastSubId) {
@@ -23357,14 +23607,17 @@
             let srtContent = null;
             if (showSubtitles && projSubs.length > 0) {
               srtContent = "";
-              projSubs.forEach((sub, i) => {
-                srtContent += `${i + 1}\n`;
-                srtContent += `${formatSrtTime(parseFloat(sub.textStart))} --> ${formatSrtTime(parseFloat(sub.textEnd))}\n`;
-                const text = sub.text || "";
+              let cueNo = 0;
+              // One cue per piece a subtitle shows (two when it is matched to two of the video's
+              // own lines - Match Subtitles to Video), same as the preview.
+              projSubs.forEach((sub) => subCues(sub).forEach((cue) => {
+                srtContent += `${++cueNo}\n`;
+                srtContent += `${formatSrtTime(cue.start)} --> ${formatSrtTime(cue.end)}\n`;
+                const text = cue.text || "";
                 const isKhmer = /[\u1780-\u17FF]/.test(text);
                 const fontName = isKhmer ? "Kantumruy Pro" : "Noto Sans";
                 srtContent += `<font face="${fontName}">${text}</font>\n\n`;
-              });
+              }));
             }
 
             const audioTracks = projIsA1Muted
@@ -23905,9 +24158,14 @@
               const startSec = Math.max(0, parseFloat(rawStart) || 0);
               const rawEnd = sub.textEnd !== undefined ? sub.textEnd : (sub.endTime !== undefined ? sub.endTime : (sub.end !== undefined ? sub.end : (sub.audioEnd !== undefined ? sub.audioEnd : (startSec + 2))));
               const endSec = Math.max(startSec + 0.1, parseFloat(rawEnd) || (startSec + 2));
-              const isKhmer = /[\u1780-\u17FF]/.test(text);
-              const fontName = isKhmer ? "Kantumruy Pro" : "Noto Sans";
-              validCues.push(`${cueIdx++}\n${formatSrtTime(startSec)} --> ${formatSrtTime(endSec)}\n<font face="${fontName}">${text}</font>\n`);
+              // A subtitle matched to several of the video's own lines: one cue per piece.
+              const cues = sub.screenParts ? subCues({ ...sub, textStart: startSec, textEnd: endSec, text }) : [{ start: startSec, end: endSec, text }];
+              cues.forEach((cue) => {
+                if (!cue.text) return;
+                const isKhmer = /[\u1780-\u17FF]/.test(cue.text);
+                const fontName = isKhmer ? "Kantumruy Pro" : "Noto Sans";
+                validCues.push(`${cueIdx++}\n${formatSrtTime(cue.start)} --> ${formatSrtTime(cue.end)}\n<font face="${fontName}">${cue.text}</font>\n`);
+              });
             });
             if (validCues.length > 0) {
               srtContent = validCues.join("\n");
@@ -24519,11 +24777,23 @@
                   </div>
                   ${s.englishTitle ? `<span class="text-[11px] text-[var(--text-muted)]">${s.englishTitle}</span>` : ""}
                   <p class="font-khmer text-[11px] text-[var(--text-secondary)] leading-relaxed">${s.reasoning || ""}</p>
+                  <button class="title-ai-apply-btn absolute bottom-2.5 right-10 opacity-0 group-hover:opacity-100 transition-all duration-200 p-1.5 rounded-lg bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/10" title="Use as this tab's name">
+                    <i data-lucide="tag" class="w-3 h-3 pointer-events-none"></i>
+                  </button>
                   <button class="title-ai-copy-btn absolute bottom-2.5 right-2.5 opacity-0 group-hover:opacity-100 transition-all duration-200 p-1.5 rounded-lg bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/10" title="Copy title">
                     <i data-lucide="copy" class="w-3 h-3 pointer-events-none"></i>
                   </button>
                 `;
               resultsEl.appendChild(card);
+
+              card.querySelector(".title-ai-apply-btn").addEventListener("click", (e) => {
+                e.stopPropagation();
+                const proj = projects[activeProjectIndex];
+                if (!proj) return showToast("Open a tab first.", "warning");
+                proj.tabTitle = raw.khmerTitle || "";
+                renderProjectTabs();
+                showToast(`Tab renamed: "${raw.khmerTitle}"`, "success");
+              });
 
               const copyBtn = card.querySelector(".title-ai-copy-btn");
               copyBtn.addEventListener("click", (e) => {
