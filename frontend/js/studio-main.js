@@ -110,8 +110,8 @@
 
     // ── 10 CHARACTER AUTO-SPEAKER PRESETS (Edge-TTS Neural Engine) ──────────
     window.CHARACTER_PRESETS = {
-      Male: { id: "Male", label: "👨 Piseth (Male)", gender: "Male", baseVoice: "km-KH-PisethNeural", pitch: "+0Hz", rate: "+0%", color: "#3b82f6" },
-      Female: { id: "Female", label: "👩 Sreymom (Female)", gender: "Female", baseVoice: "km-KH-SreymomNeural", pitch: "+0Hz", rate: "+0%", color: "#ec4899" },
+      Male: { id: "Male", label: "👨 Piseth (Male)", gender: "Male", baseVoice: "km-KH-PisethNeural", pitch: "+0Hz", rate: "+0%", color: "#338dd1" },
+      Female: { id: "Female", label: "👩 Sreymom (Female)", gender: "Female", baseVoice: "km-KH-SreymomNeural", pitch: "+0Hz", rate: "+0%", color: "#d66981" },
       Hero: { id: "Hero", label: "🦸‍♂️ Hero (តួឯកប្រុស)", gender: "Male", baseVoice: "km-KH-PisethNeural", pitch: "+4Hz", rate: "+5%", color: "#06b6d4" },
       Heroine: { id: "Heroine", label: "👸 Heroine (តួឯកស្រី)", gender: "Female", baseVoice: "km-KH-SreymomNeural", pitch: "+10Hz", rate: "+4%", color: "#f43f5e" },
       Father: { id: "Father", label: "🧔 Father (ឪពុក)", gender: "Male", baseVoice: "km-KH-PisethNeural", pitch: "-10Hz", rate: "-4%", color: "#0284c7" },
@@ -148,13 +148,22 @@
     // Voice for a line the AI transcribed or translated: only the default Male or Female voice.
     // AI role guesses (Hero, Villain, Father...) aren't reliable - the same actor got different
     // voices from line to line - so a role is only used to tell the gender when there is none.
-    // Roles picked by hand from the Role menu still work.
     window.defaultVoiceFor = function (gender, role) {
       const g = String(gender || "").trim().toLowerCase();
       if (g === "female" || g.includes("ស្រី") || g.includes("នារី")) return "Female";
       if (g === "male" || g.includes("ប្រុស") || g.includes("បុរស")) return "Male";
       const preset = window.CHARACTER_PRESETS[window.resolveCharacterKey(role || gender)];
       return preset && preset.gender === "Female" ? "Female" : "Male";
+    };
+
+    // Voices offered in the voice pickers: only Male and Female. A line from an older project
+    // that already uses a role (Hero, Villain...) keeps it listed, so its voice doesn't change.
+    window.voicePickerPresets = function (current) {
+      const presets = window.CHARACTER_PRESETS;
+      const list = [presets.Male, presets.Female];
+      const key = current ? window.resolveCharacterKey(current) : null;
+      if (key && key !== "Male" && key !== "Female" && presets[key]) list.push(presets[key]);
+      return list;
     };
 
     // Initialize Lucide Icons
@@ -282,36 +291,95 @@
     );
 
     // --- THEME CONSTANTS (From Reference) ---
+    // Default look: "Sky Blue" (cool slate / soft white with a sky-blue accent).
     const defaultThemes = {
       dark: {
-        bgBase: "#020617",
-        bgPanel: "#0f172a",
-        bgHover: "#1e293b",
-        borderColor: "#1e293b",
-        borderLight: "#334155",
-        textBright: "#f8fafc",
-        textPrimary: "#cbd5e1",
-        textSecondary: "#94a3b8",
-        textMuted: "#64748b",
-        accentPrimary: "#4f46e5",
-        accentText: "#818cf8",
+        bgBase: "#0e1320",
+        bgPanel: "#151c2c",
+        bgHover: "#1c2538",
+        borderColor: "#212b3f",
+        borderLight: "#2e3a52",
+        textBright: "#eef3fb",
+        textPrimary: "#cfd8e6",
+        textSecondary: "#97a3b8",
+        textMuted: "#69758b",
+        accentPrimary: "#3d8ef0",
+        accentText: "#8cbcff",
       },
       light: {
-        bgBase: "#f8fafc",
+        bgBase: "#f2f5fa",
         bgPanel: "#ffffff",
-        bgHover: "#f1f5f9",
-        borderColor: "#e2e8f0",
-        borderLight: "#cbd5e1",
-        textBright: "#020617",
-        textPrimary: "#334155",
-        textSecondary: "#475569",
-        textMuted: "#64748b",
-        accentPrimary: "#4f46e5",
-        accentText: "#4338ca",
+        bgHover: "#edf1f8",
+        borderColor: "#e2e8f2",
+        borderLight: "#cdd6e4",
+        textBright: "#0f1a2b",
+        textPrimary: "#2a364a",
+        textSecondary: "#4f5c72",
+        textMuted: "#7d899d",
+        accentPrimary: "#2f7de1",
+        accentText: "#1f63c0",
       },
     };
 
     const presetThemes = {
+      // Mint/teal look from the first redesign pass.
+      "Fresh Mint": {
+        dark: {
+          bgBase: "#0b1215",
+          bgPanel: "#121b1f",
+          bgHover: "#1a252a",
+          borderColor: "#1e2b30",
+          borderLight: "#2b3b41",
+          textBright: "#eef7f6",
+          textPrimary: "#cad8d8",
+          textSecondary: "#93a6a8",
+          textMuted: "#65797b",
+          accentPrimary: "#0f9f8e",
+          accentText: "#5eead4",
+        },
+        light: {
+          bgBase: "#eef4f4",
+          bgPanel: "#ffffff",
+          bgHover: "#eaf2f2",
+          borderColor: "#dfe9ea",
+          borderLight: "#cbd9db",
+          textBright: "#0d1b20",
+          textPrimary: "#2a3b41",
+          textSecondary: "#50646a",
+          textMuted: "#7f9197",
+          accentPrimary: "#0d9488",
+          accentText: "#0f766e",
+        },
+      },
+      // The default look before the redesign.
+      "Classic Indigo": {
+        dark: {
+          bgBase: "#020617",
+          bgPanel: "#0f172a",
+          bgHover: "#1e293b",
+          borderColor: "#1e293b",
+          borderLight: "#334155",
+          textBright: "#f8fafc",
+          textPrimary: "#cbd5e1",
+          textSecondary: "#94a3b8",
+          textMuted: "#64748b",
+          accentPrimary: "#4f46e5",
+          accentText: "#818cf8",
+        },
+        light: {
+          bgBase: "#f8fafc",
+          bgPanel: "#ffffff",
+          bgHover: "#f1f5f9",
+          borderColor: "#e2e8f0",
+          borderLight: "#cbd5e1",
+          textBright: "#020617",
+          textPrimary: "#334155",
+          textSecondary: "#475569",
+          textMuted: "#64748b",
+          accentPrimary: "#4f46e5",
+          accentText: "#4338ca",
+        },
+      },
       // ── Dark-first themes ──────────────────────────────────────────────
       "Midnight Blue": {
         dark: {
@@ -3071,11 +3139,7 @@
         e.stopPropagation();
         const isOpening = genreDropdown.classList.contains("hidden");
         if (isOpening) {
-          const rect = genreBtn.getBoundingClientRect();
-          genreDropdown.style.position = "fixed";
-          genreDropdown.style.left = `${Math.min(window.innerWidth - 220, Math.max(10, rect.left))}px`;
-          genreDropdown.style.bottom = `${window.innerHeight - rect.top + 6}px`;
-          genreDropdown.style.zIndex = "99999";
+          placeFixedMenu(genreDropdown, genreBtn, 220);
         }
         genreDropdown.classList.toggle("hidden");
       });
@@ -5034,12 +5098,7 @@
         }
         // The toolbar scrolls sideways (overflow-x-auto), which would clip an absolute menu:
         // place it fixed above the button, like the language menu.
-        const rect = btnTranscribeAll.getBoundingClientRect();
-        allTabsMenu.style.position = "fixed";
-        allTabsMenu.style.left = `${Math.min(window.innerWidth - 300, Math.max(10, rect.left))}px`;
-        allTabsMenu.style.bottom = `${window.innerHeight - rect.top + 6}px`;
-        allTabsMenu.style.top = "auto";
-        allTabsMenu.style.zIndex = "99999";
+        placeFixedMenu(allTabsMenu, btnTranscribeAll, 300);
         allTabsMenu.classList.remove("hidden");
       });
       document.addEventListener("click", (e) => {
@@ -10816,8 +10875,8 @@
 
       let options;
       if (!data.enabled) {
-        // Edge-TTS mode — return the 10 Character Auto-Speaker profiles!
-        options = Object.values(window.CHARACTER_PRESETS || {}).map((p) => ({
+        // Edge-TTS mode — Male and Female
+        options = window.voicePickerPresets(currentGender).map((p) => ({
           value: p.id,
           label: p.label,
           isMale: p.gender === "Male",
@@ -10835,7 +10894,7 @@
         }));
         // Fallback if no profiles added yet
         if (options.length === 0) {
-          options = Object.values(window.CHARACTER_PRESETS || {}).map((p) => ({
+          options = window.voicePickerPresets(currentGender).map((p) => ({
             value: p.id,
             label: p.label,
             isMale: p.gender === "Male",
@@ -11372,8 +11431,9 @@
 
       const deltaX = e.clientX - sidebarDragState.startX;
 
-      // Clamp the width: minimum 250px, maximum half of the window width
-      const newWidth = Math.max(250, Math.min(window.innerWidth * 0.5, sidebarDragState.startWidth + deltaX));
+      // The preview column is on the right, so dragging its left edge leftwards widens it.
+      // Clamp the width: minimum 280px, maximum half of the window width
+      const newWidth = Math.max(280, Math.min(window.innerWidth * 0.5, sidebarDragState.startWidth - deltaX));
 
       leftSidebar.style.width = `${newWidth}px`;
 
@@ -11534,11 +11594,7 @@
         closeLangDropdown();
       } else {
         renderLanguageOptions(); // Re-render to show correct checkmark
-        const rect = btnLanguageSelect.getBoundingClientRect();
-        langDropdownMenu.style.position = "fixed";
-        langDropdownMenu.style.left = `${Math.min(window.innerWidth - 150, Math.max(10, rect.left))}px`;
-        langDropdownMenu.style.bottom = `${window.innerHeight - rect.top + 6}px`;
-        langDropdownMenu.style.zIndex = "99999";
+        placeFixedMenu(langDropdownMenu, btnLanguageSelect, 150);
         langDropdownMenu.classList.remove("hidden");
         iconLangChevron.classList.add("rotate-180");
       }
@@ -12078,56 +12134,6 @@
 
     document.getElementById("btn-bulk-male")?.addEventListener("click", () => setBulkVoice("Male"));
     document.getElementById("btn-bulk-female")?.addEventListener("click", () => setBulkVoice("Female"));
-
-    // ── BULK 10 CHARACTER ROLE DROPDOWN ──────────────────────────────
-    const bulkCharWrap = document.getElementById("bulk-char-wrap");
-    const bulkCharTrigger = document.getElementById("btn-bulk-char-trigger");
-    const bulkCharChevron = document.getElementById("bulk-char-chevron");
-    const bulkCharDropdown = document.getElementById("bulk-char-dropdown");
-
-    if (bulkCharDropdown && window.CHARACTER_PRESETS) {
-      bulkCharDropdown.innerHTML = Object.values(window.CHARACTER_PRESETS).map((char) => `
-        <button type="button" data-char-id="${char.id}" class="w-full text-left px-2 py-1.5 rounded-lg text-xs font-medium flex items-center justify-between gap-1.5 hover:bg-white/10 transition-colors cursor-pointer group">
-          <span class="flex items-center gap-1.5 truncate">
-            <span class="text-sm shrink-0">${char.label.split(" ")[0]}</span>
-            <span class="font-semibold text-white group-hover:text-cyan-300 transition-colors">${char.id}</span>
-            <span class="text-[10px] text-zinc-400 font-khmer truncate">(${char.label.replace(/^.*?\(|\)$/g, "")})</span>
-          </span>
-          <span class="text-[9px] px-1.5 py-0.5 rounded font-mono shrink-0 font-medium" style="background-color: ${char.color}22; color: ${char.color}; border: 1px solid ${char.color}44;">${char.pitch}</span>
-        </button>
-      `).join("");
-
-      bulkCharDropdown.addEventListener("click", (e) => {
-        const btn = e.target.closest("button[data-char-id]");
-        if (btn) {
-          const charId = btn.getAttribute("data-char-id");
-          setBulkVoice(charId);
-          bulkCharDropdown.classList.add("hidden");
-          if (bulkCharChevron) bulkCharChevron.style.transform = "rotate(0deg)";
-        }
-      });
-    }
-
-    if (bulkCharTrigger && bulkCharDropdown) {
-      bulkCharTrigger.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const isClosed = bulkCharDropdown.classList.contains("hidden");
-        if (isClosed) {
-          bulkCharDropdown.classList.remove("hidden");
-          if (bulkCharChevron) bulkCharChevron.style.transform = "rotate(180deg)";
-        } else {
-          bulkCharDropdown.classList.add("hidden");
-          if (bulkCharChevron) bulkCharChevron.style.transform = "rotate(0deg)";
-        }
-      });
-    }
-
-    document.addEventListener("click", (e) => {
-      if (bulkCharWrap && !bulkCharWrap.contains(e.target) && bulkCharDropdown) {
-        bulkCharDropdown.classList.add("hidden");
-        if (bulkCharChevron) bulkCharChevron.style.transform = "rotate(0deg)";
-      }
-    });
 
     // ── BULK VOX PROFILE SWITCHER ────────────────────────────────────
     const bulkVoxSelectWrap = document.getElementById("bulk-vox-custom-wrap");
@@ -14910,8 +14916,9 @@
       if (subtitles.length === 0) {
         subtitleTableBody.innerHTML = `
             <tr id="empty-subtitles-row">
-                <td colspan="6" class="px-4 py-16 text-center text-[var(--text-muted)]">
-                    <p>No subtitles available. Upload a video and import or transcribe.</p>
+                <td colspan="6" class="empty-state">
+                    <p class="empty-state__title">No subtitles yet</p>
+                    <p class="empty-state__hint">Open <b>Project</b> on the left to load a video, then import an SRT or transcribe.</p>
                 </td>
             </tr>`;
         rowWindowReset();
@@ -15309,9 +15316,9 @@
               subtitles[liveSubIdx].gender = targetProfileId;
             }
           } else {
-            // --- MODE B: 10 CHARACTER AUTO-SPEAKER PRESETS (Edge-TTS) ---
+            // --- MODE B: MALE / FEMALE (Edge-TTS) ---
             const charKey = typeof window.resolveCharacterKey === "function" ? window.resolveCharacterKey(sub.character || sub.gender || currentVoiceTag) : (sub.gender === "Male" ? "Male" : "Female");
-            const charOpts = Object.values(window.CHARACTER_PRESETS || {}).map((p) => ({
+            const charOpts = window.voicePickerPresets(charKey).map((p) => ({
               value: p.id,
               label: p.label,
               isMale: p.gender === "Male",
@@ -23506,7 +23513,7 @@
               proj.renderOriginalBtnHTML ||
               `
                 <i data-lucide="film" class="w-4 h-4 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
-                Final Render
+                Render Video
               `;
             _lucideCreateIcons();
           }
@@ -23873,7 +23880,7 @@
             targetProject.renderAbortController = new AbortController();
             targetProject.renderOriginalBtnHTML = `
                 <i data-lucide="film" class="w-4 h-4 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
-                Final Render
+                Render Video
               `;
 
             // Update button UI for the active tab
@@ -27647,10 +27654,6 @@
           containerId: "lottie-video-overlay",
           path: "assets/animations/video-vertical.json",
         },
-        {
-          containerId: "lottie-workspace-tools",
-          path: "assets/animations/category.json",
-        },
       ];
 
       // Loop through and initialize
@@ -27661,7 +27664,7 @@
         const container = document.getElementById(config.containerId);
         if (!container) return;
 
-        // No btnId = always-on infinite loop (e.g. workspace-tools heading icon)
+        // No btnId = always-on loop (the Subtitles / Timeline heading icons)
         if (!config.btnId) {
           const idleAnim = lottie.loadAnimation({
             container: container,
@@ -28278,11 +28281,13 @@
         if (ar && ar.w > 0 && ar.h > 0) {
           wrapper.classList.remove("aspect-[4/5]", "aspect-video", "aspect-square");
           wrapper.style.aspectRatio = `${ar.w} / ${ar.h}`;
+          wrapper.style.setProperty("--preview-ar", ar.w / ar.h);
           if (videoEl) {
             videoEl.style.objectFit = ar.fit === "stretch" ? "fill" : ar.fit === "crop" ? "cover" : "contain";
           }
         } else {
           wrapper.style.aspectRatio = "";
+          wrapper.style.removeProperty("--preview-ar");
           wrapper.classList.add("aspect-[4/5]");
           if (videoEl) videoEl.style.objectFit = "contain";
         }

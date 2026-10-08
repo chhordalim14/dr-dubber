@@ -1,3 +1,5 @@
+const fresh = require('./tailwind.fresh-palette');
+
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: ['./frontend/index.html', './frontend/js/**/*.js', './frontend/app.js'],
@@ -14,19 +16,21 @@ module.exports = {
   ],
   theme: {
     extend: {
+      // Tailwind's colour families retuned to fit the sky-blue theme (see the file).
       colors: {
-        'studio-bg': '#090a10',
-        'studio-surface': '#11121c',
-        'studio-card': '#171826',
-        'studio-hover': '#1f2133',
+        ...fresh.colors,
+        'studio-bg': '#0e1320',
+        'studio-surface': '#151c2c',
+        'studio-card': '#182033',
+        'studio-hover': '#1f2a3e',
         'studio-border': 'rgba(255, 255, 255, 0.08)',
         'studio-border-light': 'rgba(255, 255, 255, 0.14)',
-        'studio-accent': '#6366f1',
-        'studio-accent-hover': '#818cf8'
+        'studio-accent': '#3d8ef0',
+        'studio-accent-hover': '#6aa8f5'
       },
       boxShadow: {
         'studio-card': '0 4px 20px -2px rgba(0, 0, 0, 0.5)',
-        'studio-glow': '0 0 25px -5px rgba(99, 102, 241, 0.25)',
+        'studio-glow': '0 0 25px -5px rgba(61, 142, 240, 0.25)',
         'studio-modal': '0 20px 50px -10px rgba(0, 0, 0, 0.7)'
       },
       fontFamily: {
@@ -35,5 +39,5 @@ module.exports = {
       }
     }
   },
-  plugins: []
+  plugins: [fresh.lightThemeText]
 };

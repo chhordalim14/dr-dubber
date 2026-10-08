@@ -14,8 +14,4 @@
   .studio-pill {
     @apply p-1.5 rounded-md text-slate-400 hover:text-slate-200 hover:bg-white/[0.06] transition-all duration-150 active:scale-95;
   }
-
-  .studio-deck-header {
-    @apply text-xs font-semibold uppercase tracking-wider text-slate-300 select-none flex items-center gap-2;
-  }
 }
