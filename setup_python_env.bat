@@ -32,7 +32,8 @@ set "GETPIP=%TEMP%\dr-dubber-get-pip.py"
 if exist "%PYDIR%\python.exe" (
     "%PYDIR%\python.exe" -c "import edge_tts" >nul 2>nul
     if !ERRORLEVEL! equ 0 (
-        echo   [OK] %PYDIR% already exists and edge-tts is installed. Nothing to do.
+        echo   [OK] %PYDIR% already exists and edge-tts is installed.
+        call :textdetect
         echo   Delete the folder first if you want to rebuild it from scratch.
         goto :end
     )
@@ -89,6 +90,22 @@ if %ERRORLEVEL% equ 0 (
 ) else (
     echo   [X] Verification failed — edge_tts did not import correctly.
 )
+call :textdetect
+goto :end
+
+REM Subtitle text detector ("Blur Subtitles"). --no-deps with every package pinned in the
+REM requirements file: pip's own choices (numpy 2, protobuf 7) would break Spleeter/TensorFlow.
+:textdetect
+echo.
+echo Installing the subtitle text detector (Blur Subtitles)...
+"%PYDIR%\python.exe" -m pip install --no-deps -r backend\python\requirements-textdetect.txt --no-warn-script-location -q --disable-pip-version-check
+"%PYDIR%\python.exe" -c "import rapidocr_onnxruntime, cv2, onnxruntime" >nul 2>nul
+if !ERRORLEVEL! equ 0 (
+    echo   [OK] Text detector installed.
+) else (
+    echo   [!] Text detector did not install - Blur Subtitles will try again when first used.
+)
+exit /b 0
 
 :end
 echo.

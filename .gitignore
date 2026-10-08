@@ -25,6 +25,21 @@ build/
 out/
 release/
 
+# Large media files (sample/test videos should never be committed)
+assets/*.mp4
+assets/*.mkv
+assets/*.mov
+assets/*.avi
+assets/*.webm
+assets/*.ts
+assets/*.flv
+assets/*.wmv
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
 # Storage & Runtime Caches (preserve directory structure via .gitkeep)
 storage/audio_cache/*
 !storage/audio_cache/.gitkeep
@@ -57,3 +72,7 @@ yarn-error.log*
 ehthumbs.db
 Thumbs.db
 C:\\*
+storage/preview_cache/
+storage/audio_repair/
+storage/text_detect/
+storage/batch_results/

@@ -1,3 +1,8 @@
+// Manual integration script - needs a working Python TTS environment and is
+// not run in CI. The pure-logic parts of this file (Auto-Fit timing repair,
+// multi-tab queue targeting) now have real `node --test` regression tests
+// at ../tests/auto-fit-logic.test.js - run `npm test`. Keep this script for
+// the one thing those can't cover: actually invoking tts_generator.py.
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -29,8 +34,13 @@ async function testPythonTtsDirect() {
   const outDir = path.resolve('scratch');
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
-  const pyBin = 'C:\\Users\\ADMIN\\AppData\\Local\\Programs\\DR Dubber Pro\\resources\\app.asar.unpacked\\backend\\python_env\\python.exe';
-  const pythonCmd = fs.existsSync(pyBin) ? pyBin : 'python';
+  // Prefer an explicit PYTHON_PATH, then the installed app's bundled Python for
+  // whoever is running this, then whatever `python` is on PATH.
+  const installedPy = process.env.LOCALAPPDATA
+    ? path.join(process.env.LOCALAPPDATA, 'Programs', 'DR Dubber Pro', 'resources', 'app.asar.unpacked', 'backend', 'python_env', 'python.exe')
+    : null;
+  const pythonCmd = process.env.PYTHON_PATH
+    || (installedPy && fs.existsSync(installedPy) ? installedPy : 'python');
 
   const testTexts = [
     'សួស្តីបងប្អូនទាំងអស់គ្នា',

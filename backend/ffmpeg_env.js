@@ -64,6 +64,11 @@ function ensureFFmpegInPath() {
         }
     }
 
+    // Everything above is the app's own bundled ffmpeg and goes first on PATH.
+    // The guesses below include folders at the drive root (C:\\ffmpeg, C:\\tools)
+    // that any Windows user can create, so they go LAST: they may fill in a
+    // missing ffmpeg, but can never shadow python, explorer or a system tool.
+    const bundledCount = extraPaths.length;
     const pf = process.env.ProgramFiles || 'C:\\Program Files';
     const pf86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
     extraPaths.push(
@@ -81,14 +86,16 @@ function ensureFFmpegInPath() {
     }
 
     // Filter out invalid paths AND any path containing app.asar without .unpacked
-    const validPaths = extraPaths.filter(p => {
+    const isValidDir = p => {
         if (!p || (p.includes('app.asar') && !p.includes('app.asar.unpacked'))) return false;
         try {
             return fs.existsSync(p) && fs.statSync(p).isDirectory();
         } catch (e) {
             return false;
         }
-    });
+    };
+    const bundledPaths = extraPaths.slice(0, bundledCount).filter(isValidDir);
+    const fallbackPaths = extraPaths.slice(bundledCount).filter(isValidDir);
 
     const currentPath = process.env.PATH || process.env.Path || '';
     const currentList = currentPath.split(path.delimiter).filter(p => {
@@ -99,12 +106,14 @@ function ensureFFmpegInPath() {
         try { return path.resolve(p).toLowerCase(); } catch (e) { return p.toLowerCase(); }
     }));
 
-    const toAdd = validPaths.filter(p => {
+    const notOnPath = p => {
         try { return !existingSet.has(path.resolve(p).toLowerCase()); } catch (e) { return false; }
-    });
+    };
+    const prepend = bundledPaths.filter(notOnPath);
+    const append = fallbackPaths.filter(notOnPath);
 
-    if (toAdd.length > 0 || currentList.length !== currentPath.split(path.delimiter).filter(Boolean).length) {
-        const combined = [...toAdd, ...currentList].join(path.delimiter);
+    if (prepend.length > 0 || append.length > 0 || currentList.length !== currentPath.split(path.delimiter).filter(Boolean).length) {
+        const combined = [...prepend, ...currentList, ...append].join(path.delimiter);
         process.env.PATH = combined;
         process.env.Path = combined;
     }

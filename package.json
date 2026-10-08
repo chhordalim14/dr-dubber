@@ -1,12 +1,13 @@
 {
   "name": "dr-dubber-pro",
-  "version": "1.3.4",
+  "version": "1.5.0",
   "description": "DR Dubber Pro - Khmer Edition AI Dubbing Studio",
   "main": "main.js",
   "scripts": {
     "prestart": "npm run build:css || true",
     "start": "electron .",
     "server": "node backend/server.js",
+    "test": "node --test",
     "build:css": "tailwindcss -c tailwind.config.js -i frontend/css/tailwind-src.css -o frontend/css/tailwind-built.css --minify || true",
     "watch:css": "tailwindcss -c tailwind.config.js -i frontend/css/tailwind-src.css -o frontend/css/tailwind-built.css --watch",
     "predist": "npm run build:css",
@@ -29,6 +30,7 @@
       "!backend/spleeter-env/**/*",
       "frontend/**/*",
       "assets/**/*",
+      "!assets/**/*.{mp4,mkv,mov,avi,webm,ts,flv,wmv}",
       "whisper_engine/**/*",
       "!whisper_engine/venv/**/*",
       "package.json"
@@ -77,8 +79,8 @@
     "multer": "^1.4.5-lts.1"
   },
   "devDependencies": {
-    "electron": "^28.2.0",
-    "electron-builder": "^24.9.1",
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3",
     "tailwindcss": "^3.4.17"
   },
   "productName": "DR Dubber Pro"
