@@ -17386,6 +17386,15 @@
         return note;
       }
 
+      // Fell back to FFmpeg only because no ML engine is installed at all (the installer ships
+      // neither): "Spleeter could not run (no Python with Spleeter installed was found (...));
+      // Demucs could not run (...)". A retry or a pause can't fix that, so the tab keeps the
+      // FFmpeg BGM. An engine that is there but broke is a real failure.
+      function noEngineInstalled(p) {
+        return p.bgmMethod === "ffmpeg_fallback" &&
+          String(p.bgmFallbackReason || "").split(/\);\s*/).every((r) => /no Python with \w+ installed was found/.test(r));
+      }
+
       // A tab that only got the FFmpeg phase-cancel fallback has almost no music on these
       // near-mono mixes, and one that failed has none - so those get one more try with the ML
       // engine, and if any still went wrong the series pauses instead of exporting them.
@@ -17394,7 +17403,8 @@
         checkStop();
         if (!b || b.ok === false) throw new Error(b?.reason === "no-video" ? "No video tabs to isolate." : "Isolate BGM did not start.");
         if (b.stopped) throw stoppedError();
-        let bad = [...b.fellBack, ...b.failed];
+        let noEngine = b.fellBack.filter(noEngineInstalled);
+        let bad = [...b.fellBack, ...b.failed].filter((p) => !noEngine.includes(p));
         let substituted = b.substituted;
         const retried = bad.length;
         if (bad.length) {
@@ -17403,7 +17413,8 @@
           checkStop();
           if (again?.stopped) throw stoppedError();
           if (again && again.ok !== false) {
-            bad = [...again.fellBack, ...again.failed];
+            noEngine = [...new Set([...noEngine, ...again.fellBack.filter(noEngineInstalled)])];
+            bad = [...again.fellBack, ...again.failed].filter((p) => !noEngine.includes(p));
             substituted = [...new Set([...substituted, ...again.substituted])];
           }
         }
@@ -17429,6 +17440,8 @@
         if (retried) note += ` · ${retried} tab(s) needed a second try`;
         const stillThere = substituted.filter((p) => projects.includes(p) && p.bgmFallbackReason);
         if (stillThere.length) note += ` · tab ${tabNumbers(stillThere)} used ${stillThere[0].bgmMethod === "spleeter" ? "Spleeter" : "Demucs"} instead (${stillThere[0].bgmFallbackReason.split(";")[0]})`;
+        const ffmpegOnly = noEngine.filter((p) => projects.includes(p));
+        if (ffmpegOnly.length) note += ` · tab ${tabNumbers(ffmpegOnly)} used FFmpeg phase cancellation (Spleeter and Demucs are not installed)`;
         return note;
       }
 
