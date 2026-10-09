@@ -291,37 +291,95 @@
     );
 
     // --- THEME CONSTANTS (From Reference) ---
-    // Default look: "Sky Blue" (cool slate / soft white with a sky-blue accent).
+    // Default look: "Studio Grey" (flat neutral greys, like a video editor, with a coral accent).
     const defaultThemes = {
       dark: {
-        bgBase: "#0e1320",
-        bgPanel: "#151c2c",
-        bgHover: "#1c2538",
-        borderColor: "#212b3f",
-        borderLight: "#2e3a52",
-        textBright: "#eef3fb",
-        textPrimary: "#cfd8e6",
-        textSecondary: "#97a3b8",
-        textMuted: "#69758b",
-        accentPrimary: "#3d8ef0",
-        accentText: "#8cbcff",
+        bgBase: "#121212",
+        bgPanel: "#1b1b1b",
+        bgHover: "#262626",
+        borderColor: "#2a2a2a",
+        borderLight: "#3a3a3a",
+        textBright: "#f2f2f2",
+        textPrimary: "#d9d9d9",
+        textSecondary: "#a6a6a6",
+        textMuted: "#7c7c7c",
+        accentPrimary: "#ec5f4b",
+        accentText: "#ff9d89",
       },
       light: {
-        bgBase: "#f2f5fa",
+        bgBase: "#f2f2f3",
         bgPanel: "#ffffff",
-        bgHover: "#edf1f8",
-        borderColor: "#e2e8f2",
-        borderLight: "#cdd6e4",
-        textBright: "#0f1a2b",
-        textPrimary: "#2a364a",
-        textSecondary: "#4f5c72",
-        textMuted: "#7d899d",
-        accentPrimary: "#2f7de1",
-        accentText: "#1f63c0",
+        bgHover: "#f0f0f1",
+        borderColor: "#e4e4e7",
+        borderLight: "#d1d1d6",
+        textBright: "#141414",
+        textPrimary: "#333336",
+        textSecondary: "#5b5b60",
+        textMuted: "#84848a",
+        accentPrimary: "#e0513e",
+        accentText: "#c2412f",
       },
     };
 
     const presetThemes = {
+      // Warm charcoal look from the coral redesign pass.
+      "Coral Sunset": {
+        dark: {
+          bgBase: "#131113",
+          bgPanel: "#1c1a1d",
+          bgHover: "#262327",
+          borderColor: "#2c282d",
+          borderLight: "#3d383e",
+          textBright: "#f7f2ef",
+          textPrimary: "#e0d8d4",
+          textSecondary: "#ada4a0",
+          textMuted: "#857d7a",
+          accentPrimary: "#ec5f4b",
+          accentText: "#ff9d89",
+        },
+        light: {
+          bgBase: "#f7f2ee",
+          bgPanel: "#ffffff",
+          bgHover: "#f5ede8",
+          borderColor: "#ece2dc",
+          borderLight: "#dccfc7",
+          textBright: "#1f1714",
+          textPrimary: "#3b302b",
+          textSecondary: "#5f524c",
+          textMuted: "#85776f",
+          accentPrimary: "#e0513e",
+          accentText: "#c2412f",
+        },
+      },
+      // Sky-blue look from the second redesign pass.
+      "Sky Blue": {
+        dark: {
+          bgBase: "#0e1320",
+          bgPanel: "#151c2c",
+          bgHover: "#1c2538",
+          borderColor: "#212b3f",
+          borderLight: "#2e3a52",
+          textBright: "#eef3fb",
+          textPrimary: "#cfd8e6",
+          textSecondary: "#97a3b8",
+          textMuted: "#69758b",
+          accentPrimary: "#3d8ef0",
+          accentText: "#8cbcff",
+        },
+        light: {
+          bgBase: "#f2f5fa",
+          bgPanel: "#ffffff",
+          bgHover: "#edf1f8",
+          borderColor: "#e2e8f2",
+          borderLight: "#cdd6e4",
+          textBright: "#0f1a2b",
+          textPrimary: "#2a364a",
+          textSecondary: "#4f5c72",
+          textMuted: "#7d899d",
+          accentPrimary: "#2f7de1",
+          accentText: "#1f63c0",
+        },
+      },
       // Mint/teal look from the first redesign pass.
       "Fresh Mint": {
         dark: {
@@ -11402,7 +11460,8 @@
     });
 
     // --- SIDEBAR RESIZER LOGIC ---
-    const leftSidebar = document.getElementById("left-sidebar");
+    // The handle sits on the left edge of the subtitle list (right column).
+    const subtitleColumn = document.getElementById("subtitle-card");
     const sidebarResizer = document.getElementById("sidebar-resizer");
 
     let sidebarDragState = {
@@ -11416,7 +11475,7 @@
       e.stopPropagation();
       sidebarDragState.isDragging = true;
       sidebarDragState.startX = e.clientX;
-      sidebarDragState.startWidth = leftSidebar.offsetWidth;
+      sidebarDragState.startWidth = subtitleColumn.offsetWidth;
 
       // Lock the cursor globally so it doesn't flicker while dragging fast
       document.body.classList.add("select-none");
@@ -11431,11 +11490,12 @@
 
       const deltaX = e.clientX - sidebarDragState.startX;
 
-      // The preview column is on the right, so dragging its left edge leftwards widens it.
-      // Clamp the width: minimum 280px, maximum half of the window width
-      const newWidth = Math.max(280, Math.min(window.innerWidth * 0.5, sidebarDragState.startWidth - deltaX));
+      // The subtitle list is on the right, so dragging its left edge leftwards widens it.
+      // Clamp the width: minimum 380px, maximum 60% of the window width
+      const newWidth = Math.max(380, Math.min(window.innerWidth * 0.6, sidebarDragState.startWidth - deltaX));
 
-      leftSidebar.style.width = `${newWidth}px`;
+      // Set on the row so the video inspector (which covers this column) matches it.
+      subtitleColumn.parentElement.style.setProperty("--subs-width", `${newWidth}px`);
 
       const vpPanel = document.getElementById("video-preset-panel");
       if (vpPanel && vpPanel.classList.contains("flex")) {
@@ -14918,9 +14978,14 @@
             <tr id="empty-subtitles-row">
                 <td colspan="6" class="empty-state">
                     <p class="empty-state__title">No subtitles yet</p>
-                    <p class="empty-state__hint">Open <b>Project</b> on the left to load a video, then import an SRT or transcribe.</p>
+                    <p class="empty-state__hint">Load a video, then import an SRT or transcribe it.</p>
+                    <div class="empty-state__actions">
+                      <button type="button" class="empty-state__btn empty-state__btn--primary" data-click="btn-load-video"><i data-lucide="film"></i><span>Load video</span></button>
+                      <button type="button" class="empty-state__btn" data-click="btn-import-srt"><i data-lucide="file-down"></i><span>Import SRT</span></button>
+                    </div>
                 </td>
             </tr>`;
+        _lucideCreateIcons();
         rowWindowReset();
         return;
       }
@@ -25862,8 +25927,8 @@
       const bar = document.getElementById("project-tabs-bar");
       const noProjectLabel = document.getElementById("footer-no-project");
 
-      if (projects.length <= 1) {
-        // 0 or 1 project → show the original static label, no tabs
+      if (projects.length === 0) {
+        // No project yet → show the static label, no tabs
         noProjectLabel.style.display = "";
         // remove any old tab buttons
         bar.querySelectorAll(".proj-tab-btn").forEach((b) => b.remove());
@@ -25896,7 +25961,7 @@
   <span class="font-mono opacity-60">${i + 1}</span>
   <span>${displayName}</span>
   ${isWorking ? '<span class="text-[9px] text-yellow-400 animate-pulse">●</span>' : ""}
-  <span class="close-tab ml-1 opacity-40 hover:opacity-100 text-[10px] leading-none">✕</span>
+  ${projects.length > 1 ? '<span class="close-tab ml-1 opacity-40 hover:opacity-100 text-[10px] leading-none">✕</span>' : ""}
 `;
 
         btn.addEventListener("click", (e) => {
@@ -26451,6 +26516,109 @@
       });
     }
 
+    // ── Overlay boxes (image + video): resize handles and resize math ──
+    // The box keeps the media's own shape and the media fills it (cover, as in
+    // the render), so the corner handles only scale it: nothing is stretched.
+    // Each handle has a 22px grab area (shell.css).
+    const OVERLAY_HANDLE_DIRS = ["nw", "ne", "se", "sw"];
+    function addOverlayHandles(wrapper, kindClass, onStart) {
+      OVERLAY_HANDLE_DIRS.forEach((dir) => {
+        const h = document.createElement("div");
+        h.className = `${kindClass} ov-handle ov-handle--${dir} hidden`;
+        h.dataset.dir = dir;
+        h.addEventListener("mousedown", (e) => {
+          e.stopPropagation();
+          onStart(dir, e);
+        });
+        wrapper.appendChild(h);
+      });
+    }
+
+    // New left/top/width/height (in % of the container) for a corner drag.
+    // st: { dir, startX, startY, startLeft, startTop, startWidth, startHeight }.
+    // The box scales with its shape kept, anchored at the opposite corner, and
+    // stops at the container's edges instead of refusing the move.
+    function resizeOverlayBox(st, e, parentW, parentH) {
+      const MIN_PX = 16;
+      const dir = st.dir;
+      const hasW = dir.includes("w"), hasN = dir.includes("n");
+      const l = (st.startLeft / 100) * parentW, t = (st.startTop / 100) * parentH;
+      const w = (st.startWidth / 100) * parentW, h = (st.startHeight / 100) * parentH;
+      const right = l + w, bottom = t + h;
+      const maxW = hasW ? right : parentW - l;
+      const maxH = hasN ? bottom : parentH - t;
+      const dx = e.clientX - st.startX, dy = e.clientY - st.startY;
+      let nw = w, nh = h;
+      if (w > 0 && h > 0) {
+        // Scale by whichever axis moved more, then fit inside the container.
+        const sw = (hasW ? w - dx : w + dx) / w, sh = (hasN ? h - dy : h + dy) / h;
+        let scale = Math.abs(sw - 1) > Math.abs(sh - 1) ? sw : sh;
+        scale = Math.max(scale, MIN_PX / w, MIN_PX / h);
+        scale = Math.min(scale, maxW / w, maxH / h);
+        nw = w * scale;
+        nh = h * scale;
+      }
+      const nl = hasW ? right - nw : l;
+      const nt = hasN ? bottom - nh : t;
+      return { left: (nl / parentW) * 100, top: (nt / parentH) * 100, width: (nw / parentW) * 100, height: (nh / parentH) * 100 };
+    }
+
+    // Give a newly added overlay box the media's own shape (same width, height
+    // from the aspect ratio), kept inside the container and centred where it
+    // was, so the media fills it without being cropped or stretched.
+    function fitOverlayBoxToMedia(wrapper, container, mediaW, mediaH) {
+      const rect = container.getBoundingClientRect();
+      if (!mediaW || !mediaH || !rect.width || !rect.height) return false;
+      const ratio = mediaW / mediaH;
+      let wPx = (parseFloat(wrapper.style.width) / 100) * rect.width;
+      let hPx = wPx / ratio;
+      const maxH = rect.height * 0.6;
+      if (hPx > maxH) {
+        hPx = maxH;
+        wPx = hPx * ratio;
+      }
+      const cx = ((parseFloat(wrapper.style.left) + parseFloat(wrapper.style.width) / 2) / 100) * rect.width;
+      const cy = ((parseFloat(wrapper.style.top) + parseFloat(wrapper.style.height) / 2) / 100) * rect.height;
+      const left = Math.min(Math.max(cx - wPx / 2, 0), rect.width - wPx);
+      const top = Math.min(Math.max(cy - hPx / 2, 0), rect.height - hPx);
+      wrapper.style.left = `${(left / rect.width) * 100}%`;
+      wrapper.style.top = `${(top / rect.height) * 100}%`;
+      wrapper.style.width = `${(wPx / rect.width) * 100}%`;
+      wrapper.style.height = `${(hPx / rect.height) * 100}%`;
+      return true;
+    }
+
+    // Delete / apply-to-all buttons sit in a small bar outside the box, so
+    // they never cover the media or the corner handles.
+    function addOverlayActions(wrapper, ...buttons) {
+      const bar = document.createElement("div");
+      bar.className = "ov-actions";
+      buttons.forEach((b) => bar.appendChild(b));
+      wrapper.appendChild(bar);
+    }
+
+    // The overlay container clips at the picture's edges, so the bar goes
+    // above the box when there is room, else below, else inside the top; and
+    // it slides sideways to stay within the picture.
+    function placeOverlayActions(wrapper) {
+      const bar = wrapper && wrapper.querySelector(".ov-actions");
+      const container = wrapper && wrapper.parentElement;
+      if (!bar || !container) return;
+      const GAP = 8;
+      const c = container.getBoundingClientRect();
+      const w = wrapper.getBoundingClientRect();
+      const barH = bar.offsetHeight || 26;
+      const barW = bar.offsetWidth || 56;
+      const side = w.top - c.top >= barH + GAP + 4 ? "above" : c.bottom - w.bottom >= barH + GAP + 4 ? "below" : "inside";
+      bar.classList.toggle("ov-actions--above", side === "above");
+      bar.classList.toggle("ov-actions--below", side === "below");
+      bar.classList.toggle("ov-actions--inside", side === "inside");
+      const centred = w.width / 2 - barW / 2;
+      const minX = c.left + 4 - w.left;
+      const maxX = c.right - 4 - barW - w.left;
+      bar.style.left = `${Math.max(minX, Math.min(maxX, centred))}px`;
+    }
+
     function createVideoOverlay(src, id, autoSelect = false) {
       const wrapper = document.createElement("div");
       wrapper.className = "absolute pointer-events-auto cursor-move video-overlay-item";
@@ -26466,6 +26634,18 @@
       const vid = document.createElement("video");
       vid.src = src;
       vid.className = "w-full h-full object-cover pointer-events-none";
+      if (autoSelect) {
+        vid.addEventListener(
+          "loadedmetadata",
+          () => {
+            if (fitOverlayBoxToMedia(wrapper, videoOverlayContainer, vid.videoWidth, vid.videoHeight)) {
+              updateVideoOverlayState(id, wrapper);
+              placeOverlayActions(wrapper);
+            }
+          },
+          { once: true },
+        );
+      }
       vid.autoplay = true;
       vid.loop = true;
       vid.muted = true;
@@ -26529,42 +26709,26 @@
       clipDiv.appendChild(ctrlBar);
 
       // ── Resize handles ──
-      ["nw", "ne", "se", "sw"].forEach((dir) => {
-        const h = document.createElement("div");
-        h.className = `vid-handle cursor-${dir}-resize absolute w-3.5 h-3.5 bg-white border-2 border-sky-400 rounded-full z-50 hidden`;
-        const pos = {
-          nw: ["top:-6px", "left:-6px"],
-          ne: ["top:-6px", "right:-6px"],
-          se: ["bottom:-6px", "right:-6px"],
-          sw: ["bottom:-6px", "left:-6px"],
-        };
-        pos[dir].forEach((s) => {
-          const [k, v] = s.split(":");
-          h.style[k] = v;
-        });
-        h.dataset.dir = dir;
-        wrapper.appendChild(h);
-        h.addEventListener("mousedown", (e) => {
-          e.stopPropagation();
-          selectVideoItem(wrapper);
-          vidDragState.isResizing = true;
-          const pr = videoOverlayContainer.getBoundingClientRect();
-          vidDragState.parentW = pr.width;
-          vidDragState.parentH = pr.height;
-          vidDragState.dir = dir;
-          vidDragState.startX = e.clientX;
-          vidDragState.startY = e.clientY;
-          vidDragState.startLeft = parseFloat(wrapper.style.left) || 0;
-          vidDragState.startTop = parseFloat(wrapper.style.top) || 0;
-          vidDragState.startWidth = parseFloat(wrapper.style.width) || 0;
-          vidDragState.startHeight = parseFloat(wrapper.style.height) || 0;
-        });
+      addOverlayHandles(wrapper, "vid-handle", (dir, e) => {
+        selectVideoItem(wrapper);
+        vidDragState.isResizing = true;
+        const pr = videoOverlayContainer.getBoundingClientRect();
+        vidDragState.parentW = pr.width;
+        vidDragState.parentH = pr.height;
+        vidDragState.dir = dir;
+        vidDragState.startX = e.clientX;
+        vidDragState.startY = e.clientY;
+        vidDragState.startLeft = parseFloat(wrapper.style.left) || 0;
+        vidDragState.startTop = parseFloat(wrapper.style.top) || 0;
+        vidDragState.startWidth = parseFloat(wrapper.style.width) || 0;
+        vidDragState.startHeight = parseFloat(wrapper.style.height) || 0;
       });
 
       // ── Delete button ──
       const delBtn = document.createElement("button");
       delBtn.innerHTML = `<i data-lucide="x" class="w-3.5 h-3.5 text-white"></i>`;
-      delBtn.className = "absolute -top-4 -right-4 bg-red-500 rounded-full p-1 hidden delete-vid-btn shadow-lg hover:scale-110 transition-transform z-50";
+      delBtn.className = "bg-red-500 rounded-full p-1 hidden delete-vid-btn shadow-lg hover:scale-110 transition-transform";
+      delBtn.title = "Delete Overlay";
       delBtn.onclick = (e) => {
         e.stopPropagation();
         vid.pause();
@@ -26575,18 +26739,17 @@
         const menu = document.getElementById("vid-context-menu");
         if (menu) menu.classList.add("hidden");
       };
-      wrapper.appendChild(delBtn);
 
-      // ── Apply All button (top-left) ──
+      // ── Apply All button ──
       const applyAllBtn = document.createElement("button");
       applyAllBtn.innerHTML = `<i data-lucide="layers" class="w-3.5 h-3.5 text-white"></i>`;
-      applyAllBtn.className = "absolute -top-4 -left-4 bg-amber-500 hover:bg-amber-400 rounded-full p-1 hidden apply-all-vid-btn shadow-lg hover:scale-110 active:scale-95 transition-transform z-50";
+      applyAllBtn.className = "bg-amber-500 hover:bg-amber-400 rounded-full p-1 hidden apply-all-vid-btn shadow-lg hover:scale-110 active:scale-95 transition-transform";
       applyAllBtn.title = "Apply all video overlays to all project tabs";
       applyAllBtn.onclick = (e) => {
         e.stopPropagation();
         applyVideoOverlaysToAllProjects(applyAllBtn);
       };
-      wrapper.appendChild(applyAllBtn);
+      addOverlayActions(wrapper, applyAllBtn, delBtn);
 
       // ── Drag ──
       wrapper.addEventListener("mousedown", (e) => {
@@ -26650,6 +26813,7 @@
       if (targetWrapper) {
         targetWrapper.style.outline = "2px dashed #38bdf8";
         targetWrapper.querySelectorAll(".vid-handle, .delete-vid-btn, .apply-all-vid-btn").forEach((h) => (h.style.display = "block"));
+        placeOverlayActions(targetWrapper);
         const bar = targetWrapper.querySelector(".vid-ctrl-bar");
         if (bar) {
           bar.classList.remove("hidden");
@@ -26678,29 +26842,13 @@
         activeVideoItem.style.left = `${newL}%`;
         activeVideoItem.style.top = `${newT}%`;
       } else if (vidDragState.isResizing) {
-        let newL = vidDragState.startLeft,
-          newT = vidDragState.startTop,
-          newW = vidDragState.startWidth,
-          newH = vidDragState.startHeight;
-        if (vidDragState.dir.includes("e")) newW = vidDragState.startWidth + dxPct;
-        if (vidDragState.dir.includes("s")) newH = vidDragState.startHeight + dyPct;
-        if (vidDragState.dir.includes("w")) {
-          newL = vidDragState.startLeft + dxPct;
-          newW = vidDragState.startWidth - dxPct;
-        }
-        if (vidDragState.dir.includes("n")) {
-          newT = vidDragState.startTop + dyPct;
-          newH = vidDragState.startHeight - dyPct;
-        }
-        if (newW > 2 && newL >= 0 && newL + newW <= 100) {
-          activeVideoItem.style.left = `${newL}%`;
-          activeVideoItem.style.width = `${newW}%`;
-        }
-        if (newH > 2 && newT >= 0 && newT + newH <= 100) {
-          activeVideoItem.style.top = `${newT}%`;
-          activeVideoItem.style.height = `${newH}%`;
-        }
+        const box = resizeOverlayBox(vidDragState, e, vidDragState.parentW, vidDragState.parentH);
+        activeVideoItem.style.left = `${box.left}%`;
+        activeVideoItem.style.top = `${box.top}%`;
+        activeVideoItem.style.width = `${box.width}%`;
+        activeVideoItem.style.height = `${box.height}%`;
       }
+      placeOverlayActions(activeVideoItem);
     });
 
     window.addEventListener("mouseup", () => {
@@ -26993,48 +27141,35 @@
       const img = document.createElement("img");
       img.src = src;
       img.className = "w-full h-full object-cover pointer-events-none";
+      if (autoSelect) {
+        img.addEventListener(
+          "load",
+          () => {
+            if (fitOverlayBoxToMedia(wrapper, imageOverlayContainer, img.naturalWidth, img.naturalHeight)) {
+              updateImageState(id, wrapper);
+              placeOverlayActions(wrapper);
+            }
+          },
+          { once: true },
+        );
+      }
       wrapper.appendChild(img);
 
-      const handles = ["nw", "ne", "se", "sw"];
-      handles.forEach((dir) => {
-        const h = document.createElement("div");
-        h.className = `img-handle cursor-${dir}-resize absolute w-3.5 h-3.5 bg-white border-2 border-emerald-500 rounded-full z-50 hidden`;
-        if (dir === "nw") {
-          h.style.top = "-6px";
-          h.style.left = "-6px";
-        }
-        if (dir === "ne") {
-          h.style.top = "-6px";
-          h.style.right = "-6px";
-        }
-        if (dir === "se") {
-          h.style.bottom = "-6px";
-          h.style.right = "-6px";
-        }
-        if (dir === "sw") {
-          h.style.bottom = "-6px";
-          h.style.left = "-6px";
-        }
-        h.dataset.dir = dir;
-        wrapper.appendChild(h);
-
-        h.addEventListener("mousedown", (e) => {
-          e.stopPropagation();
-          selectImageItem(wrapper);
-          imgDragState.isResizing = true;
-          imgDragState.dir = dir;
-          imgDragState.startX = e.clientX;
-          imgDragState.startY = e.clientY;
-          imgDragState.startLeft = parseFloat(wrapper.style.left) || 0;
-          imgDragState.startTop = parseFloat(wrapper.style.top) || 0;
-          imgDragState.startWidth = parseFloat(wrapper.style.width) || 0;
-          imgDragState.startHeight = parseFloat(wrapper.style.height) || 0;
-        });
+      addOverlayHandles(wrapper, "img-handle", (dir, e) => {
+        selectImageItem(wrapper);
+        imgDragState.isResizing = true;
+        imgDragState.dir = dir;
+        imgDragState.startX = e.clientX;
+        imgDragState.startY = e.clientY;
+        imgDragState.startLeft = parseFloat(wrapper.style.left) || 0;
+        imgDragState.startTop = parseFloat(wrapper.style.top) || 0;
+        imgDragState.startWidth = parseFloat(wrapper.style.width) || 0;
+        imgDragState.startHeight = parseFloat(wrapper.style.height) || 0;
       });
 
       const delBtn = document.createElement("button");
       delBtn.innerHTML = `<i data-lucide="x" class="w-3.5 h-3.5 text-white"></i>`;
-      delBtn.className = "absolute -top-4 -right-4 bg-red-500 rounded-full p-1 hidden delete-img-btn shadow-lg hover:scale-110 transition-transform z-50";
+      delBtn.className = "bg-red-500 rounded-full p-1 hidden delete-img-btn shadow-lg hover:scale-110 transition-transform";
       delBtn.title = "Delete Overlay";
       delBtn.onclick = (e) => {
         e.stopPropagation();
@@ -27043,17 +27178,16 @@
         activeImageItem = null;
         document.getElementById("text-context-menu").classList.add("hidden");
       };
-      wrapper.appendChild(delBtn);
 
       const applyAllBtn = document.createElement("button");
       applyAllBtn.innerHTML = `<i data-lucide="layers" class="w-3.5 h-3.5 text-white"></i>`;
-      applyAllBtn.className = "absolute -top-4 -left-4 bg-amber-500 hover:bg-amber-400 rounded-full p-1 hidden apply-all-img-btn shadow-lg hover:scale-110 active:scale-95 transition-transform z-50";
+      applyAllBtn.className = "bg-amber-500 hover:bg-amber-400 rounded-full p-1 hidden apply-all-img-btn shadow-lg hover:scale-110 active:scale-95 transition-transform";
       applyAllBtn.title = "Apply all overlays to all project tabs";
       applyAllBtn.onclick = (e) => {
         e.stopPropagation();
         applyImageOverlaysToAllProjects(applyAllBtn);
       };
-      wrapper.appendChild(applyAllBtn);
+      addOverlayActions(wrapper, applyAllBtn, delBtn);
 
       wrapper.addEventListener("mousedown", (e) => {
         e.stopPropagation();
@@ -27136,6 +27270,7 @@
       if (targetWrapper) {
         targetWrapper.style.outline = "2px dashed #10b981";
         targetWrapper.querySelectorAll(".img-handle, .delete-img-btn, .apply-all-img-btn").forEach((h) => (h.style.display = "block"));
+        placeOverlayActions(targetWrapper);
       }
     }
 
@@ -27159,30 +27294,13 @@
       }
 
       if (imgDragState.isResizing) {
-        let newL = imgDragState.startLeft,
-          newT = imgDragState.startTop,
-          newW = imgDragState.startWidth,
-          newH = imgDragState.startHeight;
-        if (imgDragState.dir.includes("e")) newW = imgDragState.startWidth + deltaXPercent;
-        if (imgDragState.dir.includes("s")) newH = imgDragState.startHeight + deltaYPercent;
-        if (imgDragState.dir.includes("w")) {
-          newL = imgDragState.startLeft + deltaXPercent;
-          newW = imgDragState.startWidth - deltaXPercent;
-        }
-        if (imgDragState.dir.includes("n")) {
-          newT = imgDragState.startTop + deltaYPercent;
-          newH = imgDragState.startHeight - deltaYPercent;
-        }
-
-        if (newW > 2 && newL >= 0 && newL + newW <= 100) {
-          activeImageItem.style.left = `${newL}%`;
-          activeImageItem.style.width = `${newW}%`;
-        }
-        if (newH > 2 && newT >= 0 && newT + newH <= 100) {
-          activeImageItem.style.top = `${newT}%`;
-          activeImageItem.style.height = `${newH}%`;
-        }
+        const box = resizeOverlayBox(imgDragState, e, parentRect.width, parentRect.height);
+        activeImageItem.style.left = `${box.left}%`;
+        activeImageItem.style.top = `${box.top}%`;
+        activeImageItem.style.width = `${box.width}%`;
+        activeImageItem.style.height = `${box.height}%`;
       }
+      if (imgDragState.isDragging || imgDragState.isResizing) placeOverlayActions(activeImageItem);
     });
 
     window.addEventListener("mouseup", () => {
@@ -27224,12 +27342,6 @@
         if (imgTag) {
           imgTag.style.borderRadius = `${val}px`;
           imgTag.style.overflow = "hidden";
-
-          if (val > 0) {
-            imgTag.style.objectFit = "cover";
-          } else {
-            imgTag.style.objectFit = "contain";
-          }
         }
 
         const imgState = window.imageOverlays.find((i) => i.id === activeImageItem.dataset.id);
@@ -27518,215 +27630,6 @@
       if (overlayAnimFrame) {
         cancelAnimationFrame(overlayAnimFrame);
         overlayAnimFrame = null;
-      }
-    });
-
-    document.addEventListener("DOMContentLoaded", () => {
-      // Play/Pause — two containers swapped by play state
-      const animPlay = lottie.loadAnimation({
-        container: document.getElementById("lottie-play-icon"),
-        renderer: "svg",
-        loop: false,
-        autoplay: false,
-        path: "assets/animations/iconsax-play.json",
-      });
-      const animPause = lottie.loadAnimation({
-        container: document.getElementById("lottie-pause-icon"),
-        renderer: "svg",
-        loop: false,
-        autoplay: false,
-        path: "assets/animations/iconsax-pause.json",
-      });
-      window._animPlay = animPlay;
-      window._animPause = animPause;
-
-      document.getElementById("btn-play-pause").addEventListener("mouseenter", () => {
-        const anim = isPlaying ? animPause : animPlay;
-        anim.stop();
-        anim.setDirection(1);
-        anim.play();
-      });
-      document.getElementById("btn-play-pause").addEventListener("mouseleave", () => {
-        const anim = isPlaying ? animPause : animPlay;
-        anim.setDirection(-1);
-        anim.play();
-      });
-
-      // Stop — loop forever + bounce on click
-      lottie.loadAnimation({
-        container: document.getElementById("lottie-stop"),
-        renderer: "svg",
-        loop: true,
-        autoplay: false,
-        path: "assets/animations/iconsax-stop.json",
-      });
-
-      // Subtitle — hover to animate + bounce on click
-      const animSubtitle = lottie.loadAnimation({
-        container: document.getElementById("lottie-subtitle"),
-        renderer: "svg",
-        loop: false,
-        autoplay: false,
-        path: "assets/animations/iconsax-subtitle.json",
-      });
-      document.getElementById("btn-toggle-subtitles").addEventListener("mouseenter", () => {
-        animSubtitle.setDirection(1);
-        animSubtitle.play();
-      });
-      document.getElementById("btn-toggle-subtitles").addEventListener("mouseleave", () => {
-        animSubtitle.setDirection(-1);
-        animSubtitle.play();
-      });
-
-      // Volume — two containers, swap hidden/visible on mute state change + bounce on click
-      const animVolHigh = lottie.loadAnimation({
-        container: document.getElementById("lottie-volume-high"),
-        renderer: "svg",
-        loop: false,
-        autoplay: false,
-        path: "assets/animations/iconsax-volume-high.json",
-      });
-      const animVolSlash = lottie.loadAnimation({
-        container: document.getElementById("lottie-volume-slash"),
-        renderer: "svg",
-        loop: false,
-        autoplay: false,
-        path: "assets/animations/iconsax-volume-slash.json",
-      });
-      window._animVolHigh = animVolHigh;
-      window._animVolSlash = animVolSlash;
-
-      document.getElementById("btn-mute-toggle").addEventListener("mouseenter", () => {
-        const anim = isMuted ? animVolSlash : animVolHigh;
-        anim.setDirection(1);
-        anim.play();
-      });
-      document.getElementById("btn-mute-toggle").addEventListener("mouseleave", () => {
-        const anim = isMuted ? animVolSlash : animVolHigh;
-        anim.setDirection(-1);
-        anim.play();
-      });
-
-      // Setup the icons and their paths
-      const animatedIcons = [
-        {
-          containerId: "lottie-subtitle-data",
-          path: "assets/animations/subtitle-data.json",
-        },
-        {
-          containerId: "lottie-timeline-editor",
-          path: "assets/animations/timeline-editor.json",
-        },
-        {
-          btnId: "btn-video-preset",
-          containerId: "lottie-video-preset",
-          path: "assets/animations/video-preset.json",
-        },
-        {
-          btnId: "btn-color-adjust",
-          containerId: "lottie-color-adjust",
-          path: "assets/animations/colorfilter.json",
-        },
-        {
-          btnId: "btn-add-image",
-          containerId: "lottie-add-image",
-          path: "assets/animations/gallery-add.json",
-        },
-        {
-          btnId: "btn-flip-h",
-          containerId: "lottie-flip-h",
-          path: "assets/animations/iconsax-arrow-swap-horizontal.json",
-        },
-        {
-          btnId: "btn-flip-v",
-          containerId: "lottie-flip-v",
-          path: "assets/animations/iconsax-arrow-swap-vertical.json",
-        },
-        {
-          btnId: "btn-crop-mode",
-          containerId: "lottie-crop-mode",
-          path: "assets/animations/iconsax-crop.json",
-        },
-        {
-          btnId: "btn-reset-crop",
-          containerId: "lottie-reset-crop",
-          path: "assets/animations/iconsax-rotate-left.json",
-        },
-        {
-          btnId: "btn-add-free-text",
-          containerId: "lottie-add-free-text",
-          path: "assets/animations/iconsax-text-block.json",
-        },
-        {
-          btnId: "video-title",
-          containerId: "lottie-video-title",
-          path: "assets/animations/video-title.json",
-        },
-        {
-          btnId: "btn-add-video-overlay",
-          containerId: "lottie-video-overlay",
-          path: "assets/animations/video-vertical.json",
-        },
-      ];
-
-      // Loop through and initialize
-      // Loop through and initialize (all icons EXCEPT video-title)
-      animatedIcons.forEach((config) => {
-        if (config.btnId === "video-title") return; // handled separately below
-
-        const container = document.getElementById(config.containerId);
-        if (!container) return;
-
-        // No btnId = always-on loop (the Subtitles / Timeline heading icons)
-        if (!config.btnId) {
-          const idleAnim = lottie.loadAnimation({
-            container: container,
-            renderer: "svg",
-            loop: 3,
-            autoplay: true,
-            path: config.path,
-          });
-          idleAnim.setSubframe(false);
-          (container.parentElement || container).addEventListener("mouseenter", () => idleAnim.goToAndPlay(0, true));
-          return;
-        }
-
-        const btn = document.getElementById(config.btnId);
-        if (!btn) return;
-
-        const anim = lottie.loadAnimation({
-          container: container,
-          renderer: "svg",
-          loop: false,
-          autoplay: false,
-          path: config.path,
-        });
-
-        // Play forward on hover
-        btn.addEventListener("mouseenter", () => {
-          anim.setDirection(1);
-          anim.play();
-        });
-
-        // Rewind smoothly on mouse leave
-        btn.addEventListener("mouseleave", () => {
-          anim.setDirection(-1);
-          anim.play();
-        });
-      });
-
-      // video-title icon: loops forever automatically, no hover needed
-      const videoTitleContainer = document.getElementById("lottie-video-title");
-      if (videoTitleContainer) {
-        const titleAnim = lottie.loadAnimation({
-          container: videoTitleContainer,
-          renderer: "svg",
-          loop: 3,
-          autoplay: true,
-          path: "assets/animations/video-title.json",
-        });
-        titleAnim.setSubframe(false);
-        (videoTitleContainer.parentElement || videoTitleContainer).addEventListener("mouseenter", () => titleAnim.goToAndPlay(0, true));
       }
     });
 
