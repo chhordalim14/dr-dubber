@@ -1200,6 +1200,12 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                     currentRenderJob.eta = '0s';
                     if (onComplete) onComplete(outputPath);
                 } else {
+                    try { if (!outputPreexisted && fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch (e) { }
+                    if (currentRenderJob.status === 'cancelled') {
+                        currentRenderJob.error = 'Render cancelled';
+                        if (onError) onError(new Error(currentRenderJob.error));
+                        return;
+                    }
                     currentRenderJob.status = 'error';
                     currentRenderJob.error = `Audio export exited with code ${code}`;
                     if (onError) onError(new Error(currentRenderJob.error));
@@ -1835,6 +1841,13 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                     }, onProgress, onComplete, onError);
                 }
 
+                // A stopped or failed render leaves a half-written, unplayable file behind.
+                try { if (!outputPreexisted && fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch (e) { }
+                if (currentRenderJob.status === 'cancelled') {
+                    currentRenderJob.error = 'Render cancelled';
+                    if (onError) onError(new Error(currentRenderJob.error));
+                    return;
+                }
                 console.error(`[Render FFmpeg Error Code ${code}] Full stderr:\n`, fullStderr);
                 currentRenderJob.status = 'error';
                 const errLines = fullStderr
