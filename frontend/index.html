@@ -691,21 +691,21 @@
       transform: scale(0.97);
     }
 
-    /* CSS Variables - Default Dark Theme (Studio Grey, coral accent) */
+    /* CSS Variables - Default Dark Theme (Midnight Violet) */
     :root {
       color-scheme: dark;
-      --bg-base: #121212;
-      --bg-panel: #1b1b1b;
-      --bg-hover: #262626;
-      --border-color: #2a2a2a;
-      --border-light: #3a3a3a;
-      --text-bright: #f2f2f2;
-      --text-primary: #d9d9d9;
-      --text-secondary: #a6a6a6;
-      --text-muted: #7c7c7c;
-      --accent-primary: #ec5f4b;
-      --accent-text: #ff9d89;
-      --accent-glow: rgba(236, 95, 75, 0.32);
+      --bg-base: #0a0c1a;
+      --bg-panel: #11142a;
+      --bg-hover: #1a1e3a;
+      --border-color: #21264a;
+      --border-light: #30375f;
+      --text-bright: #eef0ff;
+      --text-primary: #cfd3f0;
+      --text-secondary: #9aa0c6;
+      --text-muted: #6c7299;
+      --accent-primary: #7c5cff;
+      --accent-text: #b5a4ff;
+      --accent-glow: rgba(124, 92, 255, 0.32);
       --btn-radius: 8px;
       --font-sans: "Kantumruy Pro", "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       --font-khmer: "Kantumruy Pro", "Khmer OS Battambang", "Hanuman", "Leelawadee UI", sans-serif;
@@ -718,21 +718,21 @@
       --duration-slow: 350ms;
     }
 
-    /* Light Theme Override Class (Studio Grey Light) */
+    /* Light Theme Override Class (Midnight Violet Light) */
     :root.light-theme {
       color-scheme: light;
-      --bg-base: #f2f2f3;
+      --bg-base: #f3f3fb;
       --bg-panel: #ffffff;
-      --bg-hover: #f0f0f1;
-      --border-color: #e4e4e7;
-      --border-light: #d1d1d6;
-      --text-bright: #141414;
-      --text-primary: #333336;
-      --text-secondary: #5b5b60;
-      --text-muted: #84848a;
-      --accent-primary: #e0513e;
-      --accent-text: #c2412f;
-      --accent-glow: rgba(224, 81, 62, 0.22);
+      --bg-hover: #efeefb;
+      --border-color: #e3e2f3;
+      --border-light: #cfcde8;
+      --text-bright: #151433;
+      --text-primary: #33325a;
+      --text-secondary: #5a5980;
+      --text-muted: #8584a6;
+      --accent-primary: #6a4cf0;
+      --accent-text: #5536d6;
+      --accent-glow: rgba(106, 76, 240, 0.22);
       --btn-radius: 8px;
       --font-sans: "Kantumruy Pro", "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       --font-khmer: "Kantumruy Pro", "Khmer OS Battambang", "Leelawadee UI", sans-serif;
@@ -1224,7 +1224,7 @@
   <!-- HEADER -->
   <header class="app-header">
     <div class="app-brand">
-      <img src="drdubberpro.png" alt="DR Dubber Pro Logo" class="app-brand__logo" />
+      <img src="logo.png" alt="DR Dubber Pro Logo" class="app-brand__logo" />
       <div class="flex flex-col">
         <h1 class="app-brand__name">DR Dubber <span class="pro-badge">PRO</span></h1>
         <p class="app-brand__tag">Khmer AI Dubbing Studio</p>
@@ -1247,12 +1247,6 @@
       </div>
       <div class="hdr-divider"></div>
       <div class="hdr-group" aria-label="Tools">
-        <!-- Shortcut to Project › Dub Whole Series (opens the same window) -->
-        <button type="button" class="hdr-btn hdr-btn--series group" data-click="btn-dub-series"
-          title="Dub Whole Series: join episodes, split, transcribe, generate voices and isolate BGM, one part at a time">
-          <i data-lucide="wand-sparkles" class="w-4 h-4 group-hover:scale-110 group-hover:-rotate-12 transition-transform"></i>
-          <span>Dub Series</span>
-        </button>
         <button id="btn-open-title-ai"
           class="hdr-icon hdr-icon--magic group relative text-white title-ai-btn-idle"
           style="background: linear-gradient(135deg, #ff7a66, #ffa45c, #ff6f91, #ff7a66); background-size: 300% 300%"
@@ -1282,19 +1276,6 @@
 
   <!-- MAIN CONTENT AREA: rail | workspace (subtitles + timeline) | preview -->
   <main class="app-shell">
-    <!-- Tool rail: each button opens its tools in the floating drawer -->
-    <nav id="app-rail" aria-label="Studio tools">
-      <button type="button" class="rail-btn" data-rail="setup" style="--tile: var(--tile-amber)" title="Project setup: load video, subtitles, episodes">
-        <i data-lucide="folder-open"></i><span>Project</span>
-      </button>
-      <button type="button" class="rail-btn" data-rail="audio" style="--tile: var(--tile-mint)" title="Audio &amp; dubbing tracks">
-        <i data-lucide="audio-lines"></i><span>Audio</span>
-      </button>
-      <button type="button" class="rail-btn" data-rail="video" style="--tile: var(--tile-sky)" title="Video tools &amp; censor">
-        <i data-lucide="scan-eye"></i><span>Video</span>
-      </button>
-      <span id="badge-app-version" class="rail-version">v1.3.2 Pro</span>
-    </nav>
 
     <!-- Floating tools drawer -->
     <aside id="rail-drawer" class="hidden" aria-label="Tools">
@@ -1524,6 +1505,25 @@
     <!-- WORKSPACE: Subtitle table & Timeline -->
     <div class="app-stage">
       <div class="app-stage__top">
+        <!-- Studio tools rail: each tab opens its tools in the drawer; Series opens its window -->
+        <nav id="app-rail" aria-label="Studio tools">
+          <div class="rail-seg">
+            <button type="button" class="rail-btn" data-rail="setup" style="--tile: var(--tile-amber)" title="Project setup: load video, subtitles, episodes">
+              <i data-lucide="folder-open"></i><span>Project</span>
+            </button>
+            <button type="button" class="rail-btn" data-rail="audio" style="--tile: var(--tile-mint)" title="Audio &amp; dubbing tracks">
+              <i data-lucide="audio-lines"></i><span>Audio</span>
+            </button>
+            <button type="button" class="rail-btn" data-rail="video" style="--tile: var(--tile-sky)" title="Video tools &amp; censor">
+              <i data-lucide="scan-eye"></i><span>Video</span>
+            </button>
+          </div>
+          <!-- Shortcut: opens the Dub Whole Series window (same button as Project › Long videos) -->
+          <button type="button" class="rail-btn" data-click="btn-dub-series" style="--tile: var(--tile-coral)"
+            title="Dub Whole Series: join episodes, split, transcribe, generate voices and isolate BGM, one part at a time">
+            <i data-lucide="wand-sparkles"></i><span>Series</span>
+          </button>
+        </nav>
         <!-- PREVIEW (id kept as left-sidebar for older code paths) -->
         <aside id="left-sidebar">
           <div id="preview-card" class="shell-card">
@@ -1533,7 +1533,6 @@
                 <i id="lottie-video-title" class="lottie-icon title-tile shrink-0" style="--tile: var(--tile-sky)"><i data-lucide="monitor-play"></i></i>
                 <span id="video-title-static">Video Preview</span>
               </h2>
-            </div>
             <div id="preview-toolbar"
               class="flex items-center gap-1 overflow-x-auto custom-scrollbar flex-nowrap shrink-0 whitespace-nowrap"
               style="scrollbar-width: none">
@@ -1620,223 +1619,224 @@
                 <span class="tool-label">Presets</span>
               </button>
             </div>
-
-            <!-- Video, color and vignette panels open as an inspector over the subtitle list -->
-            <div id="preview-popovers">
-              <header class="inspector-head">
-                <div>
-                  <h2>Adjust video</h2>
-                  <p>Changes show live in the preview.</p>
-                </div>
-                <button type="button" class="drawer-close" data-close-inspector title="Close"><i data-lucide="x"></i></button>
-              </header>
-            <!-- Video Preset Panel (Redesigned) -->
-            <div id="video-preset-panel"
-              class="font-khmer hidden flex-col bg-[var(--bg-base)] border border-[var(--border-light)] rounded-xl shadow-xl overflow-hidden min-w-0 w-full"
-              style="transform-origin: top center">
-              <!-- Header -->
-              <div
-                class="flex items-center justify-between px-3 py-2 border-b border-[var(--border-light)] bg-[var(--bg-panel)]">
-                <div class="flex items-center gap-1.5">
-                  <span class="text-[11px] font-semibold text-[var(--text-bright)] tracking-wide uppercase">Video
-                    Presets</span>
-                </div>
-                <div class="flex items-center gap-1">
-                  <button id="btn-vp-apply-all"
-                    class="flex items-center gap-1 text-[10px] text-[var(--text-muted)] hover:text-amber-400 transition-all px-1.5 py-0.5 rounded hover:bg-[var(--bg-hover)] font-medium"
-                    title="Apply to ALL project tabs">
-                    <i data-lucide="layers" class="w-3 h-3"></i><span>All</span>
-                  </button>
-                  <div class="w-px h-3 bg-[var(--border-light)]"></div>
-                  <button id="btn-vp-save"
-                    class="flex items-center gap-1 text-[10px] bg-[var(--accent-primary)]/15 text-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/30 transition-all px-2 py-0.5 rounded-md font-semibold"><i
-                      data-lucide="plus" class="w-3 h-3"></i><span>Save</span></button>
-                  <button id="btn-vp-reset"
-                    class="text-[10px] text-[var(--text-muted)] hover:text-red-400 transition-colors px-1.5 py-0.5 rounded hover:bg-[var(--bg-hover)]"
-                    title="Deselect current preset">Reset</button>
-                </div>
-              </div>
-              <!-- Preset List -->
-              <div id="vp-preset-list" class="flex flex-col gap-0.5 overflow-y-auto px-2 py-2"
-                style="max-height: calc(5 * 36px + 16px); scroll-behavior: smooth">
-                <span class="text-[10px] text-[var(--text-muted)] italic text-center py-3">No presets yet — save your
-                  current settings!</span>
-              </div>
             </div>
 
-            <!-- Color Adjustment Panel -->
-            <div id="color-adjust-panel"
-              class="font-khmer hidden flex-col gap-2.5 bg-[var(--bg-base)] border border-[var(--border-light)] rounded-xl p-3 shadow-2xl overflow-hidden min-w-0"
-              style="transform-origin: top center">
-          
-              <!-- Top Title & Action Strip -->
-              <div class="flex items-center justify-between border-b border-[var(--border-light)] pb-2">
-                <div class="flex items-center gap-1.5">
-                  <i data-lucide="sparkles" class="w-3.5 h-3.5 text-amber-400 shrink-0"></i>
-                  <span class="text-[11px] font-bold text-[var(--text-bright)] tracking-wide uppercase">Cinematic Color Studio</span>
-                </div>
-                <div class="flex items-center gap-1.5">
-                  <!-- Hold to Compare Button -->
-                  <button id="btn-ca-compare"
-                    class="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md font-medium text-slate-300 bg-white/[0.06] hover:bg-white/[0.12] hover:text-white border border-white/[0.08] transition-all select-none cursor-pointer active:scale-95"
-                    title="Hold mouse down to view original raw video without color filter">
-                    <i data-lucide="eye" class="w-3 h-3"></i>
-                    <span>Hold Compare</span>
-                  </button>
-                  <button id="btn-reset-color"
-                    class="text-[10px] text-[var(--text-muted)] hover:text-rose-400 transition-colors px-1.5 py-0.5 rounded hover:bg-[var(--bg-hover)]"
-                    title="Reset all adjustments to neutral default">Reset</button>
-                </div>
-              </div>
-
-              <!-- Quick Presets Section (Cards & Categories) -->
-              <div class="flex flex-col gap-1.5">
-                <div class="flex items-center justify-between">
-                  <span class="text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-wider">Drama LUTs</span>
-                  <div class="flex items-center gap-1">
-                    <button id="btn-ca-apply-all"
-                      class="flex items-center gap-1 text-[10px] text-[var(--text-muted)] hover:text-amber-400 transition-all px-1.5 py-0.5 rounded hover:bg-[var(--bg-hover)] font-medium"
-                      title="Apply current color filter to all project tabs">
-                      <i data-lucide="layers" class="w-3 h-3"></i> All Tabs
-                    </button>
-                    <button id="btn-ca-save-preset"
-                      class="flex items-center gap-1 text-[10px] text-cyan-400 hover:brightness-125 transition-all px-1.5 py-0.5 rounded hover:bg-cyan-500/10 font-semibold">
-                      <i data-lucide="plus" class="w-3 h-3"></i> Save
-                    </button>
-                  </div>
-                </div>
-
-                <!-- Category Filter Tabs -->
-                <div id="ca-category-tabs" class="flex items-center gap-1 overflow-x-auto custom-scrollbar pb-0.5 select-none">
-                  <button class="ca-cat-btn active text-[9px] font-bold px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 transition-all" data-cat="all">All</button>
-                  <button class="ca-cat-btn text-[9px] font-medium px-2 py-0.5 rounded-full text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.08] transition-all" data-cat="romance">Romance</button>
-                  <button class="ca-cat-btn text-[9px] font-medium px-2 py-0.5 rounded-full text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.08] transition-all" data-cat="historical">Historical</button>
-                  <button class="ca-cat-btn text-[9px] font-medium px-2 py-0.5 rounded-full text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.08] transition-all" data-cat="cinematic">Cinematic</button>
-                  <button class="ca-cat-btn text-[9px] font-medium px-2 py-0.5 rounded-full text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.08] transition-all" data-cat="emotional">Melodrama</button>
-                  <button class="ca-cat-btn text-[9px] font-medium px-2 py-0.5 rounded-full text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.08] transition-all" data-cat="custom">Custom</button>
-                </div>
-
-                <!-- Presets Grid Container -->
-                <div id="ca-preset-list"
-                  class="grid grid-cols-2 gap-1.5 max-h-[145px] overflow-y-auto custom-scrollbar pr-0.5 p-0.5">
-                  <!-- Preset cards injected by JS -->
-                </div>
-              </div>
-
-              <!-- Fine-Tuning Sliders Section -->
-              <div class="mt-1 pt-2 border-t border-[var(--border-light)] flex flex-col gap-2">
-                <div class="flex items-center justify-between mb-0.5">
-                  <span class="text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-wider">Fine-Tune Grading</span>
-                  <span class="text-[9px] text-[var(--text-muted)] italic">Double-click slider to reset</span>
-                </div>
-
-                <!-- Brightness -->
-                <div class="flex items-center gap-2 group">
-                  <span class="text-[10px] text-[var(--text-secondary)] w-16 shrink-0 flex items-center gap-1.5 font-medium">
-                    <i data-lucide="sun" class="w-3 h-3 text-amber-400 shrink-0"></i>
-                    <span>Bright</span>
-                  </span>
-                  <div class="relative flex-1 flex items-center">
-                    <input type="range" id="ca-brightness" min="0" max="200" value="100"
-                      class="w-full h-1.5 rounded-lg appearance-none cursor-pointer bg-slate-800 accent-amber-400" />
-                  </div>
-                  <span id="ca-brightness-val" class="text-[10px] font-mono text-[var(--text-bright)] w-8 text-right bg-white/[0.04] px-1 py-0.5 rounded border border-white/[0.06] cursor-pointer" title="Double click to reset">100</span>
-                </div>
-
-                <!-- Contrast -->
-                <div class="flex items-center gap-2 group">
-                  <span class="text-[10px] text-[var(--text-secondary)] w-16 shrink-0 flex items-center gap-1.5 font-medium">
-                    <i data-lucide="contrast" class="w-3 h-3 text-indigo-400 shrink-0"></i>
-                    <span>Contrast</span>
-                  </span>
-                  <div class="relative flex-1 flex items-center">
-                    <input type="range" id="ca-contrast" min="0" max="200" value="100"
-                      class="w-full h-1.5 rounded-lg appearance-none cursor-pointer bg-slate-800 accent-indigo-400" />
-                  </div>
-                  <span id="ca-contrast-val" class="text-[10px] font-mono text-[var(--text-bright)] w-8 text-right bg-white/[0.04] px-1 py-0.5 rounded border border-white/[0.06] cursor-pointer" title="Double click to reset">100</span>
-                </div>
-
-                <!-- Saturation -->
-                <div class="flex items-center gap-2 group">
-                  <span class="text-[10px] text-[var(--text-secondary)] w-16 shrink-0 flex items-center gap-1.5 font-medium">
-                    <i data-lucide="palette" class="w-3 h-3 text-fuchsia-400 shrink-0"></i>
-                    <span>Saturate</span>
-                  </span>
-                  <div class="relative flex-1 flex items-center">
-                    <input type="range" id="ca-saturation" min="0" max="200" value="100"
-                      class="w-full h-1.5 rounded-lg appearance-none cursor-pointer bg-slate-800 accent-fuchsia-400" />
-                  </div>
-                  <span id="ca-saturation-val" class="text-[10px] font-mono text-[var(--text-bright)] w-8 text-right bg-white/[0.04] px-1 py-0.5 rounded border border-white/[0.06] cursor-pointer" title="Double click to reset">100</span>
-                </div>
-
-                <!-- Sharpness -->
-                <div class="flex items-center gap-2 group">
-                  <span class="text-[10px] text-[var(--text-secondary)] w-16 shrink-0 flex items-center gap-1.5 font-medium">
-                    <i data-lucide="sparkles" class="w-3 h-3 text-cyan-400 shrink-0"></i>
-                    <span>Sharp</span>
-                  </span>
-                  <div class="relative flex-1 flex items-center">
-                    <input type="range" id="ca-sharpness" min="-2" max="5" value="0" step="0.5"
-                      class="w-full h-1.5 rounded-lg appearance-none cursor-pointer bg-slate-800 accent-cyan-400" />
-                  </div>
-                  <span id="ca-sharpness-val" class="text-[10px] font-mono text-[var(--text-bright)] w-8 text-right bg-white/[0.04] px-1 py-0.5 rounded border border-white/[0.06] cursor-pointer" title="Double click to reset">0</span>
-                </div>
-
-                <!-- Hue (With real continuous rainbow spectrum track!) -->
-                <div class="flex items-center gap-2 group">
-                  <span class="text-[10px] text-[var(--text-secondary)] w-16 shrink-0 flex items-center gap-1.5 font-medium">
-                    <i data-lucide="disc" class="w-3 h-3 text-pink-400 shrink-0"></i>
-                    <span>Hue</span>
-                  </span>
-                  <div class="relative flex-1 flex items-center">
-                    <input type="range" id="ca-hue" min="-180" max="180" value="0"
-                      class="w-full h-1.5 rounded-lg appearance-none cursor-pointer"
-                      style="background: linear-gradient(to right, #ef4444, #eab308, #22c55e, #06b6d4, #3b82f6, #a855f7, #ef4444); accent-color: #ffffff;" />
-                  </div>
-                  <span id="ca-hue-val" class="text-[10px] font-mono text-[var(--text-bright)] w-8 text-right bg-white/[0.04] px-1 py-0.5 rounded border border-white/[0.06] cursor-pointer" title="Double click to reset">0°</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- Vignette Panel -->
-            <div id="vignette-panel"
-              class="font-khmer hidden flex-col gap-2 bg-[var(--bg-base)] border border-[var(--border-light)] rounded-xl px-3 py-2.5 shadow-inner overflow-hidden min-w-0"
-              style="transform-origin: top center">
-              <div class="flex items-center justify-between mb-0.5">
-                <span class="text-[11px] font-semibold text-[var(--text-bright)] tracking-wide uppercase">Vignette</span>
-                <div class="flex items-center gap-1">
-                  <button id="btn-vg-apply-all"
-                    class="flex items-center gap-1 text-[10px] text-[var(--text-muted)] hover:text-amber-400 hover:brightness-125 transition-all px-1.5 py-0.5 rounded hover:bg-[var(--bg-hover)] font-medium"
-                    title="Apply current vignette settings to all project tabs">
-                    <i data-lucide="layers" class="w-3 h-3"></i> All
-                  </button>
-                  <div class="w-px h-3 bg-[var(--border-light)]"></div>
-                  <button id="btn-reset-vignette"
-                    class="text-[10px] text-[var(--text-muted)] hover:text-red-400 transition-colors px-1.5 py-0.5 rounded hover:bg-[var(--bg-hover)]">Reset</button>
-                </div>
-              </div>
-              <!-- Strength -->
-              <div class="flex items-center gap-2">
-                <span class="text-[10px] text-[var(--text-secondary)] w-14 shrink-0">Strength</span>
-                <input type="range" id="vg-strength" min="0" max="100" value="0"
-                  class="flex-1 h-1 rounded appearance-none cursor-pointer" style="accent-color: var(--accent-primary)" />
-                <span id="vg-strength-val" class="text-[10px] font-mono text-[var(--text-muted)] w-7 text-right">0</span>
-              </div>
-              <!-- Color -->
-              <div class="flex items-center gap-2">
-                <span class="text-[10px] text-[var(--text-secondary)] w-14 shrink-0">Color</span>
-                <input type="color" id="vg-color" value="#000000"
-                  style="position: absolute; opacity: 0; pointer-events: none; width: 0; height: 0" tabindex="-1" />
-                <!-- Visual swatch — clicking it opens the native picker programmatically -->
-                <div id="vg-color-swatch" title="Choose vignette color"
-                  class="w-7 h-6 rounded cursor-pointer border border-[var(--border-light)]" style="background: #000000">
-                </div>
-                <span id="vg-color-val" class="text-[10px] font-mono text-[var(--text-muted)]">#000000</span>
-              </div>
-            </div>
-            </div>
 
             <div id="preview-stage">
+              <!-- Video, color and vignette panels open here, at the top-left of the preview -->
+              <div id="preview-popovers">
+                <header class="inspector-head">
+                  <div>
+                    <h2>Adjust video</h2>
+                    <p>Changes show live in the preview.</p>
+                  </div>
+                  <button type="button" class="drawer-close" data-close-inspector title="Close"><i data-lucide="x"></i></button>
+                </header>
+              <!-- Video Preset Panel (Redesigned) -->
+              <div id="video-preset-panel"
+                class="font-khmer hidden flex-col bg-[var(--bg-base)] border border-[var(--border-light)] rounded-xl shadow-xl overflow-hidden min-w-0 w-full"
+                style="transform-origin: top center">
+                <!-- Header -->
+                <div
+                  class="flex items-center justify-between px-3 py-2 border-b border-[var(--border-light)] bg-[var(--bg-panel)]">
+                  <div class="flex items-center gap-1.5">
+                    <span class="text-[11px] font-semibold text-[var(--text-bright)] tracking-wide uppercase">Video
+                      Presets</span>
+                  </div>
+                  <div class="flex items-center gap-1">
+                    <button id="btn-vp-apply-all"
+                      class="flex items-center gap-1 text-[10px] text-[var(--text-muted)] hover:text-amber-400 transition-all px-1.5 py-0.5 rounded hover:bg-[var(--bg-hover)] font-medium"
+                      title="Apply to ALL project tabs">
+                      <i data-lucide="layers" class="w-3 h-3"></i><span>All</span>
+                    </button>
+                    <div class="w-px h-3 bg-[var(--border-light)]"></div>
+                    <button id="btn-vp-save"
+                      class="flex items-center gap-1 text-[10px] bg-[var(--accent-primary)]/15 text-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/30 transition-all px-2 py-0.5 rounded-md font-semibold"><i
+                        data-lucide="plus" class="w-3 h-3"></i><span>Save</span></button>
+                    <button id="btn-vp-reset"
+                      class="text-[10px] text-[var(--text-muted)] hover:text-red-400 transition-colors px-1.5 py-0.5 rounded hover:bg-[var(--bg-hover)]"
+                      title="Deselect current preset">Reset</button>
+                  </div>
+                </div>
+                <!-- Preset List -->
+                <div id="vp-preset-list" class="flex flex-col gap-0.5 overflow-y-auto px-2 py-2"
+                  style="max-height: calc(5 * 36px + 16px); scroll-behavior: smooth">
+                  <span class="text-[10px] text-[var(--text-muted)] italic text-center py-3">No presets yet — save your
+                    current settings!</span>
+                </div>
+              </div>
+
+              <!-- Color Adjustment Panel -->
+              <div id="color-adjust-panel"
+                class="font-khmer hidden flex-col gap-2.5 bg-[var(--bg-base)] border border-[var(--border-light)] rounded-xl p-3 shadow-2xl overflow-hidden min-w-0"
+                style="transform-origin: top center">
+          
+                <!-- Top Title & Action Strip -->
+                <div class="flex items-center justify-between border-b border-[var(--border-light)] pb-2">
+                  <div class="flex items-center gap-1.5">
+                    <i data-lucide="sparkles" class="w-3.5 h-3.5 text-amber-400 shrink-0"></i>
+                    <span class="text-[11px] font-bold text-[var(--text-bright)] tracking-wide uppercase">Cinematic Color Studio</span>
+                  </div>
+                  <div class="flex items-center gap-1.5">
+                    <!-- Hold to Compare Button -->
+                    <button id="btn-ca-compare"
+                      class="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md font-medium text-slate-300 bg-white/[0.06] hover:bg-white/[0.12] hover:text-white border border-white/[0.08] transition-all select-none cursor-pointer active:scale-95"
+                      title="Hold mouse down to view original raw video without color filter">
+                      <i data-lucide="eye" class="w-3 h-3"></i>
+                      <span>Hold Compare</span>
+                    </button>
+                    <button id="btn-reset-color"
+                      class="text-[10px] text-[var(--text-muted)] hover:text-rose-400 transition-colors px-1.5 py-0.5 rounded hover:bg-[var(--bg-hover)]"
+                      title="Reset all adjustments to neutral default">Reset</button>
+                  </div>
+                </div>
+
+                <!-- Quick Presets Section (Cards & Categories) -->
+                <div class="flex flex-col gap-1.5">
+                  <div class="flex items-center justify-between">
+                    <span class="text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-wider">Drama LUTs</span>
+                    <div class="flex items-center gap-1">
+                      <button id="btn-ca-apply-all"
+                        class="flex items-center gap-1 text-[10px] text-[var(--text-muted)] hover:text-amber-400 transition-all px-1.5 py-0.5 rounded hover:bg-[var(--bg-hover)] font-medium"
+                        title="Apply current color filter to all project tabs">
+                        <i data-lucide="layers" class="w-3 h-3"></i> All Tabs
+                      </button>
+                      <button id="btn-ca-save-preset"
+                        class="flex items-center gap-1 text-[10px] text-cyan-400 hover:brightness-125 transition-all px-1.5 py-0.5 rounded hover:bg-cyan-500/10 font-semibold">
+                        <i data-lucide="plus" class="w-3 h-3"></i> Save
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- Category Filter Tabs -->
+                  <div id="ca-category-tabs" class="flex items-center gap-1 overflow-x-auto custom-scrollbar pb-0.5 select-none">
+                    <button class="ca-cat-btn active text-[9px] font-bold px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 transition-all" data-cat="all">All</button>
+                    <button class="ca-cat-btn text-[9px] font-medium px-2 py-0.5 rounded-full text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.08] transition-all" data-cat="romance">Romance</button>
+                    <button class="ca-cat-btn text-[9px] font-medium px-2 py-0.5 rounded-full text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.08] transition-all" data-cat="historical">Historical</button>
+                    <button class="ca-cat-btn text-[9px] font-medium px-2 py-0.5 rounded-full text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.08] transition-all" data-cat="cinematic">Cinematic</button>
+                    <button class="ca-cat-btn text-[9px] font-medium px-2 py-0.5 rounded-full text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.08] transition-all" data-cat="emotional">Melodrama</button>
+                    <button class="ca-cat-btn text-[9px] font-medium px-2 py-0.5 rounded-full text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.08] transition-all" data-cat="custom">Custom</button>
+                  </div>
+
+                  <!-- Presets Grid Container -->
+                  <div id="ca-preset-list"
+                    class="grid grid-cols-2 gap-1.5 max-h-[145px] overflow-y-auto custom-scrollbar pr-0.5 p-0.5">
+                    <!-- Preset cards injected by JS -->
+                  </div>
+                </div>
+
+                <!-- Fine-Tuning Sliders Section -->
+                <div class="mt-1 pt-2 border-t border-[var(--border-light)] flex flex-col gap-2">
+                  <div class="flex items-center justify-between mb-0.5">
+                    <span class="text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-wider">Fine-Tune Grading</span>
+                    <span class="text-[9px] text-[var(--text-muted)] italic">Double-click slider to reset</span>
+                  </div>
+
+                  <!-- Brightness -->
+                  <div class="flex items-center gap-2 group">
+                    <span class="text-[10px] text-[var(--text-secondary)] w-16 shrink-0 flex items-center gap-1.5 font-medium">
+                      <i data-lucide="sun" class="w-3 h-3 text-amber-400 shrink-0"></i>
+                      <span>Bright</span>
+                    </span>
+                    <div class="relative flex-1 flex items-center">
+                      <input type="range" id="ca-brightness" min="0" max="200" value="100"
+                        class="w-full h-1.5 rounded-lg appearance-none cursor-pointer bg-slate-800 accent-amber-400" />
+                    </div>
+                    <span id="ca-brightness-val" class="text-[10px] font-mono text-[var(--text-bright)] w-8 text-right bg-white/[0.04] px-1 py-0.5 rounded border border-white/[0.06] cursor-pointer" title="Double click to reset">100</span>
+                  </div>
+
+                  <!-- Contrast -->
+                  <div class="flex items-center gap-2 group">
+                    <span class="text-[10px] text-[var(--text-secondary)] w-16 shrink-0 flex items-center gap-1.5 font-medium">
+                      <i data-lucide="contrast" class="w-3 h-3 text-indigo-400 shrink-0"></i>
+                      <span>Contrast</span>
+                    </span>
+                    <div class="relative flex-1 flex items-center">
+                      <input type="range" id="ca-contrast" min="0" max="200" value="100"
+                        class="w-full h-1.5 rounded-lg appearance-none cursor-pointer bg-slate-800 accent-indigo-400" />
+                    </div>
+                    <span id="ca-contrast-val" class="text-[10px] font-mono text-[var(--text-bright)] w-8 text-right bg-white/[0.04] px-1 py-0.5 rounded border border-white/[0.06] cursor-pointer" title="Double click to reset">100</span>
+                  </div>
+
+                  <!-- Saturation -->
+                  <div class="flex items-center gap-2 group">
+                    <span class="text-[10px] text-[var(--text-secondary)] w-16 shrink-0 flex items-center gap-1.5 font-medium">
+                      <i data-lucide="palette" class="w-3 h-3 text-fuchsia-400 shrink-0"></i>
+                      <span>Saturate</span>
+                    </span>
+                    <div class="relative flex-1 flex items-center">
+                      <input type="range" id="ca-saturation" min="0" max="200" value="100"
+                        class="w-full h-1.5 rounded-lg appearance-none cursor-pointer bg-slate-800 accent-fuchsia-400" />
+                    </div>
+                    <span id="ca-saturation-val" class="text-[10px] font-mono text-[var(--text-bright)] w-8 text-right bg-white/[0.04] px-1 py-0.5 rounded border border-white/[0.06] cursor-pointer" title="Double click to reset">100</span>
+                  </div>
+
+                  <!-- Sharpness -->
+                  <div class="flex items-center gap-2 group">
+                    <span class="text-[10px] text-[var(--text-secondary)] w-16 shrink-0 flex items-center gap-1.5 font-medium">
+                      <i data-lucide="sparkles" class="w-3 h-3 text-cyan-400 shrink-0"></i>
+                      <span>Sharp</span>
+                    </span>
+                    <div class="relative flex-1 flex items-center">
+                      <input type="range" id="ca-sharpness" min="-2" max="5" value="0" step="0.5"
+                        class="w-full h-1.5 rounded-lg appearance-none cursor-pointer bg-slate-800 accent-cyan-400" />
+                    </div>
+                    <span id="ca-sharpness-val" class="text-[10px] font-mono text-[var(--text-bright)] w-8 text-right bg-white/[0.04] px-1 py-0.5 rounded border border-white/[0.06] cursor-pointer" title="Double click to reset">0</span>
+                  </div>
+
+                  <!-- Hue (With real continuous rainbow spectrum track!) -->
+                  <div class="flex items-center gap-2 group">
+                    <span class="text-[10px] text-[var(--text-secondary)] w-16 shrink-0 flex items-center gap-1.5 font-medium">
+                      <i data-lucide="disc" class="w-3 h-3 text-pink-400 shrink-0"></i>
+                      <span>Hue</span>
+                    </span>
+                    <div class="relative flex-1 flex items-center">
+                      <input type="range" id="ca-hue" min="-180" max="180" value="0"
+                        class="w-full h-1.5 rounded-lg appearance-none cursor-pointer"
+                        style="background: linear-gradient(to right, #ef4444, #eab308, #22c55e, #06b6d4, #3b82f6, #a855f7, #ef4444); accent-color: #ffffff;" />
+                    </div>
+                    <span id="ca-hue-val" class="text-[10px] font-mono text-[var(--text-bright)] w-8 text-right bg-white/[0.04] px-1 py-0.5 rounded border border-white/[0.06] cursor-pointer" title="Double click to reset">0°</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Vignette Panel -->
+              <div id="vignette-panel"
+                class="font-khmer hidden flex-col gap-2 bg-[var(--bg-base)] border border-[var(--border-light)] rounded-xl px-3 py-2.5 shadow-inner overflow-hidden min-w-0"
+                style="transform-origin: top center">
+                <div class="flex items-center justify-between mb-0.5">
+                  <span class="text-[11px] font-semibold text-[var(--text-bright)] tracking-wide uppercase">Vignette</span>
+                  <div class="flex items-center gap-1">
+                    <button id="btn-vg-apply-all"
+                      class="flex items-center gap-1 text-[10px] text-[var(--text-muted)] hover:text-amber-400 hover:brightness-125 transition-all px-1.5 py-0.5 rounded hover:bg-[var(--bg-hover)] font-medium"
+                      title="Apply current vignette settings to all project tabs">
+                      <i data-lucide="layers" class="w-3 h-3"></i> All
+                    </button>
+                    <div class="w-px h-3 bg-[var(--border-light)]"></div>
+                    <button id="btn-reset-vignette"
+                      class="text-[10px] text-[var(--text-muted)] hover:text-red-400 transition-colors px-1.5 py-0.5 rounded hover:bg-[var(--bg-hover)]">Reset</button>
+                  </div>
+                </div>
+                <!-- Strength -->
+                <div class="flex items-center gap-2">
+                  <span class="text-[10px] text-[var(--text-secondary)] w-14 shrink-0">Strength</span>
+                  <input type="range" id="vg-strength" min="0" max="100" value="0"
+                    class="flex-1 h-1 rounded appearance-none cursor-pointer" style="accent-color: var(--accent-primary)" />
+                  <span id="vg-strength-val" class="text-[10px] font-mono text-[var(--text-muted)] w-7 text-right">0</span>
+                </div>
+                <!-- Color -->
+                <div class="flex items-center gap-2">
+                  <span class="text-[10px] text-[var(--text-secondary)] w-14 shrink-0">Color</span>
+                  <input type="color" id="vg-color" value="#000000"
+                    style="position: absolute; opacity: 0; pointer-events: none; width: 0; height: 0" tabindex="-1" />
+                  <!-- Visual swatch — clicking it opens the native picker programmatically -->
+                  <div id="vg-color-swatch" title="Choose vignette color"
+                    class="w-7 h-6 rounded cursor-pointer border border-[var(--border-light)]" style="background: #000000">
+                  </div>
+                  <span id="vg-color-val" class="text-[10px] font-mono text-[var(--text-muted)]">#000000</span>
+                </div>
+              </div>
+              </div>
 
             <div id="preview-aspect-wrapper"
               class="ambient-video-glow relative video-backdrop rounded-xl overflow-hidden border border-[var(--border-color)] shadow-lg flex items-center justify-center group transition-shadow duration-500"
@@ -1989,12 +1989,13 @@
         <!-- Subtitle Data Panel -->
         <section id="subtitle-card" class="shell-card">
           <div id="sidebar-resizer" title="Drag to resize the subtitle list"></div>
-          <div class="card-toolbar">
+          <!-- Row 1: title + subtitle settings -->
+          <div class="card-toolbar subs-head">
               <div class="card-title">
                 <i id="lottie-subtitle-data" class="lottie-icon title-tile shrink-0" style="--tile: var(--tile-coral)"><i data-lucide="captions"></i></i>
                 <span>Subtitles</span>
               </div>
-            <div class="tb-divider"></div>
+            <div class="subs-settings">
               <!-- Language Dropdown -->
               <div class="relative" id="lang-dropdown-container">
                 <button id="btn-language-select"
@@ -2029,7 +2030,7 @@
                   <i data-lucide="chevron-down" class="w-3 h-3 text-[var(--text-muted)] shrink-0"></i>
                 </button>
                 <div id="genre-dropdown-menu"
-                  class="hidden absolute bottom-full mb-2 left-0 w-[210px] bg-studio-card border border-white/[0.12] shadow-2xl rounded-xl py-1 z-50 animate-dropdown font-khmer origin-bottom-left">
+                  class="hidden absolute bottom-full mb-2 left-0 w-[220px] bg-studio-card border border-white/[0.12] shadow-2xl rounded-xl py-1 z-50 animate-dropdown font-khmer origin-bottom-left overflow-y-auto max-h-[min(360px,60vh)]">
                   <button data-genre="historical"
                     class="genre-opt w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-white/[0.08] text-amber-400 font-semibold cursor-pointer">
                     <span class="text-sm">👑</span> <span>បុរាណ / រាជវាំង / ក្បាច់គុន</span>
@@ -2046,9 +2047,32 @@
                     class="genre-opt w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-white/[0.08] text-emerald-400 cursor-pointer">
                     <span class="text-sm">😂</span> <span>កំប្លែង / កំប្លុកកំប្លែង</span>
                   </button>
+                  <button data-genre="horror"
+                    class="genre-opt w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-white/[0.08] text-violet-400 cursor-pointer">
+                    <span class="text-sm">👻</span> <span>ខ្មោច / រន្ធត់ / អបិយជំនឿ</span>
+                  </button>
+                  <button data-genre="mystery"
+                    class="genre-opt w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-white/[0.08] text-sky-400 cursor-pointer">
+                    <span class="text-sm">🕵️</span> <span>ស៊ើបអង្កេត / អាថ៌កំបាំង / ឃាតកម្ម</span>
+                  </button>
+                  <button data-genre="fantasy"
+                    class="genre-opt w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-white/[0.08] text-fuchsia-400 cursor-pointer">
+                    <span class="text-sm">🐉</span> <span>ទេវកថា / អមតៈ / បិសាច</span>
+                  </button>
+                  <button data-genre="family"
+                    class="genre-opt w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-white/[0.08] text-orange-400 cursor-pointer">
+                    <span class="text-sm">🏠</span> <span>គ្រួសារ / សោកនាដកម្ម</span>
+                  </button>
+                  <button data-genre="youth"
+                    class="genre-opt w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-white/[0.08] text-pink-400 cursor-pointer">
+                    <span class="text-sm">🎒</span> <span>សិស្សសាលា / យុវវ័យ</span>
+                  </button>
                 </div>
               </div>
-            <div class="tb-divider"></div>
+            </div>
+          </div>
+          <!-- Row 2: transcribe this tab, in DAI studio, or every tab -->
+          <div class="card-toolbar card-toolbar--sub subs-actions">
               <!-- Transcribe: this tab, DAI studio, then every tab -->
               <button id="btn-transcribe" disabled
                 class="h-8 px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-muted)] opacity-60 cursor-not-allowed">
@@ -2501,6 +2525,7 @@
 
   <!-- STATUS BAR -->
   <footer class="app-footer">
+    <span id="badge-app-version" class="rail-version">v1.3.2 Pro</span>
     <div id="memory-usage-display" class="memory-usage">Memory Usage: Normal</div>
   </footer>
 
@@ -3512,6 +3537,11 @@
                 <option value="modern">🏙️ សម័យ / ស្នេហា / CEO (Modern Drama)</option>
                 <option value="action">💥 សកម្មភាព / កងទ័ព (Action)</option>
                 <option value="comedy">😂 កំប្លែង (Comedy)</option>
+                <option value="horror">👻 ខ្មោច / រន្ធត់ (Horror)</option>
+                <option value="mystery">🕵️ ស៊ើបអង្កេត / អាថ៌កំបាំង (Mystery/Thriller)</option>
+                <option value="fantasy">🐉 ទេវកថា / អមតៈ (Fantasy/Xianxia)</option>
+                <option value="family">🏠 គ្រួសារ / សោកនាដកម្ម (Family)</option>
+                <option value="youth">🎒 សិស្សសាលា / យុវវ័យ (Youth/School)</option>
               </select>
             </label>
           </div>
@@ -3658,6 +3688,11 @@
                 <option value="modern">🏙️ សម័យ / ស្នេហាផ្អែមល្ហែម / CEO (Modern Romance)</option>
                 <option value="action">💥 សកម្មភាព / កងទ័ព / ឧក្រិដ្ឋ (Action/Crime)</option>
                 <option value="comedy">😂 កំប្លែង / កំប្លុកកំប្លែង (Comedy)</option>
+                <option value="horror">👻 ខ្មោច / រន្ធត់ / អបិយជំនឿ (Horror)</option>
+                <option value="mystery">🕵️ ស៊ើបអង្កេត / អាថ៌កំបាំង / ឃាតកម្ម (Mystery/Thriller)</option>
+                <option value="fantasy">🐉 ទេវកថា / អមតៈ / បិសាច (Fantasy/Xianxia)</option>
+                <option value="family">🏠 គ្រួសារ / សោកនាដកម្ម (Family Drama)</option>
+                <option value="youth">🎒 សិស្សសាលា / យុវវ័យ (Youth/School)</option>
               </select>
             </div>
 
@@ -3849,6 +3884,11 @@
                   <option value="modern">🏙️ សម័យ / ស្នេហា / CEO (Modern Drama)</option>
                   <option value="action">💥 សកម្មភាព / កងទ័ព (Action)</option>
                   <option value="comedy">😂 កំប្លែង (Comedy)</option>
+                  <option value="horror">👻 ខ្មោច / រន្ធត់ (Horror)</option>
+                  <option value="mystery">🕵️ ស៊ើបអង្កេត / អាថ៌កំបាំង (Mystery/Thriller)</option>
+                  <option value="fantasy">🐉 ទេវកថា / អមតៈ (Fantasy/Xianxia)</option>
+                  <option value="family">🏠 គ្រួសារ / សោកនាដកម្ម (Family)</option>
+                  <option value="youth">🎒 សិស្សសាលា / យុវវ័យ (Youth/School)</option>
                 </select>
               </label>
 
@@ -4182,6 +4222,19 @@
     <div id="settings-panel"
       class="bg-[var(--bg-panel)] border border-[var(--border-light)] rounded-2xl w-[700px] h-[550px] shadow-2xl flex overflow-hidden text-[var(--text-primary)] transform scale-95 transition-transform duration-300"
       onclick="event.stopPropagation()">
+      <div class="settings-topbar">
+        <button type="button" class="settings-back" onclick="closeSettingsModal()" title="Back to the editor">
+          <i data-lucide="arrow-left"></i>
+          <span>Back</span>
+        </button>
+        <span class="settings-topbar__title">Settings</span>
+        <div class="settings-search">
+          <i data-lucide="search"></i>
+          <input type="search" id="settings-search-input" placeholder="Search settings" autocomplete="off"
+            spellcheck="false" aria-label="Search settings" aria-controls="settings-search-results" />
+          <div id="settings-search-results" class="settings-search__results" role="listbox" hidden></div>
+        </div>
+      </div>
       <div class="settings-nav w-[200px] bg-[var(--bg-base)] border-r border-[var(--border-color)] flex flex-col shrink-0">
         <div class="settings-nav__head">
           <span class="title-tile" style="--tile: var(--tile-coral)"><i data-lucide="settings"></i></span>
@@ -4242,15 +4295,6 @@
             <i data-lucide="info"
               class="w-4 h-4 transition-transform duration-300 group-hover:translate-x-1 group-hover:text-[var(--accent-text)]"></i>
             About
-          </button>
-          <button style="--tile: var(--tile-mint)"
-            class="settings-tab-btn group w-full text-left px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-300 hover:bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-[var(--text-bright)] flex items-center gap-2.5 relative overflow-hidden"
-            data-target="settings-bonus">
-            <i data-lucide="gift"
-              class="w-4 h-4 transition-transform duration-300 group-hover:translate-x-1 group-hover:text-emerald-400"></i>
-            Bonus
-            <span
-              class="ml-auto w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.9)] animate-pulse"></span>
           </button>
         </div>
       </div>
@@ -4451,7 +4495,32 @@
             <!-- ── Vocal Removal Engine ── -->
             <div class="flex flex-col gap-3 pt-4 border-t border-[var(--border-color)]">
               <label class="text-sm text-[var(--text-bright)] font-medium">Vocal Removal Engine</label>
-              <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-1">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-1">
+                <label
+                  class="group relative flex flex-col p-3 cursor-pointer rounded-xl border border-[var(--border-light)] bg-[var(--bg-base)] hover:bg-[var(--bg-hover)] hover:shadow-md transition-all duration-300 ease-out hover:-translate-y-1 active:scale-[0.96]">
+                  <input type="radio" name="vocal-engine" value="mdx" class="peer sr-only" checked />
+                  <div
+                    class="absolute inset-0 rounded-xl border-2 border-transparent peer-checked:border-emerald-500 transition-colors pointer-events-none peer-checked:shadow-[0_0_15px_-3px_rgba(16,185,129,0.3)]">
+                  </div>
+                  <div class="flex items-center justify-between mb-1">
+                    <span
+                      class="text-sm font-bold text-[var(--text-bright)] flex items-center gap-2 w-full overflow-hidden pr-2">
+                      <i data-lucide="sparkles"
+                        class="w-4 h-4 text-emerald-400 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 shrink-0"></i>
+                      MDX-Net (Best)
+                    </span>
+                    <div
+                      class="w-5 h-5 rounded-full border border-[var(--border-light)] peer-checked:border-emerald-500 peer-checked:bg-emerald-500 flex items-center justify-center transition-all shadow-sm">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="3" stroke-linecap="round" stroke-linejoin="round"
+                        class="w-3 h-3 text-white opacity-0 peer-checked:opacity-100 transition-all transform scale-50 peer-checked:scale-100 duration-200">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                      </svg>
+                    </div>
+                  </div>
+                  <span class="text-[10px] text-[var(--text-secondary)] leading-tight mt-1">Cleanest BGM, keeps sound effects. Built-in, nothing to install. ~5 min per 9-min tab.</span>
+                </label>
+
                 <label
                   class="group relative flex flex-col p-3 cursor-pointer rounded-xl border border-[var(--border-light)] bg-[var(--bg-base)] hover:bg-[var(--bg-hover)] hover:shadow-md transition-all duration-300 ease-out hover:-translate-y-1 active:scale-[0.96]">
                   <input type="radio" name="vocal-engine" value="demucs" class="peer sr-only" />
@@ -4474,12 +4543,12 @@
                       </svg>
                     </div>
                   </div>
-                  <span class="text-[10px] text-[var(--text-secondary)] leading-tight mt-1">High quality AI stem separation. Portable bundle.</span>
+                  <span class="text-[10px] text-[var(--text-secondary)] leading-tight mt-1">Good AI stem separation. Needs the portable Demucs download.</span>
                 </label>
 
                 <label
                   class="group relative flex flex-col p-3 cursor-pointer rounded-xl border border-[var(--border-light)] bg-[var(--bg-base)] hover:bg-[var(--bg-hover)] hover:shadow-md transition-all duration-300 ease-out hover:-translate-y-1 active:scale-[0.96]">
-                  <input type="radio" name="vocal-engine" value="spleeter" class="peer sr-only" checked />
+                  <input type="radio" name="vocal-engine" value="spleeter" class="peer sr-only" />
                   <div
                     class="absolute inset-0 rounded-xl border-2 border-transparent peer-checked:border-teal-500 transition-colors pointer-events-none peer-checked:shadow-[0_0_15px_-3px_rgba(20,184,166,0.3)]">
                   </div>
@@ -4499,7 +4568,7 @@
                       </svg>
                     </div>
                   </div>
-                  <span class="text-[10px] text-[var(--text-secondary)] leading-tight mt-1">Fast AI vocal separation (2-stems). Built-in & ready.</span>
+                  <span class="text-[10px] text-[var(--text-secondary)] leading-tight mt-1">Fast, but leaves more voice in the BGM. Needs a separate Spleeter install.</span>
                 </label>
 
                 <label
@@ -4535,13 +4604,13 @@
                   <label class="text-xs text-[var(--text-secondary)] font-medium">Spleeter Folder Path (Optional)</label>
                   <div class="flex gap-2">
                     <input id="setting-spleeter-folder" type="text"
-                      placeholder="Optional — leave blank to use the built-in Spleeter environment"
+                      placeholder="Optional — leave blank to look for an installed Spleeter"
                       class="flex-1 text-xs bg-[var(--bg-hover)] border border-[var(--border-light)] rounded-lg px-3 py-2 text-[var(--text-primary)] placeholder-[var(--text-muted)] transition-colors focus:outline-none focus:border-[var(--accent-primary)]" />
                     <button id="btn-browse-spleeter"
                       class="px-3 py-2 rounded-lg text-xs font-medium bg-[var(--bg-hover)] border border-[var(--border-light)] text-[var(--text-primary)] hover:brightness-110 transition-all active:scale-95">Browse</button>
                   </div>
                   <p class="text-[10px] text-[var(--text-muted)]">
-                    The app includes a built-in Spleeter environment with offline AI models. Leave blank to use it, or point to an external custom Spleeter folder if desired.
+                    Spleeter is not part of the installer. Leave blank to use a Spleeter the app can find on this PC, or point to a Spleeter folder. If none is found, MDX-Net is used instead.
                   </p>
                 </div>
               </div>
@@ -5381,291 +5450,50 @@
           </div>
 
           <div id="settings-about" class="settings-content-pane flex flex-col gap-6 hidden animate-tab-content">
-            <div class="flex flex-col items-center justify-center gap-2 py-6">
-              <div id="about-logo-clicker"
-                class="w-24 h-24 rounded-full bg-[var(--bg-base)] border-4 border-[var(--border-light)] shadow-lg overflow-hidden group cursor-pointer hover:border-[var(--accent-primary)] transition-colors duration-300">
-                <img src="drdubberpro.png" alt="DR Dubber Pro"
-                  class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-                  onerror="this.style.display = 'none'" />
+            <div class="about-hero">
+              <div id="about-logo-clicker" class="about-hero__logo">
+                <img src="logo.png" alt="DR Dubber Pro" onerror="this.style.display = 'none'" />
               </div>
-              <h2 class="text-lg font-bold text-[var(--text-bright)] leading-tight flex items-center gap-2">
-                DR Dubber
-                <!-- PRO diamond badge -->
-                <span class="relative inline-flex items-center justify-center ml-0.5" style="width: auto; height: 20px">
-                  <span
-                    class="relative inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black tracking-widest uppercase overflow-hidden"
-                    style="
-                        background: linear-gradient(135deg, #1a1a2e, #16213e, #0f3460);
-                        border: 1px solid rgba(139, 92, 246, 0.5);
-                        box-shadow:
-                          0 0 10px rgba(139, 92, 246, 0.3),
-                          inset 0 1px 0 rgba(255, 255, 255, 0.1);
-                      ">
-                    <!-- Shimmer sweep -->
-                    <span class="absolute inset-0 opacity-40 shimmer-rest"
-                      style="background: linear-gradient(105deg, transparent 40%, rgba(255, 255, 255, 0.25) 50%, transparent 60%)"></span>
-                    <!-- Diamond icon -->
-                    <svg viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg"
-                      class="relative w-2.5 h-2.5 shrink-0">
-                      <path d="M6 1 L11 5 L6 11 L1 5 Z" fill="url(#dg1)" />
-                      <path d="M1 5 L6 1 L11 5" fill="rgba(255,255,255,0.15)" />
-                      <path d="M3.5 5 L6 2 L8.5 5 L6 9.5 Z" fill="rgba(255,255,255,0.1)" />
-                      <defs>
-                        <linearGradient id="dg1" x1="1" y1="1" x2="11" y2="11" gradientUnits="userSpaceOnUse">
-                          <stop offset="0%" stop-color="#c4b5fd" />
-                          <stop offset="50%" stop-color="#8b5cf6" />
-                          <stop offset="100%" stop-color="#6d28d9" />
-                        </linearGradient>
-                      </defs>
-                    </svg>
-                    <!-- PRO text -->
-                    <span class="relative"
-                      style="background: linear-gradient(135deg, #e9d5ff, #c4b5fd, #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent">PRO</span>
-                  </span>
-                </span>
-              </h2>
-              <span id="about-app-version"
-                class="px-3 py-1 bg-[var(--bg-hover)] border border-[var(--border-light)] rounded-full text-xs font-mono text-[var(--text-secondary)]">Version
-                ...</span>
-
-              <button id="btn-manual-update-check"
-                class="group mt-3 flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-[var(--border-light)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-bright)] hover:border-[var(--accent-primary)] transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-md active:scale-[0.95] shadow-sm">
-                <i data-lucide="refresh-cw"
-                  class="w-4 h-4 transition-transform duration-500 group-hover:rotate-180 group-active:scale-90 text-[var(--accent-text)]"></i>
+              <div class="about-hero__text">
+                <h2>DR Dubber <span class="about-pro">PRO</span></h2>
+                <p>Khmer AI Dubbing Studio</p>
+                <span id="about-app-version" class="about-version">Version ...</span>
+              </div>
+              <button id="btn-manual-update-check" class="about-update-btn">
+                <i data-lucide="refresh-cw"></i>
                 Check for Updates
               </button>
             </div>
 
-            <div class="flex flex-col gap-3">
-              <a href="https://web.facebook.com/dacodingofficial"
-                class="external-link flex items-center gap-3 p-3 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)] hover:bg-[var(--bg-hover)] hover:border-blue-500 hover:text-blue-400 transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-md active:scale-[0.96] group">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                  class="w-5 h-5 text-blue-500 shrink-0 transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-6 group-active:scale-90">
-                  <path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"></path>
-                </svg>
-                <span class="text-sm font-medium">Official Facebook Page</span>
-                <i data-lucide="external-link"
-                  class="w-4 h-4 ml-auto opacity-0 group-hover:opacity-100 transition-opacity group-hover:-translate-y-0.5"></i>
-              </a>
-
-              <a href="https://t.me/+KWSBSiCHbNVmMzg1"
-                class="external-link flex items-center gap-3 p-3 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)] hover:bg-[var(--bg-hover)] hover:border-cyan-500 hover:text-cyan-400 transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-md active:scale-[0.96] group">
-                <i data-lucide="send"
-                  class="w-5 h-5 text-cyan-500 shrink-0 transition-transform duration-300 group-hover:scale-110 group-hover:translate-x-1 group-hover:-translate-y-1 group-active:scale-90"></i>
-                <span class="text-sm font-medium">Official Telegram Channel</span>
-                <i data-lucide="external-link"
-                  class="w-4 h-4 ml-auto opacity-0 group-hover:opacity-100 transition-opacity group-hover:-translate-y-0.5"></i>
-              </a>
-
-              <a href="https://www.youtube.com/@dacoding8563"
-                class="external-link flex items-center gap-3 p-3 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)] hover:bg-[var(--bg-hover)] hover:border-red-500 hover:text-red-400 transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-md active:scale-[0.96] group">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                  class="w-5 h-5 text-red-500 shrink-0 transition-transform duration-300 group-hover:scale-110 group-hover:translate-y-0.5 group-active:scale-90">
-                  <path
-                    d="M22.54 6.42a2.78 2.78 0 0 0-1.94-2C18.88 4 12 4 12 4s-6.88 0-8.6.46a2.78 2.78 0 0 0-1.94 2A29 29 0 0 0 1 11.75a29 29 0 0 0 .46 5.33A2.78 2.78 0 0 0 3.4 19c1.72.46 8.6.46 8.6.46s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-2 29 29 0 0 0 .46-5.25 29 29 0 0 0-.46-5.33z">
-                  </path>
-                  <polygon points="9.75 15.02 15.5 11.75 9.75 8.48 9.75 15.02"></polygon>
-                </svg>
-                <span class="text-sm font-medium">YouTube Channel</span>
-                <i data-lucide="external-link"
-                  class="w-4 h-4 ml-auto opacity-0 group-hover:opacity-100 transition-opacity group-hover:-translate-y-0.5"></i>
-              </a>
-
-              <div class="text-[var(--text-muted)] text-[10px] uppercase tracking-widest font-bold mt-2 ml-1">Admin
-                Contacts</div>
-              <div class="flex gap-2">
-                <a href="https://t.me/booya2fac"
-                  class="group external-link flex-1 flex items-center justify-center gap-2 p-2.5 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)] text-xs font-medium hover:bg-cyan-500/10 hover:border-cyan-500 hover:text-cyan-400 transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-sm active:scale-[0.95]">
-                  <i data-lucide="user"
-                    class="w-3.5 h-3.5 transition-transform duration-300 group-hover:scale-110 group-active:scale-90"></i>
-                  @booya2fac
-                </a>
-                <a href="https://t.me/th3thirdeye"
-                  class="group external-link flex-1 flex items-center justify-center gap-2 p-2.5 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)] text-xs font-medium hover:bg-cyan-500/10 hover:border-cyan-500 hover:text-cyan-400 transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-sm active:scale-[0.95]">
-                  <i data-lucide="user"
-                    class="w-3.5 h-3.5 transition-transform duration-300 group-hover:scale-110 group-active:scale-90"></i>
-                  @th3thirdeye
-                </a>
-              </div>
+            <div class="flex flex-col gap-2">
+              <label>Details</label>
+              <dl class="about-details">
+                <div><dt>Version</dt><dd id="about-detail-version">…</dd></div>
+                <div><dt>System</dt><dd id="about-detail-system">…</dd></div>
+                <div><dt>Built on</dt><dd id="about-detail-engine">…</dd></div>
+                <div><dt>AI model</dt><dd id="about-detail-model">…</dd></div>
+              </dl>
             </div>
-          </div>
 
-          <!-- ── Bonus Tab Pane ─────────────────────────────────────── -->
-          <div id="settings-bonus"
-            class="settings-content-pane flex flex-col gap-5 hidden animate-tab-content font-khmer">
-            <!-- Premium hero card -->
-            <div class="relative rounded-2xl overflow-hidden border border-emerald-500/30"
-              style="background: linear-gradient(135deg, #052e2b, #064e3b 45%, #0f3460)">
-              <span class="absolute inset-0 opacity-30"
-                style="background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, 0.18) 50%, transparent 65%); animation: update-shimmer 3.2s ease infinite"></span>
-
-              <div class="relative p-5 flex flex-col items-center text-center gap-2">
-                <span
-                  class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-widest uppercase bg-emerald-400/15 border border-emerald-400/40 text-emerald-300">
-                  <i data-lucide="sparkles" class="w-3 h-3"></i>
-                  Free Bonus App
-                </span>
-
-                <div
-                  class="w-16 h-16 rounded-2xl bg-white/10 border border-white/20 shadow-lg flex items-center justify-center mt-1 overflow-hidden">
-                  <img src="assets/dasplitr.png" alt="DaSplitr PRO" class="w-full h-full object-cover"
-                    onerror="this.replaceWith(Object.assign(document.createElement('i'), { className: 'w-8 h-8 text-emerald-300', dataset: { lucide: 'scissors' } }))" />
-                </div>
-
-                <h2 class="text-lg font-bold text-white mt-1">DaSplitr PROv3.5.0</h2>
-                <p class="text-xs text-emerald-100/70 max-w-[380px]">Split, merge, and convert your videos in seconds —
-                  a companion app included free with your DR Dubber Pro license.</p>
+            <div class="flex flex-col gap-2">
+              <label>What's new</label>
+              <div id="about-whats-new" class="about-notes">
+                <p class="about-notes__msg">Loading release notes…</p>
               </div>
             </div>
 
-            <!-- Feature grid -->
-            <div class="grid grid-cols-3 gap-2">
-              <div
-                class="flex flex-col items-center gap-1.5 p-3 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)]">
-                <i data-lucide="scissors" class="w-4 h-4 text-emerald-400"></i>
-                <span class="text-[11px] font-medium text-[var(--text-secondary)] text-center">Video Splitter</span>
-              </div>
-              <div
-                class="flex flex-col items-center gap-1.5 p-3 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)]">
-                <i data-lucide="link" class="w-4 h-4 text-emerald-400"></i>
-                <span class="text-[11px] font-medium text-[var(--text-secondary)] text-center">Merge Parts</span>
-              </div>
-              <div
-                class="flex flex-col items-center gap-1.5 p-3 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)]">
-                <i data-lucide="music" class="w-4 h-4 text-emerald-400"></i>
-                <span class="text-[11px] font-medium text-[var(--text-secondary)] text-center">Audio Extract</span>
-              </div>
-            </div>
-
-            <!-- Screenshot showcase -->
-            <div class="grid grid-cols-2 gap-2">
-              <img src="assets/bonus/dasplitr-1.png" alt="DaSplitr PRO splitter"
-                class="w-full h-24 object-cover rounded-lg border border-[var(--border-light)]"
-                onerror="this.style.display = 'none'" />
-              <img src="assets/bonus/dasplitr-2.png" alt="DaSplitr PRO merger"
-                class="w-full h-24 object-cover rounded-lg border border-[var(--border-light)]"
-                onerror="this.style.display = 'none'" />
-              <img src="assets/bonus/dasplitr-3.png" alt="DaSplitr PRO audio"
-                class="w-full h-24 object-cover rounded-lg border border-[var(--border-light)]"
-                onerror="this.style.display = 'none'" />
-              <img src="assets/bonus/dasplitr-4.png" alt="DaSplitr PRO hardware"
-                class="w-full h-24 object-cover rounded-lg border border-[var(--border-light)]"
-                onerror="this.style.display = 'none'" />
-            </div>
-
-            <!-- CTA -->
-            <button id="btn-download-dasplitr" onclick="
-                  fireConfetti(event);
-                  downloadDaSplitrPro();
-                "
-              class="group flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-bold text-white transition-all duration-300 ease-out hover:-translate-y-0.5 active:scale-[0.97] shadow-lg"
-              style="background: linear-gradient(135deg, #10b981, #059669); box-shadow: 0 4px 20px rgba(16, 185, 129, 0.35)">
-              <i data-lucide="download"
-                class="w-4 h-4 transition-transform duration-300 group-hover:translate-y-0.5"></i>
-              Download DaSplitr PRO — v3.5.0
-            </button>
-
-            <!-- ── DAI-Transcribe Card ─────────────────────────────────── -->
-            <div class="relative rounded-2xl overflow-hidden border border-indigo-500/30"
-              style="background: linear-gradient(135deg, #1e1b4b, #312e81 45%, #1e293b)">
-              <span class="absolute inset-0 opacity-25"
-                style="background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, 0.16) 50%, transparent 65%); animation: update-shimmer 3.6s ease infinite"></span>
-
-              <div class="relative p-5 flex flex-col items-center text-center gap-2">
-                <span
-                  class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-widest uppercase bg-indigo-400/15 border border-indigo-400/40 text-indigo-300">
-                  <i data-lucide="sparkles" class="w-3 h-3"></i>
-                  Web App
-                </span>
-
-                <div
-                  class="w-16 h-16 rounded-2xl bg-white/10 border border-white/20 shadow-lg flex items-center justify-center mt-1">
-                  <i data-lucide="captions" class="w-8 h-8 text-indigo-300"></i>
-                </div>
-
-                <h2 class="text-lg font-bold text-white mt-1">DAI-Transcribe</h2>
-                <p class="text-xs text-indigo-100/70 max-w-[380px]">Auto extract & batch transcribe audio into editable
-                  subtitles — powered by Gemini AI, with Khmer voice-profile tagging and one-click subtitle export.</p>
-
-                <div class="flex flex-wrap items-center justify-center gap-1.5 mt-1">
-                  <span
-                    class="px-2 py-0.5 rounded-full text-[10px] font-medium bg-white/10 text-indigo-100 border border-white/10">Batch
-                    Transcribe</span>
-                  <span
-                    class="px-2 py-0.5 rounded-full text-[10px] font-medium bg-white/10 text-indigo-100 border border-white/10">Gemini
-                    AI</span>
-                  <span
-                    class="px-2 py-0.5 rounded-full text-[10px] font-medium bg-white/10 text-indigo-100 border border-white/10">Export
-                    Subtitles</span>
-                </div>
-
-                <div class="flex flex-col gap-2 mt-3 w-full">
-                  <button id="btn-open-daitranscribe" onclick="
-                        fireConfetti(event);
-                        openDaiTranscribe();
-                      "
-                    class="group w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-bold text-white transition-all duration-300 ease-out hover:-translate-y-0.5 active:scale-[0.97] shadow-lg"
-                    style="background: linear-gradient(135deg, #6366f1, #4f46e5); box-shadow: 0 4px 20px rgba(99, 102, 241, 0.35)">
-                    <i data-lucide="sparkles"
-                      class="w-4 h-4 transition-transform duration-300 group-hover:rotate-12"></i>
-                    Launch DAI-Transcribe Studio
-                  </button>
-                  <button onclick="openDaiTranscribeWeb()"
-                    class="w-full text-center text-xs text-indigo-300/80 hover:text-white hover:underline transition-colors py-1 flex items-center justify-center gap-1">
-                    <i data-lucide="external-link" class="w-3 h-3"></i>
-                    <span>Open AI Studio Web Version</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <!-- ── DAI-Recap Card ─────────────────────────────────────── -->
-            <div class="relative rounded-2xl overflow-hidden border border-sky-500/30"
-              style="background: linear-gradient(135deg, #0c2a3e, #0e3a5f 45%, #1e293b)">
-              <span class="absolute inset-0 opacity-25"
-                style="background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, 0.16) 50%, transparent 65%); animation: update-shimmer 3.4s ease infinite"></span>
-
-              <div class="relative p-5 flex flex-col items-center text-center gap-2">
-                <span
-                  class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-widest uppercase bg-sky-400/15 border border-sky-400/40 text-sky-300">
-                  <i data-lucide="sparkles" class="w-3 h-3"></i>
-                  Web App
-                </span>
-
-                <div
-                  class="w-16 h-16 rounded-2xl bg-white/10 border border-white/20 shadow-lg flex items-center justify-center mt-1 overflow-hidden">
-                  <img src="assets/DAI-Recap.png" alt="DAI-Recap AI" class="w-full h-full object-cover"
-                    onerror="this.replaceWith(Object.assign(document.createElement('i'), { className: 'w-8 h-8 text-sky-300', dataset: { lucide: 'clapperboard' } }))" />
-                </div>
-
-                <h2 class="text-lg font-bold text-white mt-1">DAI-Recap AI</h2>
-                <p class="text-xs text-sky-100/70 max-w-[380px]">សម្រាយរឿងបានច្រើនភាសា រួមទាំងភាសាខ្មែរផងដែរ។
-                  គាំទ្រឯកសារជាប្រភេទ វីដេអូ, សម្លេង និងអក្សរ Subtitle ដោយប្រើប្រាស់ Google Gemini AI។</p>
-
-                <div class="flex flex-wrap items-center justify-center gap-1.5 mt-1">
-                  <span
-                    class="px-2 py-0.5 rounded-full text-[10px] font-medium bg-white/10 text-sky-100 border border-white/10">Video
-                    Recap</span>
-                  <span
-                    class="px-2 py-0.5 rounded-full text-[10px] font-medium bg-white/10 text-sky-100 border border-white/10">Khmer
-                    Translate</span>
-                  <span
-                    class="px-2 py-0.5 rounded-full text-[10px] font-medium bg-white/10 text-sky-100 border border-white/10">Export
-                    .SRT</span>
-                </div>
-
-                <button id="btn-open-dairecap" onclick="
-                      fireConfetti(event);
-                      openDaiRecap();
-                    "
-                  class="group mt-3 w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-bold text-white transition-all duration-300 ease-out hover:-translate-y-0.5 active:scale-[0.97] shadow-lg"
-                  style="background: linear-gradient(135deg, #0ea5e9, #0284c7); box-shadow: 0 4px 20px rgba(14, 165, 233, 0.35)">
-                  <i data-lucide="external-link"
-                    class="w-4 h-4 transition-transform duration-300 group-hover:translate-x-0.5"></i>
-                  Open Website
-                </button>
+            <div class="flex flex-col gap-2">
+              <label>Powered by</label>
+              <div class="about-credits">
+                <span>Google Gemini</span>
+                <span>Edge TTS</span>
+                <span>VoxCPM2</span>
+                <span>Whisper</span>
+                <span>UVR MDX-Net</span>
+                <span>Demucs</span>
+                <span>Spleeter</span>
+                <span>FFmpeg</span>
+                <span>Electron</span>
               </div>
             </div>
           </div>

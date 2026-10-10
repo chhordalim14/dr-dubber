@@ -38,6 +38,23 @@
       return String(str ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
     }
 
+    // Isolate BGM engine from Settings. MDX-Net ships with the app and is the default.
+    // Spleeter was the old pre-selected default but never shipped, so a saved "spleeter"
+    // moves to MDX-Net once; picking Spleeter again afterwards sticks.
+    function vocalEngineSetting() {
+      try {
+        if (!localStorage.getItem("aiDubberVocalEngineMdx")) {
+          localStorage.setItem("aiDubberVocalEngineMdx", "1");
+          if (localStorage.getItem("aiDubberVocalEngine") === "spleeter") localStorage.setItem("aiDubberVocalEngine", "mdx");
+        }
+        return localStorage.getItem("aiDubberVocalEngine") || "mdx";
+      } catch (e) {
+        return "mdx";
+      }
+    }
+
+    const VOCAL_ENGINE_LABELS = { mdx: "MDX-Net", spleeter: "Spleeter", demucs: "Demucs", ffmpeg: "FFmpeg" };
+
     // Rich text for the free-text overlay boxes: those are contentEditable
     // and intentionally hold per-character colour runs (<span style="color:…">
     // from execCommand foreColor) plus line breaks. Parse in an inert
@@ -122,7 +139,13 @@
       Child: { id: "Child", label: "🧒 Child (កូនក្មេង)", gender: "Female", baseVoice: "km-KH-SreymomNeural", pitch: "+22Hz", rate: "+10%", color: "#eab308" }
     };
 
-    window.resolveCharacterKey = function(val) {
+    // Only two voices: "Male" or "Female". A role from an old project or SRT tag (Hero, Mother,
+    // Villain...) only tells which of the two; it no longer gets a voice of its own.
+    window.resolveCharacterKey = function (val) {
+      return window.CHARACTER_PRESETS[roleKeyFor(val)].gender;
+    };
+
+    function roleKeyFor(val) {
       if (!val) return "Male";
       const str = String(val).trim().toLowerCase();
       for (const k of Object.keys(window.CHARACTER_PRESETS)) {
@@ -143,7 +166,7 @@
       if (str.includes("female") || str.includes("ស្រី") || str.includes("នារី")) return "Female";
       if (str.includes("male") || str.includes("ប្រុស") || str.includes("បុរស")) return "Male";
       return "Male";
-    };
+    }
 
     // Voice for a line the AI transcribed or translated: only the default Male or Female voice.
     // AI role guesses (Hero, Villain, Father...) aren't reliable - the same actor got different
@@ -152,18 +175,12 @@
       const g = String(gender || "").trim().toLowerCase();
       if (g === "female" || g.includes("ស្រី") || g.includes("នារី")) return "Female";
       if (g === "male" || g.includes("ប្រុស") || g.includes("បុរស")) return "Male";
-      const preset = window.CHARACTER_PRESETS[window.resolveCharacterKey(role || gender)];
-      return preset && preset.gender === "Female" ? "Female" : "Male";
+      return window.resolveCharacterKey(role || gender);
     };
 
-    // Voices offered in the voice pickers: only Male and Female. A line from an older project
-    // that already uses a role (Hero, Villain...) keeps it listed, so its voice doesn't change.
-    window.voicePickerPresets = function (current) {
-      const presets = window.CHARACTER_PRESETS;
-      const list = [presets.Male, presets.Female];
-      const key = current ? window.resolveCharacterKey(current) : null;
-      if (key && key !== "Male" && key !== "Female" && presets[key]) list.push(presets[key]);
-      return list;
+    // Voices offered in the voice pickers: only Male and Female.
+    window.voicePickerPresets = function () {
+      return [window.CHARACTER_PRESETS.Male, window.CHARACTER_PRESETS.Female];
     };
 
     // Initialize Lucide Icons
@@ -291,37 +308,67 @@
     );
 
     // --- THEME CONSTANTS (From Reference) ---
-    // Default look: "Studio Grey" (flat neutral greys, like a video editor, with a coral accent).
+    // Default look: "Midnight Violet" (deep navy panels with a violet accent).
     const defaultThemes = {
       dark: {
-        bgBase: "#121212",
-        bgPanel: "#1b1b1b",
-        bgHover: "#262626",
-        borderColor: "#2a2a2a",
-        borderLight: "#3a3a3a",
-        textBright: "#f2f2f2",
-        textPrimary: "#d9d9d9",
-        textSecondary: "#a6a6a6",
-        textMuted: "#7c7c7c",
-        accentPrimary: "#ec5f4b",
-        accentText: "#ff9d89",
+        bgBase: "#0a0c1a",
+        bgPanel: "#11142a",
+        bgHover: "#1a1e3a",
+        borderColor: "#21264a",
+        borderLight: "#30375f",
+        textBright: "#eef0ff",
+        textPrimary: "#cfd3f0",
+        textSecondary: "#9aa0c6",
+        textMuted: "#6c7299",
+        accentPrimary: "#7c5cff",
+        accentText: "#b5a4ff",
       },
       light: {
-        bgBase: "#f2f2f3",
+        bgBase: "#f3f3fb",
         bgPanel: "#ffffff",
-        bgHover: "#f0f0f1",
-        borderColor: "#e4e4e7",
-        borderLight: "#d1d1d6",
-        textBright: "#141414",
-        textPrimary: "#333336",
-        textSecondary: "#5b5b60",
-        textMuted: "#84848a",
-        accentPrimary: "#e0513e",
-        accentText: "#c2412f",
+        bgHover: "#efeefb",
+        borderColor: "#e3e2f3",
+        borderLight: "#cfcde8",
+        textBright: "#151433",
+        textPrimary: "#33325a",
+        textSecondary: "#5a5980",
+        textMuted: "#8584a6",
+        accentPrimary: "#6a4cf0",
+        accentText: "#5536d6",
       },
     };
 
     const presetThemes = {
+      "Midnight Violet": defaultThemes,
+      // Flat neutral greys with a coral accent (the default before Midnight Violet).
+      "Studio Grey": {
+        dark: {
+          bgBase: "#121212",
+          bgPanel: "#1b1b1b",
+          bgHover: "#262626",
+          borderColor: "#2a2a2a",
+          borderLight: "#3a3a3a",
+          textBright: "#f2f2f2",
+          textPrimary: "#d9d9d9",
+          textSecondary: "#a6a6a6",
+          textMuted: "#7c7c7c",
+          accentPrimary: "#ec5f4b",
+          accentText: "#ff9d89",
+        },
+        light: {
+          bgBase: "#f2f2f3",
+          bgPanel: "#ffffff",
+          bgHover: "#f0f0f1",
+          borderColor: "#e4e4e7",
+          borderLight: "#d1d1d6",
+          textBright: "#141414",
+          textPrimary: "#333336",
+          textSecondary: "#5b5b60",
+          textMuted: "#84848a",
+          accentPrimary: "#e0513e",
+          accentText: "#c2412f",
+        },
+      },
       // Warm charcoal look from the coral redesign pass.
       "Coral Sunset": {
         dark: {
@@ -3158,7 +3205,7 @@
     // Series all show and change this same setting. The DAI dropdowns used to keep their own
     // value (Ancient/Royal after every restart), so a modern series was transcribed with royal
     // court words unless that dropdown was picked again by hand.
-    const DRAMA_GENRES = ["historical", "modern", "action", "comedy"];
+    const DRAMA_GENRES = ["historical", "modern", "action", "comedy", "horror", "mystery", "fantasy", "family", "youth"];
     // 'neutral' was an old DAI-only choice that the server treated as modern.
     const normalizeDramaGenre = (g) => (DRAMA_GENRES.includes(g) ? g : g === "neutral" ? "modern" : "historical");
     let activeDramaGenre = "historical"; // only used when nothing was ever saved
@@ -3173,6 +3220,11 @@
       modern: { icon: "🏙️", label: "សម័យ/ស្នេហា/CEO", color: "text-cyan-400" },
       action: { icon: "💥", label: "សកម្មភាព/កងទ័ព/ឧក្រិដ្ឋ", color: "text-rose-400" },
       comedy: { icon: "😂", label: "កំប្លែង/កំប្លុកកំប្លែង", color: "text-emerald-400" },
+      horror: { icon: "👻", label: "ខ្មោច/រន្ធត់/អបិយជំនឿ", color: "text-violet-400" },
+      mystery: { icon: "🕵️", label: "ស៊ើបអង្កេត/អាថ៌កំបាំង", color: "text-sky-400" },
+      fantasy: { icon: "🐉", label: "ទេវកថា/អមតៈ/បិសាច", color: "text-fuchsia-400" },
+      family: { icon: "🏠", label: "គ្រួសារ/សោកនាដកម្ម", color: "text-orange-400" },
+      youth: { icon: "🎒", label: "សិស្សសាលា/យុវវ័យ", color: "text-pink-400" },
     };
 
     const setDramaGenre = (g) => {
@@ -9342,7 +9394,7 @@
       if (!demucsOptionsMeasured) {
         requestAnimationFrame(() => {
           const demucsOptions = document.getElementById("demucs-options");
-          const savedVocalEngine = localStorage.getItem("aiDubberVocalEngine") || "spleeter";
+          const savedVocalEngine = vocalEngineSetting();
           if (demucsOptions && savedVocalEngine === "demucs") {
             demucsOptions.style.transition = "none";
             demucsOptions.style.maxHeight = "none";
@@ -9361,7 +9413,7 @@
       if (!spleeterOptionsMeasured) {
         requestAnimationFrame(() => {
           const spleeterOptions = document.getElementById("spleeter-options");
-          const savedVocalEngine = localStorage.getItem("aiDubberVocalEngine") || "spleeter";
+          const savedVocalEngine = vocalEngineSetting();
           if (spleeterOptions && savedVocalEngine === "spleeter") {
             spleeterOptions.style.transition = "none";
             spleeterOptions.style.maxHeight = "none";
@@ -9416,7 +9468,7 @@
     });
 
     // Load vocal engine setting
-    let savedVocalEngine = localStorage.getItem("aiDubberVocalEngine") || "spleeter";
+    let savedVocalEngine = vocalEngineSetting();
     const vocalEngineRadio = document.querySelector(`input[name="vocal-engine"][value="${savedVocalEngine}"]`);
     if (vocalEngineRadio) vocalEngineRadio.checked = true;
     const demucsOptions = document.getElementById("demucs-options");
@@ -12179,6 +12231,7 @@
             ...s,
             gender: charKey,
             character: charKey,
+            genderUnknown: undefined, // picked by hand: a translation keeps it
             audioStatus: "idle",
             audioUrl: null,
             audioStart: s.textStart,
@@ -12654,6 +12707,8 @@
         toggleBtn.addEventListener("click", (e) => {
           e.stopPropagation();
           dropdown.classList.toggle("hidden");
+          // Keep it inside the window (the button sits near the right edge on small screens).
+          if (!dropdown.classList.contains("hidden")) placeFixedMenu(dropdown, toggleBtn, 270);
         });
 
         document.addEventListener("click", (e) => {
@@ -13047,6 +13102,8 @@
             text: textContent,
             voice: "KH Khmer",
             gender: extractedGender,
+            // No [Male]/[Female] tag: "Female" is only a default, so a translation may still pick the gender.
+            ...(genderMatch ? {} : { genderUnknown: true }),
             status: "pending",
             audioStatus: "idle",
             audioUrl: null,
@@ -13090,6 +13147,17 @@
       }
       if (typeof updateGenerateAllButtonState === "function") updateGenerateAllButtonState();
       if (typeof renderProjectTabs === "function") renderProjectTabs();
+    };
+
+    // "Male"/"Female" when a line's voice is known (heard by Transcribe, picked by hand, or an SRT
+    // tag), else null. A text-only translation keeps a known gender instead of guessing it again.
+    const knownVoiceGender = (s) => {
+      if (s.genderUnknown) return null;
+      for (const v of [s.character, s.gender]) {
+        const preset = v && window.CHARACTER_PRESETS[String(v).trim()];
+        if (preset) return preset.gender;
+      }
+      return null; // e.g. a VoxCPM2 profile id
     };
 
     // For js/dai-transcribe-studio.js: the project state lives in this script's let/const
@@ -13173,7 +13241,7 @@
           total: proj.subtitles.length,
           lines: proj.subtitles
             .filter((s) => String(s.originalText || "").trim())
-            .map((s) => ({ id: s.id, textStart: s.textStart, textEnd: s.textEnd, source: String(s.originalText).trim() })),
+            .map((s) => ({ id: s.id, textStart: s.textStart, textEnd: s.textEnd, source: String(s.originalText).trim(), gender: knownVoiceGender(s) })),
         }));
       },
       isTabBusy: (ref) => !!(ref && (ref.isTranscribing || ref.isGeneratingAudio || ref.isIsolatingBgm || ref.isBatchTranscribing || ref.isFixingMissing)),
@@ -13193,11 +13261,9 @@
           const tr = byId.get(String(s.id));
           if (!tr || !String(tr.text || "").trim()) return s;
           const next = { ...s, text: tr.text.trim(), emotion: tr.emotion || s.emotion || "Neutral" };
-          // A role picked by hand (Hero, Villain...) stays; the default Male/Female voice follows the new gender.
-          if (!s.character || /^(male|female)$/i.test(s.character)) {
-            const voiceChar = window.defaultVoiceFor(tr.gender || s.gender, null);
-            Object.assign(next, { speaker: voiceChar, character: voiceChar, gender: voiceChar });
-          }
+          // The Male/Female voice follows the gender (a known one comes back unchanged from the server).
+          const voiceChar = window.defaultVoiceFor(tr.gender || s.gender, null);
+          Object.assign(next, { speaker: voiceChar, character: voiceChar, gender: voiceChar });
           if (next.text !== s.text) {
             changed++;
             Object.assign(next, { audioStatus: "idle", audioUrl: null, baseAudioDuration: 0, speed: 1.0, audioStart: s.textStart, audioEnd: s.textEnd });
@@ -15407,6 +15473,7 @@
             if (currentIndex > -1) {
               subtitles[currentIndex].gender = selectedValue;
               subtitles[currentIndex].character = selectedValue;
+              delete subtitles[currentIndex].genderUnknown; // picked by hand: a translation keeps it
 
               if (subtitles[currentIndex].audioStatus === "ready") {
                 subtitles[currentIndex].audioStatus = "idle";
@@ -17451,13 +17518,14 @@
         return note;
       }
 
-      // Fell back to FFmpeg only because no ML engine is installed at all (the installer ships
-      // neither): "Spleeter could not run (no Python with Spleeter installed was found (...));
-      // Demucs could not run (...)". A retry or a pause can't fix that, so the tab keeps the
-      // FFmpeg BGM. An engine that is there but broke is a real failure.
+      // Fell back to FFmpeg only because no ML engine is installed at all (a build without the
+      // MDX-Net model or onnxruntime, and no Spleeter/Demucs): "MDX-Net could not run (the model
+      // ... is not installed ...); Spleeter could not run (no Python with Spleeter installed was
+      // found (...)); ...". A retry or a pause can't fix that, so the tab keeps the FFmpeg BGM.
+      // An engine that is there but broke is a real failure.
       function noEngineInstalled(p) {
         return p.bgmMethod === "ffmpeg_fallback" &&
-          String(p.bgmFallbackReason || "").split(/\);\s*/).every((r) => /no Python with \w+ installed was found/.test(r));
+          String(p.bgmFallbackReason || "").split(/\);\s*/).every((r) => /no Python with \w+ installed was found|is not installed/.test(r));
       }
 
       // A tab that only got the FFmpeg phase-cancel fallback has almost no music on these
@@ -17484,8 +17552,7 @@
           }
         }
         if (bad.length) {
-          const engine = localStorage.getItem("aiDubberVocalEngine") || "spleeter";
-          const label = engine === "demucs" ? "Demucs" : engine === "ffmpeg" ? "FFmpeg" : "Spleeter";
+          const label = VOCAL_ENGINE_LABELS[vocalEngineSetting()] || "MDX-Net";
           const why = (p) => {
             const reason = (p.bgmMethod === "ffmpeg_fallback" ? p.bgmFallbackReason : p.bgmError) || "unknown error";
             return /could not run/.test(reason) ? reason : `${label} could not run (${reason})`;
@@ -17504,9 +17571,9 @@
         let note = `${b.total} of ${b.total} tabs`;
         if (retried) note += ` · ${retried} tab(s) needed a second try`;
         const stillThere = substituted.filter((p) => projects.includes(p) && p.bgmFallbackReason);
-        if (stillThere.length) note += ` · tab ${tabNumbers(stillThere)} used ${stillThere[0].bgmMethod === "spleeter" ? "Spleeter" : "Demucs"} instead (${stillThere[0].bgmFallbackReason.split(";")[0]})`;
+        if (stillThere.length) note += ` · tab ${tabNumbers(stillThere)} used ${VOCAL_ENGINE_LABELS[stillThere[0].bgmMethod] || "another engine"} instead (${stillThere[0].bgmFallbackReason.split(";")[0]})`;
         const ffmpegOnly = noEngine.filter((p) => projects.includes(p));
-        if (ffmpegOnly.length) note += ` · tab ${tabNumbers(ffmpegOnly)} used FFmpeg phase cancellation (Spleeter and Demucs are not installed)`;
+        if (ffmpegOnly.length) note += ` · tab ${tabNumbers(ffmpegOnly)} used FFmpeg phase cancellation (no AI separation engine is installed)`;
         return note;
       }
 
@@ -22697,7 +22764,7 @@
         const isMacForGpu = navigator.platform.toUpperCase().includes("MAC") || navigator.userAgent.includes("Mac");
         const savedGpuPref = localStorage.getItem("aiDubberUseGPU");
         const useGPU = savedGpuPref !== null ? savedGpuPref !== "false" : !isMacForGpu;
-        let vocalEngine = localStorage.getItem("aiDubberVocalEngine") || "spleeter";
+        let vocalEngine = vocalEngineSetting();
         let demucsFolder = localStorage.getItem("aiDubberDemucsFolder") || "";
         let demucsSegment = localStorage.getItem("aiDubberDemucsSegment") || "7";
         let spleeterFolder = localStorage.getItem("aiDubberSpleeterFolder") || "";
@@ -25581,29 +25648,33 @@
       });
     }
 
+    // Full picture again in the open tab: no crop, pan, zoom or stretch. Used by Reset and
+    // when the tab's aspect ratio changes (framing made for the old shape doesn't fit the new).
+    function resetVideoFraming() {
+      cropConfig = { x: 0, y: 0, w: 100, h: 100 };
+      videoPan = { x: 0, y: 0 };
+      videoZoom = 1;
+      window.videoScaleX = 1; // FIX: Reset the custom X stretch!
+      window.videoScaleY = 1; // FIX: Reset the custom Y stretch!
+
+      // Keep the Zoom Slider UI in sync
+      const zoomSlider = document.getElementById("crop-zoom-slider");
+      const zoomText = document.getElementById("crop-zoom-text");
+      if (zoomSlider && zoomText) {
+        zoomSlider.value = 1;
+        zoomText.textContent = "100%";
+      }
+
+      // Force the preview canvas to re-render with the new full dimensions
+      updateVideoTransforms();
+    }
+
     const btnResetCrop = document.getElementById("btn-reset-crop");
     if (btnResetCrop) {
       btnResetCrop.addEventListener("click", () => {
-        // 1. Save the exact state BEFORE resetting, so Ctrl+Z brings the crop back!
+        // Save the exact state BEFORE resetting, so Ctrl+Z brings the crop back!
         saveStateToPast();
-
-        // 2. Reset everything to standard full-screen values
-        cropConfig = { x: 0, y: 0, w: 100, h: 100 };
-        videoPan = { x: 0, y: 0 };
-        videoZoom = 1;
-        window.videoScaleX = 1; // FIX: Reset the custom X stretch!
-        window.videoScaleY = 1; // FIX: Reset the custom Y stretch!
-
-        // 3. Reset the Zoom Slider UI so it doesn't get out of sync
-        const zoomSlider = document.getElementById("crop-zoom-slider");
-        const zoomText = document.getElementById("crop-zoom-text");
-        if (zoomSlider && zoomText) {
-          zoomSlider.value = 1;
-          zoomText.textContent = "100%";
-        }
-
-        // 4. Force the preview canvas to re-render with the new full dimensions
-        updateVideoTransforms();
+        resetVideoFraming();
       });
     }
 
@@ -28219,9 +28290,25 @@
         btn.title = ar ? `Aspect Ratio: ${ar.w}×${ar.h}` : "Aspect Ratio";
       }
 
+      const sameAR = (a, b) => (!a && !b) || (!!a && !!b && a.w === b.w && a.h === b.h && (a.fit || "crop") === (b.fit || "crop"));
+
       // ── Core: apply AR to one project object without switching tabs ─
-      function applyARToProject(proj, ar) {
+      // A tab whose shape changes starts from the full picture again: a zoom or position
+      // chosen for the old shape leaves black bars or cuts off the wrong part, and needed
+      // Reset by hand on every tab. A tab that already had this AR keeps its framing.
+      function applyARToProject(proj, ar, isActive) {
+        const changed = !sameAR(proj.customAspectRatio, ar);
         proj.customAspectRatio = ar ? { ...ar } : null;
+        if (!changed) return;
+        if (isActive) {
+          resetVideoFraming();
+        } else {
+          proj.cropConfig = { x: 0, y: 0, w: 100, h: 100 };
+          proj.videoPan = { x: 0, y: 0 };
+          proj.videoZoom = 1;
+          proj.videoScaleX = 1;
+          proj.videoScaleY = 1;
+        }
       }
 
       function openModal() {
@@ -28248,7 +28335,7 @@
       function applyAR(ar) {
         const activeProj = typeof activeProjectIndex !== "undefined" ? (typeof projects !== "undefined" ? projects[activeProjectIndex] : null) : null;
         window.customAspectRatio = ar;
-        if (activeProj) applyARToProject(activeProj, ar);
+        if (activeProj) applyARToProject(activeProj, ar, true);
         updatePreviewAspect();
         updateARButtonState();
         currentLbl.textContent = ar ? `${ar.w}×${ar.h}` : "Original";
@@ -28271,8 +28358,8 @@
         const allProjects = typeof projects !== "undefined" ? projects : [];
         if (allProjects.length === 0) return;
 
-        // 1. Write AR into every project object in memory
-        allProjects.forEach((proj) => applyARToProject(proj, ar));
+        // 1. Write AR into every project object in memory (and reset framing where the shape changed)
+        allProjects.forEach((proj, i) => applyARToProject(proj, ar, i === activeProjectIndex));
 
         // 2. Apply live to the currently visible tab
         window.customAspectRatio = ar;
