@@ -691,21 +691,21 @@
       transform: scale(0.97);
     }
 
-    /* CSS Variables - Default Dark Theme (Midnight Violet) */
+    /* CSS Variables - Default Dark Theme (Midnight Indigo) */
     :root {
       color-scheme: dark;
-      --bg-base: #0a0c1a;
-      --bg-panel: #11142a;
-      --bg-hover: #1a1e3a;
-      --border-color: #21264a;
-      --border-light: #30375f;
-      --text-bright: #eef0ff;
-      --text-primary: #cfd3f0;
-      --text-secondary: #9aa0c6;
-      --text-muted: #6c7299;
-      --accent-primary: #7c5cff;
-      --accent-text: #b5a4ff;
-      --accent-glow: rgba(124, 92, 255, 0.32);
+      --bg-base: #060a1f;
+      --bg-panel: #0b1130;
+      --bg-hover: #131b42;
+      --border-color: #1a2452;
+      --border-light: #28366e;
+      --text-bright: #f1f4ff;
+      --text-primary: #d0d7f5;
+      --text-secondary: #97a2d0;
+      --text-muted: #68739f;
+      --accent-primary: #5b5ff7;
+      --accent-text: #a3adff;
+      --accent-glow: rgba(91, 95, 247, 0.32);
       --btn-radius: 8px;
       --font-sans: "Kantumruy Pro", "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       --font-khmer: "Kantumruy Pro", "Khmer OS Battambang", "Hanuman", "Leelawadee UI", sans-serif;
@@ -718,21 +718,21 @@
       --duration-slow: 350ms;
     }
 
-    /* Light Theme Override Class (Midnight Violet Light) */
+    /* Light Theme Override Class (Midnight Indigo Light) */
     :root.light-theme {
       color-scheme: light;
-      --bg-base: #f3f3fb;
+      --bg-base: #f1f3fc;
       --bg-panel: #ffffff;
-      --bg-hover: #efeefb;
-      --border-color: #e3e2f3;
-      --border-light: #cfcde8;
-      --text-bright: #151433;
-      --text-primary: #33325a;
-      --text-secondary: #5a5980;
-      --text-muted: #8584a6;
-      --accent-primary: #6a4cf0;
-      --accent-text: #5536d6;
-      --accent-glow: rgba(106, 76, 240, 0.22);
+      --bg-hover: #eceffc;
+      --border-color: #dfe3f5;
+      --border-light: #c9cfec;
+      --text-bright: #111637;
+      --text-primary: #2f365e;
+      --text-secondary: #555d86;
+      --text-muted: #838aab;
+      --accent-primary: #4f53e8;
+      --accent-text: #3c3fcf;
+      --accent-glow: rgba(79, 83, 232, 0.22);
       --btn-radius: 8px;
       --font-sans: "Kantumruy Pro", "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       --font-khmer: "Kantumruy Pro", "Khmer OS Battambang", "Leelawadee UI", sans-serif;
@@ -1226,17 +1226,22 @@
     <div class="app-brand">
       <img src="logo.png" alt="DR Dubber Pro Logo" class="app-brand__logo" />
       <div class="flex flex-col">
-        <h1 class="app-brand__name">DR Dubber <span class="pro-badge">PRO</span></h1>
-        <p class="app-brand__tag">Khmer AI Dubbing Studio</p>
+        <h1 class="app-brand__name">DR Dubber <span class="pro-badge">Pro</span></h1>
+        <p class="app-brand__tag">Drama Dubbing Made Easy</p>
       </div>
     </div>
     <!-- Project tabs (rendered by JS; the label shows while only one project is open) -->
     <div id="project-tabs-bar" class="app-tabs">
-      <span id="footer-no-project" class="app-tabs__label font-khmer">Project: បកប្រែរឿង</span>
+      <span id="footer-no-project" class="app-tabs__label font-khmer"><i data-lucide="folder"></i><span>Project: បកប្រែរឿង</span></span>
       <button type="button" class="app-tabs__add" data-click="btn-load-video" title="Open another video in a new tab"><i data-lucide="plus"></i></button>
     </div>
     <!-- Header actions, left to right: app · tools · output -->
     <div class="app-header__actions">
+      <!-- Mirrors Settings › Auto Save Subtitle (layout-shell.js); a click flips that switch -->
+      <button type="button" id="hdr-autosave" class="hdr-autosave" data-click="autosave-srt-toggle"
+        title="Auto-save subtitles (.srt) after transcribing. Click to turn on or off; options are in Settings.">
+        <i data-lucide="cloud-check"></i><span>Auto Save</span>
+      </button>
       <div class="hdr-icons" aria-label="App">
         <button id="theme-toggle" class="hdr-icon hdr-icon--tile group" style="--tile: var(--tile-amber)" title="Light / dark mode">
           <i data-lucide="sun" id="theme-icon" class="w-[18px] h-[18px] transition-transform duration-300 group-hover:scale-110 group-active:scale-90"></i>
@@ -1262,6 +1267,11 @@
           <span id="queue-badge"
             class="hidden absolute -top-1 -right-1 min-w-[16px] h-4 px-1 bg-[var(--accent-primary)] text-white text-[9px] font-bold rounded-full flex items-center justify-center leading-none"></span>
         </button>
+        <!-- Shortcut: same file picker as Media › Import SRT -->
+        <button type="button" class="hdr-btn hdr-btn--ghost group" data-click="btn-import-srt" title="Import SRT subtitles">
+          <i data-lucide="file-down" class="w-4 h-4 group-hover:translate-y-0.5 transition-transform"></i>
+          <span>Import SRT</span>
+        </button>
         <button id="btn-export-srt" class="hdr-btn hdr-btn--ghost group" title="Export SRT Subtitles">
           <i data-lucide="file-up" class="w-4 h-4 group-hover:-translate-y-0.5 transition-transform"></i>
           <span>Export SRT</span>
@@ -1285,8 +1295,8 @@
       <section class="drawer-panel" data-rail-panel="setup">
         <header class="drawer-head">
           <div>
-            <h2>Project setup</h2>
-            <p>Load your media and subtitles to start a dub.</p>
+            <h2>Media</h2>
+            <p>Load your video and subtitles to start a dub.</p>
           </div>
           <button type="button" class="drawer-close" data-rail-close title="Close"><i data-lucide="x"></i></button>
         </header>
@@ -1500,6 +1510,46 @@
             </div>
         </div>
       </section>
+
+      <!-- Effects: shortcuts to the look tools of the preview tool strip (data-click
+           presses the real button, so each opens its usual panel) -->
+      <section class="drawer-panel" data-rail-panel="effects">
+        <header class="drawer-head">
+          <div>
+            <h2>Effects</h2>
+            <p>Grade the picture and set its frame. Changes show live in the preview.</p>
+          </div>
+          <button type="button" class="drawer-close" data-rail-close title="Close"><i data-lucide="x"></i></button>
+        </header>
+
+        <p class="dw-group">Look</p>
+        <div class="dw-list">
+            <div class="dw-item">
+              <button type="button" data-click="btn-color-adjust"><i data-lucide="palette"></i><span class="truncate">Color</span></button>
+              <span class="dw-desc">Drama LUTs and fine colour grading</span>
+            </div>
+            <div class="dw-item">
+              <button type="button" data-click="btn-vignette"><i data-lucide="aperture"></i><span class="truncate">Vignette</span></button>
+              <span class="dw-desc">Darken the edges of the picture</span>
+            </div>
+            <div class="dw-item">
+              <button type="button" data-click="btn-video-preset"><i data-lucide="swatch-book"></i><span class="truncate">Video Presets</span></button>
+              <span class="dw-desc">Save and reuse a whole look</span>
+            </div>
+        </div>
+
+        <p class="dw-group">Frame</p>
+        <div class="dw-list">
+            <div class="dw-item">
+              <button type="button" data-click="btn-aspect-ratio"><i data-lucide="ratio"></i><span class="truncate">Aspect Ratio</span></button>
+              <span class="dw-desc">Change the output shape (9:16, 16:9, ...)</span>
+            </div>
+            <div class="dw-item">
+              <button type="button" data-click="btn-crop-mode"><i data-lucide="crop"></i><span class="truncate">Crop</span></button>
+              <span class="dw-desc">Cut the picture to a window, pan and zoom</span>
+            </div>
+        </div>
+      </section>
     </aside>
 
     <!-- WORKSPACE: Subtitle table & Timeline -->
@@ -1508,21 +1558,32 @@
         <!-- Studio tools rail: each tab opens its tools in the drawer; Series opens its window -->
         <nav id="app-rail" aria-label="Studio tools">
           <div class="rail-seg">
-            <button type="button" class="rail-btn" data-rail="setup" style="--tile: var(--tile-amber)" title="Project setup: load video, subtitles, episodes">
-              <i data-lucide="folder-open"></i><span>Project</span>
+            <button type="button" class="rail-btn" data-rail="setup" title="Media: load video, subtitles, episodes">
+              <i data-lucide="clapperboard"></i><span>Media</span>
             </button>
-            <button type="button" class="rail-btn" data-rail="audio" style="--tile: var(--tile-mint)" title="Audio &amp; dubbing tracks">
-              <i data-lucide="audio-lines"></i><span>Audio</span>
+            <button type="button" class="rail-btn" data-rail="audio" title="Audio &amp; dubbing tracks">
+              <i data-lucide="music-2"></i><span>Audio</span>
             </button>
-            <button type="button" class="rail-btn" data-rail="video" style="--tile: var(--tile-sky)" title="Video tools &amp; censor">
-              <i data-lucide="scan-eye"></i><span>Video</span>
+            <button type="button" class="rail-btn" data-rail="video" title="Video tools &amp; censor">
+              <i data-lucide="square-play"></i><span>Video</span>
+            </button>
+            <!-- Shortcut: opens the Dub Whole Series window (same button as Media › Long videos) -->
+            <button type="button" class="rail-btn" data-click="btn-dub-series"
+              title="Dub Whole Series: join episodes, split, transcribe, generate voices and isolate BGM, one part at a time">
+              <i data-lucide="library-big"></i><span>Series</span>
+            </button>
+            <button type="button" class="rail-btn" data-rail="effects" title="Effects: colour, vignette, presets, aspect ratio">
+              <i data-lucide="wand-sparkles"></i><span>Effects</span>
             </button>
           </div>
-          <!-- Shortcut: opens the Dub Whole Series window (same button as Project › Long videos) -->
-          <button type="button" class="rail-btn" data-click="btn-dub-series" style="--tile: var(--tile-coral)"
-            title="Dub Whole Series: join episodes, split, transcribe, generate voices and isolate BGM, one part at a time">
-            <i data-lucide="wand-sparkles"></i><span>Series</span>
-          </button>
+          <div class="rail-art" aria-hidden="true">
+            <svg viewBox="0 0 120 150" preserveAspectRatio="none">
+              <path d="M0 150 L0 92 C30 70 52 108 84 82 C100 69 112 52 120 46 L120 150 Z" class="rail-art__fill" />
+              <path d="M0 96 C30 74 52 112 84 86 C100 73 112 56 120 50" class="rail-art__line" />
+              <path d="M0 108 C34 86 56 120 88 96 C102 85 113 70 120 64" class="rail-art__line rail-art__line--2" />
+            </svg>
+            <p>Better Dubbing<br />Bigger Stories</p>
+          </div>
         </nav>
         <!-- PREVIEW (id kept as left-sidebar for older code paths) -->
         <aside id="left-sidebar">
@@ -1937,20 +1998,9 @@
             </div>
             </div>
 
-            <div id="preview-transport" class="flex flex-col gap-2">
-              <div class="flex justify-between items-center text-xs font-mono text-[var(--text-secondary)]">
-                <span id="current-time-display" class="text-[var(--accent-text)] font-medium">00:00.00</span>
-                <span id="duration-display">00:00.00</span>
-              </div>
-
-              <div id="progress-bar-container"
-                class="w-full h-1.5 bg-[var(--bg-hover)] rounded-full overflow-hidden cursor-pointer">
-                <div id="progress-bar-fill"
-                  class="h-full bg-[var(--accent-primary)] rounded-full transition-all duration-75" style="width: 0%"></div>
-              </div>
-
-              <div class="flex items-center justify-between mt-1">
-                <div class="flex gap-2">
+            <!-- Player bar, one row: play · stop · time · scrubber · captions · volume -->
+            <div id="preview-transport" class="flex items-center gap-3">
+                <div class="flex gap-1.5 shrink-0">
                   <button id="btn-play-pause" style="--tile: var(--tile-coral)"
                     class="group p-2 rounded-lg bg-[var(--bg-hover)] hover:brightness-110 text-[var(--text-primary)] transition-colors disabled:opacity-50"
                     disabled>
@@ -1963,7 +2013,20 @@
                     <i id="lottie-stop" class="lottie-icon"><i data-lucide="square"></i></i>
                   </button>
                 </div>
-                <div class="flex items-center gap-2">
+
+              <div class="transport-time shrink-0 font-mono">
+                <span id="current-time-display" class="font-medium">00:00.00</span>
+                <span class="transport-time__sep">/</span>
+                <span id="duration-display">00:00.00</span>
+              </div>
+
+              <div id="progress-bar-container"
+                class="flex-1 min-w-[60px] h-1.5 bg-[var(--bg-hover)] rounded-full overflow-hidden cursor-pointer">
+                <div id="progress-bar-fill"
+                  class="h-full bg-[var(--accent-primary)] rounded-full transition-all duration-75" style="width: 0%"></div>
+              </div>
+
+                <div class="flex items-center gap-2 shrink-0">
                   <button id="btn-toggle-subtitles" style="--tile: var(--tile-sky)"
                     class="group p-2 rounded-lg text-[var(--text-muted)] hover:bg-[var(--bg-hover)] transition-colors disabled:opacity-50"
                     disabled>
@@ -1981,7 +2044,6 @@
                     </button>
                   </div>
                 </div>
-              </div>
             </div>
           </div>
         </aside>
@@ -1989,13 +2051,20 @@
         <!-- Subtitle Data Panel -->
         <section id="subtitle-card" class="shell-card">
           <div id="sidebar-resizer" title="Drag to resize the subtitle list"></div>
-          <!-- Row 1: title + subtitle settings -->
-          <div class="card-toolbar subs-head">
-              <div class="card-title">
-                <i id="lottie-subtitle-data" class="lottie-icon title-tile shrink-0" style="--tile: var(--tile-coral)"><i data-lucide="captions"></i></i>
-                <span>Subtitles</span>
-              </div>
-            <div class="subs-settings">
+          <!-- Tabs: each shows its own tools above the subtitle list (layout-shell.js) -->
+          <div class="subs-tabs" role="tablist" aria-label="Subtitle tools">
+            <button type="button" class="subs-tab is-active" role="tab" aria-selected="true" data-subs-tab="subs">
+              <i id="lottie-subtitle-data" class="lottie-icon"><i data-lucide="captions"></i></i><span>Subtitles</span>
+            </button>
+            <button type="button" class="subs-tab" role="tab" aria-selected="false" data-subs-tab="ai">
+              <i data-lucide="sparkles"></i><span>AI Dubbing</span>
+            </button>
+            <button type="button" class="subs-tab" role="tab" aria-selected="false" data-subs-tab="voice">
+              <i data-lucide="mic"></i><span>Voice</span>
+            </button>
+          </div>
+          <!-- Subtitles: language · add · transcribe · edit -->
+          <div class="card-toolbar subs-pane" role="tabpanel" data-subs-pane="subs">
               <!-- Language Dropdown -->
               <div class="relative" id="lang-dropdown-container">
                 <button id="btn-language-select"
@@ -2020,6 +2089,44 @@
                   class="hidden absolute bottom-full mb-2 left-0 w-[140px] bg-studio-card border border-white/[0.12] shadow-2xl rounded-xl py-1.5 z-50 animate-dropdown origin-bottom-left overflow-y-auto max-h-[min(320px,50vh)]">
                 </div>
               </div>
+              <button id="btn-add-text" style="--tile: var(--tile-coral)"
+                class="btn-accent group h-8 px-3 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all active:scale-[0.97] shrink-0">
+                <i data-lucide="plus" class="w-3.5 h-3.5 group-hover:scale-110 transition-transform"></i>
+                <span>Add Text</span>
+              </button>
+              <!-- Transcribe: this tab, DAI studio, then every tab -->
+              <button id="btn-transcribe" disabled
+                class="h-8 px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-muted)] opacity-60 cursor-not-allowed">
+                <i id="icon-transcribe" data-lucide="sparkles" class="w-3.5 h-3.5 shrink-0"></i>
+                <span id="text-transcribe" class="hidden sm:inline">Transcribe</span>
+              </button>
+              <!-- Edit strip: Edit / Delete / Find & Replace -->
+              <div class="flex items-center bg-[var(--bg-hover)] border border-[var(--border-color)] rounded-lg p-0.5 shrink-0 flex-nowrap">
+                <button id="btn-edit-selected" style="--tile: var(--tile-sky)"
+                  class="group h-7 px-2.5 rounded-md text-xs font-medium flex items-center gap-1.5 text-[var(--text-secondary)] hover:text-blue-400 hover:bg-blue-500/10 transition-all shrink-0"
+                  title="Edit checked items">
+                  <i data-lucide="type-outline" class="w-3.5 h-3.5 group-hover:scale-110 transition-transform"></i>
+                  <span>Edit</span>
+                </button>
+
+                <button id="btn-delete-selected" style="--tile: var(--tile-red)"
+                  class="group h-7 px-2.5 rounded-md text-xs font-medium flex items-center gap-1.5 text-[var(--text-secondary)] hover:text-rose-400 hover:bg-rose-500/10 transition-all shrink-0"
+                  title="Delete checked items">
+                  <i data-lucide="trash-2" class="w-3.5 h-3.5 group-hover:scale-110 transition-transform"></i>
+                  <span>Delete</span>
+                </button>
+
+                <button id="btn-find-replace" style="--tile: var(--tile-amber)"
+                  class="group h-7 px-2.5 rounded-md text-xs font-medium flex items-center gap-1.5 text-[var(--text-secondary)] hover:text-amber-400 hover:bg-amber-500/10 transition-all shrink-0"
+                  title="Find & Replace (Ctrl+H)">
+                  <i data-lucide="search-code" class="w-3.5 h-3.5 group-hover:scale-110 transition-transform"></i>
+                  <span>Find</span>
+                </button>
+
+              </div>
+          </div>
+          <!-- AI Dubbing: drama genre · DAI studio · every tab · fixes -->
+          <div class="card-toolbar subs-pane" role="tabpanel" data-subs-pane="ai" hidden>
               <!-- Drama Style / Genre Selector -->
               <div class="relative">
                 <button id="btn-genre-select"
@@ -2069,16 +2176,6 @@
                   </button>
                 </div>
               </div>
-            </div>
-          </div>
-          <!-- Row 2: transcribe this tab, in DAI studio, or every tab -->
-          <div class="card-toolbar card-toolbar--sub subs-actions">
-              <!-- Transcribe: this tab, DAI studio, then every tab -->
-              <button id="btn-transcribe" disabled
-                class="h-8 px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-muted)] opacity-60 cursor-not-allowed">
-                <i id="icon-transcribe" data-lucide="sparkles" class="w-3.5 h-3.5 shrink-0"></i>
-                <span id="text-transcribe" class="hidden sm:inline">Transcribe</span>
-              </button>
               <!-- DAI-Transcribe Toolbar Shortcut -->
               <button id="btn-open-daitranscribe-toolbar" title="Open DAI-Transcribe Batch Studio"
                 onclick="window.daiStudio && window.daiStudio.open('batch')"
@@ -2128,37 +2225,6 @@
                     <span class="flex flex-col"><span class="font-medium">DAI Translate all tabs…</span><span class="text-[10px] text-slate-400">Re-translate existing transcripts (opens DAI Translate)</span></span>
                   </button>
                 </div>
-              </div>
-          </div>
-          <div class="card-toolbar card-toolbar--sub tool-row">
-              <button id="btn-add-text" style="--tile: var(--tile-coral)"
-                class="btn-accent group h-8 px-3 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all active:scale-[0.97] shrink-0">
-                <i data-lucide="plus" class="w-3.5 h-3.5 group-hover:scale-110 transition-transform"></i>
-                <span>Add Text</span>
-              </button>
-              <!-- Edit strip: Edit / Delete / Find & Replace -->
-              <div class="flex items-center bg-[var(--bg-hover)] border border-[var(--border-color)] rounded-lg p-0.5 shrink-0 flex-nowrap">
-                <button id="btn-edit-selected" style="--tile: var(--tile-sky)"
-                  class="group h-7 px-2.5 rounded-md text-xs font-medium flex items-center gap-1.5 text-[var(--text-secondary)] hover:text-blue-400 hover:bg-blue-500/10 transition-all shrink-0"
-                  title="Edit checked items">
-                  <i data-lucide="type-outline" class="w-3.5 h-3.5 group-hover:scale-110 transition-transform"></i>
-                  <span>Edit</span>
-                </button>
-
-                <button id="btn-delete-selected" style="--tile: var(--tile-red)"
-                  class="group h-7 px-2.5 rounded-md text-xs font-medium flex items-center gap-1.5 text-[var(--text-secondary)] hover:text-rose-400 hover:bg-rose-500/10 transition-all shrink-0"
-                  title="Delete checked items">
-                  <i data-lucide="trash-2" class="w-3.5 h-3.5 group-hover:scale-110 transition-transform"></i>
-                  <span>Delete</span>
-                </button>
-
-                <button id="btn-find-replace" style="--tile: var(--tile-amber)"
-                  class="group h-7 px-2.5 rounded-md text-xs font-medium flex items-center gap-1.5 text-[var(--text-secondary)] hover:text-amber-400 hover:bg-amber-500/10 transition-all shrink-0"
-                  title="Find & Replace (Ctrl+H)">
-                  <i data-lucide="search-code" class="w-3.5 h-3.5 group-hover:scale-110 transition-transform"></i>
-                  <span>Find</span>
-                </button>
-
               </div>
               <!-- AI fix strip: Fix Missing + AI Refactor -->
               <div class="flex items-center bg-[var(--bg-hover)] border border-[var(--border-color)] rounded-lg p-0.5 shrink-0 flex-nowrap">
@@ -2222,6 +2288,9 @@
                   </div>
                 </div>
               </div>
+          </div>
+          <!-- Voice: the voice of the checked lines -->
+          <div class="card-toolbar subs-pane" role="tabpanel" data-subs-pane="voice" hidden>
             <!-- Right: Voice Quick Selector -->
             <div class="flex items-center gap-2.5 ml-auto shrink-0 flex-nowrap">
               <span id="bulk-voice-label" class="text-[var(--text-muted)] text-xs flex items-center gap-1 font-medium">Voice:</span>
@@ -2272,15 +2341,15 @@
                       <input id="master-checkbox" type="checkbox" class="w-3.5 h-3.5 cursor-pointer"
                         style="accent-color: var(--accent-primary)" />
                     </th>
-                    <th class="px-4 py-3 border-b border-[var(--border-color)] w-24 bg-[var(--bg-panel)]">Start</th>
+                    <th class="px-4 py-3 border-b border-[var(--border-color)] w-24 bg-[var(--bg-panel)]">Time</th>
                     <th class="px-4 py-3 border-b border-[var(--border-color)] w-24 bg-[var(--bg-panel)]">End</th>
                     <th id="table-header-text"
                       class="px-4 py-3 border-b border-[var(--border-color)] bg-[var(--bg-panel)]">Khmer Text (Editable)
                     </th>
-                    <th class="px-4 py-3 border-b border-[var(--border-color)] w-32 bg-[var(--bg-panel)]">Voice Profile
+                    <th class="px-4 py-3 border-b border-[var(--border-color)] w-32 bg-[var(--bg-panel)]">Speaker
                     </th>
                     <th class="px-4 py-3 border-b border-[var(--border-color)] w-28 text-center bg-[var(--bg-panel)]">
-                      Audio Status</th>
+                      Audio</th>
                   </tr>
                 </thead>
                 <tbody id="subtitle-table-body" class="divide-y divide-[var(--border-color)]">
@@ -2297,6 +2366,10 @@
                 </tbody>
               </table>
             </div>
+          </div>
+          <div class="subs-foot">
+            <span>Total Subtitles: <b id="subs-total">0</b></span>
+            <button type="button" class="subs-foot__btn" data-click="btn-import-srt" title="Import SRT subtitles"><i data-lucide="file-down"></i><span>Import SRT</span></button>
           </div>
         </section>
       </div>
@@ -2469,7 +2542,7 @@
                 style="height: 48px">
                 <div
                   class="absolute left-2.5 text-[11px] text-[var(--text-secondary)] font-semibold z-30 bg-studio-card/90 border border-white/[0.08] px-2 py-0.5 rounded-lg shadow-sm pointer-events-none sticky flex items-center gap-1.5 backdrop-blur-sm">
-                  <span class="text-violet-400 font-bold">T1</span>
+                  <span class="track-name"><i data-lucide="type"></i>Subtitles<em>T1</em></span>
                   <button id="btn-link-t1a1" title="T1 & A1 are linked — click to unlink"
                     class="pointer-events-auto transition-colors text-indigo-400 hover:text-indigo-300 ml-0.5 p-1 -m-1 rounded hover:bg-white/[0.06]">
                     <i id="icon-link-t1a1" data-lucide="link" class="w-3.5 h-3.5"></i>
@@ -2490,7 +2563,7 @@
                 style="height: 48px">
                 <div
                   class="absolute left-2.5 text-[11px] text-[var(--text-secondary)] font-semibold z-30 bg-studio-card/90 border border-white/[0.08] px-2 py-0.5 rounded-lg shadow-sm pointer-events-none sticky flex items-center gap-1.5 backdrop-blur-sm">
-                  <span class="text-sky-400 font-bold">A1</span>
+                  <span class="track-name"><i data-lucide="mic"></i>Dubbing<em>A1</em></span>
                   <button id="btn-mute-a1"
                     class="pointer-events-auto hover:text-[var(--text-bright)] text-[var(--text-muted)] transition-colors p-1 -m-1 rounded hover:bg-white/[0.06]">
                     <i id="icon-mute-a1" data-lucide="volume-2" class="w-3.5 h-3.5"></i>

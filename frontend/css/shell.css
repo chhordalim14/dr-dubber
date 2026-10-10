@@ -1,31 +1,32 @@
 /* ─────────────────────────────────────────────────────────────────────────
    App shell, video-editor layout:
-     header (brand · project tabs · actions)
-     tool rail + drawer │ preview │ subtitle list
-                        │ timeline (full width)
+     header (brand · project · auto save · actions)
+     side nav + drawer │ tool strip / preview / player │ subtitle panel (tabs)
+                       │ timeline (full width)
    Colours come from the theme variables that studio-main.js writes onto
    :root (see defaultThemes / presetThemes), so every preset still works.
    ───────────────────────────────────────────────────────────────────────── */
 
 :root,
 :root.light-theme {
-  --shell-gap: 8px;
-  --shell-radius: 12px;
-  --rail-width: 76px;
+  --shell-gap: 10px;
+  --shell-radius: 14px;
+  --rail-width: 124px;
   --accent-glow: color-mix(in srgb, var(--accent-primary) 45%, transparent);
   --accent-soft: color-mix(in srgb, var(--accent-primary) 14%, transparent);
-  /* Main actions (Render, Generate All Tabs, Pro badge) get a soft accent-to-blue
-     gradient; panels stay flat. Floating menus and dialogs keep a small shadow. */
-  --accent-grad: linear-gradient(135deg, var(--accent-primary), color-mix(in srgb, var(--accent-primary) 55%, #3d7bf0));
-  --shell-shadow: none;
-  --float-shadow: 0 8px 24px -8px rgb(0 0 0 / 0.6);
+  /* Main actions (Render, Generate All Tabs, the open nav item) run from blue
+     into violet; panels stay calm. */
+  --accent-grad: linear-gradient(90deg, color-mix(in srgb, var(--accent-primary) 55%, #2f6dff), color-mix(in srgb, var(--accent-primary) 45%, #a23cff));
+  --panel-grad: linear-gradient(180deg, color-mix(in srgb, var(--accent-primary) 4%, var(--bg-panel)), var(--bg-panel) 220px);
+  --edge: color-mix(in srgb, var(--accent-primary) 18%, var(--border-color));
+  --shell-shadow: inset 0 1px 0 rgb(255 255 255 / 0.03);
+  --float-shadow: 0 12px 32px -10px rgb(0 0 0 / 0.65);
 
-  /* Tile colours. One accent: tools sit on neutral tiles, and the accent marks
-     the main actions and whatever is selected (see "Selected = accent" below).
-     Each tool still names its own tile (--tile-sky, --tile-mint, ...), so a
-     colour can come back by changing one line here. Neutral follows the theme's
-     text colours, so every preset gets matching icons. */
-  --tile-neutral: color-mix(in srgb, var(--text-secondary) 60%, var(--text-bright));
+  /* Tile colours. One accent: tools sit on neutral icons, and the accent marks
+     the main actions and whatever is selected. Each tool still names its own
+     tile (--tile-sky, --tile-mint, ...), so a colour can come back by changing
+     one line here. Neutral follows the theme's text colours. */
+  --tile-neutral: color-mix(in srgb, var(--text-secondary) 45%, var(--text-bright));
   --tile-coral: var(--accent-primary);
   --tile-amber: var(--tile-neutral);
   --tile-mint: var(--tile-neutral);
@@ -36,13 +37,17 @@
 }
 
 :root.light-theme {
-  --shell-shadow: none;
-  --float-shadow: 0 8px 24px -10px rgb(0 0 0 / 0.22);
+  --shell-shadow: 0 1px 2px rgb(20 24 60 / 0.04);
+  --float-shadow: 0 12px 28px -12px rgb(20 24 60 / 0.25);
   --tile-neutral: var(--text-secondary);
 }
 
+/* A soft accent glow behind the panels (bottom-left, like the side nav art). */
 body {
-  background: var(--bg-base);
+  background:
+    radial-gradient(900px 520px at -8% 108%, color-mix(in srgb, var(--accent-primary) 16%, transparent), transparent 62%),
+    radial-gradient(760px 420px at 108% -12%, color-mix(in srgb, var(--accent-primary) 9%, transparent), transparent 60%),
+    var(--bg-base);
 }
 
 /* ── Comfortable type scale inside the studio ───────────────────────────
@@ -75,11 +80,13 @@ body {
   position: relative;
   z-index: 10;
   flex-shrink: 0;
-  height: 60px;
+  height: 66px;
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 0 calc(var(--shell-gap) + 6px);
+  gap: 18px;
+  padding: 0 calc(var(--shell-gap) + 8px);
+  border-bottom: 1px solid var(--border-color);
+  background: color-mix(in srgb, var(--bg-panel) 55%, transparent);
 }
 
 .app-brand {
@@ -91,27 +98,26 @@ body {
 }
 
 .app-brand__logo {
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   border-radius: 11px;
   object-fit: cover;
   flex-shrink: 0;
-  box-shadow: 0 0 0 1px var(--border-light);
 }
 
 .app-brand__name {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 700;
-  line-height: 1.2;
+  line-height: 1.15;
   color: var(--text-bright);
 }
 
 .app-brand__tag {
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   line-height: 1.3;
 }
 
@@ -120,10 +126,10 @@ body {
   align-items: center;
   height: 18px;
   padding: 0 7px;
-  border-radius: 999px;
-  font-size: 9.5px;
+  border-radius: 6px;
+  font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.02em;
   color: #fff;
   background: var(--accent-grad);
 }
@@ -136,22 +142,33 @@ body {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   overflow-x: auto;
   padding: 4px;
+  scrollbar-width: none;
 }
 
+/* While one project is open: a pill with a folder icon. */
 .app-tabs__label {
   display: inline-flex;
   align-items: center;
-  height: 32px;
-  padding: 0 14px;
-  border-radius: 10px;
-  font-size: 13px;
+  gap: 10px;
+  height: 40px;
+  padding: 0 16px 0 14px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 500;
   white-space: nowrap;
-  color: var(--text-secondary);
+  color: var(--text-bright);
   background: var(--bg-panel);
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border-light);
+}
+
+.app-tabs__label svg {
+  width: 18px;
+  height: 18px;
+  color: var(--accent-text);
+  fill: color-mix(in srgb, var(--accent-primary) 30%, transparent);
 }
 
 /* Stays pinned at the strip's right edge when the tabs scroll. */
@@ -164,9 +181,9 @@ body {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 32px;
-  height: 32px;
-  border-radius: 10px;
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
   color: var(--accent-text);
   background: color-mix(in srgb, var(--accent-primary) 16%, var(--bg-base));
   transition: background-color var(--duration-fast) ease;
@@ -182,11 +199,11 @@ body {
 }
 
 #project-tabs-bar .proj-tab-btn {
-  height: 32px;
+  height: 36px;
   flex-shrink: 0;
   padding: 0 12px;
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: 11px;
   font-size: 12.5px;
   color: var(--text-secondary);
   background: transparent;
@@ -200,7 +217,7 @@ body {
 #project-tabs-bar .proj-tab-btn.font-semibold {
   color: var(--text-bright);
   background: var(--bg-panel);
-  border-color: var(--border-color);
+  border-color: var(--border-light);
   box-shadow: inset 0 -2px 0 var(--accent-primary);
 }
 
@@ -212,18 +229,51 @@ body {
   margin-left: auto;
 }
 
+/* Auto Save: mirrors Settings › Auto Save Subtitle (layout-shell.js sets .is-on). */
+.hdr-autosave {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 10px;
+  border-radius: 11px;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--text-muted);
+  transition: background-color var(--duration-fast) ease, color var(--duration-fast) ease;
+}
+
+.hdr-autosave svg {
+  width: 20px;
+  height: 20px;
+}
+
+.hdr-autosave:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.hdr-autosave.is-on {
+  color: var(--text-primary);
+}
+
+.hdr-autosave.is-on svg {
+  color: var(--accent-text);
+}
+
 .hdr-icons {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 .hdr-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
   border-radius: 11px;
   color: var(--text-secondary);
   transition: background-color var(--duration-fast) ease, color var(--duration-fast) ease, transform var(--duration-fast) ease;
@@ -240,7 +290,7 @@ body {
 }
 
 .hdr-icon--tile:hover {
-  color: var(--tile);
+  color: var(--text-bright);
   background: var(--bg-hover);
 }
 
@@ -263,24 +313,24 @@ body {
 .hdr-divider,
 .tb-divider {
   width: 1px;
-  height: 20px;
+  height: 22px;
   background: var(--border-color);
   flex-shrink: 0;
 }
 
 .tb-divider {
-  height: 16px;
+  height: 18px;
 }
 
 .hdr-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  height: 38px;
+  gap: 9px;
+  height: 42px;
   padding: 0 16px;
   border-radius: 12px;
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 600;
   white-space: nowrap;
   transition: background-color var(--duration-fast) ease, border-color var(--duration-fast) ease, color var(--duration-fast) ease, box-shadow var(--duration-base) ease, filter var(--duration-fast) ease;
@@ -291,24 +341,26 @@ body {
 }
 
 .hdr-btn--ghost {
-  color: var(--text-primary);
+  color: var(--text-bright);
   background: var(--bg-panel);
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border-light);
 }
 
 .hdr-btn--ghost:hover {
-  color: var(--accent-text);
-  border-color: color-mix(in srgb, var(--accent-primary) 55%, transparent);
+  border-color: color-mix(in srgb, var(--accent-primary) 60%, transparent);
+  background: color-mix(in srgb, var(--accent-primary) 8%, var(--bg-panel));
 }
 
 #btn-render.hdr-btn--primary {
+  padding: 0 20px;
   color: #fff;
   background: var(--accent-grad);
   border: 1px solid transparent;
+  box-shadow: 0 10px 26px -12px var(--accent-glow), inset 0 1px 0 rgb(255 255 255 / 0.18);
 }
 
 #btn-render.hdr-btn--primary:hover {
-  filter: brightness(1.06);
+  filter: brightness(1.08);
 }
 
 /* Rendering state (studio-main.js toggles these classes) */
@@ -324,7 +376,7 @@ body {
   min-height: 0;
   display: flex;
   gap: var(--shell-gap);
-  padding: 0 var(--shell-gap);
+  padding: var(--shell-gap) var(--shell-gap) 0;
 }
 
 .app-stage {
@@ -337,7 +389,7 @@ body {
 
 .app-stage__top {
   /* Subtitle column width; the resizer in studio-main.js sets --subs-width. */
-  --subs-default: clamp(440px, 42vw, 780px);
+  --subs-default: clamp(440px, 36vw, 720px);
   flex: 1;
   min-height: 0;
   display: flex;
@@ -345,8 +397,8 @@ body {
 }
 
 .shell-card {
-  background: var(--bg-panel);
-  border: 1px solid var(--border-color);
+  background: var(--panel-grad);
+  border: 1px solid var(--edge);
   border-radius: var(--shell-radius);
   box-shadow: var(--shell-shadow);
 }
@@ -354,9 +406,9 @@ body {
 .card-title {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
   flex-shrink: 0;
-  font-size: 14.5px;
+  font-size: 15px;
   font-weight: 650;
   color: var(--text-bright);
   white-space: nowrap;
@@ -371,8 +423,8 @@ body {
 }
 
 .title-tile svg {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
 }
 
 .card-toolbar {
@@ -396,7 +448,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  height: 34px;
+  height: 36px;
   padding: 0 12px;
   border-radius: 10px;
   font-size: 13px;
@@ -421,55 +473,57 @@ body {
    swaps the colour classes to show busy/on/off states). */
 #subtitle-card .card-toolbar button.h-8,
 #timeline-toolbar-header button.h-8 {
-  height: 34px;
+  height: 36px;
   border-radius: 10px;
 }
 
-/* ── Studio tools rail (left column, beside the preview) ───────────────
-   Project / Audio / Video switch the drawer panel; Series sits under them,
-   past a divider (it opens a window of its own). Icon above the name. */
+/* ── Side nav (left column, beside the preview) ─────────────────────────
+   Media / Audio / Video / Effects open their tools in the drawer; Series
+   opens a window of its own. Icon beside the name; the open one is filled
+   with the accent gradient. Decorative art fills the space underneath. */
 #app-rail {
+  position: relative;
   flex-shrink: 0;
   width: var(--rail-width);
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 4px;
-  padding: 8px 6px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border-color);
+  gap: 6px;
+  padding: 10px 8px;
+  background: var(--panel-grad);
+  border: 1px solid var(--edge);
   border-radius: var(--shell-radius);
-  overflow-y: auto;
-  scrollbar-width: none;
+  box-shadow: var(--shell-shadow);
+  overflow: hidden;
 }
 
 .rail-seg {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .rail-btn {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 5px;
-  padding: 10px 2px 8px;
-  border-radius: 10px;
-  font-size: 11.5px;
-  font-weight: 600;
+  gap: 11px;
+  height: 48px;
+  padding: 0 12px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 500;
   line-height: 1.1;
   white-space: nowrap;
-  color: var(--text-secondary);
-  transition: background-color var(--duration-fast) ease, color var(--duration-fast) ease;
+  color: var(--text-primary);
+  transition: background-color var(--duration-fast) ease, color var(--duration-fast) ease, box-shadow var(--duration-base) ease;
 }
 
 .rail-btn svg {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   flex-shrink: 0;
-  color: var(--tile);
+  color: var(--text-secondary);
   transition: color var(--duration-fast) ease;
 }
 
@@ -478,33 +532,72 @@ body {
   background: var(--bg-hover);
 }
 
-/* The open panel's tab is filled with the accent. */
+.rail-btn:hover svg {
+  color: var(--text-bright);
+}
+
 .rail-btn.is-active,
 .rail-btn.is-active:hover {
   color: #fff;
+  font-weight: 600;
   background: var(--accent-grad);
-  box-shadow: 0 6px 16px -8px var(--accent-glow);
+  box-shadow: 0 10px 24px -12px var(--accent-glow), inset 0 1px 0 rgb(255 255 255 / 0.16);
 }
 
 .rail-btn.is-active svg {
   color: #fff;
 }
 
-/* Series: under a divider, with the accent icon of a main action. */
-#app-rail > .rail-btn {
+/* Waves and a tagline at the bottom of the nav; shrinks away when short. */
+.rail-art {
   position: relative;
-  margin-top: 9px;
-  color: var(--text-primary);
+  flex: 0 1 170px;
+  min-height: 0;
+  margin: auto -8px -10px;
+  overflow: hidden;
+  pointer-events: none;
+  container-type: size;
 }
 
-#app-rail > .rail-btn::before {
-  content: "";
+.rail-art svg {
   position: absolute;
-  top: -7px;
+  inset: auto 0 0;
+  width: 100%;
+  height: 150px;
+}
+
+.rail-art__fill {
+  fill: color-mix(in srgb, var(--accent-primary) 16%, transparent);
+}
+
+.rail-art__line {
+  fill: none;
+  stroke: color-mix(in srgb, var(--accent-text) 70%, transparent);
+  stroke-width: 1.4;
+}
+
+.rail-art__line--2 {
+  stroke: color-mix(in srgb, var(--accent-primary) 55%, transparent);
+  stroke-width: 1;
+}
+
+.rail-art p {
+  position: absolute;
   left: 12px;
-  right: 12px;
-  height: 1px;
-  background: var(--border-color);
+  bottom: 30px;
+  transform: rotate(-16deg);
+  transform-origin: left bottom;
+  font-size: 12px;
+  font-weight: 600;
+  font-style: italic;
+  line-height: 1.25;
+  color: var(--text-secondary);
+}
+
+@container (max-height: 120px) {
+  .rail-art p {
+    display: none;
+  }
 }
 
 .rail-version {
@@ -513,14 +606,14 @@ body {
   color: var(--text-muted);
 }
 
-/* ── Tools drawer (floats over the preview, beside the rail) ────────────── */
+/* ── Tools drawer (floats over the preview, beside the nav) ─────────────── */
 #rail-drawer {
   position: absolute;
   z-index: 60;
-  top: 0;
-  max-height: 100%;
+  top: var(--shell-gap);
+  max-height: calc(100% - var(--shell-gap));
   left: calc(var(--shell-gap) * 2 + var(--rail-width));
-  width: 350px;
+  width: 360px;
   overflow-y: auto;
   padding: 18px;
   background: var(--bg-panel);
@@ -589,7 +682,7 @@ body {
   border-top: 1px solid var(--border-color);
 }
 
-/* Tools as a CapCut-like list: group label, then rows in one bordered box.
+/* Tools as a list: group label, then rows in one bordered box.
    Each row (.dw-item) holds the tool's button, stretched to fill the row,
    and a one-line description (.dw-desc) laid over the button's lower half;
    the description ignores the pointer, so a click anywhere hits the button.
@@ -608,7 +701,7 @@ body {
   flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--border-color);
-  border-radius: 10px;
+  border-radius: 12px;
 }
 
 .dw-item {
@@ -638,12 +731,19 @@ body {
   font-size: 13.5px;
   font-weight: 600;
   text-align: left;
+  color: var(--text-primary);
   box-shadow: none;
   transform: none;
 }
 
 #rail-drawer .dw-item > button:first-child:hover {
   background-color: var(--bg-hover);
+}
+
+#rail-drawer .dw-item > button:first-child:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background-color: transparent;
 }
 
 #rail-drawer .dw-item > button:first-child > svg:first-child {
@@ -786,7 +886,7 @@ body {
   border-color: var(--border-light);
 }
 
-/* DAI-Transcribe Studio: a normal row with a coral icon and its PRO badge. */
+/* DAI-Transcribe Studio: a normal row with an accent icon and its PRO badge. */
 #rail-drawer .dw-item--accent > button:first-child {
   color: var(--text-bright);
   background: var(--bg-panel);
@@ -820,11 +920,13 @@ body {
 
 /* Focus ring only while navigating with the keyboard (layout-shell.js sets
    body.kbd-nav on Tab and clears it on the next mouse press). */
-.app-shell button:focus {
+.app-shell button:focus,
+.app-header button:focus {
   outline: none;
 }
 
-body.kbd-nav .app-shell button:focus-visible {
+body.kbd-nav .app-shell button:focus-visible,
+body.kbd-nav .app-header button:focus-visible {
   outline: 2px solid var(--accent-primary);
   outline-offset: 2px;
 }
@@ -845,7 +947,7 @@ body.kbd-nav .app-shell button:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 12px;
+  padding: 8px 10px 10px;
 }
 
 /* One row: the tool strip, then the loaded file's name on the right. */
@@ -854,8 +956,7 @@ body.kbd-nav .app-shell button:focus-visible {
   align-items: flex-start;
   gap: 12px;
   min-width: 0;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--border-color);
+  padding: 0 2px;
 }
 
 .preview-head > #preview-toolbar {
@@ -868,7 +969,7 @@ body.kbd-nav .app-shell button:focus-visible {
 #video-title {
   order: 1;
   flex: 0 1 auto;
-  max-width: 34%;
+  max-width: 30%;
   align-self: center;
   justify-content: flex-end;
   font-size: 12.5px;
@@ -887,45 +988,40 @@ body.kbd-nav .app-shell button:focus-visible {
 
 #preview-toolbar {
   padding: 2px 0;
-  gap: 4px;
+  gap: 2px;
   flex-wrap: wrap;
   justify-content: flex-start;
-  row-gap: 6px;
+  row-gap: 4px;
 }
 
-/* Tools: a tinted icon tile (one colour per group, set inline as --tile) with
-   the tool's name under it. The open tool gets a solid tile: studio-main.js
-   marks it with a text-* colour class. */
+/* Tools: a line icon with the tool's name under it. The open tool is lit
+   with the accent: studio-main.js marks it with a text-* colour class. */
 #preview-toolbar > button {
   display: inline-flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  min-width: 48px;
-  padding: 2px 1px 0;
+  gap: 5px;
+  min-width: 54px;
+  padding: 6px 4px 5px;
   border-radius: 10px;
-  color: var(--tile);
+  color: var(--text-primary);
   background: transparent;
   transform: none;
+  transition: background-color var(--duration-fast) ease;
 }
 
 #preview-toolbar > button svg {
-  box-sizing: content-box;
-  width: 18px;
-  height: 18px;
-  padding: 8px;
-  border-radius: 11px;
-  background: transparent;
-  transition: background-color var(--duration-fast) ease, color var(--duration-fast) ease, transform var(--duration-base) var(--ease-spring);
+  width: 20px;
+  height: 20px;
+  transition: color var(--duration-fast) ease, transform var(--duration-base) var(--ease-spring);
 }
 
 #preview-toolbar > button:hover {
-  background: transparent;
-  color: var(--tile);
+  color: var(--text-bright);
+  background: var(--bg-hover);
 }
 
 #preview-toolbar > button:hover svg {
-  background: var(--bg-hover);
   transform: translateY(-1px);
 }
 
@@ -945,17 +1041,17 @@ body.kbd-nav .app-shell button:focus-visible {
 
 #left-sidebar.is-narrow #preview-toolbar > button {
   min-width: 0;
-  padding-bottom: 2px;
+  padding: 8px;
 }
 
 #left-sidebar.is-narrow #preview-toolbar > div {
-  margin-top: 8px !important;
+  margin-top: 9px !important;
   height: 18px !important;
 }
 
 .tool-label {
-  font-size: 11.5px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 500;
   line-height: 1.1;
   white-space: nowrap;
   color: var(--text-secondary);
@@ -969,14 +1065,6 @@ body.kbd-nav .app-shell button:focus-visible {
 #preview-toolbar > button.text-fuchsia-400,
 #preview-toolbar > button.text-purple-400,
 #preview-toolbar > button.text-orange-500 {
-  color: var(--tile);
-  background: transparent;
-}
-
-#preview-toolbar > button.text-yellow-400 svg,
-#preview-toolbar > button.text-fuchsia-400 svg,
-#preview-toolbar > button.text-purple-400 svg,
-#preview-toolbar > button.text-orange-500 svg {
   color: var(--accent-text);
   background: var(--accent-soft);
 }
@@ -986,13 +1074,13 @@ body.kbd-nav .app-shell button:focus-visible {
 #preview-toolbar > button.text-purple-400 .tool-label,
 #preview-toolbar > button.text-orange-500 .tool-label {
   color: var(--text-bright);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 #preview-toolbar > div {
   align-self: flex-start;
-  height: 26px !important;
-  margin: 6px 4px 0 !important;
+  height: 30px !important;
+  margin: 8px 6px 0 !important;
 }
 
 /* Icon toolbar: the button tooltips name each tool, so the group labels
@@ -1002,8 +1090,8 @@ body.kbd-nav .app-shell button:focus-visible {
 }
 
 /* Video / colour / vignette panels open at the top-left of the preview,
-   right under the tool row that opens them (like the Project / Audio /
-   Video drawer under its tabs). #preview-stage is their positioned parent. */
+   right under the tool row that opens them (like the Media / Audio /
+   Video drawer beside the nav). #preview-stage is their positioned parent. */
 #preview-popovers {
   position: absolute;
   z-index: 70;
@@ -1058,6 +1146,7 @@ body.kbd-nav .app-shell button:focus-visible {
   box-shadow: none !important;
 }
 
+/* The picture sits in a framed, glowing stage. */
 #preview-stage {
   position: relative;
   flex: 1;
@@ -1066,8 +1155,14 @@ body.kbd-nav .app-shell button:focus-visible {
   align-items: center;
   justify-content: center;
   container-type: size;
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--bg-base) 75%, var(--bg-panel));
+  border-radius: 12px;
+  background: color-mix(in srgb, #000 35%, var(--bg-base));
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 38%, var(--border-color));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-primary) 10%, transparent), 0 0 28px -10px var(--accent-glow);
+}
+
+:root.light-theme #preview-stage {
+  background: color-mix(in srgb, var(--bg-hover) 70%, var(--bg-base));
 }
 
 /* Fit the preview inside the stage at its aspect ratio (studio-main.js sets
@@ -1075,62 +1170,111 @@ body.kbd-nav .app-shell button:focus-visible {
 #preview-aspect-wrapper {
   flex: none;
   width: min(100cqw, calc(100cqh * var(--preview-ar, 0.8)));
-  border-radius: 14px;
+  border-radius: 10px;
+  border-color: transparent;
 }
 
+/* Player bar: play · stop · time · scrubber · captions · volume, one row. */
 #preview-transport {
   flex-shrink: 0;
-  padding: 10px 12px;
-  border-radius: 14px;
-  background: var(--bg-hover);
+  min-height: 52px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  background: color-mix(in srgb, var(--bg-base) 40%, var(--bg-panel));
+}
+
+.transport-time {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+#current-time-display {
+  font-weight: 650;
+  color: var(--text-bright);
+}
+
+.transport-time__sep {
+  color: var(--text-muted);
 }
 
 #progress-bar-container {
-  height: 5px;
-  background: color-mix(in srgb, var(--text-muted) 22%, transparent);
+  height: 6px;
+  overflow: visible;
+  background: color-mix(in srgb, var(--text-muted) 26%, transparent);
 }
 
 #progress-bar-fill {
+  position: relative;
   background: var(--accent-grad);
 }
 
-/* Player controls: tinted tiles (colour set inline as --tile); play is the
-   solid one. Subtitles on = solid tile (studio-main.js swaps its text class). */
+/* Scrubber knob at the playhead. */
+#progress-bar-fill::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: -7px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  transform: translateY(-50%);
+  background: var(--accent-primary);
+  border: 3px solid color-mix(in srgb, var(--accent-text) 80%, #fff);
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+
 #preview-transport button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
   padding: 0;
   border-radius: 11px;
-  color: var(--tile);
+  color: var(--text-secondary);
   background: transparent;
-  transition: background-color var(--duration-fast) ease, transform var(--duration-base) var(--ease-spring);
+  transition: background-color var(--duration-fast) ease, color var(--duration-fast) ease, transform var(--duration-base) var(--ease-spring);
 }
 
 #preview-transport button:hover:not(:disabled) {
+  color: var(--text-bright);
   background: var(--bg-hover);
-  transform: translateY(-1px);
 }
 
 #preview-transport button svg {
-  width: 18px;
-  height: 18px;
+  width: 19px;
+  height: 19px;
 }
 
-#preview-transport #btn-play-pause:not(:disabled),
+/* Play: a big plain triangle, as in the player of a video site. */
+#preview-transport #btn-play-pause:not(:disabled) {
+  color: var(--text-bright);
+}
+
+#preview-transport #btn-play-pause svg {
+  width: 24px;
+  height: 24px;
+  fill: currentColor;
+}
+
+/* Subtitles on (studio-main.js swaps its text class). */
 #preview-transport #btn-toggle-subtitles.text-\[var\(--accent-text\)\]:not(:disabled) {
-  color: #fff;
-  background: var(--tile);
+  color: var(--accent-text);
+  background: var(--accent-soft);
 }
 
-#preview-transport #btn-play-pause:not(:disabled):hover {
-  background: var(--tile);
-  filter: brightness(1.06);
+#volume-slider {
+  width: 72px;
 }
 
-/* ── Subtitle list (right) ──────────────────────────────────────────────── */
+/* ── Subtitle panel (right) ─────────────────────────────────────────────── */
 #subtitle-card {
   position: relative;
   flex-shrink: 0;
@@ -1167,17 +1311,184 @@ body.kbd-nav .app-shell button:focus-visible {
   background: var(--accent-primary);
 }
 
-#subtitle-table-wrap {
-  border-top: 1px solid var(--border-color);
-  border-radius: 0 0 var(--shell-radius) var(--shell-radius);
+/* Tabs: Subtitles / AI Dubbing / Voice. The open one is a lit block with an
+   accent underline. layout-shell.js switches them. */
+.subs-tabs {
+  flex-shrink: 0;
+  display: flex;
+  gap: 4px;
+  padding: 8px 8px 0;
+  border-bottom: 1px solid var(--border-color);
 }
 
-/* Each subtitle is a two-line card row instead of a wide table row:
-     [✓]  00:00:01,000 → 00:00:03,200          [voice ▾]  [▶]
-          original line (muted)
-          Khmer text ........................................
+.subs-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  height: 46px;
+  padding: 0 18px;
+  border-radius: 12px 12px 0 0;
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  transition: background-color var(--duration-fast) ease, color var(--duration-fast) ease;
+}
+
+.subs-tab svg {
+  width: 19px;
+  height: 19px;
+  flex-shrink: 0;
+}
+
+.subs-tab:hover {
+  color: var(--text-bright);
+  background: var(--bg-hover);
+}
+
+.subs-tab.is-active {
+  color: var(--text-bright);
+  font-weight: 600;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent-primary) 26%, transparent), color-mix(in srgb, var(--accent-primary) 8%, transparent));
+  box-shadow: inset 0 -2px 0 var(--accent-primary);
+}
+
+.subs-tab.is-active svg {
+  color: var(--accent-text);
+}
+
+#subtitle-card.is-xnarrow .subs-tab {
+  flex: 1;
+  padding: 0 8px;
+}
+
+/* Each tab's toolbar. */
+.subs-pane[hidden] {
+  display: none;
+}
+
+.subs-pane {
+  gap: 8px;
+}
+
+/* Language: the big dropdown at the start of the Subtitles tab. */
+#lang-dropdown-container #btn-language-select {
+  width: auto;
+  min-width: 150px;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 11px;
+  font-size: 14px;
+  color: var(--text-bright);
+  background: var(--bg-panel);
+  border-color: var(--border-light);
+}
+
+#btn-genre-select {
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 11px;
+  background: var(--bg-panel);
+  border-color: var(--border-light);
+}
+
+/* The genre's name in plain text (its emoji already marks it). */
+#genre-label {
+  color: var(--text-primary);
+}
+
+/* Toolbar buttons in the tabs: one height, ghost look. studio-main.js swaps
+   the colour classes of Transcribe / All Tabs / Fix Missing for their states,
+   so only the shape is set here. */
+#subtitle-card .subs-pane #btn-add-text,
+#subtitle-card .subs-pane #btn-transcribe,
+#subtitle-card .subs-pane #btn-open-daitranscribe-toolbar,
+#subtitle-card .subs-pane #btn-transcribe-all {
+  height: 40px;
+  padding: 0 14px;
+  gap: 8px;
+  border-radius: 11px;
+  font-size: 13.5px;
+}
+
+#subtitle-card .subs-pane #btn-add-text {
+  color: var(--text-bright);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-light);
+  box-shadow: none;
+}
+
+#subtitle-card .subs-pane #btn-add-text:hover {
+  border-color: color-mix(in srgb, var(--accent-primary) 60%, transparent);
+  background: color-mix(in srgb, var(--accent-primary) 8%, var(--bg-panel));
+}
+
+/* Edit / Delete / Find and Fix Missing / AI Refactor: segmented groups. */
+.subs-pane > div.flex.items-center.bg-\[var\(--bg-hover\)\] {
+  height: 40px;
+  padding: 3px;
+  border-radius: 11px;
+  background: var(--bg-panel);
+  border-color: var(--border-light);
+}
+
+.subs-pane > div.flex.items-center.bg-\[var\(--bg-hover\)\] button {
+  height: 32px;
+  border-radius: 8px;
+}
+
+.subs-pane > div.flex.items-center.bg-\[var\(--bg-hover\)\] > div.relative {
+  display: flex;
+}
+
+/* Voice tab: the selector starts at the left. */
+.subs-pane[data-subs-pane="voice"] > div {
+  margin-left: 0;
+}
+
+.subs-pane[data-subs-pane="voice"] button {
+  height: 36px;
+  border-radius: 10px;
+}
+
+/* Narrow list: Edit / Delete / Find go icon-only (tooltips name them), so the
+   Subtitles tab keeps one row; very narrow: the AI fixes too. */
+#subtitle-card.is-narrow .subs-pane[data-subs-pane="subs"] > div.flex.items-center.bg-\[var\(--bg-hover\)\] button > span,
+#subtitle-card.is-xnarrow .subs-pane > div.flex.items-center.bg-\[var\(--bg-hover\)\] button > span {
+  display: none;
+}
+
+#subtitle-card.is-narrow .subs-pane[data-subs-pane="subs"] > div.flex.items-center.bg-\[var\(--bg-hover\)\] button {
+  width: 34px;
+  padding: 0;
+  justify-content: center;
+}
+
+/* Very narrow: tighter buttons, so language · add · transcribe · edit fit one row. */
+#subtitle-card.is-xnarrow #lang-dropdown-container #btn-language-select {
+  min-width: 0;
+}
+
+#subtitle-card.is-xnarrow .subs-pane #btn-add-text,
+#subtitle-card.is-xnarrow .subs-pane #btn-transcribe {
+  padding: 0 10px;
+}
+
+#subtitle-card.is-xnarrow .subs-pane {
+  gap: 6px;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+#subtitle-table-wrap {
+  border-top: 0;
+}
+
+/* The list as a table:  [✓] #  │ time │ speaker │ text │ audio
    The markup stays a table (studio-main.js renders and windows the rows),
-   so the cells are placed on a grid. */
+   so the cells are placed on a grid: start over end in one column, the
+   original line over the Khmer text in another. */
 #subtitle-table-wrap table,
 #subtitle-table-wrap thead,
 #subtitle-table-wrap tbody {
@@ -1187,9 +1498,9 @@ body.kbd-nav .app-shell button:focus-visible {
 #subtitle-table-wrap thead tr,
 #subtitle-table-wrap tbody tr.subtitle-row {
   display: grid;
-  grid-template-columns: 40px auto auto minmax(0, 1fr) auto auto;
+  grid-template-columns: 62px 70px 122px minmax(0, 1fr) 40px;
   align-items: center;
-  column-gap: 8px;
+  column-gap: 10px;
   padding: 0 12px 0 0;
 }
 
@@ -1207,50 +1518,77 @@ body.kbd-nav .app-shell button:focus-visible {
 }
 
 #subtitle-table-wrap tbody tr.subtitle-row {
+  min-height: 56px;
   row-gap: 2px;
-  padding-top: 9px;
-  padding-bottom: 9px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-color);
 }
 
+/* ✓ and the line number. */
 #subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(1) {
   grid-row: 1 / span 2;
   grid-column: 1;
   align-self: stretch;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
+  gap: 12px;
+  padding-left: 16px;
 }
 
+#subtitle-table-wrap .checkbox-cell::after {
+  content: attr(data-num);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+/* Start over end. */
 #subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(2),
 #subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(3) {
-  grid-row: 1;
+  grid-column: 2;
   font-size: 12px;
+  line-height: 1.3;
+  align-self: end;
 }
 
-#subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(3)::before {
-  content: "→ ";
-  color: var(--text-muted);
+#subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(2) {
+  grid-row: 1;
 }
 
-#subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(4) {
+#subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(3) {
   grid-row: 2;
-  grid-column: 2 / -1;
+  align-self: start;
+  opacity: 0.7;
 }
 
+/* Speaker. */
 #subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(5) {
-  grid-row: 1;
-  grid-column: 5;
+  grid-row: 1 / span 2;
+  grid-column: 3;
 }
 
+/* Original line over the Khmer text. */
+#subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(4) {
+  grid-row: 1 / span 2;
+  grid-column: 4;
+  min-width: 0;
+}
+
+/* Audio status / play. */
 #subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(6) {
-  grid-row: 1;
-  grid-column: 6;
-  min-width: 56px;
-  text-align: right;
+  grid-row: 1 / span 2;
+  grid-column: 5;
+  text-align: center;
 }
 
 #subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(6) .btn-play-tts {
-  margin-right: 0;
+  margin: 0 auto;
+}
+
+#subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(6) > span {
+  font-size: 11px;
 }
 
 #subtitle-table-wrap .subtitle-text-input {
@@ -1260,35 +1598,215 @@ body.kbd-nav .app-shell button:focus-visible {
 /* The original-language line reads as text, not code. */
 #subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(4) > div.font-mono {
   font-family: var(--font-sans);
-  font-size: 12.5px;
+  font-size: 12px;
+  margin-bottom: 0;
 }
 
-/* Header: select-all checkbox + the text column's name. */
+/* Speaker as a pill: Female pink, Male blue (studio-main.js colours it). */
+#subtitle-table-wrap .vox-row-wrap {
+  width: 100%;
+}
+
+#subtitle-table-wrap .vox-row-trigger {
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px 0 6px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  border-color: color-mix(in srgb, currentColor 40%, transparent);
+}
+
+#subtitle-table-wrap .vox-row-trigger .vox-row-label {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The closed voice list is 0 rows tall but kept its border: a stray line
+   under each pill. Show the border only while open. */
+#subtitle-table-wrap .vox-row-panel:not([style*="1fr"]) {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+/* Header: ✓ # · Time · Speaker · Text · Audio */
 #subtitle-table-wrap thead tr {
-  grid-template-columns: 40px minmax(0, 1fr);
-  padding-top: 9px;
-  padding-bottom: 9px;
+  min-height: 44px;
+  padding-top: 0;
+  padding-bottom: 0;
   border-bottom: 1px solid var(--border-color);
   background: var(--bg-panel);
 }
 
 #subtitle-table-wrap thead th {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-muted);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
   background: transparent;
+  width: auto;
+  text-align: left;
 }
 
 #subtitle-table-wrap thead th:nth-child(1) {
+  grid-column: 1;
   display: flex;
-  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  padding-left: 16px;
 }
 
-#subtitle-table-wrap thead th:nth-child(2),
-#subtitle-table-wrap thead th:nth-child(3),
-#subtitle-table-wrap thead th:nth-child(5),
-#subtitle-table-wrap thead th:nth-child(6) {
+#subtitle-table-wrap thead th:nth-child(1)::after {
+  content: "#";
+}
+
+#subtitle-table-wrap thead th:nth-child(2) {
+  grid-column: 2;
+}
+
+#subtitle-table-wrap thead th:nth-child(3) {
   display: none;
+}
+
+#subtitle-table-wrap thead th:nth-child(5) {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+#subtitle-table-wrap thead th:nth-child(4) {
+  grid-column: 4;
+  grid-row: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+#subtitle-table-wrap thead th:nth-child(6) {
+  grid-column: 5;
+  text-align: center;
+}
+
+/* Narrow list: two-line cards instead of columns.
+     [✓]  00:00:01.00 → 00:00:03.20          [voice ▾]  [▶]
+          original line (muted) / Khmer text ............. */
+#subtitle-card.is-xnarrow #subtitle-table-wrap tbody tr.subtitle-row {
+  grid-template-columns: 40px auto auto minmax(0, 1fr) auto auto;
+  column-gap: 8px;
+}
+
+#subtitle-card.is-xnarrow #subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(1) {
+  justify-content: center;
+  padding-left: 0;
+}
+
+#subtitle-card.is-xnarrow #subtitle-table-wrap .checkbox-cell::after {
+  content: none;
+}
+
+#subtitle-card.is-xnarrow #subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(2),
+#subtitle-card.is-xnarrow #subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(3) {
+  grid-row: 1;
+  align-self: center;
+  opacity: 1;
+}
+
+#subtitle-card.is-xnarrow #subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(2) {
+  grid-column: 2;
+}
+
+#subtitle-card.is-xnarrow #subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(3) {
+  grid-column: 3;
+}
+
+#subtitle-card.is-xnarrow #subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(3)::before {
+  content: "→ ";
+  color: var(--text-muted);
+}
+
+#subtitle-card.is-xnarrow #subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(4) {
+  grid-row: 2;
+  grid-column: 2 / -1;
+}
+
+#subtitle-card.is-xnarrow #subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(5) {
+  grid-row: 1;
+  grid-column: 5;
+}
+
+#subtitle-card.is-xnarrow #subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(6) {
+  grid-row: 1;
+  grid-column: 6;
+  min-width: 40px;
+}
+
+#subtitle-card.is-xnarrow #subtitle-table-wrap .vox-row-wrap {
+  width: 112px;
+}
+
+#subtitle-card.is-xnarrow #subtitle-table-wrap thead tr {
+  grid-template-columns: 40px minmax(0, 1fr);
+}
+
+#subtitle-card.is-xnarrow #subtitle-table-wrap thead th:nth-child(1) {
+  justify-content: center;
+  padding-left: 0;
+}
+
+#subtitle-card.is-xnarrow #subtitle-table-wrap thead th:nth-child(1)::after {
+  content: none;
+}
+
+#subtitle-card.is-xnarrow #subtitle-table-wrap thead th:nth-child(4) {
+  grid-column: 2;
+}
+
+#subtitle-card.is-xnarrow #subtitle-table-wrap thead th:nth-child(2),
+#subtitle-card.is-xnarrow #subtitle-table-wrap thead th:nth-child(5),
+#subtitle-card.is-xnarrow #subtitle-table-wrap thead th:nth-child(6) {
+  display: none;
+}
+
+/* Footer: total count + Import SRT. */
+.subs-foot {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px 10px 16px;
+  border-top: 1px solid var(--border-color);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.subs-foot b {
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+.subs-foot__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-bright);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-light);
+  transition: border-color var(--duration-fast) ease, background-color var(--duration-fast) ease;
+}
+
+.subs-foot__btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.subs-foot__btn:hover {
+  border-color: color-mix(in srgb, var(--accent-primary) 60%, transparent);
+  background: color-mix(in srgb, var(--accent-primary) 8%, var(--bg-panel));
 }
 
 .empty-state {
@@ -1320,7 +1838,7 @@ body.kbd-nav .app-shell button:focus-visible {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  height: 38px;
+  height: 40px;
   padding: 0 16px;
   border-radius: 12px;
   font-size: 13.5px;
@@ -1347,7 +1865,7 @@ body.kbd-nav .app-shell button:focus-visible {
 }
 
 .empty-state__btn--primary:hover {
-  filter: brightness(1.06);
+  filter: brightness(1.08);
 }
 
 /* Short windows: drop the hint so the two buttons stay in view. */
@@ -1361,133 +1879,6 @@ body.kbd-nav .app-shell button:focus-visible {
   }
 }
 
-/* Edit row: each tool is a tinted icon tile with its name under it, like
-   the preview toolbar. Colours are set inline as --tile. Strips become
-   plain groups split by a thin line. */
-.tool-row {
-  align-items: flex-start;
-  column-gap: 4px;
-}
-
-.tool-row > div.flex {
-  gap: 4px;
-  padding: 0 0 0 8px;
-  margin-left: 4px;
-  background: transparent;
-  border: 0;
-  border-left: 1px solid var(--border-color);
-  border-radius: 0;
-}
-
-.tool-row > div.flex > div.relative {
-  display: flex;
-}
-
-.tool-row #bulk-voice-label,
-.tool-row #btn-refactor-menu-toggle > svg:last-child,
-.tool-row > div.flex > div.h-3\.5 {
-  display: none;
-}
-
-#subtitle-card .tool-row button[style*="--tile"] {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 4px;
-  height: auto;
-  min-width: 46px;
-  padding: 2px 1px 0;
-  border: 0;
-  border-radius: 10px;
-  box-shadow: none;
-  font-size: 11.5px;
-  font-weight: 600;
-  line-height: 1.1;
-  color: var(--text-secondary);
-  background: transparent;
-  filter: none;
-  transform: none;
-}
-
-#subtitle-card .tool-row button[style*="--tile"] > svg:first-child {
-  flex-shrink: 0;
-  box-sizing: content-box;
-  width: 18px;
-  height: 18px;
-  padding: 8px;
-  border-radius: 11px;
-  color: var(--tile);
-  background: transparent;
-  transform: none;
-  transition: background-color var(--duration-fast) ease, transform var(--duration-base) var(--ease-spring);
-}
-
-#subtitle-card .tool-row button[style*="--tile"]:hover {
-  color: var(--text-bright);
-  background: transparent;
-}
-
-#subtitle-card .tool-row button[style*="--tile"]:hover > svg:first-child {
-  background: var(--bg-hover);
-  transform: translateY(-1px);
-}
-
-#subtitle-card .tool-row button[style*="--tile"]:active > svg:first-child {
-  transform: scale(0.92);
-}
-
-/* Add Text is the main action: solid tile. */
-#subtitle-card .tool-row #btn-add-text > svg:first-child {
-  color: #fff;
-  background: var(--tile);
-}
-
-/* Very narrow list: icons only (tooltips name them). */
-#subtitle-card.is-xnarrow .tool-row button[style*="--tile"] > span {
-  display: none;
-}
-
-/* Subtitle header: row 1 = title + settings (language, genre) on the right,
-   row 2 = the transcribe actions as one group. Same height for every control;
-   studio-main.js swaps these buttons' colour classes for their states. */
-.subs-head {
-  flex-wrap: nowrap;
-}
-
-.subs-settings {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  margin-left: auto;
-}
-
-#btn-language-select,
-#btn-genre-select {
-  height: 32px;
-  border-radius: 8px;
-}
-
-/* The genre's name in plain text (its emoji already marks it). */
-#genre-label {
-  color: var(--text-primary);
-}
-
-.subs-actions {
-  flex-wrap: nowrap;
-  gap: 6px;
-}
-
-#subtitle-card #btn-transcribe,
-#subtitle-card #btn-open-daitranscribe-toolbar,
-#subtitle-card #btn-transcribe-all {
-  height: 34px;
-  padding: 0 12px;
-  border-radius: 10px;
-  font-size: 13px;
-}
-
 /* ── Timeline (full width, bottom) ──────────────────────────────────────── */
 #timeline-panel {
   position: relative;
@@ -1498,14 +1889,19 @@ body.kbd-nav .app-shell button:focus-visible {
   overflow: hidden;
 }
 
+/* The whole top edge drags the timeline's height (the grip in the middle shows
+   where). Above the toolbar (z-index 30), which used to swallow the press; the
+   strip fits in the toolbar's top padding, so it covers no button. */
 #panel-resizer {
   position: absolute;
-  z-index: 6;
+  z-index: 40;
   top: 0;
-  left: 50%;
-  width: 56px;
-  height: 10px;
-  transform: translateX(-50%);
+  left: 0;
+  right: 0;
+  width: auto;
+  height: 9px;
+  transform: none;
+  background: transparent;
   cursor: n-resize;
 }
 
@@ -1513,8 +1909,8 @@ body.kbd-nav .app-shell button:focus-visible {
   content: "";
   position: absolute;
   top: 4px;
-  left: 0;
-  right: 0;
+  left: calc(50% - 28px);
+  width: 56px;
   height: 3px;
   border-radius: 99px;
   background: var(--border-light);
@@ -1532,37 +1928,161 @@ body.kbd-nav .app-shell button:focus-visible {
 }
 
 #timeline-scroll-container {
-  background: color-mix(in srgb, var(--bg-base) 70%, var(--bg-panel));
+  background: color-mix(in srgb, var(--bg-base) 55%, var(--bg-panel));
+}
+
+/* Timeline tools: outlined in their own tint, like the mockup — Auto-Fit
+   violet, Sync End cyan, the audio fixes blue. Auto-Fit and Sync End are
+   tinted only while OFF (.opacity-70); when ON studio-main.js paints them
+   green / amber / red. */
+#timeline-toolbar-header #btn-auto-fit,
+#timeline-toolbar-header #btn-match-audio-end,
+#timeline-toolbar-header #btn-fit-duration,
+#timeline-toolbar-header #btn-fix-fast-audio {
+  height: 38px;
+  padding: 0 14px;
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+#timeline-toolbar-header #btn-auto-fit.opacity-70,
+#timeline-toolbar-header #btn-match-audio-end.opacity-70,
+#timeline-toolbar-header #btn-fit-duration,
+#timeline-toolbar-header #btn-fix-fast-audio {
+  --tool-tint: #8b7bff;
+  opacity: 1;
+  color: var(--text-bright);
+  background: color-mix(in srgb, var(--tool-tint) 8%, transparent);
+  border-color: color-mix(in srgb, var(--tool-tint) 55%, transparent);
+}
+
+#timeline-toolbar-header #btn-match-audio-end.opacity-70 {
+  --tool-tint: #22d3ee;
+}
+
+#timeline-toolbar-header #btn-fit-duration,
+#timeline-toolbar-header #btn-fix-fast-audio {
+  --tool-tint: #4f8cff;
+}
+
+#timeline-toolbar-header #btn-auto-fit.opacity-70 svg {
+  color: #a99dff;
+}
+
+#timeline-toolbar-header #btn-match-audio-end.opacity-70 svg {
+  color: #67e8f9;
+}
+
+#timeline-toolbar-header #btn-auto-fit.opacity-70:hover,
+#timeline-toolbar-header #btn-match-audio-end.opacity-70:hover,
+#timeline-toolbar-header #btn-fit-duration:hover,
+#timeline-toolbar-header #btn-fix-fast-audio:hover {
+  background: color-mix(in srgb, var(--tool-tint) 16%, transparent);
+  border-color: var(--tool-tint);
+}
+
+#timeline-toolbar-header #btn-generate-audio,
+#timeline-toolbar-header #btn-generate-audio-all {
+  height: 38px;
+  padding: 0 16px;
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+/* Generate All Tabs is the main timeline action: solid gradient whenever it
+   can run (studio-main.js rewrites its classes: red while running = Stop). */
+#timeline-toolbar-header #btn-generate-audio-all:not(:disabled):not(.bg-red-600) {
+  color: #fff;
+  background: var(--accent-grad);
+  border-color: transparent;
+  box-shadow: 0 8px 20px -12px var(--accent-glow), inset 0 1px 0 rgb(255 255 255 / 0.16);
+}
+
+#timeline-toolbar-header #btn-generate-audio-all:not(:disabled):not(.bg-red-600) svg {
+  color: #fff;
+}
+
+#timeline-toolbar-header #btn-generate-audio-all:not(:disabled):not(.bg-red-600):hover {
+  filter: brightness(1.08);
+}
+
+/* Track lanes: dark strips; the name tag sticks to the left edge. */
+#timeline-tracks > div[id^="track-"] {
+  border-radius: 10px;
+  border-color: var(--border-color);
+  background: color-mix(in srgb, var(--bg-panel) 70%, var(--bg-base));
+}
+
+/* (see-through, so the clips under it still show) */
+#timeline-tracks div:has(> .track-name) {
+  gap: 7px;
+  padding: 3px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border-light);
+  background: color-mix(in srgb, var(--bg-panel) 72%, transparent);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 4px 12px -6px rgb(0 0 0 / 0.5);
+}
+
+.track-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-bright);
+  white-space: nowrap;
+}
+
+.track-name svg {
+  width: 15px;
+  height: 15px;
+  color: var(--text-secondary);
+}
+
+.track-name em {
+  font-style: normal;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--accent-text);
+}
+
+/* Subtitle clips: indigo blocks (selected = brighter, with studio-main.js's ring). */
+#track-t1 .subtitle-timeline-item.bg-emerald-600 {
+  background: color-mix(in srgb, var(--accent-primary) 32%, var(--bg-panel));
+  border-color: color-mix(in srgb, var(--accent-primary) 70%, transparent);
+}
+
+#track-t1 .subtitle-timeline-item.bg-emerald-500 {
+  background: color-mix(in srgb, var(--accent-primary) 62%, var(--bg-panel));
+  border-color: var(--accent-text);
+}
+
+#track-t1 .subtitle-timeline-item {
+  border-radius: 6px;
+  font-size: 11.5px;
+}
+
+/* Playhead in the accent instead of red. */
+#timeline-playhead {
+  width: 2px;
+  background: var(--accent-text);
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+
+#timeline-playhead > div {
+  border-top-color: var(--accent-text);
 }
 
 /* ── Buttons ────────────────────────────────────────────────────────────── */
 .btn-accent {
   color: #fff;
   background: var(--accent-grad);
-  box-shadow: 0 6px 16px -10px var(--accent-glow);
-}
-
-/* Timeline audio tools: outlined in their icon's colour (Fit Audio Slot cyan,
-   Fix Fast Audio amber), like the mockup's outlined tool buttons. */
-#timeline-toolbar-header #btn-fit-duration,
-#timeline-toolbar-header #btn-fix-fast-audio {
-  --tool-tint: #22d3ee;
-  background: color-mix(in srgb, var(--tool-tint) 7%, transparent);
-  border-color: color-mix(in srgb, var(--tool-tint) 40%, transparent);
-}
-
-#timeline-toolbar-header #btn-fix-fast-audio {
-  --tool-tint: #f59e0b;
-}
-
-#timeline-toolbar-header #btn-fit-duration:hover,
-#timeline-toolbar-header #btn-fix-fast-audio:hover {
-  background: color-mix(in srgb, var(--tool-tint) 14%, transparent);
-  border-color: color-mix(in srgb, var(--tool-tint) 70%, transparent);
+  box-shadow: 0 8px 20px -12px var(--accent-glow), inset 0 1px 0 rgb(255 255 255 / 0.16);
 }
 
 .btn-accent:hover {
-  filter: brightness(1.06);
+  filter: brightness(1.08);
 }
 
 .btn-accent-soft {
@@ -1595,13 +2115,86 @@ body.kbd-nav .app-shell button:focus-visible {
 }
 
 /* ── Narrow windows ─────────────────────────────────────────────────────── */
+@media (max-width: 1439px) {
+  /* Header: the secondary buttons drop their labels (tooltips name them). */
+  .hdr-autosave span,
+  .hdr-btn--ghost span {
+    display: none;
+  }
+
+  .hdr-btn--ghost {
+    width: 42px;
+    padding: 0;
+  }
+
+  /* Timeline: the two audio fixes go icon-only so the toolbar keeps one row. */
+  #timeline-toolbar-header #text-fit-duration,
+  #timeline-toolbar-header #text-fix-fast-audio {
+    display: none;
+  }
+
+  #timeline-toolbar-header #btn-fit-duration,
+  #timeline-toolbar-header #btn-fix-fast-audio {
+    padding: 0 11px;
+  }
+}
+
+/* Short windows: slimmer subtitle panel chrome, so more lines stay in view. */
+@media (max-height: 860px) {
+  .subs-tab {
+    height: 40px;
+  }
+
+  .subs-pane {
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+
+  #subtitle-table-wrap thead tr {
+    min-height: 36px;
+  }
+
+  #subtitle-table-wrap tbody tr.subtitle-row {
+    min-height: 0;
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+
+  .subs-foot {
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+
+  .subs-foot__btn {
+    height: 30px;
+  }
+}
+
 @media (max-width: 1279px) {
+  :root {
+    --rail-width: 76px;
+  }
+
   .app-brand__tag {
     display: none;
   }
 
   .app-stage__top {
-    --subs-default: clamp(400px, 44vw, 560px);
+    --subs-default: clamp(400px, 40vw, 540px);
+  }
+
+  /* The side nav goes back to icon-over-name. */
+  .rail-btn {
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+    height: auto;
+    padding: 10px 2px 8px;
+    font-size: 11.5px;
+  }
+
+  .rail-art p {
+    display: none;
   }
 }
 
@@ -1609,6 +2202,14 @@ body.kbd-nav .app-shell button:focus-visible {
 :root.light-theme #timeline-tracks .bg-studio-card\/90 {
   background-color: rgb(255 255 255 / 0.92);
   border-color: var(--border-color);
+}
+
+:root.light-theme #track-t1 .subtitle-timeline-item.bg-emerald-600 {
+  color: var(--text-bright);
+}
+
+:root.light-theme #timeline-tracks div:has(> .track-name) {
+  box-shadow: 0 2px 6px -3px rgb(20 24 60 / 0.25);
 }
 
 /* .lottie-icon sets display:flex, which beat Tailwind's .hidden, so both

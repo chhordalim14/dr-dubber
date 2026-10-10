@@ -308,38 +308,68 @@
     );
 
     // --- THEME CONSTANTS (From Reference) ---
-    // Default look: "Midnight Violet" (deep navy panels with a violet accent).
+    // Default look: "Midnight Indigo" (deep blue-navy panels, an indigo accent
+    // that runs into violet on the main actions).
     const defaultThemes = {
       dark: {
-        bgBase: "#0a0c1a",
-        bgPanel: "#11142a",
-        bgHover: "#1a1e3a",
-        borderColor: "#21264a",
-        borderLight: "#30375f",
-        textBright: "#eef0ff",
-        textPrimary: "#cfd3f0",
-        textSecondary: "#9aa0c6",
-        textMuted: "#6c7299",
-        accentPrimary: "#7c5cff",
-        accentText: "#b5a4ff",
+        bgBase: "#060a1f",
+        bgPanel: "#0b1130",
+        bgHover: "#131b42",
+        borderColor: "#1a2452",
+        borderLight: "#28366e",
+        textBright: "#f1f4ff",
+        textPrimary: "#d0d7f5",
+        textSecondary: "#97a2d0",
+        textMuted: "#68739f",
+        accentPrimary: "#5b5ff7",
+        accentText: "#a3adff",
       },
       light: {
-        bgBase: "#f3f3fb",
+        bgBase: "#f1f3fc",
         bgPanel: "#ffffff",
-        bgHover: "#efeefb",
-        borderColor: "#e3e2f3",
-        borderLight: "#cfcde8",
-        textBright: "#151433",
-        textPrimary: "#33325a",
-        textSecondary: "#5a5980",
-        textMuted: "#8584a6",
-        accentPrimary: "#6a4cf0",
-        accentText: "#5536d6",
+        bgHover: "#eceffc",
+        borderColor: "#dfe3f5",
+        borderLight: "#c9cfec",
+        textBright: "#111637",
+        textPrimary: "#2f365e",
+        textSecondary: "#555d86",
+        textMuted: "#838aab",
+        accentPrimary: "#4f53e8",
+        accentText: "#3c3fcf",
       },
     };
 
     const presetThemes = {
-      "Midnight Violet": defaultThemes,
+      "Midnight Indigo": defaultThemes,
+      // Navy with a violet accent (the default before Midnight Indigo).
+      "Midnight Violet": {
+        dark: {
+          bgBase: "#0a0c1a",
+          bgPanel: "#11142a",
+          bgHover: "#1a1e3a",
+          borderColor: "#21264a",
+          borderLight: "#30375f",
+          textBright: "#eef0ff",
+          textPrimary: "#cfd3f0",
+          textSecondary: "#9aa0c6",
+          textMuted: "#6c7299",
+          accentPrimary: "#7c5cff",
+          accentText: "#b5a4ff",
+        },
+        light: {
+          bgBase: "#f3f3fb",
+          bgPanel: "#ffffff",
+          bgHover: "#efeefb",
+          borderColor: "#e3e2f3",
+          borderLight: "#cfcde8",
+          textBright: "#151433",
+          textPrimary: "#33325a",
+          textSecondary: "#5a5980",
+          textMuted: "#8584a6",
+          accentPrimary: "#6a4cf0",
+          accentText: "#5536d6",
+        },
+      },
       // Flat neutral greys with a coral accent (the default before Midnight Violet).
       "Studio Grey": {
         dark: {
@@ -15024,6 +15054,9 @@
     // rows on every click froze the UI for seconds on 1-2 hour projects.
     const renderSubtitles = (onlyIds = null) => {
       const isPartial = onlyIds instanceof Set && onlyIds.size > 0 && subtitles.length > 0;
+      // "Total Subtitles" under the list.
+      const subsTotal = document.getElementById("subs-total");
+      if (subsTotal) subsTotal.textContent = subtitles.length;
       if (!isPartial) {
       // 1. Clear Table & Timeline items
       subtitleTableBody.innerHTML = "";
@@ -15105,7 +15138,7 @@
         tr.setAttribute("data-id", sub.id);
 
         tr.innerHTML = `
-            <td class="checkbox-cell px-3 py-2 text-center cursor-pointer">
+            <td class="checkbox-cell px-3 py-2 text-center cursor-pointer" data-num="${index + 1}">
                 <input type="checkbox" class="row-checkbox w-3.5 h-3.5 opacity-60 group-hover:opacity-100 transition-opacity cursor-pointer" style="accent-color: var(--accent-primary)" ${isRowSelected ? "checked" : ""}>
             </td>
             <td class="px-4 py-2 font-mono text-xs ${timeTextColor} transition-colors">${formatTime(parseFloat(sub.textStart))}</td>
@@ -22299,8 +22332,8 @@
 
       const trackA2HTML = `
         <div id="track-a2" class="bg-[var(--bg-panel)] rounded border border-[var(--border-color)] flex items-center relative group shrink-0" style="height: ${trackHeights.a2}px;">
-            <div class="absolute left-2 text-xs text-[var(--text-secondary)] font-semibold z-30 bg-[var(--bg-base)] px-1.5 py-0.5 rounded shadow-md pointer-events-none sticky flex items-center gap-1.5">
-                A2
+            <div class="track-head absolute left-2 text-xs text-[var(--text-secondary)] font-semibold z-30 bg-[var(--bg-base)] px-1.5 py-0.5 rounded shadow-md pointer-events-none sticky flex items-center gap-1.5">
+                <span class="track-name"><i data-lucide="music"></i>Music<em>A2</em></span>
                 <button id="btn-mute-a2" class="pointer-events-auto hover:text-[var(--text-bright)] text-[var(--text-muted)] transition-colors p-1 -m-1 rounded hover:bg-[var(--bg-hover)]">
                     <i id="icon-mute-a2" data-lucide="${bgmTrack.isMuted ? "volume-x" : "volume-2"}" class="w-3.5 h-3.5 ${bgmTrack.isMuted ? "text-red-400" : ""}"></i>
                 </button>

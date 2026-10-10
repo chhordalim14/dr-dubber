@@ -39,6 +39,11 @@
           btn.setAttribute("aria-expanded", active ? "true" : "false");
         });
         drawer.classList.toggle("hidden", !name);
+        // Shortcut rows (Effects) follow their tool: disabled until a video is loaded.
+        drawer.querySelectorAll("[data-click]").forEach((row) => {
+          const tool = document.getElementById(row.dataset.click);
+          if (tool) row.disabled = tool.disabled;
+        });
       };
 
       rail.addEventListener("click", (e) => {
@@ -53,7 +58,8 @@
       });
 
       drawer.addEventListener("click", (e) => {
-        if (e.target.closest("[data-rail-close]")) setOpen(null);
+        // Shortcut rows (Effects) open a panel of their own: close the drawer.
+        if (e.target.closest("[data-rail-close], [data-click]")) setOpen(null);
       });
 
       // Close on a click anywhere else, or Escape.
@@ -73,6 +79,54 @@
       const shortcut = e.target.closest("[data-click]");
       if (shortcut) document.getElementById(shortcut.dataset.click)?.click();
     });
+
+    // Subtitle panel tabs (Subtitles / AI Dubbing / Voice): each shows its own
+    // toolbar above the subtitle list, which stays in view. The last tab is
+    // remembered.
+    (function () {
+      const card = document.getElementById("subtitle-card");
+      if (!card) return;
+      const tabs = card.querySelectorAll("[data-subs-tab]");
+      const panes = card.querySelectorAll("[data-subs-pane]");
+      const show = (name) => {
+        if (![...tabs].some((t) => t.dataset.subsTab === name)) name = "subs";
+        tabs.forEach((tab) => {
+          const active = tab.dataset.subsTab === name;
+          tab.classList.toggle("is-active", active);
+          tab.setAttribute("aria-selected", active ? "true" : "false");
+        });
+        panes.forEach((pane) => {
+          pane.hidden = pane.dataset.subsPane !== name;
+        });
+        try {
+          localStorage.setItem("drSubsTab", name);
+        } catch (e) {}
+      };
+      tabs.forEach((tab) => tab.addEventListener("click", () => show(tab.dataset.subsTab)));
+      let saved = null;
+      try {
+        saved = localStorage.getItem("drSubsTab");
+      } catch (e) {}
+      show(saved || "subs");
+    })();
+
+    // Header "Auto Save" chip: lit while Settings › Auto Save Subtitle is on.
+    // A click presses that switch (data-click); its class change re-syncs the chip.
+    (function () {
+      const chip = document.getElementById("hdr-autosave");
+      const toggle = document.getElementById("autosave-srt-toggle");
+      if (!chip) return;
+      const sync = () => {
+        let on = false;
+        try {
+          on = localStorage.getItem("aiDubberAutoSaveSrt") === "true";
+        } catch (e) {}
+        chip.classList.toggle("is-on", on);
+        chip.setAttribute("aria-pressed", on ? "true" : "false");
+      };
+      sync();
+      if (toggle) new MutationObserver(sync).observe(toggle, { attributes: true, attributeFilter: ["class"] });
+    })();
 
     // Video inspector (preset / colour / vignette panels): its close button
     // and Escape press the toolbar button of each open panel, so the panels
