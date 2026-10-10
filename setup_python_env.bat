@@ -34,6 +34,7 @@ if exist "%PYDIR%\python.exe" (
     if !ERRORLEVEL! equ 0 (
         echo   [OK] %PYDIR% already exists and edge-tts is installed.
         call :textdetect
+        call :bgmmodel
         echo   Delete the folder first if you want to rebuild it from scratch.
         goto :end
     )
@@ -91,6 +92,7 @@ if %ERRORLEVEL% equ 0 (
     echo   [X] Verification failed — edge_tts did not import correctly.
 )
 call :textdetect
+call :bgmmodel
 goto :end
 
 REM Subtitle text detector ("Blur Subtitles"). --no-deps with every package pinned in the
@@ -104,6 +106,27 @@ if !ERRORLEVEL! equ 0 (
     echo   [OK] Text detector installed.
 ) else (
     echo   [!] Text detector did not install - Blur Subtitles will try again when first used.
+)
+exit /b 0
+
+REM Isolate BGM's built-in engine: UVR-MDX-NET-Voc_FT (~64MB), run by the
+REM onnxruntime installed above. Shipped in the installer from backend\models.
+:bgmmodel
+set "MDXFILE=backend\models\UVR-MDX-NET-Voc_FT.onnx"
+set "MDXURL=https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/UVR-MDX-NET-Voc_FT.onnx"
+set "MDXSHA=534B2070FCC7DF514B13EF660DC8CBB328679C2374D04354A5C42BB14ECCE111"
+echo.
+echo Getting the Isolate BGM model (MDX-Net Voc_FT, ~64MB)...
+if not exist "backend\models" mkdir "backend\models"
+if not exist "%MDXFILE%" (
+    powershell -NoProfile -Command "try { Invoke-WebRequest -Uri '%MDXURL%' -OutFile '%MDXFILE%.part' -UseBasicParsing; Move-Item -Force '%MDXFILE%.part' '%MDXFILE%' } catch { exit 1 }"
+)
+powershell -NoProfile -Command "if ((Get-FileHash '%MDXFILE%' -Algorithm SHA256).Hash -eq '%MDXSHA%') { exit 0 } else { exit 1 }" >nul 2>nul
+if !ERRORLEVEL! equ 0 (
+    echo   [OK] Isolate BGM model ready.
+) else (
+    del /q "%MDXFILE%" >nul 2>nul
+    echo   [X] The Isolate BGM model did not download correctly. Run this script again before building.
 )
 exit /b 0
 

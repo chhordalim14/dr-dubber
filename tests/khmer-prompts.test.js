@@ -60,18 +60,39 @@ describe('translate-srt keeps timing', () => {
     test('parses start/end/seconds and a syllable budget per block', () => {
         const lines = parseSrtBlocksForTranslate(srt);
         assert.equal(lines.length, 3);
-        assert.deepEqual(lines[0], { text: '你在干什么？', start: 1, end: 3, seconds: 2, maxSyllables: 9 });
+        assert.deepEqual(lines[0], { text: '你在干什么？', gender: 'Male', start: 1, end: 3, seconds: 2, maxSyllables: 9 });
         assert.equal(lines[1].maxSyllables, 2, 'a blip still gets at least 2 syllables');
-        assert.deepEqual(lines[2], { text: '第一行\n第二行', start: 60, end: 65.5, seconds: 5.5, maxSyllables: 25 });
+        assert.deepEqual(lines[2], { text: '第一行\n第二行', gender: null, start: 60, end: 65.5, seconds: 5.5, maxSyllables: 25 });
     });
 
     test('the prompt line carries seconds and maxSyllables only when timing is known', () => {
         const [first] = parseSrtBlocksForTranslate(srt);
-        assert.deepEqual(translatePromptLine(4, first), { i: 4, text: '你在干什么？', seconds: 2, maxSyllables: 9 });
+        assert.deepEqual(translatePromptLine(4, first), { i: 4, text: '你在干什么？', seconds: 2, maxSyllables: 9, gender: 'Male' });
         assert.deepEqual(translatePromptLine(0, { text: 'x', seconds: null }), { i: 0, text: 'x' });
         const prompt = buildTranslatePrompt({ lines: [translatePromptLine(4, first)], glossaryHint: '', genreGuidance: '', previousLines: [] });
         assert.match(prompt, /"maxSyllables":9/);
         assert.match(prompt, /"maxSyllables" its Khmer syllable budget/);
+    });
+});
+
+describe('translate-srt keeps the voice heard by Transcribe', () => {
+    // A text-only translation used to guess every line's gender again, so a line Transcribe
+    // heard as a man (or the user set to Male) could come back Female and change voice.
+    test('a role or gender tag becomes the line\'s known gender', () => {
+        const srt = ['[Heroine] 你好', '[Villain:p1] 站住', '[female] 嗯', '没有标签']
+            .map((t, i) => `${i + 1}\n00:00:0${i},000 --> 00:00:0${i},900\n${t}`).join('\n\n');
+        const lines = parseSrtBlocksForTranslate(srt);
+        assert.deepEqual(lines.map((l) => l.gender), ['Female', 'Male', 'Female', null]);
+        assert.deepEqual(lines.map((l) => l.text), ['你好', '站住', '嗯', '没有标签']);
+    });
+
+    test('the prompt tells the model to keep a given gender', () => {
+        const prompt = buildTranslatePrompt({ lines: [], glossaryHint: '', genreGuidance: '', previousLines: [] });
+        assert.match(prompt, /already has a "gender" was heard from the audio: output that same gender/);
+    });
+
+    test('the server overrides the model\'s guess for a tagged line', () => {
+        assert.ok(serverSource.includes('results[i] = { ...item, text: clean, ...(sourceLines[i].gender && { gender: sourceLines[i].gender }) }'));
     });
 });
 

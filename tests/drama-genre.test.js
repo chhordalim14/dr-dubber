@@ -126,4 +126,13 @@ describe('genre choices', () => {
       assert.deepEqual(optionValues(id), DRAMA_GENRES, id);
     }
   });
+
+  test('every genre has its own Khmer register on the server', () => {
+    // An unknown genre falls back to the modern register, so a new genre without its own
+    // branch would silently be dubbed as a modern romance.
+    const { getKhmerDramaRegisterGuidance } = require('../backend/lib/khmer-prompts');
+    const { DRAMA_GENRES } = loadStudio().api;
+    const registers = DRAMA_GENRES.map((g) => getKhmerDramaRegisterGuidance(g));
+    assert.equal(new Set(registers).size, DRAMA_GENRES.length);
+  });
 });

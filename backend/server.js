@@ -652,15 +652,18 @@ app.post('/api/batch-result/save', (req, res) => {
 
 // --- BGM ISOLATION ---
 const { cacheKeyForFile, lookupCachedStems, storeStems, pruneBgmCache, jobStatusFor, pickSeparatorThreads, killProcessTree } = require('./lib/bgm-cache');
-// Engines: Spleeter 2stems (the default: ~40 s for a 9-minute tab), Demucs
-// htdemucs (cleaner, full-band stems, but ~4.5 min per 9-minute tab on CPU, so
-// opt-in; also the stand-in when Spleeter can't run) and FFmpeg phase cancellation.
-const BGM_ENGINES = ['spleeter', 'demucs', 'ffmpeg'];
-const DEFAULT_BGM_ENGINE = 'spleeter';
+// Engines: MDX-Net (the default: UVR's Voc_FT model on onnxruntime, shipped
+// with the app; cleanest BGM in our tests, ~4-5 min per 9-minute tab on CPU),
+// Spleeter 2stems and Demucs htdemucs (each needs its own Python install) and
+// FFmpeg phase cancellation.
+const BGM_ENGINES = ['mdx', 'spleeter', 'demucs', 'ffmpeg'];
+const DEFAULT_BGM_ENGINE = 'mdx';
+const BGM_ENGINE_LABELS = { mdx: 'MDX-Net', spleeter: 'Spleeter', demucs: 'Demucs', ffmpeg: 'FFmpeg' };
 const bgmChildren = new Map(); // jobId -> running separator process, so Stop can kill it
 
 // Part of the cache key: a new model must not reuse the old model's stems.
 function bgmEngineModel(engine) {
+    if (engine === 'mdx') return 'UVR-MDX-NET-Voc_FT:ov0.1';
     if (engine === 'demucs') return process.env.DEMUCS_MODEL || 'htdemucs';
     if (engine === 'spleeter') return 'spleeter:2stems';
     return 'stereotools-lr';
@@ -834,7 +837,7 @@ app.post('/api/remove-vocals', upload.any(), async (req, res) => {
         return;
     }
 
-    const engineLabel = engine === 'demucs' ? 'Demucs' : 'Spleeter';
+    const engineLabel = BGM_ENGINE_LABELS[engine];
     // Phase cancellation when no ML engine could run - always reported back with
     // the reason (method 'ffmpeg_fallback'), so the app can warn and retry.
     const fallBack = (reason) => {
@@ -844,10 +847,11 @@ app.post('/api/remove-vocals', upload.any(), async (req, res) => {
     };
 
     const spleeterPython = SPLEETER_PYTHON_CMD || getSpleeterPythonCmd();
-    let separatorPython = PYTHON_CMD;
-    if (engine === 'spleeter' && spleeterPython) {
-        separatorPython = spleeterPython;
-    }
+    // The separator itself runs in the app's Python (it has onnxruntime for
+    // MDX-Net, the stand-in when Spleeter breaks); Spleeter gets its own
+    // Python via --spleeter-python. Only with no app Python at all does the
+    // Spleeter Python run it.
+    const separatorPython = PYTHON_CMD || (engine === 'spleeter' ? spleeterPython : null);
 
     if (!separatorPython) {
         fallBack(`${engineLabel} could not run (no working Python was found)`);
@@ -902,7 +906,16 @@ app.post('/api/remove-vocals', upload.any(), async (req, res) => {
     const stdoutDecoder = new StringDecoder('utf8');
     const stderrDecoder = new StringDecoder('utf8');
     child.stdout.on('data', d => output += stdoutDecoder.write(d));
-    child.stderr.on('data', d => stderr += stderrDecoder.write(d));
+    child.stderr.on('data', d => {
+        const text = stderrDecoder.write(d);
+        // MDX-Net reports "[progress] chunk/total": maps onto 10-95%.
+        const m = [...text.matchAll(/\[progress\] (\d+)\/(\d+)/g)].pop();
+        const job = bgmJobs.get(jobId);
+        if (m && job && job.status === 'processing') {
+            job.progress = 10 + Math.floor(85 * Number(m[1]) / Math.max(1, Number(m[2])));
+        }
+        stderr += text.replace(/^\[progress\] .*(\r?\n|$)/gm, '');
+    });
     child.on('error', (err) => {
         if (settled) return;
         settled = true;
@@ -2035,7 +2048,7 @@ async function retranslateCues(targets, allCues, { keys, model, promptOpts, glos
         const lines = batch.map(({ cue, index }) => {
             const around = (from, to) => allCues.slice(Math.max(0, from), Math.max(0, to))
                 .map(c => `${c.originalText || ''}${c.text && KHMER_CHAR_RE.test(c.text) ? ` => ${c.text}` : ''}`).filter(Boolean);
-            return { i: index, text: cue.originalText, context: [...around(index - 2, index), '>>> THIS LINE <<<', ...around(index + 1, index + 3)].join(' | ') };
+            return { i: index, text: cue.originalText, ...(cue.gender && { gender: cue.gender }), context: [...around(index - 2, index), '>>> THIS LINE <<<', ...around(index + 1, index + 3)].join(' | ') };
         });
         const payload = {
             contents: [{ role: 'user', parts: [{ text: buildTranslatePrompt({ lines, glossaryHint: promptOpts.glossaryHint, genreGuidance: promptOpts.genreGuidance, previousLines: [] }) + '\n\nEach line has a "context" field with the neighbouring dialogue - use it only to understand the meaning; translate only "text".' }] }],
@@ -2541,7 +2554,8 @@ app.post('/api/translate-srt', async (req, res) => {
                 let clean = sanitizeKhmerDialogue(item.text || '');
                 if (glossary) clean = applyGlossary(clean, glossary);
                 // An echo of the source (no Khmer) counts as missing, so the retry pass picks it up.
-                if (clean && KHMER_CHAR_RE.test(clean)) results[i] = { ...item, text: clean };
+                // A tagged line keeps its tag's gender (heard from the audio), whatever the model guessed.
+                if (clean && KHMER_CHAR_RE.test(clean)) results[i] = { ...item, text: clean, ...(sourceLines[i].gender && { gender: sourceLines[i].gender }) };
             }
             return result;
         };
@@ -3118,7 +3132,14 @@ const CHARACTER_PRESETS = {
     Child: { id: 'Child', label: '🧒 Child (កូនក្មេង)', gender: 'Female', baseVoice: 'km-KH-SreymomNeural', pitch: '+22Hz', rate: '+10%', color: '#eab308' }
 };
 
+// Only two voices: plain Male or plain Female. A role from an old project or SRT tag (Hero,
+// Mother, Villain...) only says which of the two, never its own pitch or pace, so a speaker
+// sounds the same on every line.
 function resolveCharacterPreset(identifier) {
+    return CHARACTER_PRESETS[resolveRolePreset(identifier).gender] || CHARACTER_PRESETS.Male;
+}
+
+function resolveRolePreset(identifier) {
     if (!identifier) return CHARACTER_PRESETS.Male;
     const clean = String(identifier).trim().toLowerCase();
     
@@ -3154,40 +3175,36 @@ function getEmotionProsody(emotion, basePitch, baseVolume, _baseSpeed, baseRate)
         if (!isNaN(pNum)) basePitchVal = pNum;
     }
 
-    let emotionPitchOffset = 0;
+    // Emotion changes only pace and loudness, never pitch: every man shares one voice and every
+    // woman another, so a pitch shift per emotion (it was -8 Hz Royal to +15 Hz Fear) made the
+    // same character sound deep on one line and light on the next.
     let emotionVolOffset = 0;
     let emotionRateOffset = 0;
 
     if (emotion) {
         const em = String(emotion).toLowerCase().trim();
         if (em === 'angry') {
-            emotionPitchOffset = 10;
             emotionVolOffset = 15;
             emotionRateOffset = 12;
         } else if (em === 'sad') {
-            emotionPitchOffset = -6;
             emotionVolOffset = -10;
             emotionRateOffset = -12;
         } else if (em === 'whisper') {
-            emotionPitchOffset = -4;
             emotionVolOffset = -25;
             emotionRateOffset = -8;
         } else if (em === 'excited') {
-            emotionPitchOffset = 12;
             emotionVolOffset = 10;
             emotionRateOffset = 15;
         } else if (em === 'royal') {
-            emotionPitchOffset = -8;
             emotionVolOffset = 5;
             emotionRateOffset = -5;
         } else if (em === 'fear') {
-            emotionPitchOffset = 15;
             emotionVolOffset = 5;
             emotionRateOffset = 18;
         }
     }
 
-    const totalPitch = basePitchVal + emotionPitchOffset;
+    const totalPitch = basePitchVal;
     const finalPitch = (totalPitch >= 0 ? `+${totalPitch}` : `${totalPitch}`) + 'Hz';
 
     let baseVolVal = 0;
