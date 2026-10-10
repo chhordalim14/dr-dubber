@@ -196,7 +196,7 @@ function createWindow() {
         minWidth: 1200,
         minHeight: 750,
         backgroundColor: '#0c0e14',
-        icon: path.join(ROOT_DIR, 'assets', 'drdubberpro.png'),
+        icon: path.join(ROOT_DIR, 'assets', 'logo.png'),
         show: false,
         webPreferences: {
             preload: path.join(ROOT_DIR, 'preload.js'),

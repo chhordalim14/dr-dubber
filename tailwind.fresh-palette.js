@@ -1,5 +1,5 @@
 // "Fresh" versions of Tailwind's colour families, so the icon and text
-// colours used across the app sit well on the sky-blue theme.
+// colours used across the app sit well on the coral-sunset theme.
 //
 // Each family keeps Tailwind's lightness ladder (so text-*-400 stays as
 // readable as before) but gets a new hue (and, for the loudest families, a
@@ -15,12 +15,12 @@ const FRESH = {
   cyan: [208, 1.0],    // aqua
   sky: [228, 1.0],     // sky
   blue: [245, 0.95],
-  indigo: [255, 0.95], // the old brand colour: now a blue next to the accent
+  indigo: [33, 0.9],   // the old brand colour: now the coral accent
   violet: [285, 0.85], // lavender
   purple: [300, 0.85],
   fuchsia: [330, 0.85],
   pink: [8, 0.9],      // coral pink
-  rose: [18, 0.95],    // coral
+  rose: [14, 0.95],    // red-coral: deletes stay apart from the coral accent
   orange: [50, 0.95],  // peach
   amber: [72, 0.95],   // apricot / sun
   yellow: [95, 0.9],

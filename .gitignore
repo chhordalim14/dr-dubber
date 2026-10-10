@@ -18,6 +18,9 @@ backend/bin/
 backend/python_env/
 pretrained_models/
 backend/pretrained_models/
+# Isolate BGM model, downloaded by setup_python_env.bat
+backend/models/*.onnx
+backend/models/*.part
 
 # Build & Distributables
 dist/

@@ -1,6 +1,8 @@
 /* ─────────────────────────────────────────────────────────────────────────
-   App shell: header · tool rail + drawer · workspace (subtitles + timeline)
-   · preview column · status bar.
+   App shell, video-editor layout:
+     header (brand · project · auto save · actions)
+     side nav + drawer │ tool strip / preview / player │ subtitle panel (tabs)
+                       │ timeline (full width)
    Colours come from the theme variables that studio-main.js writes onto
    :root (see defaultThemes / presetThemes), so every preset still works.
    ───────────────────────────────────────────────────────────────────────── */
@@ -8,25 +10,69 @@
 :root,
 :root.light-theme {
   --shell-gap: 10px;
-  --shell-radius: 18px;
-  --rail-width: 76px;
+  --shell-radius: 14px;
+  --rail-width: 124px;
   --accent-glow: color-mix(in srgb, var(--accent-primary) 45%, transparent);
   --accent-soft: color-mix(in srgb, var(--accent-primary) 14%, transparent);
-  --accent-grad: linear-gradient(135deg, var(--accent-primary), color-mix(in srgb, var(--accent-primary) 55%, #38bdf8));
-  --shell-shadow: 0 1px 0 rgb(255 255 255 / 0.03) inset, 0 12px 32px -18px rgb(0 0 0 / 0.6);
-  --float-shadow: 0 24px 60px -20px rgb(0 0 0 / 0.65), 0 2px 8px rgb(0 0 0 / 0.25);
+  /* Main actions (Render, Generate All Tabs, the open nav item) run from blue
+     into violet; panels stay calm. */
+  --accent-grad: linear-gradient(90deg, color-mix(in srgb, var(--accent-primary) 55%, #2f6dff), color-mix(in srgb, var(--accent-primary) 45%, #a23cff));
+  --panel-grad: linear-gradient(180deg, color-mix(in srgb, var(--accent-primary) 4%, var(--bg-panel)), var(--bg-panel) 220px);
+  --edge: color-mix(in srgb, var(--accent-primary) 18%, var(--border-color));
+  --shell-shadow: inset 0 1px 0 rgb(255 255 255 / 0.03);
+  --float-shadow: 0 12px 32px -10px rgb(0 0 0 / 0.65);
+
+  /* Tile colours. One accent: tools sit on neutral icons, and the accent marks
+     the main actions and whatever is selected. Each tool still names its own
+     tile (--tile-sky, --tile-mint, ...), so a colour can come back by changing
+     one line here. Neutral follows the theme's text colours. */
+  --tile-neutral: color-mix(in srgb, var(--text-secondary) 45%, var(--text-bright));
+  --tile-coral: var(--accent-primary);
+  --tile-amber: var(--tile-neutral);
+  --tile-mint: var(--tile-neutral);
+  --tile-sky: var(--tile-neutral);
+  --tile-lav: var(--tile-neutral);
+  --tile-red: var(--tile-neutral);
+  --tile-pink: var(--tile-neutral);
 }
 
 :root.light-theme {
-  --shell-shadow: 0 1px 2px rgb(15 50 55 / 0.04), 0 12px 32px -18px rgb(15 50 55 / 0.16);
-  --float-shadow: 0 24px 60px -24px rgb(15 50 55 / 0.28), 0 2px 8px rgb(15 50 55 / 0.06);
+  --shell-shadow: 0 1px 2px rgb(20 24 60 / 0.04);
+  --float-shadow: 0 12px 28px -12px rgb(20 24 60 / 0.25);
+  --tile-neutral: var(--text-secondary);
 }
 
+/* A soft accent glow behind the panels (bottom-left, like the side nav art). */
 body {
   background:
-    radial-gradient(1100px 520px at -5% -15%, color-mix(in srgb, var(--accent-primary) 12%, transparent), transparent 65%),
-    radial-gradient(900px 480px at 105% 115%, color-mix(in srgb, #38bdf8 9%, transparent), transparent 65%),
+    radial-gradient(900px 520px at -8% 108%, color-mix(in srgb, var(--accent-primary) 16%, transparent), transparent 62%),
+    radial-gradient(760px 420px at 108% -12%, color-mix(in srgb, var(--accent-primary) 9%, transparent), transparent 60%),
     var(--bg-base);
+}
+
+/* ── Comfortable type scale inside the studio ───────────────────────────
+   Bumps Tailwind's tiny sizes a step and drops shouty uppercase labels. */
+.app-header .text-xs,
+.app-shell .text-xs {
+  font-size: 13px;
+  line-height: 1.25rem;
+}
+
+.app-shell .text-\[9px\] {
+  font-size: 10px;
+}
+
+.app-shell .text-\[10px\] {
+  font-size: 11px;
+}
+
+.app-shell .text-\[11px\] {
+  font-size: 12px;
+}
+
+.app-shell .uppercase {
+  text-transform: none;
+  letter-spacing: 0;
 }
 
 /* ── Header ─────────────────────────────────────────────────────────────── */
@@ -34,44 +80,44 @@ body {
   position: relative;
   z-index: 10;
   flex-shrink: 0;
-  height: 62px;
+  height: 66px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 0 calc(var(--shell-gap) + 6px);
+  gap: 18px;
+  padding: 0 calc(var(--shell-gap) + 8px);
+  border-bottom: 1px solid var(--border-color);
+  background: color-mix(in srgb, var(--bg-panel) 55%, transparent);
 }
 
 .app-brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 11px;
   min-width: 0;
+  flex-shrink: 0;
 }
 
 .app-brand__logo {
-  width: 38px;
-  height: 38px;
-  border-radius: 12px;
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
   object-fit: cover;
   flex-shrink: 0;
-  box-shadow: 0 0 0 1px var(--border-light), 0 6px 16px -8px var(--accent-glow);
 }
 
 .app-brand__name {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 16px;
+  gap: 7px;
+  font-size: 18px;
   font-weight: 700;
-  line-height: 1.2;
-  letter-spacing: -0.01em;
+  line-height: 1.15;
   color: var(--text-bright);
 }
 
 .app-brand__tag {
-  font-size: 11.5px;
-  color: var(--text-muted);
+  font-size: 12px;
+  color: var(--text-secondary);
   line-height: 1.3;
 }
 
@@ -80,19 +126,140 @@ body {
   align-items: center;
   height: 18px;
   padding: 0 7px;
-  border-radius: 999px;
-  font-size: 9.5px;
-  font-weight: 800;
-  letter-spacing: 0.12em;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #fff;
+  background: var(--accent-grad);
+}
+
+/* Project tabs live in the header, like browser tabs. studio-main.js builds
+   them with Tailwind classes; the ID selector restyles them as pills, and
+   only the active tab carries .font-semibold. */
+.app-tabs {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 4px;
+  scrollbar-width: none;
+}
+
+/* While one project is open: a pill with a folder icon. */
+.app-tabs__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 16px 0 14px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--text-bright);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-light);
+}
+
+.app-tabs__label svg {
+  width: 18px;
+  height: 18px;
   color: var(--accent-text);
-  background: var(--accent-soft);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 35%, transparent);
+  fill: color-mix(in srgb, var(--accent-primary) 30%, transparent);
+}
+
+/* Stays pinned at the strip's right edge when the tabs scroll. */
+.app-tabs__add {
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  box-shadow: -8px 0 8px -2px var(--bg-base);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent-primary) 16%, var(--bg-base));
+  transition: background-color var(--duration-fast) ease;
+}
+
+.app-tabs__add:hover {
+  background: color-mix(in srgb, var(--accent-primary) 26%, var(--bg-base));
+}
+
+.app-tabs__add svg {
+  width: 16px;
+  height: 16px;
+}
+
+#project-tabs-bar .proj-tab-btn {
+  height: 36px;
+  flex-shrink: 0;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  background: transparent;
+}
+
+#project-tabs-bar .proj-tab-btn:hover {
+  color: var(--text-bright);
+  background: var(--bg-hover);
+}
+
+#project-tabs-bar .proj-tab-btn.font-semibold {
+  color: var(--text-bright);
+  background: var(--bg-panel);
+  border-color: var(--border-light);
+  box-shadow: inset 0 -2px 0 var(--accent-primary);
 }
 
 .app-header__actions {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* Auto Save: mirrors Settings › Auto Save Subtitle (layout-shell.js sets .is-on). */
+.hdr-autosave {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 10px;
+  border-radius: 11px;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--text-muted);
+  transition: background-color var(--duration-fast) ease, color var(--duration-fast) ease;
+}
+
+.hdr-autosave svg {
+  width: 20px;
+  height: 20px;
+}
+
+.hdr-autosave:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.hdr-autosave.is-on {
+  color: var(--text-primary);
+}
+
+.hdr-autosave.is-on svg {
+  color: var(--accent-text);
 }
 
 .hdr-icons {
@@ -107,7 +274,7 @@ body {
   justify-content: center;
   width: 38px;
   height: 38px;
-  border-radius: 12px;
+  border-radius: 11px;
   color: var(--text-secondary);
   transition: background-color var(--duration-fast) ease, color var(--duration-fast) ease, transform var(--duration-fast) ease;
 }
@@ -117,9 +284,19 @@ body {
   color: var(--text-bright);
 }
 
+.hdr-icon--tile {
+  color: var(--tile);
+  background: transparent;
+}
+
+.hdr-icon--tile:hover {
+  color: var(--text-bright);
+  background: var(--bg-hover);
+}
+
 .hdr-icon--magic {
   color: #fff;
-  box-shadow: 0 6px 16px -8px rgb(56 189 248 / 0.7);
+  box-shadow: none;
 }
 
 .hdr-icon--magic:hover {
@@ -127,27 +304,33 @@ body {
   transform: translateY(-1px);
 }
 
+.hdr-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .hdr-divider,
 .tb-divider {
   width: 1px;
-  height: 20px;
+  height: 22px;
   background: var(--border-color);
   flex-shrink: 0;
 }
 
 .tb-divider {
-  height: 16px;
+  height: 18px;
 }
 
 .hdr-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  height: 38px;
+  gap: 9px;
+  height: 42px;
   padding: 0 16px;
   border-radius: 12px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   white-space: nowrap;
   transition: background-color var(--duration-fast) ease, border-color var(--duration-fast) ease, color var(--duration-fast) ease, box-shadow var(--duration-base) ease, filter var(--duration-fast) ease;
@@ -158,21 +341,22 @@ body {
 }
 
 .hdr-btn--ghost {
-  color: var(--text-primary);
+  color: var(--text-bright);
   background: var(--bg-panel);
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border-light);
 }
 
 .hdr-btn--ghost:hover {
-  color: var(--accent-text);
-  border-color: color-mix(in srgb, var(--accent-primary) 55%, transparent);
+  border-color: color-mix(in srgb, var(--accent-primary) 60%, transparent);
+  background: color-mix(in srgb, var(--accent-primary) 8%, var(--bg-panel));
 }
 
 #btn-render.hdr-btn--primary {
+  padding: 0 20px;
   color: #fff;
   background: var(--accent-grad);
   border: 1px solid transparent;
-  box-shadow: 0 10px 24px -12px var(--accent-glow);
+  box-shadow: 0 10px 26px -12px var(--accent-glow), inset 0 1px 0 rgb(255 255 255 / 0.18);
 }
 
 #btn-render.hdr-btn--primary:hover {
@@ -182,7 +366,7 @@ body {
 /* Rendering state (studio-main.js toggles these classes) */
 #btn-render.bg-red-600 {
   background: #dc2626;
-  box-shadow: 0 0 18px -4px rgb(220 38 38 / 0.6);
+  box-shadow: none;
 }
 
 /* ── Main grid ──────────────────────────────────────────────────────────── */
@@ -192,12 +376,29 @@ body {
   min-height: 0;
   display: flex;
   gap: var(--shell-gap);
-  padding: 0 var(--shell-gap);
+  padding: var(--shell-gap) var(--shell-gap) 0;
+}
+
+.app-stage {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--shell-gap);
+}
+
+.app-stage__top {
+  /* Subtitle column width; the resizer in studio-main.js sets --subs-width. */
+  --subs-default: clamp(440px, 36vw, 720px);
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: var(--shell-gap);
 }
 
 .shell-card {
-  background: var(--bg-panel);
-  border: 1px solid var(--border-color);
+  background: var(--panel-grad);
+  border: 1px solid var(--edge);
   border-radius: var(--shell-radius);
   box-shadow: var(--shell-shadow);
 }
@@ -205,13 +406,25 @@ body {
 .card-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   flex-shrink: 0;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 650;
-  letter-spacing: -0.005em;
   color: var(--text-bright);
   white-space: nowrap;
+}
+
+/* Panel title icons sit in a soft tile of their own colour. */
+.title-tile {
+  padding: 6px;
+  border-radius: 9px;
+  color: var(--tile);
+  background: transparent;
+}
+
+.title-tile svg {
+  width: 18px;
+  height: 18px;
 }
 
 .card-toolbar {
@@ -230,76 +443,177 @@ body {
   z-index: 29;
 }
 
-/* ── Tool rail ──────────────────────────────────────────────────────────── */
+/* Neutral toolbar button: the icon carries the colour, the body stays calm. */
+.tb-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--text-primary);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-color);
+  transition: border-color var(--duration-fast) ease, color var(--duration-fast) ease, background-color var(--duration-fast) ease;
+}
+
+.tb-btn:hover {
+  color: var(--text-bright);
+  border-color: var(--border-light);
+}
+
+.tb-btn:active {
+  transform: scale(0.97);
+}
+
+/* Rounder, roomier controls in the two toolbars (shape only: studio-main.js
+   swaps the colour classes to show busy/on/off states). */
+#subtitle-card .card-toolbar button.h-8,
+#timeline-toolbar-header button.h-8 {
+  height: 36px;
+  border-radius: 10px;
+}
+
+/* ── Side nav (left column, beside the preview) ─────────────────────────
+   Media / Audio / Video / Effects open their tools in the drawer; Series
+   opens a window of its own. Icon beside the name; the open one is filled
+   with the accent gradient. Decorative art fills the space underneath. */
 #app-rail {
-  width: var(--rail-width);
+  position: relative;
   flex-shrink: 0;
+  width: var(--rail-width);
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   gap: 6px;
-  padding: 10px 0;
-  background: var(--bg-panel);
-  border: 1px solid var(--border-color);
+  padding: 10px 8px;
+  background: var(--panel-grad);
+  border: 1px solid var(--edge);
   border-radius: var(--shell-radius);
   box-shadow: var(--shell-shadow);
+  overflow: hidden;
+}
+
+.rail-seg {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .rail-btn {
-  width: 60px;
-  padding: 10px 0 8px;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 5px;
-  border-radius: 14px;
-  font-size: 10.5px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  transition: background-color var(--duration-fast) ease, color var(--duration-fast) ease;
+  gap: 11px;
+  height: 48px;
+  padding: 0 12px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.1;
+  white-space: nowrap;
+  color: var(--text-primary);
+  transition: background-color var(--duration-fast) ease, color var(--duration-fast) ease, box-shadow var(--duration-base) ease;
 }
 
 .rail-btn svg {
-  width: 20px;
-  height: 20px;
-  transition: transform var(--duration-base) var(--ease-spring);
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  transition: color var(--duration-fast) ease;
 }
 
 .rail-btn:hover {
-  background: var(--bg-hover);
   color: var(--text-bright);
+  background: var(--bg-hover);
 }
 
 .rail-btn:hover svg {
-  transform: translateY(-1px);
+  color: var(--text-bright);
 }
 
-.rail-btn.is-active {
-  background: var(--accent-soft);
-  color: var(--accent-text);
+.rail-btn.is-active,
+.rail-btn.is-active:hover {
+  color: #fff;
+  font-weight: 600;
+  background: var(--accent-grad);
+  box-shadow: 0 10px 24px -12px var(--accent-glow), inset 0 1px 0 rgb(255 255 255 / 0.16);
+}
+
+.rail-btn.is-active svg {
+  color: #fff;
+}
+
+/* Waves and a tagline at the bottom of the nav; shrinks away when short. */
+.rail-art {
+  position: relative;
+  flex: 0 1 170px;
+  min-height: 0;
+  margin: auto -8px -10px;
+  overflow: hidden;
+  pointer-events: none;
+  container-type: size;
+}
+
+.rail-art svg {
+  position: absolute;
+  inset: auto 0 0;
+  width: 100%;
+  height: 150px;
+}
+
+.rail-art__fill {
+  fill: color-mix(in srgb, var(--accent-primary) 16%, transparent);
+}
+
+.rail-art__line {
+  fill: none;
+  stroke: color-mix(in srgb, var(--accent-text) 70%, transparent);
+  stroke-width: 1.4;
+}
+
+.rail-art__line--2 {
+  stroke: color-mix(in srgb, var(--accent-primary) 55%, transparent);
+  stroke-width: 1;
+}
+
+.rail-art p {
+  position: absolute;
+  left: 12px;
+  bottom: 30px;
+  transform: rotate(-16deg);
+  transform-origin: left bottom;
+  font-size: 12px;
+  font-weight: 600;
+  font-style: italic;
+  line-height: 1.25;
+  color: var(--text-secondary);
+}
+
+@container (max-height: 120px) {
+  .rail-art p {
+    display: none;
+  }
 }
 
 .rail-version {
-  margin-top: auto;
-  padding: 3px 6px;
-  border-radius: 8px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 9px;
-  line-height: 1.3;
-  text-align: center;
+  font-size: 11px;
   color: var(--text-muted);
-  background: var(--bg-hover);
-  max-width: 64px;
 }
 
-/* ── Tools drawer (floats over the workspace) ───────────────────────────── */
+/* ── Tools drawer (floats over the preview, beside the nav) ─────────────── */
 #rail-drawer {
   position: absolute;
   z-index: 60;
-  top: 0;
-  bottom: 0;
+  top: var(--shell-gap);
+  max-height: calc(100% - var(--shell-gap));
   left: calc(var(--shell-gap) * 2 + var(--rail-width));
-  width: 340px;
+  width: 360px;
   overflow-y: auto;
   padding: 18px;
   background: var(--bg-panel);
@@ -308,19 +622,6 @@ body {
   box-shadow: var(--float-shadow);
   scrollbar-width: thin;
   scrollbar-color: var(--border-light) transparent;
-  animation: drawer-in var(--duration-base) var(--ease-out-expo);
-}
-
-@keyframes drawer-in {
-  from {
-    opacity: 0;
-    transform: translateX(-10px) scale(0.985);
-  }
-
-  to {
-    opacity: 1;
-    transform: none;
-  }
 }
 
 .drawer-panel {
@@ -341,15 +642,14 @@ body {
 }
 
 .drawer-head h2 {
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 700;
-  letter-spacing: -0.01em;
   color: var(--text-bright);
 }
 
 .drawer-head p {
   margin-top: 2px;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.45;
   color: var(--text-muted);
 }
@@ -376,175 +676,610 @@ body {
   color: var(--text-bright);
 }
 
-.tool-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+.drawer-foot {
+  margin-top: 2px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-color);
 }
 
-.drawer-stack {
+/* Tools as a list: group label, then rows in one bordered box.
+   Each row (.dw-item) holds the tool's button, stretched to fill the row,
+   and a one-line description (.dw-desc) laid over the button's lower half;
+   the description ignores the pointer, so a click anywhere hits the button.
+   studio-main.js rewrites some of these buttons' classes and contents while
+   busy (Isolate, Mute, the "all tabs" variants), so the layout is set by
+   position (> button:first-child) and id, never by classes added here. */
+.dw-group {
+  margin: 4px 2px -6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.dw-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
 }
 
-.drawer-foot {
-  margin-top: 4px;
-  padding-top: 14px;
-  border-top: 1px dashed var(--border-color);
+.dw-item {
+  position: relative;
 }
 
-/* Tool tiles. Only shape is set here: studio-main.js swaps the colour classes
-   on several of these buttons to show busy/disabled states. */
-#rail-drawer .tool-grid > button,
-#rail-drawer .drawer-stack > div:not(.tool-grid) > button,
-#rail-drawer .drawer-stack > button {
-  gap: 10px;
-  padding: 12px;
-  border-radius: 14px;
-  font-size: 12.5px;
-  font-weight: 600;
-  text-align: left;
+/* (hidden file inputs sit between some rows, so count rows by tag) */
+.dw-list > div.dw-item:not(:first-of-type) {
+  border-top: 1px solid var(--border-color);
 }
 
-#rail-drawer .tool-grid > button:not(.col-span-2) {
-  flex-direction: column;
+#rail-drawer #btn-dub-series {
+  color: var(--text-primary);
+}
+
+#rail-drawer .dw-item > button:first-child {
+  display: flex;
   align-items: flex-start;
   justify-content: flex-start;
-  min-height: 86px;
+  gap: 12px;
+  width: 100%;
+  min-height: 58px;
+  margin: 0;
+  padding: 10px 12px 26px;
+  border: 0;
+  border-radius: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  text-align: left;
+  color: var(--text-primary);
+  box-shadow: none;
+  transform: none;
 }
 
-#rail-drawer .tool-grid > button.col-span-2,
-#rail-drawer .drawer-stack > div:not(.tool-grid) > button,
-#rail-drawer .drawer-stack > button {
-  min-height: 54px;
-  justify-content: flex-start;
+#rail-drawer .dw-item > button:first-child:hover {
+  background-color: var(--bg-hover);
 }
 
-#rail-drawer .tool-grid > button > span,
-#rail-drawer .drawer-stack button > span {
-  max-width: 100%;
+#rail-drawer .dw-item > button:first-child:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background-color: transparent;
 }
 
-#rail-drawer .tool-grid > button > svg:first-child,
-#rail-drawer .drawer-stack button > svg:first-child {
-  width: 32px;
-  height: 32px;
-  padding: 8px;
+#rail-drawer .dw-item > button:first-child > svg:first-child {
   flex-shrink: 0;
-  border-radius: 10px;
-  background: color-mix(in srgb, currentColor 20%, transparent);
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  color: var(--tile-neutral);
 }
 
-#rail-drawer .tool-grid > div.col-span-2 {
-  border-radius: 14px;
+.dw-desc {
+  position: absolute;
+  left: 42px;
+  right: 12px;
+  bottom: 9px;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.3;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+/* "All tabs" variant (or the Blur Subtitles on/off) as a chip on the row. */
+.dw-item--chip > button:first-child {
+  padding-right: 120px !important;
+}
+
+#rail-drawer #btn-isolate-bgm-all,
+#rail-drawer #btn-apply-blur-all,
+#rail-drawer #text-blur-toggle-wrap {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  height: 28px;
+  margin: 0;
+  padding: 0 10px;
+  gap: 6px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: none;
+  transform: none;
+}
+
+#rail-drawer #btn-isolate-bgm-all:not([class*="bg-red"]),
+#rail-drawer #btn-apply-blur-all {
+  border: 1px solid var(--border-light);
+  background: var(--bg-hover);
+}
+
+#rail-drawer #btn-isolate-bgm-all svg,
+#rail-drawer #btn-apply-blur-all svg {
+  width: 14px;
+  height: 14px;
+  color: var(--tile-neutral);
+}
+
+/* Busy rows (studio-main.js paints them red/rose): keep the text readable. */
+.dw-item:has(> button:first-child[class*="bg-rose-6"]) .dw-desc,
+.dw-item:has(> button:first-child[class*="bg-red-6"]) .dw-desc {
+  color: rgb(255 255 255 / 0.8);
+}
+
+/* Mute original audio: a calm row with a switch; on = muted (studio-main.js
+   marks the muted state with rose classes). */
+.dw-item--switch > button:first-child {
+  padding-right: 64px !important;
+}
+
+#rail-drawer #btn-mute-audio[class*="bg-rose"] {
+  color: var(--text-bright);
+  background: var(--bg-panel);
+}
+
+.dw-item--switch::after,
+.dw-item--switch::before {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+}
+
+.dw-item--switch::after {
+  top: 14px;
+  right: 14px;
+  width: 32px;
+  height: 18px;
+  border-radius: 99px;
+  background: var(--border-light);
+}
+
+.dw-item--switch::before {
+  z-index: 1;
+  top: 16px;
+  right: 30px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.dw-item--switch:has(> #btn-mute-audio[class*="bg-rose"])::after {
+  background: var(--accent-primary);
+}
+
+.dw-item--switch:has(> #btn-mute-audio[class*="bg-rose"])::before {
+  right: 16px;
+}
+
+/* Auto-ducking: the settings card is a row of the list. */
+.dw-item--card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   padding: 12px;
 }
 
-/* ── Workspace (subtitles + timeline) ───────────────────────────────────── */
-.app-workspace {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--shell-gap);
+.dw-item--card .text-xs {
+  font-size: 13.5px;
 }
 
-#subtitle-card {
+#deck-toggle-ducking:checked + div {
+  background: var(--accent-primary);
+}
+
+#deck-ducking-depth-container .deck-duck-btn {
+  height: 28px;
+  border-radius: 8px;
+}
+
+#deck-ducking-depth-container .deck-duck-btn[class*="border-cyan-400 "],
+#deck-ducking-depth-container .deck-duck-btn[class*="bg-cyan-400"] {
+  color: var(--accent-text);
+  border-color: var(--accent-primary);
+  background: var(--accent-soft);
+}
+
+#deck-ducking-depth-container .deck-duck-btn:hover {
+  border-color: var(--border-light);
+}
+
+/* DAI-Transcribe Studio: a normal row with an accent icon and its PRO badge. */
+#rail-drawer .dw-item--accent > button:first-child {
+  color: var(--text-bright);
+  background: var(--bg-panel);
+}
+
+#rail-drawer .dw-item--accent > button:first-child > svg:first-child {
+  color: var(--accent-text);
+}
+
+#rail-drawer .dw-item--accent > button:first-child > span:last-child {
+  margin-left: auto;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+
+/* Clear All Data: a quiet red text button at the bottom. */
+#rail-drawer #btn-clear {
+  border-color: transparent;
+  background: transparent;
+}
+
+#rail-drawer #btn-clear:hover {
+  background: rgb(244 63 94 / 0.08);
+}
+
+/* Blur Subtitles status line sits right under its list. */
+#text-blur-status {
+  margin: -6px 2px 0;
+}
+
+/* Focus ring only while navigating with the keyboard (layout-shell.js sets
+   body.kbd-nav on Tab and clears it on the next mouse press). */
+.app-shell button:focus,
+.app-header button:focus {
+  outline: none;
+}
+
+body.kbd-nav .app-shell button:focus-visible,
+body.kbd-nav .app-header button:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+/* ── Preview (centre) ───────────────────────────────────────────────────── */
+#left-sidebar {
+  position: relative;
+  flex: 1;
+  min-width: 340px;
+  display: flex;
+  flex-direction: column;
+}
+
+#preview-card {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  gap: 10px;
+  padding: 8px 10px 10px;
 }
 
-#subtitle-table-wrap {
-  border-top: 1px solid var(--border-color);
-  border-radius: 0 0 var(--shell-radius) var(--shell-radius);
+/* One row: the tool strip, then the loaded file's name on the right. */
+.preview-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+  padding: 0 2px;
 }
 
-#subtitle-table-wrap thead th {
-  padding-top: 10px;
-  padding-bottom: 10px;
-  font-size: 10.5px;
-  font-weight: 650;
-  letter-spacing: 0.06em;
+.preview-head > #preview-toolbar {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* The "Video Preview" heading is hidden; the loaded file's name (inserted by
+   studio-main.js) shows small on the right of the tool strip. */
+#video-title {
+  order: 1;
+  flex: 0 1 auto;
+  max-width: 30%;
+  align-self: center;
+  justify-content: flex-end;
+  font-size: 12.5px;
+  font-weight: 500;
   color: var(--text-muted);
+}
+
+#video-title > .title-tile,
+#video-title-static {
+  display: none;
+}
+
+#video-title .proj-title-dynamic {
+  text-align: right;
+}
+
+#preview-toolbar {
+  padding: 2px 0;
+  gap: 2px;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  row-gap: 4px;
+}
+
+/* Tools: a line icon with the tool's name under it. The open tool is lit
+   with the accent: studio-main.js marks it with a text-* colour class. */
+#preview-toolbar > button {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  min-width: 54px;
+  padding: 6px 4px 5px;
+  border-radius: 10px;
+  color: var(--text-primary);
+  background: transparent;
+  transform: none;
+  transition: background-color var(--duration-fast) ease;
+}
+
+#preview-toolbar > button svg {
+  width: 20px;
+  height: 20px;
+  transition: color var(--duration-fast) ease, transform var(--duration-base) var(--ease-spring);
+}
+
+#preview-toolbar > button:hover {
+  color: var(--text-bright);
+  background: var(--bg-hover);
+}
+
+#preview-toolbar > button:hover svg {
+  transform: translateY(-1px);
+}
+
+#preview-toolbar > button:active svg {
+  transform: scale(0.92);
+}
+
+#preview-toolbar > button:disabled {
+  opacity: 0.4;
+}
+
+/* Narrow preview: icons only (each button's tooltip names it).
+   layout-shell.js adds .is-narrow from the column's width. */
+#left-sidebar.is-narrow .tool-label {
+  display: none;
+}
+
+#left-sidebar.is-narrow #preview-toolbar > button {
+  min-width: 0;
+  padding: 8px;
+}
+
+#left-sidebar.is-narrow #preview-toolbar > div {
+  margin-top: 9px !important;
+  height: 18px !important;
+}
+
+.tool-label {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.1;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+#preview-toolbar > button:hover .tool-label {
+  color: var(--text-bright);
+}
+
+#preview-toolbar > button.text-yellow-400,
+#preview-toolbar > button.text-fuchsia-400,
+#preview-toolbar > button.text-purple-400,
+#preview-toolbar > button.text-orange-500 {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+
+#preview-toolbar > button.text-yellow-400 .tool-label,
+#preview-toolbar > button.text-fuchsia-400 .tool-label,
+#preview-toolbar > button.text-purple-400 .tool-label,
+#preview-toolbar > button.text-orange-500 .tool-label {
+  color: var(--text-bright);
+  font-weight: 600;
+}
+
+#preview-toolbar > div {
+  align-self: flex-start;
+  height: 30px !important;
+  margin: 8px 6px 0 !important;
+}
+
+/* Icon toolbar: the button tooltips name each tool, so the group labels
+   (Transform / Crop / Overlay / Look) give their room to the buttons. */
+#preview-toolbar > span {
+  display: none;
+}
+
+/* Video / colour / vignette panels open at the top-left of the preview,
+   right under the tool row that opens them (like the Media / Audio /
+   Video drawer beside the nav). #preview-stage is their positioned parent. */
+#preview-popovers {
+  position: absolute;
+  z-index: 70;
+  top: 8px;
+  left: 8px;
+  width: min(380px, calc(100% - 16px));
+  /* Like a dropdown it may reach past the stage (over the player bar and
+     timeline), so short windows still show the whole panel. */
+  max-height: max(320px, calc(100vh - 240px));
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  overflow-y: auto;
   background: var(--bg-panel);
+  border: 1px solid var(--border-light);
+  border-radius: var(--shell-radius);
+  box-shadow: var(--float-shadow);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-light) transparent;
 }
 
-.empty-state {
-  padding: 72px 16px;
-  text-align: center;
+#preview-popovers:has(> .flex) {
+  display: flex;
 }
 
-.empty-state__title {
-  font-size: 15px;
+.inspector-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.inspector-head h2 {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-bright);
+}
+
+.inspector-head p {
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+#preview-popovers > :not(.inspector-head) {
+  flex-shrink: 0;
+  border-radius: 14px !important;
+  border-color: var(--border-color) !important;
+  background: color-mix(in srgb, var(--bg-base) 45%, var(--bg-panel)) !important;
+  box-shadow: none !important;
+}
+
+/* The picture sits in a framed, glowing stage. */
+#preview-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  container-type: size;
+  border-radius: 12px;
+  background: color-mix(in srgb, #000 35%, var(--bg-base));
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 38%, var(--border-color));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-primary) 10%, transparent), 0 0 28px -10px var(--accent-glow);
+}
+
+:root.light-theme #preview-stage {
+  background: color-mix(in srgb, var(--bg-hover) 70%, var(--bg-base));
+}
+
+/* Fit the preview inside the stage at its aspect ratio (studio-main.js sets
+   --preview-ar together with a custom aspect ratio; default 4:5). */
+#preview-aspect-wrapper {
+  flex: none;
+  width: min(100cqw, calc(100cqh * var(--preview-ar, 0.8)));
+  border-radius: 10px;
+  border-color: transparent;
+}
+
+/* Player bar: play · stop · time · scrubber · captions · volume, one row. */
+#preview-transport {
+  flex-shrink: 0;
+  min-height: 52px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  background: color-mix(in srgb, var(--bg-base) 40%, var(--bg-panel));
+}
+
+.transport-time {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+#current-time-display {
   font-weight: 650;
   color: var(--text-bright);
 }
 
-.empty-state__hint {
-  margin-top: 4px;
-  font-size: 12.5px;
+.transport-time__sep {
   color: var(--text-muted);
 }
 
-.empty-state__hint b {
-  color: var(--accent-text);
-  font-weight: 650;
+#progress-bar-container {
+  height: 6px;
+  overflow: visible;
+  background: color-mix(in srgb, var(--text-muted) 26%, transparent);
 }
 
-#timeline-panel {
+#progress-bar-fill {
   position: relative;
-  z-index: 5;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
+  background: var(--accent-grad);
 }
 
-#panel-resizer {
-  position: absolute;
-  z-index: 6;
-  top: 0;
-  left: 50%;
-  width: 56px;
-  height: 10px;
-  transform: translateX(-50%);
-  cursor: n-resize;
-}
-
-#panel-resizer::after {
+/* Scrubber knob at the playhead. */
+#progress-bar-fill::after {
   content: "";
   position: absolute;
-  top: 4px;
-  left: 0;
-  right: 0;
-  height: 3px;
-  border-radius: 99px;
-  background: var(--border-light);
-  transition: background-color var(--duration-fast) ease;
-}
-
-#panel-resizer:hover::after {
+  top: 50%;
+  right: -7px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  transform: translateY(-50%);
   background: var(--accent-primary);
+  border: 3px solid color-mix(in srgb, var(--accent-text) 80%, #fff);
+  box-shadow: 0 0 10px var(--accent-glow);
 }
 
-#timeline-toolbar-header {
-  justify-content: space-between;
-  row-gap: 8px;
-  border-bottom: 1px solid var(--border-color);
+#preview-transport button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border-radius: 11px;
+  color: var(--text-secondary);
+  background: transparent;
+  transition: background-color var(--duration-fast) ease, color var(--duration-fast) ease, transform var(--duration-base) var(--ease-spring);
 }
 
-#timeline-scroll-container {
-  background: color-mix(in srgb, var(--bg-base) 70%, var(--bg-panel));
+#preview-transport button:hover:not(:disabled) {
+  color: var(--text-bright);
+  background: var(--bg-hover);
 }
 
-/* ── Preview column ─────────────────────────────────────────────────────── */
-#left-sidebar {
+#preview-transport button svg {
+  width: 19px;
+  height: 19px;
+}
+
+/* Play: a big plain triangle, as in the player of a video site. */
+#preview-transport #btn-play-pause:not(:disabled) {
+  color: var(--text-bright);
+}
+
+#preview-transport #btn-play-pause svg {
+  width: 24px;
+  height: 24px;
+  fill: currentColor;
+}
+
+/* Subtitles on (studio-main.js swaps its text class). */
+#preview-transport #btn-toggle-subtitles.text-\[var\(--accent-text\)\]:not(:disabled) {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+
+#volume-slider {
+  width: 72px;
+}
+
+/* ── Subtitle panel (right) ─────────────────────────────────────────────── */
+#subtitle-card {
   position: relative;
   flex-shrink: 0;
-  min-width: 280px;
+  width: var(--subs-width, var(--subs-default));
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
@@ -576,104 +1311,774 @@ body {
   background: var(--accent-primary);
 }
 
-#preview-card {
-  position: relative;
-  flex: 1;
-  min-height: 0;
+/* Tabs: Subtitles / AI Dubbing / Voice. The open one is a lit block with an
+   accent underline. layout-shell.js switches them. */
+.subs-tabs {
+  flex-shrink: 0;
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px;
+  gap: 4px;
+  padding: 8px 8px 0;
+  border-bottom: 1px solid var(--border-color);
 }
 
-.preview-head {
-  display: flex;
+.subs-tab {
+  display: inline-flex;
   align-items: center;
-  min-width: 0;
-  padding: 2px 4px 0;
+  justify-content: center;
+  gap: 9px;
+  height: 46px;
+  padding: 0 18px;
+  border-radius: 12px 12px 0 0;
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  transition: background-color var(--duration-fast) ease, color var(--duration-fast) ease;
 }
 
-#preview-toolbar {
-  padding: 4px 6px;
-  border-radius: 12px;
+.subs-tab svg {
+  width: 19px;
+  height: 19px;
+  flex-shrink: 0;
+}
+
+.subs-tab:hover {
+  color: var(--text-bright);
   background: var(--bg-hover);
 }
 
-#preview-toolbar > button {
+.subs-tab.is-active {
+  color: var(--text-bright);
+  font-weight: 600;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent-primary) 26%, transparent), color-mix(in srgb, var(--accent-primary) 8%, transparent));
+  box-shadow: inset 0 -2px 0 var(--accent-primary);
+}
+
+.subs-tab.is-active svg {
+  color: var(--accent-text);
+}
+
+#subtitle-card.is-xnarrow .subs-tab {
+  flex: 1;
+  padding: 0 8px;
+}
+
+/* Each tab's toolbar. */
+.subs-pane[hidden] {
+  display: none;
+}
+
+.subs-pane {
+  gap: 8px;
+}
+
+/* Language: the big dropdown at the start of the Subtitles tab. */
+#lang-dropdown-container #btn-language-select {
+  width: auto;
+  min-width: 150px;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 11px;
+  font-size: 14px;
+  color: var(--text-bright);
+  background: var(--bg-panel);
+  border-color: var(--border-light);
+}
+
+#btn-genre-select {
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 11px;
+  background: var(--bg-panel);
+  border-color: var(--border-light);
+}
+
+/* The genre's name in plain text (its emoji already marks it). */
+#genre-label {
+  color: var(--text-primary);
+}
+
+/* Toolbar buttons in the tabs: one height, ghost look. studio-main.js swaps
+   the colour classes of Transcribe / All Tabs / Fix Missing for their states,
+   so only the shape is set here. */
+#subtitle-card .subs-pane #btn-add-text,
+#subtitle-card .subs-pane #btn-transcribe,
+#subtitle-card .subs-pane #btn-open-daitranscribe-toolbar,
+#subtitle-card .subs-pane #btn-transcribe-all {
+  height: 40px;
+  padding: 0 14px;
+  gap: 8px;
+  border-radius: 11px;
+  font-size: 13.5px;
+}
+
+#subtitle-card .subs-pane #btn-add-text {
+  color: var(--text-bright);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-light);
+  box-shadow: none;
+}
+
+#subtitle-card .subs-pane #btn-add-text:hover {
+  border-color: color-mix(in srgb, var(--accent-primary) 60%, transparent);
+  background: color-mix(in srgb, var(--accent-primary) 8%, var(--bg-panel));
+}
+
+/* Edit / Delete / Find and Fix Missing / AI Refactor: segmented groups. */
+.subs-pane > div.flex.items-center.bg-\[var\(--bg-hover\)\] {
+  height: 40px;
+  padding: 3px;
+  border-radius: 11px;
+  background: var(--bg-panel);
+  border-color: var(--border-light);
+}
+
+.subs-pane > div.flex.items-center.bg-\[var\(--bg-hover\)\] button {
+  height: 32px;
   border-radius: 8px;
 }
 
-/* Video / colour / vignette panels float to the left of the preview, over
-   the workspace, so the picture stays in view while adjusting it. */
-#preview-popovers {
-  position: absolute;
-  z-index: 70;
-  top: 96px;
-  right: calc(100% + var(--shell-gap) + 4px);
-  width: 330px;
-  max-height: calc(100% - 108px);
-  overflow-y: auto;
+.subs-pane > div.flex.items-center.bg-\[var\(--bg-hover\)\] > div.relative {
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-  pointer-events: none;
-  scrollbar-width: none;
 }
 
-#preview-popovers > * {
-  pointer-events: auto;
-  border-radius: 16px !important;
-  background: var(--bg-panel) !important;
-  box-shadow: var(--float-shadow) !important;
+/* Voice tab: the selector starts at the left. */
+.subs-pane[data-subs-pane="voice"] > div {
+  margin-left: 0;
 }
 
-#preview-stage {
-  flex: 1;
-  min-height: 0;
+.subs-pane[data-subs-pane="voice"] button {
+  height: 36px;
+  border-radius: 10px;
+}
+
+/* Narrow list: Edit / Delete / Find go icon-only (tooltips name them), so the
+   Subtitles tab keeps one row; very narrow: the AI fixes too. */
+#subtitle-card.is-narrow .subs-pane[data-subs-pane="subs"] > div.flex.items-center.bg-\[var\(--bg-hover\)\] button > span,
+#subtitle-card.is-xnarrow .subs-pane > div.flex.items-center.bg-\[var\(--bg-hover\)\] button > span {
+  display: none;
+}
+
+#subtitle-card.is-narrow .subs-pane[data-subs-pane="subs"] > div.flex.items-center.bg-\[var\(--bg-hover\)\] button {
+  width: 34px;
+  padding: 0;
+  justify-content: center;
+}
+
+/* Very narrow: tighter buttons, so language · add · transcribe · edit fit one row. */
+#subtitle-card.is-xnarrow #lang-dropdown-container #btn-language-select {
+  min-width: 0;
+}
+
+#subtitle-card.is-xnarrow .subs-pane #btn-add-text,
+#subtitle-card.is-xnarrow .subs-pane #btn-transcribe {
+  padding: 0 10px;
+}
+
+#subtitle-card.is-xnarrow .subs-pane {
+  gap: 6px;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+#subtitle-table-wrap {
+  border-top: 0;
+}
+
+/* The list as a table:  [✓] #  │ time │ speaker │ text │ audio
+   The markup stays a table (studio-main.js renders and windows the rows),
+   so the cells are placed on a grid: start over end in one column, the
+   original line over the Khmer text in another. */
+#subtitle-table-wrap table,
+#subtitle-table-wrap thead,
+#subtitle-table-wrap tbody {
+  display: block;
+}
+
+#subtitle-table-wrap thead tr,
+#subtitle-table-wrap tbody tr.subtitle-row {
+  display: grid;
+  grid-template-columns: 62px 70px 122px minmax(0, 1fr) 40px;
+  align-items: center;
+  column-gap: 10px;
+  padding: 0 12px 0 0;
+}
+
+/* Every other row (empty state, loading message, windowing spacers) is one
+   full-width cell. */
+#subtitle-table-wrap tbody tr:not(.subtitle-row),
+#subtitle-table-wrap tbody tr:not(.subtitle-row) > td {
+  display: block;
+}
+
+#subtitle-table-wrap thead th,
+#subtitle-table-wrap tbody tr.subtitle-row > td {
+  padding: 0;
+  border: 0;
+}
+
+#subtitle-table-wrap tbody tr.subtitle-row {
+  min-height: 56px;
+  row-gap: 2px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+/* ✓ and the line number. */
+#subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(1) {
+  grid-row: 1 / span 2;
+  grid-column: 1;
+  align-self: stretch;
   display: flex;
   align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  padding-left: 16px;
+}
+
+#subtitle-table-wrap .checkbox-cell::after {
+  content: attr(data-num);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+/* Start over end. */
+#subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(2),
+#subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(3) {
+  grid-column: 2;
+  font-size: 12px;
+  line-height: 1.3;
+  align-self: end;
+}
+
+#subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(2) {
+  grid-row: 1;
+}
+
+#subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(3) {
+  grid-row: 2;
+  align-self: start;
+  opacity: 0.7;
+}
+
+/* Speaker. */
+#subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(5) {
+  grid-row: 1 / span 2;
+  grid-column: 3;
+}
+
+/* Original line over the Khmer text. */
+#subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(4) {
+  grid-row: 1 / span 2;
+  grid-column: 4;
+  min-width: 0;
+}
+
+/* Audio status / play. */
+#subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(6) {
+  grid-row: 1 / span 2;
+  grid-column: 5;
+  text-align: center;
+}
+
+#subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(6) .btn-play-tts {
+  margin: 0 auto;
+}
+
+#subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(6) > span {
+  font-size: 11px;
+}
+
+#subtitle-table-wrap .subtitle-text-input {
+  font-size: 14px;
+}
+
+/* The original-language line reads as text, not code. */
+#subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(4) > div.font-mono {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  margin-bottom: 0;
+}
+
+/* Speaker as a pill: Female pink, Male blue (studio-main.js colours it). */
+#subtitle-table-wrap .vox-row-wrap {
+  width: 100%;
+}
+
+#subtitle-table-wrap .vox-row-trigger {
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px 0 6px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  border-color: color-mix(in srgb, currentColor 40%, transparent);
+}
+
+#subtitle-table-wrap .vox-row-trigger .vox-row-label {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The closed voice list is 0 rows tall but kept its border: a stray line
+   under each pill. Show the border only while open. */
+#subtitle-table-wrap .vox-row-panel:not([style*="1fr"]) {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+/* Header: ✓ # · Time · Speaker · Text · Audio */
+#subtitle-table-wrap thead tr {
+  min-height: 44px;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-panel);
+}
+
+#subtitle-table-wrap thead th {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  width: auto;
+  text-align: left;
+}
+
+#subtitle-table-wrap thead th:nth-child(1) {
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-left: 16px;
+}
+
+#subtitle-table-wrap thead th:nth-child(1)::after {
+  content: "#";
+}
+
+#subtitle-table-wrap thead th:nth-child(2) {
+  grid-column: 2;
+}
+
+#subtitle-table-wrap thead th:nth-child(3) {
+  display: none;
+}
+
+#subtitle-table-wrap thead th:nth-child(5) {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+#subtitle-table-wrap thead th:nth-child(4) {
+  grid-column: 4;
+  grid-row: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+#subtitle-table-wrap thead th:nth-child(6) {
+  grid-column: 5;
+  text-align: center;
+}
+
+/* Narrow list: two-line cards instead of columns.
+     [✓]  00:00:01.00 → 00:00:03.20          [voice ▾]  [▶]
+          original line (muted) / Khmer text ............. */
+#subtitle-card.is-xnarrow #subtitle-table-wrap tbody tr.subtitle-row {
+  grid-template-columns: 40px auto auto minmax(0, 1fr) auto auto;
+  column-gap: 8px;
+}
+
+#subtitle-card.is-xnarrow #subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(1) {
   justify-content: center;
-  container-type: size;
+  padding-left: 0;
 }
 
-/* Fit the preview inside the stage at its aspect ratio (studio-main.js sets
-   --preview-ar together with a custom aspect ratio; default 4:5). */
-#preview-aspect-wrapper {
-  flex: none;
-  width: min(100cqw, calc(100cqh * var(--preview-ar, 0.8)));
-  border-radius: 14px;
+#subtitle-card.is-xnarrow #subtitle-table-wrap .checkbox-cell::after {
+  content: none;
 }
 
-#preview-transport {
+#subtitle-card.is-xnarrow #subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(2),
+#subtitle-card.is-xnarrow #subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(3) {
+  grid-row: 1;
+  align-self: center;
+  opacity: 1;
+}
+
+#subtitle-card.is-xnarrow #subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(2) {
+  grid-column: 2;
+}
+
+#subtitle-card.is-xnarrow #subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(3) {
+  grid-column: 3;
+}
+
+#subtitle-card.is-xnarrow #subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(3)::before {
+  content: "→ ";
+  color: var(--text-muted);
+}
+
+#subtitle-card.is-xnarrow #subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(4) {
+  grid-row: 2;
+  grid-column: 2 / -1;
+}
+
+#subtitle-card.is-xnarrow #subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(5) {
+  grid-row: 1;
+  grid-column: 5;
+}
+
+#subtitle-card.is-xnarrow #subtitle-table-wrap tbody tr.subtitle-row > td:nth-child(6) {
+  grid-row: 1;
+  grid-column: 6;
+  min-width: 40px;
+}
+
+#subtitle-card.is-xnarrow #subtitle-table-wrap .vox-row-wrap {
+  width: 112px;
+}
+
+#subtitle-card.is-xnarrow #subtitle-table-wrap thead tr {
+  grid-template-columns: 40px minmax(0, 1fr);
+}
+
+#subtitle-card.is-xnarrow #subtitle-table-wrap thead th:nth-child(1) {
+  justify-content: center;
+  padding-left: 0;
+}
+
+#subtitle-card.is-xnarrow #subtitle-table-wrap thead th:nth-child(1)::after {
+  content: none;
+}
+
+#subtitle-card.is-xnarrow #subtitle-table-wrap thead th:nth-child(4) {
+  grid-column: 2;
+}
+
+#subtitle-card.is-xnarrow #subtitle-table-wrap thead th:nth-child(2),
+#subtitle-card.is-xnarrow #subtitle-table-wrap thead th:nth-child(5),
+#subtitle-card.is-xnarrow #subtitle-table-wrap thead th:nth-child(6) {
+  display: none;
+}
+
+/* Footer: total count + Import SRT. */
+.subs-foot {
   flex-shrink: 0;
-  padding: 10px 12px;
-  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px 10px 16px;
+  border-top: 1px solid var(--border-color);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.subs-foot b {
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+.subs-foot__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-bright);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-light);
+  transition: border-color var(--duration-fast) ease, background-color var(--duration-fast) ease;
+}
+
+.subs-foot__btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.subs-foot__btn:hover {
+  border-color: color-mix(in srgb, var(--accent-primary) 60%, transparent);
+  background: color-mix(in srgb, var(--accent-primary) 8%, var(--bg-panel));
+}
+
+.empty-state {
+  padding: clamp(20px, 6vh, 64px) 16px;
+  text-align: center;
+}
+
+.empty-state__title {
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--text-bright);
+}
+
+.empty-state__hint {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.empty-state__actions {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.empty-state__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 16px;
+  border-radius: 12px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-primary);
   background: var(--bg-hover);
+  border: 1px solid var(--border-color);
+  transition: border-color var(--duration-fast) ease, filter var(--duration-fast) ease;
 }
 
-#progress-bar-container {
-  height: 5px;
-  background: color-mix(in srgb, var(--text-muted) 22%, transparent);
+.empty-state__btn svg {
+  width: 16px;
+  height: 16px;
 }
 
-#progress-bar-fill {
+.empty-state__btn:hover {
+  border-color: var(--border-light);
+}
+
+.empty-state__btn--primary {
+  color: #fff;
   background: var(--accent-grad);
+  border-color: transparent;
 }
 
-#btn-play-pause:not(:disabled) {
+.empty-state__btn--primary:hover {
+  filter: brightness(1.08);
+}
+
+/* Short windows: drop the hint so the two buttons stay in view. */
+@media (max-height: 740px) {
+  .empty-state__hint {
+    display: none;
+  }
+
+  .empty-state__actions {
+    margin-top: 12px;
+  }
+}
+
+/* ── Timeline (full width, bottom) ──────────────────────────────────────── */
+#timeline-panel {
+  position: relative;
+  z-index: 5;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* The whole top edge drags the timeline's height (the grip in the middle shows
+   where). Above the toolbar (z-index 30), which used to swallow the press; the
+   strip fits in the toolbar's top padding, so it covers no button. */
+#panel-resizer {
+  position: absolute;
+  z-index: 40;
+  top: 0;
+  left: 0;
+  right: 0;
+  width: auto;
+  height: 9px;
+  transform: none;
+  background: transparent;
+  cursor: n-resize;
+}
+
+#panel-resizer::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: calc(50% - 28px);
+  width: 56px;
+  height: 3px;
+  border-radius: 99px;
+  background: var(--border-light);
+  transition: background-color var(--duration-fast) ease;
+}
+
+#panel-resizer:hover::after {
   background: var(--accent-primary);
+}
+
+#timeline-toolbar-header {
+  justify-content: space-between;
+  row-gap: 8px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+#timeline-scroll-container {
+  background: color-mix(in srgb, var(--bg-base) 55%, var(--bg-panel));
+}
+
+/* Timeline tools: outlined in their own tint, like the mockup — Auto-Fit
+   violet, Sync End cyan, the audio fixes blue. Auto-Fit and Sync End are
+   tinted only while OFF (.opacity-70); when ON studio-main.js paints them
+   green / amber / red. */
+#timeline-toolbar-header #btn-auto-fit,
+#timeline-toolbar-header #btn-match-audio-end,
+#timeline-toolbar-header #btn-fit-duration,
+#timeline-toolbar-header #btn-fix-fast-audio {
+  height: 38px;
+  padding: 0 14px;
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+#timeline-toolbar-header #btn-auto-fit.opacity-70,
+#timeline-toolbar-header #btn-match-audio-end.opacity-70,
+#timeline-toolbar-header #btn-fit-duration,
+#timeline-toolbar-header #btn-fix-fast-audio {
+  --tool-tint: #8b7bff;
+  opacity: 1;
+  color: var(--text-bright);
+  background: color-mix(in srgb, var(--tool-tint) 8%, transparent);
+  border-color: color-mix(in srgb, var(--tool-tint) 55%, transparent);
+}
+
+#timeline-toolbar-header #btn-match-audio-end.opacity-70 {
+  --tool-tint: #22d3ee;
+}
+
+#timeline-toolbar-header #btn-fit-duration,
+#timeline-toolbar-header #btn-fix-fast-audio {
+  --tool-tint: #4f8cff;
+}
+
+#timeline-toolbar-header #btn-auto-fit.opacity-70 svg {
+  color: #a99dff;
+}
+
+#timeline-toolbar-header #btn-match-audio-end.opacity-70 svg {
+  color: #67e8f9;
+}
+
+#timeline-toolbar-header #btn-auto-fit.opacity-70:hover,
+#timeline-toolbar-header #btn-match-audio-end.opacity-70:hover,
+#timeline-toolbar-header #btn-fit-duration:hover,
+#timeline-toolbar-header #btn-fix-fast-audio:hover {
+  background: color-mix(in srgb, var(--tool-tint) 16%, transparent);
+  border-color: var(--tool-tint);
+}
+
+#timeline-toolbar-header #btn-generate-audio,
+#timeline-toolbar-header #btn-generate-audio-all {
+  height: 38px;
+  padding: 0 16px;
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+/* Generate All Tabs is the main timeline action: solid gradient whenever it
+   can run (studio-main.js rewrites its classes: red while running = Stop). */
+#timeline-toolbar-header #btn-generate-audio-all:not(:disabled):not(.bg-red-600) {
+  color: #fff;
+  background: var(--accent-grad);
+  border-color: transparent;
+  box-shadow: 0 8px 20px -12px var(--accent-glow), inset 0 1px 0 rgb(255 255 255 / 0.16);
+}
+
+#timeline-toolbar-header #btn-generate-audio-all:not(:disabled):not(.bg-red-600) svg {
   color: #fff;
 }
 
-#btn-play-pause:not(:disabled) .lottie-icon {
-  color: #fff;
+#timeline-toolbar-header #btn-generate-audio-all:not(:disabled):not(.bg-red-600):hover {
+  filter: brightness(1.08);
+}
+
+/* Track lanes: dark strips; the name tag sticks to the left edge. */
+#timeline-tracks > div[id^="track-"] {
+  border-radius: 10px;
+  border-color: var(--border-color);
+  background: color-mix(in srgb, var(--bg-panel) 70%, var(--bg-base));
+}
+
+/* (see-through, so the clips under it still show) */
+#timeline-tracks div:has(> .track-name) {
+  gap: 7px;
+  padding: 3px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border-light);
+  background: color-mix(in srgb, var(--bg-panel) 72%, transparent);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 4px 12px -6px rgb(0 0 0 / 0.5);
+}
+
+.track-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-bright);
+  white-space: nowrap;
+}
+
+.track-name svg {
+  width: 15px;
+  height: 15px;
+  color: var(--text-secondary);
+}
+
+.track-name em {
+  font-style: normal;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--accent-text);
+}
+
+/* Subtitle clips: indigo blocks (selected = brighter, with studio-main.js's ring). */
+#track-t1 .subtitle-timeline-item.bg-emerald-600 {
+  background: color-mix(in srgb, var(--accent-primary) 32%, var(--bg-panel));
+  border-color: color-mix(in srgb, var(--accent-primary) 70%, transparent);
+}
+
+#track-t1 .subtitle-timeline-item.bg-emerald-500 {
+  background: color-mix(in srgb, var(--accent-primary) 62%, var(--bg-panel));
+  border-color: var(--accent-text);
+}
+
+#track-t1 .subtitle-timeline-item {
+  border-radius: 6px;
+  font-size: 11.5px;
+}
+
+/* Playhead in the accent instead of red. */
+#timeline-playhead {
+  width: 2px;
+  background: var(--accent-text);
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+
+#timeline-playhead > div {
+  border-top-color: var(--accent-text);
 }
 
 /* ── Buttons ────────────────────────────────────────────────────────────── */
 .btn-accent {
   color: #fff;
-  background: var(--accent-primary);
-  box-shadow: 0 6px 16px -8px var(--accent-glow);
+  background: var(--accent-grad);
+  box-shadow: 0 8px 20px -12px var(--accent-glow), inset 0 1px 0 rgb(255 255 255 / 0.16);
 }
 
 .btn-accent:hover {
@@ -694,7 +2099,7 @@ body {
 /* ── Status bar ─────────────────────────────────────────────────────────── */
 .app-footer {
   flex-shrink: 0;
-  height: 36px;
+  height: 30px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -705,21 +2110,90 @@ body {
 
 #memory-usage-display {
   flex-shrink: 0;
-  margin-left: 16px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
 }
 
 /* ── Narrow windows ─────────────────────────────────────────────────────── */
-@media (max-width: 1499px) {
-  #bulk-voice-label {
+@media (max-width: 1439px) {
+  /* Header: the secondary buttons drop their labels (tooltips name them). */
+  .hdr-autosave span,
+  .hdr-btn--ghost span {
     display: none;
+  }
+
+  .hdr-btn--ghost {
+    width: 42px;
+    padding: 0;
+  }
+
+  /* Timeline: the two audio fixes go icon-only so the toolbar keeps one row. */
+  #timeline-toolbar-header #text-fit-duration,
+  #timeline-toolbar-header #text-fix-fast-audio {
+    display: none;
+  }
+
+  #timeline-toolbar-header #btn-fit-duration,
+  #timeline-toolbar-header #btn-fix-fast-audio {
+    padding: 0 11px;
   }
 }
 
-/* The genre emoji stays; its long Khmer label goes. */
-@media (max-width: 1399px) {
-  #genre-label {
+/* Short windows: slimmer subtitle panel chrome, so more lines stay in view. */
+@media (max-height: 860px) {
+  .subs-tab {
+    height: 40px;
+  }
+
+  .subs-pane {
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+
+  #subtitle-table-wrap thead tr {
+    min-height: 36px;
+  }
+
+  #subtitle-table-wrap tbody tr.subtitle-row {
+    min-height: 0;
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+
+  .subs-foot {
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+
+  .subs-foot__btn {
+    height: 30px;
+  }
+}
+
+@media (max-width: 1279px) {
+  :root {
+    --rail-width: 76px;
+  }
+
+  .app-brand__tag {
+    display: none;
+  }
+
+  .app-stage__top {
+    --subs-default: clamp(400px, 40vw, 540px);
+  }
+
+  /* The side nav goes back to icon-over-name. */
+  .rail-btn {
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+    height: auto;
+    padding: 10px 2px 8px;
+    font-size: 11.5px;
+  }
+
+  .rail-art p {
     display: none;
   }
 }
@@ -730,20 +2204,912 @@ body {
   border-color: var(--border-color);
 }
 
-/* Icon toolbar: the button tooltips name each tool, so the group labels
-   (Transform / Crop / Overlay / Look) give their room to the buttons. */
-#preview-toolbar {
-  flex-wrap: wrap;
-  justify-content: center;
-  row-gap: 2px;
+:root.light-theme #track-t1 .subtitle-timeline-item.bg-emerald-600 {
+  color: var(--text-bright);
 }
 
-#preview-toolbar > span {
-  display: none;
+:root.light-theme #timeline-tracks div:has(> .track-name) {
+  box-shadow: 0 2px 6px -3px rgb(20 24 60 / 0.25);
 }
 
 /* .lottie-icon sets display:flex, which beat Tailwind's .hidden, so both
    icons of a pair (play/pause, volume on/off) showed at once. */
 .lottie-icon.hidden {
   display: none;
+}
+
+/* ── Overlay boxes on the preview (image + video) ───────────────────────
+   studio-main.js adds 4 corner handles (.ov-handle--nw … --sw) and an
+   action bar. Each handle is a 22px grab area centred on the corner, with
+   the visible dot drawn inside it. */
+.ov-handle {
+  position: absolute;
+  z-index: 50;
+  width: 22px;
+  height: 22px;
+  transform: translate(-50%, -50%);
+  --handle: var(--accent-primary);
+}
+
+.ov-handle::after {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  background: #fff;
+  border: 2px solid var(--handle);
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.45);
+  transition: transform var(--duration-fast) ease;
+}
+
+.ov-handle:hover::after {
+  transform: scale(1.25);
+}
+
+.ov-handle--nw { left: 0; top: 0; cursor: nwse-resize; }
+.ov-handle--ne { left: 100%; top: 0; cursor: nesw-resize; }
+.ov-handle--se { left: 100%; top: 100%; cursor: nwse-resize; }
+.ov-handle--sw { left: 0; top: 100%; cursor: nesw-resize; }
+
+/* Delete / apply-to-all: a small bar outside the box. studio-main.js
+   (placeOverlayActions) picks above / below / inside and sets its left. */
+.ov-actions {
+  position: absolute;
+  z-index: 51;
+  bottom: calc(100% + 8px);
+  left: 0;
+  display: flex;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.ov-actions--below {
+  top: calc(100% + 8px);
+  bottom: auto;
+}
+
+.ov-actions--inside {
+  top: 16px;
+  bottom: auto;
+}
+
+.ov-actions > button {
+  pointer-events: auto;
+}
+
+
+/* ═════════════════════════════════════════════════════════════════════════
+   Settings: a full-window page, like an editor's Preferences. A top bar with
+   Back and search, the menu on the left, and each setting as a row: its name
+   on the left, its controls on the right.
+   ═════════════════════════════════════════════════════════════════════════ */
+#modal-settings {
+  background-color: var(--bg-base);
+}
+
+#settings-panel {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  width: 100vw;
+  height: 100vh;
+  border: 0;
+  border-radius: 0;
+  background: var(--bg-panel);
+  box-shadow: none;
+  /* No zoom-in: a full page just fades in. */
+  transform: none !important;
+}
+
+/* Top bar */
+.settings-topbar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 52px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-base);
+}
+
+.settings-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px 0 8px;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: transparent;
+  transition: background-color var(--duration-fast) ease, color var(--duration-fast) ease;
+}
+
+.settings-back:hover {
+  color: var(--text-bright);
+  background: var(--bg-hover);
+}
+
+.settings-back svg {
+  width: 16px;
+  height: 16px;
+}
+
+.settings-topbar__title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-bright);
+}
+
+.settings-search {
+  position: relative;
+  width: min(360px, 40vw);
+  margin-left: auto;
+}
+
+.settings-search > svg {
+  position: absolute;
+  top: 50%;
+  left: 10px;
+  width: 15px;
+  height: 15px;
+  margin-top: -7.5px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+#settings-search-input {
+  width: 100%;
+  height: 34px;
+  padding: 0 12px 0 32px;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg-panel);
+  outline: none;
+  transition: border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
+}
+
+#settings-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+#settings-search-input:focus {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.settings-search__results {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  left: 0;
+  z-index: 30;
+  max-height: min(420px, 60vh);
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  box-shadow: var(--float-shadow);
+}
+
+.settings-search__results[hidden] {
+  display: none;
+}
+
+.settings-search__item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 7px;
+  text-align: left;
+}
+
+.settings-search__item:hover,
+.settings-search__item.is-active {
+  background: var(--bg-hover);
+}
+
+.settings-search__item b {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+.settings-search__item span {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.settings-search__empty {
+  padding: 10px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+/* Menu */
+#settings-panel .settings-nav {
+  width: auto;
+  min-height: 0;
+  border-right: 1px solid var(--border-color);
+  background: var(--bg-base);
+}
+
+.settings-nav__head {
+  display: none;
+}
+
+#settings-panel .settings-nav > div {
+  padding: 14px 10px;
+}
+
+.settings-nav__group {
+  margin: 18px 0 6px;
+  padding: 0 12px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.settings-nav__group:first-child {
+  margin-top: 2px;
+}
+
+#settings-panel .settings-tab-btn {
+  position: relative;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  box-shadow: none;
+}
+
+#settings-panel .settings-tab-btn > svg:first-child {
+  flex-shrink: 0;
+  width: 17px;
+  height: 17px;
+  color: var(--text-muted);
+  transform: none;
+  transition: color var(--duration-fast) ease;
+}
+
+#settings-panel .settings-tab-btn:hover {
+  color: var(--text-bright);
+  background: var(--bg-hover);
+}
+
+#settings-panel .settings-tab-btn.active-tab {
+  font-weight: 600;
+  color: var(--text-bright);
+  background: var(--bg-hover);
+  box-shadow: none;
+}
+
+#settings-panel .settings-tab-btn.active-tab::before {
+  content: "";
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 0;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--accent-primary);
+}
+
+#settings-panel .settings-tab-btn.active-tab > svg:first-child {
+  color: var(--accent-text);
+}
+
+/* Content: one centred column that scrolls. The Back button replaces the
+   old close (×) button and the Close footer. */
+#settings-panel .settings-nav + div {
+  min-height: 0;
+}
+
+#settings-panel .settings-nav + div > button:first-child,
+#settings-panel .settings-foot {
+  display: none;
+}
+
+#settings-panel .settings-nav + div > .overflow-y-auto {
+  padding: 32px 48px 72px;
+}
+
+#settings-panel .settings-content-pane {
+  max-width: 920px;
+  margin-inline: auto;
+}
+
+#settings-panel .settings-content-pane > div:first-child h3 {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+#settings-panel .settings-content-pane > div:first-child p {
+  font-size: 13px;
+}
+
+/* Rows: sections split by thin lines instead of cards. */
+#settings-general,
+#settings-theme,
+#settings-voxcmp2,
+#settings-shortcuts,
+#settings-about {
+  gap: 0;
+}
+
+#settings-general > div:first-child,
+#settings-theme > div:first-child,
+#settings-voxcmp2 > div:first-child,
+#settings-shortcuts > div:first-child {
+  padding-bottom: 20px;
+}
+
+#settings-general > :not(:first-child),
+#settings-about > :not(:first-child),
+#settings-theme > div:nth-child(2),
+#settings-theme > #theme-grid,
+#settings-voxcmp2 > .voxcmp2-content,
+#settings-voxcmp2 > div:has(> button[id$="toggle"]),
+#settings-shortcuts > div.flex-col:not(:first-child) {
+  margin: 0;
+  padding: 22px 0;
+  border: 0;
+  border-top: 1px solid var(--border-color);
+  border-radius: 0;
+  background: none;
+}
+
+/* The VoxCMP2 log row stays out of sight until the server writes to it. */
+#settings-voxcmp2 > .voxcmp2-content:has(> #voxcpm2-log-wrap:only-child) {
+  padding: 0;
+  border-top: 0;
+}
+
+#settings-theme > div.border-t:empty {
+  display: none;
+}
+
+/* Callouts (tips, warnings) keep their box, with room around it. */
+#settings-voxcmp2 > div:nth-child(2) {
+  margin: 0 0 22px;
+}
+
+#settings-voxcmp2 > div:last-child,
+#settings-shortcuts > div:last-child {
+  margin: 22px 0 0;
+}
+
+/* Name on the left, controls on the right (wide windows). */
+@media (min-width: 1100px) {
+  #settings-general > div:has(> label:first-child),
+  #settings-theme > div:has(> label:first-child),
+  #settings-voxcmp2 > div:has(> label:first-child),
+  #settings-about > div:has(> label:first-child) {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    align-items: start;
+    column-gap: 40px;
+    row-gap: 0;
+  }
+
+  /* Spacing as margins, so the name can span every row without adding gaps. */
+  #settings-general > div:has(> label:first-child) > *,
+  #settings-theme > div:has(> label:first-child) > *,
+  #settings-voxcmp2 > div:has(> label:first-child) > *,
+  #settings-about > div:has(> label:first-child) > * {
+    grid-column: 2;
+    margin-top: 10px;
+  }
+
+  #settings-general > div:has(> label:first-child) > label:first-child + *,
+  #settings-general > div:has(> label:first-child) > label:first-child + .hidden + *,
+  #settings-theme > div:has(> label:first-child) > label:first-child + *,
+  #settings-voxcmp2 > div:has(> label:first-child) > label:first-child + *,
+  #settings-about > div:has(> label:first-child) > label:first-child + * {
+    margin-top: 0;
+  }
+
+  #settings-general > div:has(> label:first-child) > label:first-child,
+  #settings-theme > div:has(> label:first-child) > label:first-child,
+  #settings-voxcmp2 > div:has(> label:first-child) > label:first-child,
+  #settings-about > div:has(> label:first-child) > label:first-child {
+    grid-row: 1 / span 12;
+    grid-column: 1;
+    margin-top: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: 6px;
+    padding-top: 6px;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: normal;
+    text-transform: none;
+    color: var(--text-bright);
+  }
+
+  /* About rows hold one block each, so the name needs only one row. */
+  #settings-about > div:has(> label:first-child) > label:first-child {
+    grid-row: 1;
+  }
+}
+
+/* Text fields and selects */
+#settings-panel input[type="text"],
+#settings-panel input[type="password"],
+#settings-panel input[type="number"],
+#settings-panel input[type="url"],
+#settings-panel select,
+#settings-panel textarea {
+  border-radius: 8px;
+  border-color: var(--border-light);
+  background-color: var(--bg-base);
+  transition: border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
+}
+
+#settings-panel input[type="text"]:focus,
+#settings-panel input[type="password"]:focus,
+#settings-panel input[type="number"]:focus,
+#settings-panel input[type="url"]:focus,
+#settings-panel select:focus,
+#settings-panel textarea:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* About: app card on top, then Details, What's new and Powered by rows. */
+.about-hero {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding-bottom: 24px;
+}
+
+.about-hero__logo {
+  flex-shrink: 0;
+  width: 72px;
+  height: 72px;
+  overflow: hidden;
+  border: 1px solid var(--border-light);
+  border-radius: 18px;
+  background: var(--bg-base);
+}
+
+.about-hero__logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.about-hero__text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.about-hero__text h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--text-bright);
+}
+
+.about-hero__text p {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.about-pro {
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+
+.about-version {
+  margin-top: 4px;
+  padding: 2px 9px;
+  border: 1px solid var(--border-light);
+  border-radius: 999px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  background: var(--bg-base);
+}
+
+#settings-panel .about-update-btn {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  margin-left: auto;
+  padding: 0 14px;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: transparent;
+  transition: background-color var(--duration-fast) ease, color var(--duration-fast) ease, border-color var(--duration-fast) ease;
+}
+
+#settings-panel .about-update-btn:hover {
+  border-color: var(--accent-primary);
+  color: var(--text-bright);
+  background: var(--bg-hover);
+}
+
+#settings-panel .about-update-btn svg {
+  width: 16px;
+  height: 16px;
+  color: var(--accent-text);
+}
+
+.about-details {
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+}
+
+.about-details > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 14px;
+  font-size: 13px;
+}
+
+.about-details > div + div {
+  border-top: 1px solid var(--border-color);
+}
+
+.about-details dt {
+  color: var(--text-secondary);
+}
+
+.about-details dd {
+  min-width: 0;
+  font-weight: 500;
+  text-align: right;
+  color: var(--text-bright);
+}
+
+.about-notes__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+.about-notes__tag {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+
+.about-notes ul {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 18px;
+  list-style: disc;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.about-notes li::marker {
+  color: var(--text-muted);
+}
+
+.about-notes__more {
+  margin-top: 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--accent-text);
+}
+
+.about-notes__more:hover {
+  text-decoration: underline;
+}
+
+.about-notes__msg {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.about-credits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.about-credits span {
+  padding: 5px 11px;
+  border: 1px solid var(--border-light);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--bg-base);
+}
+
+/* A section found with search flashes once. */
+.settings-search-hit {
+  border-radius: 6px;
+  animation: settings-search-hit 1.6s ease;
+}
+
+@keyframes settings-search-hit {
+  0%,
+  35% {
+    background-color: var(--accent-soft);
+    box-shadow: 0 0 0 12px var(--accent-soft);
+  }
+
+  100% {
+    background-color: transparent;
+    box-shadow: 0 0 0 12px transparent;
+  }
+}
+
+
+/* ═════════════════════════════════════════════════════════════════════════
+   One accent: selected = coral, everything else neutral.
+   Tiles get their colour inline (style="--tile: ..."), so these overrides
+   need !important to win over the inline value.
+   ═════════════════════════════════════════════════════════════════════════ */
+.rail-btn.is-active,
+#preview-toolbar > button.text-yellow-400,
+#preview-toolbar > button.text-fuchsia-400,
+#preview-toolbar > button.text-purple-400,
+#preview-toolbar > button.text-orange-500,
+#preview-transport #btn-toggle-subtitles.text-\[var\(--accent-text\)\],
+#settings-panel .settings-tab-btn.active-tab {
+  --tile: var(--accent-primary) !important;
+}
+
+/* Panel title icons: neutral tiles. */
+.title-tile {
+  --tile: var(--tile-neutral) !important;
+}
+
+/* Movie-title AI: a calm accent tile instead of the rainbow gradient. */
+#btn-open-title-ai {
+  color: var(--accent-text);
+  background: var(--accent-soft) !important;
+  box-shadow: none;
+  animation: none;
+}
+
+#btn-open-title-ai::after {
+  display: none;
+}
+
+#btn-open-title-ai:hover {
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent-primary) 24%, transparent) !important;
+}
+
+/* Toolbar buttons: neutral icons. */
+.tb-btn svg,
+#btn-transcribe-all:not(.bg-red-600) > svg {
+  color: var(--tile-neutral);
+}
+
+/* Transcribe, when ready, is a main action: coral, not green. */
+#btn-transcribe.bg-emerald-600 {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  box-shadow: none;
+}
+
+/* Simple, CapCut-like preview: no ambient glow around the picture. (The glow
+   faded an 80px shadow every second while playing, which is costly.) */
+#preview-aspect-wrapper.ambient-video-glow {
+  box-shadow: none !important;
+  transition: none !important;
+  will-change: auto !important;
+}
+
+/* ═════════════════════════════════════════════════════════════════════════
+   Pop-up windows (dialogs, Render Queue, Movie Titles): the same flat
+   studio look as the main screen. Style only; JS still swaps its own state
+   classes (red Stop buttons, status badges), which are left alone.
+   ═════════════════════════════════════════════════════════════════════════ */
+/* Dim backdrop without blur (a blur over the app is costly). */
+.fixed.inset-0[class*="backdrop-blur"],
+.fixed.inset-0 > [class*="backdrop-blur"],
+#queue-drawer-backdrop,
+#title-ai-drawer-backdrop {
+  backdrop-filter: none !important;
+  background-color: rgb(0 0 0 / 0.6);
+}
+
+/* Window panel: flat, thin border, small radius, one modest shadow. */
+:is([id^="modal-"], [id$="-modal"]):not(#modal-settings) > div[class*="rounded-2xl"],
+:is([id^="modal-"], [id$="-modal"]):not(#modal-settings) > div[class*="rounded-xl"][class*="shadow"] {
+  border-radius: 12px;
+  border-color: var(--border-light);
+  background: var(--bg-panel);
+  box-shadow: var(--float-shadow);
+}
+
+#queue-drawer,
+#title-ai-drawer {
+  border-color: var(--border-light);
+  background: var(--bg-panel);
+  box-shadow: var(--float-shadow);
+}
+
+/* Header bar: no tint or gradient; plain bright title, grey icon. */
+:is([id^="modal-"], [id$="-modal"]):not(#modal-settings) > div > div[class*="border-b"]:first-child {
+  background: transparent;
+  background-image: none;
+}
+
+:is([id^="modal-"], [id$="-modal"]):not(#modal-settings) > div > div[class*="border-b"]:first-child :is(h2, h3) {
+  color: var(--text-bright);
+}
+
+:is([id^="modal-"], [id$="-modal"]):not(#modal-settings) > div > div[class*="border-b"]:first-child :is(h2, h3) > svg {
+  color: var(--tile-neutral);
+}
+
+/* Gradients → flat. Coloured blocks with white text become coral; other
+   gradient surfaces become plain. Gradient text and the shine overlay keep
+   their own style. */
+:is([id^="modal-"], [id$="-modal"], #queue-drawer, #title-ai-drawer):not(#modal-settings) [class*="bg-gradient-to-"] {
+  background-image: none;
+}
+
+:is([id^="modal-"], [id$="-modal"], #queue-drawer, #title-ai-drawer):not(#modal-settings) [class*="bg-gradient-to-"]:is([class*="text-white"], [class*="text-slate-9"]) {
+  color: #fff;
+  background-color: var(--accent-primary);
+}
+
+:is([id^="modal-"], [id$="-modal"], #queue-drawer, #title-ai-drawer):not(#modal-settings) [style*="linear-gradient"]:not([style*="background-clip"]):not([style*="transparent"]) {
+  background: var(--accent-primary) !important;
+  box-shadow: none !important;
+}
+
+/* Main action buttons: one colour (coral) instead of green / violet /
+   amber / indigo per window. Red stays red (stop, delete, warnings). */
+:is([id^="modal-"], [id$="-modal"], #queue-drawer, #title-ai-drawer):not(#modal-settings)
+  button:is([class*="bg-emerald-6"], [class*="bg-violet-6"], [class*="bg-purple-6"], [class*="bg-indigo-6"],
+    [class*="bg-amber-6"], [class*="bg-amber-5"]:not([class*="/"]), [class*="bg-sky-6"], [class*="bg-cyan-6"],
+    [class*="bg-teal-6"], [class*="bg-blue-6"]) {
+  color: #fff;
+  background-color: var(--accent-primary);
+  box-shadow: none;
+}
+
+/* No coloured glows under buttons and badges inside windows. */
+:is([id^="modal-"], [id$="-modal"], #queue-drawer, #title-ai-drawer):not(#modal-settings) :is([class*="shadow-lg"], [class*="shadow-md"], [class*="shadow-sm"]) {
+  box-shadow: none;
+}
+
+/* Text fields: rounded, coral focus ring. */
+:is([id^="modal-"], [id$="-modal"], #queue-drawer, #title-ai-drawer):not(#modal-settings)
+  :is(input[type="text"], input[type="number"], input[type="password"], input:not([type]), select, textarea):focus {
+  outline: none;
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* Selected option chips that used cyan (Export settings): coral. */
+:is([id^="modal-"], [id$="-modal"]):not(#modal-settings) button[class*="border-cyan-4"][class*="bg-cyan-4"] {
+  color: var(--accent-text);
+  border-color: var(--accent-primary);
+  background-color: var(--accent-soft);
+}
+
+/* ── Aspect Ratio: opens like the Color panel, at the top-left of the
+   preview under the tool row (layout-shell.js sets --pop-top / --pop-left
+   when it opens). The backdrop stays (a click outside still closes it) but
+   is clear, so the picture stays in view. Selected states keep their sky
+   classes (studio-main.js reads .border-sky-400 back); only the look is
+   coral here. */
+#aspect-ratio-modal {
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+
+#aspect-ratio-backdrop {
+  background: transparent !important;
+}
+
+#aspect-ratio-modal > div:not(#aspect-ratio-backdrop) {
+  margin: 0;
+  position: fixed;
+  top: var(--pop-top, 120px);
+  left: var(--pop-left, 24px);
+  width: 380px;
+  max-height: calc(100vh - var(--pop-top, 120px) - 16px);
+  overflow-y: auto;
+  border-color: var(--border-light);
+  border-radius: 12px;
+  background: var(--bg-panel);
+  box-shadow: var(--float-shadow);
+}
+
+#aspect-ratio-modal .border-sky-400 {
+  color: var(--accent-text);
+  border-color: var(--accent-primary);
+  background-color: var(--accent-soft);
+}
+
+#aspect-ratio-modal .border-sky-400 [class*="text-sky"],
+#aspect-ratio-modal .border-sky-400 svg {
+  color: var(--accent-text);
+}
+
+#aspect-ratio-modal [class*="hover:border-sky-400"]:hover {
+  border-color: var(--border-light);
+  background-color: var(--bg-hover);
+}
+
+#aspect-ratio-modal .text-sky-400:not(.border-sky-400 *) {
+  color: var(--tile-neutral);
+}
+
+#ar-current-label {
+  color: var(--text-secondary) !important;
+  border-color: var(--border-light) !important;
+  background: var(--bg-hover) !important;
+}
+
+#ar-apply-btn {
+  color: #fff;
+  background: var(--accent-primary);
+}
+
+#ar-apply-btn:hover {
+  background: var(--accent-primary);
+  filter: brightness(1.06);
+}
+
+#ar-custom-apply,
+#ar-apply-all-btn {
+  color: var(--text-primary);
+  border-color: var(--border-light);
+  background: var(--bg-hover);
+}
+
+#ar-save-default-chk:checked + div {
+  background: var(--accent-primary);
+}
+
+#aspect-ratio-modal input[type="number"]:focus {
+  border-color: var(--accent-primary);
 }

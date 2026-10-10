@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Audio Vocal & Background Music (BGM) Separator
-Demucs & Spleeter (ML-based) stem isolation.
+Built-in MDX-Net (onnx_separator.py), Demucs & Spleeter (ML-based) stem isolation.
 """
 
 import sys
@@ -12,6 +12,12 @@ import argparse
 import json
 import re
 import time
+
+# The bundled embeddable Python reads its path from python311._pth, which
+# leaves this script's folder off sys.path: add it so onnx_separator imports.
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
 
 def ensure_ffmpeg_in_path():
     if os.name != "nt":
@@ -432,6 +438,51 @@ def separate_spleeter(input_audio, output_dir, spleeter_folder=None, spleeter_py
         note_error("Spleeter", str(e))
         return None
 
+def separate_mdx(input_audio, output_dir, threads=None):
+    """
+    Built-in separation: UVR MDX-Net vocal model run with onnxruntime in this
+    same Python (onnx_separator.py). Ships with the app, nothing to install.
+    """
+    # "is not installed" in these three: the app treats them like a missing
+    # Spleeter/Demucs (keeps the FFmpeg BGM) rather than a separator that broke.
+    try:
+        import onnx_separator
+    except Exception as e:
+        note_error("MDX-Net", f"the separator is not installed correctly ({e})")
+        return None
+    model_path = onnx_separator.find_model()
+    if not model_path:
+        note_error("MDX-Net", f"the model {onnx_separator.DEFAULT_MODEL} is not installed in backend/models")
+        return None
+    try:
+        import onnxruntime  # noqa: F401
+    except Exception as e:
+        note_error("MDX-Net", f"onnxruntime is not installed in this Python ({e})")
+        return None
+    try:
+        job_suffix = f"{os.getpid()}_{int(time.time() * 1000)}"
+        job_dir = os.path.join(os.path.abspath(output_dir), f"mdx_{job_suffix}")
+        os.makedirs(job_dir, exist_ok=True)
+
+        def progress(done, total):
+            sys.stderr.write(f"[progress] {done}/{total}\n")
+            sys.stderr.flush()
+
+        vocal_path, bgm_path = onnx_separator.separate_file(
+            input_audio, job_dir, model_path, ffmpeg=get_ffmpeg_executable(), threads=threads, progress=progress)
+        return {
+            "success": True,
+            "method": "mdx",
+            "vocal": os.path.abspath(vocal_path),
+            "bgm": os.path.abspath(bgm_path)
+        }
+    except MemoryError:
+        note_error("MDX-Net", "not enough free memory for this audio")
+        return None
+    except Exception as e:
+        note_error("MDX-Net", str(e))
+        return None
+
 def separate_ffmpeg(input_audio, output_dir):
     """
     Zero-dependency stem separation using FFmpeg stereo phase cancellation.
@@ -481,11 +532,12 @@ def ml_failure(engines):
     reasons = "; ".join(f"{name} could not run ({ENGINE_ERRORS.get(name, 'unknown error')})" for name in engines)
     return {"success": False, "error": reasons}
 
-def separate(input_audio, output_dir, engine="spleeter", demucs_folder=None, segment=None, device=None, spleeter_folder=None, spleeter_python=None, threads=None):
+def separate(input_audio, output_dir, engine="mdx", demucs_folder=None, segment=None, device=None, spleeter_folder=None, spleeter_python=None, threads=None):
     """
-    Runs the chosen engine and, if it fails, the other ML engine. There is no
-    phase-cancel fallback in here any more: when both ML engines fail the error
-    says why, and the server decides what to do (and tells the user).
+    Runs the chosen engine and, if it fails, the other ML engines (the
+    built-in MDX-Net first, as it is always there). There is no phase-cancel
+    fallback in here: when every ML engine fails the error says why, and the
+    server decides what to do (and tells the user).
     """
     if engine == "ffmpeg":
         res = separate_ffmpeg(input_audio, output_dir)
@@ -493,12 +545,15 @@ def separate(input_audio, output_dir, engine="spleeter", demucs_folder=None, seg
             return res
         return {"success": False, "error": "FFmpeg audio separation failed."}
 
+    run_mdx = lambda: separate_mdx(input_audio, output_dir, threads)
     run_demucs = lambda: separate_demucs(input_audio, output_dir, demucs_folder, segment, device, threads)
     run_spleeter = lambda: separate_spleeter(input_audio, output_dir, spleeter_folder=spleeter_folder, spleeter_python_override=spleeter_python)
     if engine in ("demucs", "auto"):
-        order = [("Demucs", run_demucs), ("Spleeter", run_spleeter)]
-    else:  # "spleeter" or anything unknown: the fast default first
-        order = [("Spleeter", run_spleeter), ("Demucs", run_demucs)]
+        order = [("Demucs", run_demucs), ("MDX-Net", run_mdx), ("Spleeter", run_spleeter)]
+    elif engine == "spleeter":
+        order = [("Spleeter", run_spleeter), ("MDX-Net", run_mdx), ("Demucs", run_demucs)]
+    else:  # "mdx" or anything unknown: the built-in engine
+        order = [("MDX-Net", run_mdx), ("Demucs", run_demucs), ("Spleeter", run_spleeter)]
 
     first_name = order[0][0]
     for name, run in order:
@@ -520,13 +575,13 @@ def main():
         parser = argparse.ArgumentParser(description="Stem & Vocal Separator")
         parser.add_argument("--input", required=True, help="Input audio or video file")
         parser.add_argument("--output", required=True, help="Output directory")
-        parser.add_argument("--engine", default="spleeter", help="Separation engine (spleeter, demucs, or ffmpeg)")
+        parser.add_argument("--engine", default="mdx", help="Separation engine (mdx, spleeter, demucs, or ffmpeg)")
         parser.add_argument("--demucs-folder", default=None, help="Optional portable Demucs install to use instead of the bundled one")
         parser.add_argument("--segment", default=None, help="Demucs chunk size (lower = less RAM)")
         parser.add_argument("--device", default=None, help="Demucs device override; omit to let demucs auto-detect")
         parser.add_argument("--spleeter-folder", default=None, help="Optional portable Spleeter install to use instead of the bundled one")
         parser.add_argument("--spleeter-python", default=None, help="Optional direct path to Spleeter Python binary")
-        parser.add_argument("--threads", default=None, type=int, help="CPU threads Demucs may use (its share when several tabs separate at once)")
+        parser.add_argument("--threads", default=None, type=int, help="CPU threads the separator may use (its share when several tabs separate at once)")
 
         args = parser.parse_args()
         result = separate(

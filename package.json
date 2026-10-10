@@ -14,6 +14,7 @@
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
     "dist:mac": "electron-builder --mac",
+    "predist:win": "node -e \"require('fs').existsSync('backend/models/UVR-MDX-NET-Voc_FT.onnx') || (console.error('Missing backend/models/UVR-MDX-NET-Voc_FT.onnx (the Isolate BGM model): run setup_python_env.bat first.'), process.exit(1))\"",
     "dist:win": "electron-builder --win"
   },
   "build": {
@@ -40,10 +41,11 @@
       "backend/python_env/**/*",
       "backend/python/**/*",
       "backend/pretrained_models/**/*",
+      "backend/models/**/*",
       "whisper_engine/**/*"
     ],
     "mac": {
-      "icon": "assets/drdubberpro.png",
+      "icon": "assets/logo.png",
       "target": [
         "dmg",
         "zip"
@@ -51,7 +53,7 @@
       "category": "public.app-category.video"
     },
     "win": {
-      "icon": "assets/drdubberpro.ico",
+      "icon": "assets/logo.ico",
       "target": [
         "nsis",
         "portable"

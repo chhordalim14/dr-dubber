@@ -42,7 +42,7 @@ const KHMER_FORMS_OF_ADDRESS = `2. FORMS OF ADDRESS (របៀបហៅគ្ន
    - To a boss, elder, stranger or superior (ថ្នាក់លើ អ្នកចាស់ទុំ អ្នកមិនស្គាល់): "លោក" (man), "លោកស្រី" / "អ្នកនាង" (woman); self "ខ្ញុំ" (polite: "ខ្ញុំបាទ" / "នាងខ្ញុំ").
    - Servant to master (អ្នកបម្រើទៅម្ចាស់): "លោកម្ចាស់" / "លោកប្រុស" / "អ្នកនាង".
    - Parents & children: "ម៉ាក់" / "ប៉ា" (modern) or "ម្ដាយ" / "ឪពុក", and "កូន". Grandparents "យាយ" / "តា", and "ចៅ".
-   - Royal forms ("ព្រះអង្គ", "ទូលបង្គំ", "ក្រាបទូល") ONLY in a historical / palace register.
+   - Royal forms ("ព្រះអង្គ", "ទូលបង្គំ", "ក្រាបទូល") ONLY in a historical / palace register (or for gods and a heavenly court in fantasy).
    - "ឯង" / "អញ" / "ហ្អែង" ONLY for anger, fights, villains or very close same-age friends - never between lovers in a normal scene.
    - Keep each pair's choice for the whole scene unless their relationship changes.`;
 
@@ -113,6 +113,45 @@ REGISTER - Action, Military & Crime (រឿងសកម្មភាព/កងទ
 REGISTER - Comedy & Lively (រឿងកំប្លែង/កំប្លុកកំប្លែង):
    - Use humorous, lively, and entertaining spoken Cambodian colloquialisms:
      * Natural reactions: "អីយ៉ា!", "ងាប់ហើយ!", "កុំចេះដឹង!", "ពិតមែនហ្អេស?!", "កំប្លែងមែន!".`;
+    } else if (genreRegister === 'horror') {
+        return `
+REGISTER - Horror, Ghost & Supernatural (រឿងខ្មោច/រន្ធត់/អបិយជំនឿ):
+   - Use short, tense, breathless lines; let fear build with "..." pauses instead of long sentences:
+     * Fear & panic: "នរណាហ្នឹង?!", "ឮអត់?", "កុំងាកក្រោយ!", "វាមកហើយ!", "ជួយផង!", "កុំទុកខ្ញុំចោល!", "រត់!".
+     * Supernatural words: "ខ្មោច", "វិញ្ញាណ", "ព្រលឹង", "បិសាច", "អាបធ្មប់", "ខ្មោចលង", "ខ្មោចចូល", "គ្រូខ្មែរ", "ទឹកមន្ត".
+     * A ghost or possessed voice is slow and cold: "រត់មិនរួចទេ...", "ខ្ញុំរង់ចាំយូរហើយ...".
+     * "有鬼啊！" -> "មានខ្មោច!", "救命！" -> "ជួយផង!", "别回头！" -> "កុំងាកក្រោយ!", "谁在那里？" -> "នរណានៅហ្នឹង?".
+   - Scared or hiding lines take the emotion "Fear" or "Whisper".`;
+    } else if (genreRegister === 'mystery') {
+        return `
+REGISTER - Mystery, Thriller & Detective (រឿងស៊ើបអង្កេត/អាថ៌កំបាំង/ឃាតកម្ម):
+   - Use sharp, clipped, suspicious dialogue, and keep every clue, name, time and place exact:
+     * Investigation words: "ប៉ូលិស", "អ្នកស៊ើបអង្កេត", "ជនសង្ស័យ", "ភស្តុតាង", "ឃាតករ", "សាកសព", "កន្លែងកើតហេតុ", "ចាប់ខ្លួន".
+     * Address: "警官" -> "លោកប៉ូលិស", "队长" -> "ប្រធានក្រុម", "法医" -> "គ្រូពេទ្យកោសល្យវិច្ច័យ".
+     * Interrogation: "និយាយការពិតមក!", "យប់ម៉ិញនៅឯណា?", "ភស្តុតាងនៅនេះ នៅប្រកែកទៀត?", "នរណាជាអ្នកសម្លាប់?".`;
+    } else if (genreRegister === 'fantasy') {
+        return `
+REGISTER - Fantasy, Xianxia & Immortals (រឿងទេវកថា/អមតៈ/បិសាច):
+   - Use grand, mythic but still speakable Khmer:
+     * Heaven & cultivation: "ឋានសួគ៌", "ទេវតា", "ទេពធីតា", "អមតៈ", "ព្រះអាទិទេព", "ថាមពលវិញ្ញាណ", "ហាត់វិជ្ជា", "ធ្វើសមាធិ".
+     * Masters & disciples: "ម្ចាស់គ្រូ", "លោកគ្រូ", "សិស្សច្បង", "សិស្សប្អូន", "និកាយ".
+     * Demons & monsters: "បិសាច", "អារក្ស", "យក្ស", "ស្ដេចបិសាច", "ពិភពបិសាច".
+     * The Heavenly Emperor and gods take the royal forms ("ព្រះអង្គ", "ទូលបង្គំ", "ក្រាបទូល"), as in a palace.
+     * Battle: "ការពារខ្លួន!", "កុំសង្ឃឹមថារួចខ្លួន!", "ប្រយ័ត្នវិជ្ជាវា!".`;
+    } else if (genreRegister === 'family') {
+        return `
+REGISTER - Family Drama & Tear-jerker (រឿងគ្រួសារ/សោកនាដកម្ម):
+   - Use warm, everyday, heartfelt Khmer; the feeling matters more than big words:
+     * Family address: "ម៉ាក់" / "ប៉ា" or "ម្ដាយ" / "ឪពុក", "កូន", "យាយ" / "តា", "ចៅ", "បងប្រុស" / "បងស្រី", "ប្អូន", in-laws "ម្ដាយក្មេក" / "ឪពុកក្មេក", "កូនប្រសា".
+     * Tender & sad lines: "កុំយំអី ម៉ាក់នៅនេះ", "ម៉ាក់សុំទោសកូន", "កូននឹកម៉ាក់ណាស់", "ប៉ាមិនដែលបន្ទោសកូនទេ".
+     * Quarrels stay inside family words: "ម៉ាក់មិនដែលយល់ពីកូនសោះ!", "កូនធ្វើចឹងបានយ៉ាងម៉េច?!".`;
+    } else if (genreRegister === 'youth') {
+        return `
+REGISTER - Youth, School & Campus (រឿងសិស្សសាលា/យុវវ័យ):
+   - Use young, casual, playful Khmer:
+     * Classmates of the same age may use "ឯង" / "គ្នា" / "យើង" playfully; a dating couple switches to "បង" / "អូន".
+     * Teachers: "លោកគ្រូ" / "អ្នកគ្រូ" with self "ខ្ញុំ"; an older student ("学长" / "学姐") is "បង".
+     * Lively lines: "ទៅលេងណា!", "ប្រឡងហើយ ងាប់ហើយ!", "ចូលចិត្តគេមែនទេ?", "ហ៊ានអត់?", "អត់អីទេណា!".`;
     }
     return `
 REGISTER - Modern Romance, CEO & Urban (រឿងសម័យ/ស្នេហា/ប្រធានក្រុមហ៊ុន):
@@ -127,6 +166,12 @@ REGISTER - Modern Romance, CEO & Urban (រឿងសម័យ/ស្នេហា
        - "怎么办？" -> "ធ្វើម៉េចទៅ?"`;
 }
 
+// A line's voice tag ("[Male] ...", "[Heroine] ...", "[Female:profile] ...") and the gender it
+// stands for. The tag comes from the audio (Transcribe) or from the user, so it is the speaker's
+// real gender: a text-only translation must keep it instead of guessing again.
+const VOICE_TAG_RE = /^\[(Male|Female|Hero|Heroine|Father|Mother|Villain|Queen|Elder|Child)(?::[^\]]+)?\]\s*/i;
+const FEMALE_ROLES = new Set(['female', 'heroine', 'mother', 'queen', 'child']);
+
 // Mirrors the frontend parseSrtText() block rules so indexes line up 1:1. Each block keeps
 // its timing, so the prompt can size every Khmer line to the time it has on screen.
 function parseSrtBlocksForTranslate(content) {
@@ -138,10 +183,11 @@ function parseSrtBlocksForTranslate(content) {
             const start = toSeconds(times[0]);
             const end = toSeconds(times[1]);
             const seconds = end > start ? Number((end - start).toFixed(2)) : null;
+            const raw = lines.slice(2).join('\n');
+            const tag = raw.match(VOICE_TAG_RE);
             return {
-                text: lines.slice(2).join('\n')
-                    .replace(/^\[(Male|Female|Hero|Heroine|Father|Mother|Villain|Queen|Elder|Child)(?::[^\]]+)?\]\s*/i, '')
-                    .trim(),
+                text: raw.replace(VOICE_TAG_RE, '').trim(),
+                gender: tag ? (FEMALE_ROLES.has(tag[1].toLowerCase()) ? 'Female' : 'Male') : null,
                 start: Number.isFinite(start) ? start : null,
                 end: Number.isFinite(end) ? end : null,
                 seconds,
@@ -151,18 +197,20 @@ function parseSrtBlocksForTranslate(content) {
         .filter(Boolean);
 }
 
-// The item the model sees for one SRT line: timing only when it is known.
+// The item the model sees for one SRT line: timing and the speaker's gender only when known.
 function translatePromptLine(i, line) {
-    return line.seconds
+    const item = line.seconds
         ? { i, text: line.text, seconds: line.seconds, maxSyllables: line.maxSyllables }
         : { i, text: line.text };
+    if (line.gender) item.gender = line.gender;
+    return item;
 }
 
 function buildTranslatePrompt({ lines, glossaryHint, genreGuidance, previousLines }) {
     const contextHint = previousLines && previousLines.length
         ? `\n\nPREVIOUS DIALOGUE (context only, for consistent names and pronouns; do NOT translate or output these):\n${previousLines.map(l => `- [${l.gender || '?'}] ${l.source} => ${l.text}`).join('\n')}`
         : '';
-    return `You are an elite master film/TV dialogue adapter and dubbing director specializing in Asian and Chinese drama (C-Drama: 古装/宫斗/仙侠/武侠/现代甜宠/总裁/动作) localization into cinematic, natural and highly readable Khmer.
+    return `You are an elite master film/TV dialogue adapter and dubbing director specializing in Asian and Chinese drama (C-Drama: 古装/宫斗/仙侠/武侠/现代甜宠/总裁/动作/悬疑/恐怖/家庭/校园) localization into cinematic, natural and highly readable Khmer.
 
 TASK:
 Translate each dialogue line into NATURAL, SPEAKABLE Khmer dialogue for voice dubbing, sized to the time the line has on screen.
@@ -178,6 +226,7 @@ LINE MATCHING & EMOTION RULES:
 
 2. Speaker Gender & Emotional Acting Detection:
    - Assign "gender": "Male" or "Female" - the gender of the character speaking the line, from context, pronouns and relationships.
+   - A line that already has a "gender" was heard from the audio: output that same gender, and choose pronouns for a speaker of that gender (a man calls himself "បង" to his lover, a woman "អូន").
    - Assign the dramatic emotion: "Neutral", "Angry", "Sad", "Whisper", "Excited", "Royal", "Romantic", "Fear".${genreGuidance}
 
 3. Output Format:

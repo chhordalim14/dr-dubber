@@ -1876,7 +1876,8 @@
         state.translator.batchRequestIds.add(requestId);
         try {
           const srtText = job.lines
-            .map((l, i) => `${i + 1}\n${formatSrtTimestamp(l.textStart)} --> ${formatSrtTimestamp(l.textEnd)}\n${cleanSource(l.source)}`)
+            // A known voice goes along as a [Male]/[Female] tag: the server keeps that gender.
+            .map((l, i) => `${i + 1}\n${formatSrtTimestamp(l.textStart)} --> ${formatSrtTimestamp(l.textEnd)}\n${l.gender ? `[${l.gender}] ` : ''}${cleanSource(l.source)}`)
             .join('\n\n');
           const res = await fetch(`${getBackendBase()}/api/translate-srt`, {
             method: 'POST',

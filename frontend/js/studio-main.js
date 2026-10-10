@@ -38,6 +38,23 @@
       return String(str ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
     }
 
+    // Isolate BGM engine from Settings. MDX-Net ships with the app and is the default.
+    // Spleeter was the old pre-selected default but never shipped, so a saved "spleeter"
+    // moves to MDX-Net once; picking Spleeter again afterwards sticks.
+    function vocalEngineSetting() {
+      try {
+        if (!localStorage.getItem("aiDubberVocalEngineMdx")) {
+          localStorage.setItem("aiDubberVocalEngineMdx", "1");
+          if (localStorage.getItem("aiDubberVocalEngine") === "spleeter") localStorage.setItem("aiDubberVocalEngine", "mdx");
+        }
+        return localStorage.getItem("aiDubberVocalEngine") || "mdx";
+      } catch (e) {
+        return "mdx";
+      }
+    }
+
+    const VOCAL_ENGINE_LABELS = { mdx: "MDX-Net", spleeter: "Spleeter", demucs: "Demucs", ffmpeg: "FFmpeg" };
+
     // Rich text for the free-text overlay boxes: those are contentEditable
     // and intentionally hold per-character colour runs (<span style="color:…">
     // from execCommand foreColor) plus line breaks. Parse in an inert
@@ -122,7 +139,13 @@
       Child: { id: "Child", label: "🧒 Child (កូនក្មេង)", gender: "Female", baseVoice: "km-KH-SreymomNeural", pitch: "+22Hz", rate: "+10%", color: "#eab308" }
     };
 
-    window.resolveCharacterKey = function(val) {
+    // Only two voices: "Male" or "Female". A role from an old project or SRT tag (Hero, Mother,
+    // Villain...) only tells which of the two; it no longer gets a voice of its own.
+    window.resolveCharacterKey = function (val) {
+      return window.CHARACTER_PRESETS[roleKeyFor(val)].gender;
+    };
+
+    function roleKeyFor(val) {
       if (!val) return "Male";
       const str = String(val).trim().toLowerCase();
       for (const k of Object.keys(window.CHARACTER_PRESETS)) {
@@ -143,7 +166,7 @@
       if (str.includes("female") || str.includes("ស្រី") || str.includes("នារី")) return "Female";
       if (str.includes("male") || str.includes("ប្រុស") || str.includes("បុរស")) return "Male";
       return "Male";
-    };
+    }
 
     // Voice for a line the AI transcribed or translated: only the default Male or Female voice.
     // AI role guesses (Hero, Villain, Father...) aren't reliable - the same actor got different
@@ -152,18 +175,12 @@
       const g = String(gender || "").trim().toLowerCase();
       if (g === "female" || g.includes("ស្រី") || g.includes("នារី")) return "Female";
       if (g === "male" || g.includes("ប្រុស") || g.includes("បុរស")) return "Male";
-      const preset = window.CHARACTER_PRESETS[window.resolveCharacterKey(role || gender)];
-      return preset && preset.gender === "Female" ? "Female" : "Male";
+      return window.resolveCharacterKey(role || gender);
     };
 
-    // Voices offered in the voice pickers: only Male and Female. A line from an older project
-    // that already uses a role (Hero, Villain...) keeps it listed, so its voice doesn't change.
-    window.voicePickerPresets = function (current) {
-      const presets = window.CHARACTER_PRESETS;
-      const list = [presets.Male, presets.Female];
-      const key = current ? window.resolveCharacterKey(current) : null;
-      if (key && key !== "Male" && key !== "Female" && presets[key]) list.push(presets[key]);
-      return list;
+    // Voices offered in the voice pickers: only Male and Female.
+    window.voicePickerPresets = function () {
+      return [window.CHARACTER_PRESETS.Male, window.CHARACTER_PRESETS.Female];
     };
 
     // Initialize Lucide Icons
@@ -291,37 +308,155 @@
     );
 
     // --- THEME CONSTANTS (From Reference) ---
-    // Default look: "Sky Blue" (cool slate / soft white with a sky-blue accent).
+    // Default look: "Midnight Indigo" (deep blue-navy panels, an indigo accent
+    // that runs into violet on the main actions).
     const defaultThemes = {
       dark: {
-        bgBase: "#0e1320",
-        bgPanel: "#151c2c",
-        bgHover: "#1c2538",
-        borderColor: "#212b3f",
-        borderLight: "#2e3a52",
-        textBright: "#eef3fb",
-        textPrimary: "#cfd8e6",
-        textSecondary: "#97a3b8",
-        textMuted: "#69758b",
-        accentPrimary: "#3d8ef0",
-        accentText: "#8cbcff",
+        bgBase: "#060a1f",
+        bgPanel: "#0b1130",
+        bgHover: "#131b42",
+        borderColor: "#1a2452",
+        borderLight: "#28366e",
+        textBright: "#f1f4ff",
+        textPrimary: "#d0d7f5",
+        textSecondary: "#97a2d0",
+        textMuted: "#68739f",
+        accentPrimary: "#5b5ff7",
+        accentText: "#a3adff",
       },
       light: {
-        bgBase: "#f2f5fa",
+        bgBase: "#f1f3fc",
         bgPanel: "#ffffff",
-        bgHover: "#edf1f8",
-        borderColor: "#e2e8f2",
-        borderLight: "#cdd6e4",
-        textBright: "#0f1a2b",
-        textPrimary: "#2a364a",
-        textSecondary: "#4f5c72",
-        textMuted: "#7d899d",
-        accentPrimary: "#2f7de1",
-        accentText: "#1f63c0",
+        bgHover: "#eceffc",
+        borderColor: "#dfe3f5",
+        borderLight: "#c9cfec",
+        textBright: "#111637",
+        textPrimary: "#2f365e",
+        textSecondary: "#555d86",
+        textMuted: "#838aab",
+        accentPrimary: "#4f53e8",
+        accentText: "#3c3fcf",
       },
     };
 
     const presetThemes = {
+      "Midnight Indigo": defaultThemes,
+      // Navy with a violet accent (the default before Midnight Indigo).
+      "Midnight Violet": {
+        dark: {
+          bgBase: "#0a0c1a",
+          bgPanel: "#11142a",
+          bgHover: "#1a1e3a",
+          borderColor: "#21264a",
+          borderLight: "#30375f",
+          textBright: "#eef0ff",
+          textPrimary: "#cfd3f0",
+          textSecondary: "#9aa0c6",
+          textMuted: "#6c7299",
+          accentPrimary: "#7c5cff",
+          accentText: "#b5a4ff",
+        },
+        light: {
+          bgBase: "#f3f3fb",
+          bgPanel: "#ffffff",
+          bgHover: "#efeefb",
+          borderColor: "#e3e2f3",
+          borderLight: "#cfcde8",
+          textBright: "#151433",
+          textPrimary: "#33325a",
+          textSecondary: "#5a5980",
+          textMuted: "#8584a6",
+          accentPrimary: "#6a4cf0",
+          accentText: "#5536d6",
+        },
+      },
+      // Flat neutral greys with a coral accent (the default before Midnight Violet).
+      "Studio Grey": {
+        dark: {
+          bgBase: "#121212",
+          bgPanel: "#1b1b1b",
+          bgHover: "#262626",
+          borderColor: "#2a2a2a",
+          borderLight: "#3a3a3a",
+          textBright: "#f2f2f2",
+          textPrimary: "#d9d9d9",
+          textSecondary: "#a6a6a6",
+          textMuted: "#7c7c7c",
+          accentPrimary: "#ec5f4b",
+          accentText: "#ff9d89",
+        },
+        light: {
+          bgBase: "#f2f2f3",
+          bgPanel: "#ffffff",
+          bgHover: "#f0f0f1",
+          borderColor: "#e4e4e7",
+          borderLight: "#d1d1d6",
+          textBright: "#141414",
+          textPrimary: "#333336",
+          textSecondary: "#5b5b60",
+          textMuted: "#84848a",
+          accentPrimary: "#e0513e",
+          accentText: "#c2412f",
+        },
+      },
+      // Warm charcoal look from the coral redesign pass.
+      "Coral Sunset": {
+        dark: {
+          bgBase: "#131113",
+          bgPanel: "#1c1a1d",
+          bgHover: "#262327",
+          borderColor: "#2c282d",
+          borderLight: "#3d383e",
+          textBright: "#f7f2ef",
+          textPrimary: "#e0d8d4",
+          textSecondary: "#ada4a0",
+          textMuted: "#857d7a",
+          accentPrimary: "#ec5f4b",
+          accentText: "#ff9d89",
+        },
+        light: {
+          bgBase: "#f7f2ee",
+          bgPanel: "#ffffff",
+          bgHover: "#f5ede8",
+          borderColor: "#ece2dc",
+          borderLight: "#dccfc7",
+          textBright: "#1f1714",
+          textPrimary: "#3b302b",
+          textSecondary: "#5f524c",
+          textMuted: "#85776f",
+          accentPrimary: "#e0513e",
+          accentText: "#c2412f",
+        },
+      },
+      // Sky-blue look from the second redesign pass.
+      "Sky Blue": {
+        dark: {
+          bgBase: "#0e1320",
+          bgPanel: "#151c2c",
+          bgHover: "#1c2538",
+          borderColor: "#212b3f",
+          borderLight: "#2e3a52",
+          textBright: "#eef3fb",
+          textPrimary: "#cfd8e6",
+          textSecondary: "#97a3b8",
+          textMuted: "#69758b",
+          accentPrimary: "#3d8ef0",
+          accentText: "#8cbcff",
+        },
+        light: {
+          bgBase: "#f2f5fa",
+          bgPanel: "#ffffff",
+          bgHover: "#edf1f8",
+          borderColor: "#e2e8f2",
+          borderLight: "#cdd6e4",
+          textBright: "#0f1a2b",
+          textPrimary: "#2a364a",
+          textSecondary: "#4f5c72",
+          textMuted: "#7d899d",
+          accentPrimary: "#2f7de1",
+          accentText: "#1f63c0",
+        },
+      },
       // Mint/teal look from the first redesign pass.
       "Fresh Mint": {
         dark: {
@@ -3100,7 +3235,7 @@
     // Series all show and change this same setting. The DAI dropdowns used to keep their own
     // value (Ancient/Royal after every restart), so a modern series was transcribed with royal
     // court words unless that dropdown was picked again by hand.
-    const DRAMA_GENRES = ["historical", "modern", "action", "comedy"];
+    const DRAMA_GENRES = ["historical", "modern", "action", "comedy", "horror", "mystery", "fantasy", "family", "youth"];
     // 'neutral' was an old DAI-only choice that the server treated as modern.
     const normalizeDramaGenre = (g) => (DRAMA_GENRES.includes(g) ? g : g === "neutral" ? "modern" : "historical");
     let activeDramaGenre = "historical"; // only used when nothing was ever saved
@@ -3115,6 +3250,11 @@
       modern: { icon: "🏙️", label: "សម័យ/ស្នេហា/CEO", color: "text-cyan-400" },
       action: { icon: "💥", label: "សកម្មភាព/កងទ័ព/ឧក្រិដ្ឋ", color: "text-rose-400" },
       comedy: { icon: "😂", label: "កំប្លែង/កំប្លុកកំប្លែង", color: "text-emerald-400" },
+      horror: { icon: "👻", label: "ខ្មោច/រន្ធត់/អបិយជំនឿ", color: "text-violet-400" },
+      mystery: { icon: "🕵️", label: "ស៊ើបអង្កេត/អាថ៌កំបាំង", color: "text-sky-400" },
+      fantasy: { icon: "🐉", label: "ទេវកថា/អមតៈ/បិសាច", color: "text-fuchsia-400" },
+      family: { icon: "🏠", label: "គ្រួសារ/សោកនាដកម្ម", color: "text-orange-400" },
+      youth: { icon: "🎒", label: "សិស្សសាលា/យុវវ័យ", color: "text-pink-400" },
     };
 
     const setDramaGenre = (g) => {
@@ -9284,7 +9424,7 @@
       if (!demucsOptionsMeasured) {
         requestAnimationFrame(() => {
           const demucsOptions = document.getElementById("demucs-options");
-          const savedVocalEngine = localStorage.getItem("aiDubberVocalEngine") || "spleeter";
+          const savedVocalEngine = vocalEngineSetting();
           if (demucsOptions && savedVocalEngine === "demucs") {
             demucsOptions.style.transition = "none";
             demucsOptions.style.maxHeight = "none";
@@ -9303,7 +9443,7 @@
       if (!spleeterOptionsMeasured) {
         requestAnimationFrame(() => {
           const spleeterOptions = document.getElementById("spleeter-options");
-          const savedVocalEngine = localStorage.getItem("aiDubberVocalEngine") || "spleeter";
+          const savedVocalEngine = vocalEngineSetting();
           if (spleeterOptions && savedVocalEngine === "spleeter") {
             spleeterOptions.style.transition = "none";
             spleeterOptions.style.maxHeight = "none";
@@ -9358,7 +9498,7 @@
     });
 
     // Load vocal engine setting
-    let savedVocalEngine = localStorage.getItem("aiDubberVocalEngine") || "spleeter";
+    let savedVocalEngine = vocalEngineSetting();
     const vocalEngineRadio = document.querySelector(`input[name="vocal-engine"][value="${savedVocalEngine}"]`);
     if (vocalEngineRadio) vocalEngineRadio.checked = true;
     const demucsOptions = document.getElementById("demucs-options");
@@ -11402,7 +11542,8 @@
     });
 
     // --- SIDEBAR RESIZER LOGIC ---
-    const leftSidebar = document.getElementById("left-sidebar");
+    // The handle sits on the left edge of the subtitle list (right column).
+    const subtitleColumn = document.getElementById("subtitle-card");
     const sidebarResizer = document.getElementById("sidebar-resizer");
 
     let sidebarDragState = {
@@ -11416,7 +11557,7 @@
       e.stopPropagation();
       sidebarDragState.isDragging = true;
       sidebarDragState.startX = e.clientX;
-      sidebarDragState.startWidth = leftSidebar.offsetWidth;
+      sidebarDragState.startWidth = subtitleColumn.offsetWidth;
 
       // Lock the cursor globally so it doesn't flicker while dragging fast
       document.body.classList.add("select-none");
@@ -11431,11 +11572,12 @@
 
       const deltaX = e.clientX - sidebarDragState.startX;
 
-      // The preview column is on the right, so dragging its left edge leftwards widens it.
-      // Clamp the width: minimum 280px, maximum half of the window width
-      const newWidth = Math.max(280, Math.min(window.innerWidth * 0.5, sidebarDragState.startWidth - deltaX));
+      // The subtitle list is on the right, so dragging its left edge leftwards widens it.
+      // Clamp the width: minimum 380px, maximum 60% of the window width
+      const newWidth = Math.max(380, Math.min(window.innerWidth * 0.6, sidebarDragState.startWidth - deltaX));
 
-      leftSidebar.style.width = `${newWidth}px`;
+      // Set on the row so the video inspector (which covers this column) matches it.
+      subtitleColumn.parentElement.style.setProperty("--subs-width", `${newWidth}px`);
 
       const vpPanel = document.getElementById("video-preset-panel");
       if (vpPanel && vpPanel.classList.contains("flex")) {
@@ -12119,6 +12261,7 @@
             ...s,
             gender: charKey,
             character: charKey,
+            genderUnknown: undefined, // picked by hand: a translation keeps it
             audioStatus: "idle",
             audioUrl: null,
             audioStart: s.textStart,
@@ -12594,6 +12737,8 @@
         toggleBtn.addEventListener("click", (e) => {
           e.stopPropagation();
           dropdown.classList.toggle("hidden");
+          // Keep it inside the window (the button sits near the right edge on small screens).
+          if (!dropdown.classList.contains("hidden")) placeFixedMenu(dropdown, toggleBtn, 270);
         });
 
         document.addEventListener("click", (e) => {
@@ -12987,6 +13132,8 @@
             text: textContent,
             voice: "KH Khmer",
             gender: extractedGender,
+            // No [Male]/[Female] tag: "Female" is only a default, so a translation may still pick the gender.
+            ...(genderMatch ? {} : { genderUnknown: true }),
             status: "pending",
             audioStatus: "idle",
             audioUrl: null,
@@ -13030,6 +13177,17 @@
       }
       if (typeof updateGenerateAllButtonState === "function") updateGenerateAllButtonState();
       if (typeof renderProjectTabs === "function") renderProjectTabs();
+    };
+
+    // "Male"/"Female" when a line's voice is known (heard by Transcribe, picked by hand, or an SRT
+    // tag), else null. A text-only translation keeps a known gender instead of guessing it again.
+    const knownVoiceGender = (s) => {
+      if (s.genderUnknown) return null;
+      for (const v of [s.character, s.gender]) {
+        const preset = v && window.CHARACTER_PRESETS[String(v).trim()];
+        if (preset) return preset.gender;
+      }
+      return null; // e.g. a VoxCPM2 profile id
     };
 
     // For js/dai-transcribe-studio.js: the project state lives in this script's let/const
@@ -13113,7 +13271,7 @@
           total: proj.subtitles.length,
           lines: proj.subtitles
             .filter((s) => String(s.originalText || "").trim())
-            .map((s) => ({ id: s.id, textStart: s.textStart, textEnd: s.textEnd, source: String(s.originalText).trim() })),
+            .map((s) => ({ id: s.id, textStart: s.textStart, textEnd: s.textEnd, source: String(s.originalText).trim(), gender: knownVoiceGender(s) })),
         }));
       },
       isTabBusy: (ref) => !!(ref && (ref.isTranscribing || ref.isGeneratingAudio || ref.isIsolatingBgm || ref.isBatchTranscribing || ref.isFixingMissing)),
@@ -13133,11 +13291,9 @@
           const tr = byId.get(String(s.id));
           if (!tr || !String(tr.text || "").trim()) return s;
           const next = { ...s, text: tr.text.trim(), emotion: tr.emotion || s.emotion || "Neutral" };
-          // A role picked by hand (Hero, Villain...) stays; the default Male/Female voice follows the new gender.
-          if (!s.character || /^(male|female)$/i.test(s.character)) {
-            const voiceChar = window.defaultVoiceFor(tr.gender || s.gender, null);
-            Object.assign(next, { speaker: voiceChar, character: voiceChar, gender: voiceChar });
-          }
+          // The Male/Female voice follows the gender (a known one comes back unchanged from the server).
+          const voiceChar = window.defaultVoiceFor(tr.gender || s.gender, null);
+          Object.assign(next, { speaker: voiceChar, character: voiceChar, gender: voiceChar });
           if (next.text !== s.text) {
             changed++;
             Object.assign(next, { audioStatus: "idle", audioUrl: null, baseAudioDuration: 0, speed: 1.0, audioStart: s.textStart, audioEnd: s.textEnd });
@@ -14898,6 +15054,9 @@
     // rows on every click froze the UI for seconds on 1-2 hour projects.
     const renderSubtitles = (onlyIds = null) => {
       const isPartial = onlyIds instanceof Set && onlyIds.size > 0 && subtitles.length > 0;
+      // "Total Subtitles" under the list.
+      const subsTotal = document.getElementById("subs-total");
+      if (subsTotal) subsTotal.textContent = subtitles.length;
       if (!isPartial) {
       // 1. Clear Table & Timeline items
       subtitleTableBody.innerHTML = "";
@@ -14918,9 +15077,14 @@
             <tr id="empty-subtitles-row">
                 <td colspan="6" class="empty-state">
                     <p class="empty-state__title">No subtitles yet</p>
-                    <p class="empty-state__hint">Open <b>Project</b> on the left to load a video, then import an SRT or transcribe.</p>
+                    <p class="empty-state__hint">Load a video, then import an SRT or transcribe it.</p>
+                    <div class="empty-state__actions">
+                      <button type="button" class="empty-state__btn empty-state__btn--primary" data-click="btn-load-video"><i data-lucide="film"></i><span>Load video</span></button>
+                      <button type="button" class="empty-state__btn" data-click="btn-import-srt"><i data-lucide="file-down"></i><span>Import SRT</span></button>
+                    </div>
                 </td>
             </tr>`;
+        _lucideCreateIcons();
         rowWindowReset();
         return;
       }
@@ -14974,7 +15138,7 @@
         tr.setAttribute("data-id", sub.id);
 
         tr.innerHTML = `
-            <td class="checkbox-cell px-3 py-2 text-center cursor-pointer">
+            <td class="checkbox-cell px-3 py-2 text-center cursor-pointer" data-num="${index + 1}">
                 <input type="checkbox" class="row-checkbox w-3.5 h-3.5 opacity-60 group-hover:opacity-100 transition-opacity cursor-pointer" style="accent-color: var(--accent-primary)" ${isRowSelected ? "checked" : ""}>
             </td>
             <td class="px-4 py-2 font-mono text-xs ${timeTextColor} transition-colors">${formatTime(parseFloat(sub.textStart))}</td>
@@ -15342,6 +15506,7 @@
             if (currentIndex > -1) {
               subtitles[currentIndex].gender = selectedValue;
               subtitles[currentIndex].character = selectedValue;
+              delete subtitles[currentIndex].genderUnknown; // picked by hand: a translation keeps it
 
               if (subtitles[currentIndex].audioStatus === "ready") {
                 subtitles[currentIndex].audioStatus = "idle";
@@ -17386,13 +17551,14 @@
         return note;
       }
 
-      // Fell back to FFmpeg only because no ML engine is installed at all (the installer ships
-      // neither): "Spleeter could not run (no Python with Spleeter installed was found (...));
-      // Demucs could not run (...)". A retry or a pause can't fix that, so the tab keeps the
-      // FFmpeg BGM. An engine that is there but broke is a real failure.
+      // Fell back to FFmpeg only because no ML engine is installed at all (a build without the
+      // MDX-Net model or onnxruntime, and no Spleeter/Demucs): "MDX-Net could not run (the model
+      // ... is not installed ...); Spleeter could not run (no Python with Spleeter installed was
+      // found (...)); ...". A retry or a pause can't fix that, so the tab keeps the FFmpeg BGM.
+      // An engine that is there but broke is a real failure.
       function noEngineInstalled(p) {
         return p.bgmMethod === "ffmpeg_fallback" &&
-          String(p.bgmFallbackReason || "").split(/\);\s*/).every((r) => /no Python with \w+ installed was found/.test(r));
+          String(p.bgmFallbackReason || "").split(/\);\s*/).every((r) => /no Python with \w+ installed was found|is not installed/.test(r));
       }
 
       // A tab that only got the FFmpeg phase-cancel fallback has almost no music on these
@@ -17419,8 +17585,7 @@
           }
         }
         if (bad.length) {
-          const engine = localStorage.getItem("aiDubberVocalEngine") || "spleeter";
-          const label = engine === "demucs" ? "Demucs" : engine === "ffmpeg" ? "FFmpeg" : "Spleeter";
+          const label = VOCAL_ENGINE_LABELS[vocalEngineSetting()] || "MDX-Net";
           const why = (p) => {
             const reason = (p.bgmMethod === "ffmpeg_fallback" ? p.bgmFallbackReason : p.bgmError) || "unknown error";
             return /could not run/.test(reason) ? reason : `${label} could not run (${reason})`;
@@ -17439,9 +17604,9 @@
         let note = `${b.total} of ${b.total} tabs`;
         if (retried) note += ` · ${retried} tab(s) needed a second try`;
         const stillThere = substituted.filter((p) => projects.includes(p) && p.bgmFallbackReason);
-        if (stillThere.length) note += ` · tab ${tabNumbers(stillThere)} used ${stillThere[0].bgmMethod === "spleeter" ? "Spleeter" : "Demucs"} instead (${stillThere[0].bgmFallbackReason.split(";")[0]})`;
+        if (stillThere.length) note += ` · tab ${tabNumbers(stillThere)} used ${VOCAL_ENGINE_LABELS[stillThere[0].bgmMethod] || "another engine"} instead (${stillThere[0].bgmFallbackReason.split(";")[0]})`;
         const ffmpegOnly = noEngine.filter((p) => projects.includes(p));
-        if (ffmpegOnly.length) note += ` · tab ${tabNumbers(ffmpegOnly)} used FFmpeg phase cancellation (Spleeter and Demucs are not installed)`;
+        if (ffmpegOnly.length) note += ` · tab ${tabNumbers(ffmpegOnly)} used FFmpeg phase cancellation (no AI separation engine is installed)`;
         return note;
       }
 
@@ -22167,8 +22332,8 @@
 
       const trackA2HTML = `
         <div id="track-a2" class="bg-[var(--bg-panel)] rounded border border-[var(--border-color)] flex items-center relative group shrink-0" style="height: ${trackHeights.a2}px;">
-            <div class="absolute left-2 text-xs text-[var(--text-secondary)] font-semibold z-30 bg-[var(--bg-base)] px-1.5 py-0.5 rounded shadow-md pointer-events-none sticky flex items-center gap-1.5">
-                A2
+            <div class="track-head absolute left-2 text-xs text-[var(--text-secondary)] font-semibold z-30 bg-[var(--bg-base)] px-1.5 py-0.5 rounded shadow-md pointer-events-none sticky flex items-center gap-1.5">
+                <span class="track-name"><i data-lucide="music"></i>Music<em>A2</em></span>
                 <button id="btn-mute-a2" class="pointer-events-auto hover:text-[var(--text-bright)] text-[var(--text-muted)] transition-colors p-1 -m-1 rounded hover:bg-[var(--bg-hover)]">
                     <i id="icon-mute-a2" data-lucide="${bgmTrack.isMuted ? "volume-x" : "volume-2"}" class="w-3.5 h-3.5 ${bgmTrack.isMuted ? "text-red-400" : ""}"></i>
                 </button>
@@ -22632,7 +22797,7 @@
         const isMacForGpu = navigator.platform.toUpperCase().includes("MAC") || navigator.userAgent.includes("Mac");
         const savedGpuPref = localStorage.getItem("aiDubberUseGPU");
         const useGPU = savedGpuPref !== null ? savedGpuPref !== "false" : !isMacForGpu;
-        let vocalEngine = localStorage.getItem("aiDubberVocalEngine") || "spleeter";
+        let vocalEngine = vocalEngineSetting();
         let demucsFolder = localStorage.getItem("aiDubberDemucsFolder") || "";
         let demucsSegment = localStorage.getItem("aiDubberDemucsSegment") || "7";
         let spleeterFolder = localStorage.getItem("aiDubberSpleeterFolder") || "";
@@ -25516,29 +25681,33 @@
       });
     }
 
+    // Full picture again in the open tab: no crop, pan, zoom or stretch. Used by Reset and
+    // when the tab's aspect ratio changes (framing made for the old shape doesn't fit the new).
+    function resetVideoFraming() {
+      cropConfig = { x: 0, y: 0, w: 100, h: 100 };
+      videoPan = { x: 0, y: 0 };
+      videoZoom = 1;
+      window.videoScaleX = 1; // FIX: Reset the custom X stretch!
+      window.videoScaleY = 1; // FIX: Reset the custom Y stretch!
+
+      // Keep the Zoom Slider UI in sync
+      const zoomSlider = document.getElementById("crop-zoom-slider");
+      const zoomText = document.getElementById("crop-zoom-text");
+      if (zoomSlider && zoomText) {
+        zoomSlider.value = 1;
+        zoomText.textContent = "100%";
+      }
+
+      // Force the preview canvas to re-render with the new full dimensions
+      updateVideoTransforms();
+    }
+
     const btnResetCrop = document.getElementById("btn-reset-crop");
     if (btnResetCrop) {
       btnResetCrop.addEventListener("click", () => {
-        // 1. Save the exact state BEFORE resetting, so Ctrl+Z brings the crop back!
+        // Save the exact state BEFORE resetting, so Ctrl+Z brings the crop back!
         saveStateToPast();
-
-        // 2. Reset everything to standard full-screen values
-        cropConfig = { x: 0, y: 0, w: 100, h: 100 };
-        videoPan = { x: 0, y: 0 };
-        videoZoom = 1;
-        window.videoScaleX = 1; // FIX: Reset the custom X stretch!
-        window.videoScaleY = 1; // FIX: Reset the custom Y stretch!
-
-        // 3. Reset the Zoom Slider UI so it doesn't get out of sync
-        const zoomSlider = document.getElementById("crop-zoom-slider");
-        const zoomText = document.getElementById("crop-zoom-text");
-        if (zoomSlider && zoomText) {
-          zoomSlider.value = 1;
-          zoomText.textContent = "100%";
-        }
-
-        // 4. Force the preview canvas to re-render with the new full dimensions
-        updateVideoTransforms();
+        resetVideoFraming();
       });
     }
 
@@ -25862,8 +26031,8 @@
       const bar = document.getElementById("project-tabs-bar");
       const noProjectLabel = document.getElementById("footer-no-project");
 
-      if (projects.length <= 1) {
-        // 0 or 1 project → show the original static label, no tabs
+      if (projects.length === 0) {
+        // No project yet → show the static label, no tabs
         noProjectLabel.style.display = "";
         // remove any old tab buttons
         bar.querySelectorAll(".proj-tab-btn").forEach((b) => b.remove());
@@ -25896,7 +26065,7 @@
   <span class="font-mono opacity-60">${i + 1}</span>
   <span>${displayName}</span>
   ${isWorking ? '<span class="text-[9px] text-yellow-400 animate-pulse">●</span>' : ""}
-  <span class="close-tab ml-1 opacity-40 hover:opacity-100 text-[10px] leading-none">✕</span>
+  ${projects.length > 1 ? '<span class="close-tab ml-1 opacity-40 hover:opacity-100 text-[10px] leading-none">✕</span>' : ""}
 `;
 
         btn.addEventListener("click", (e) => {
@@ -26451,6 +26620,109 @@
       });
     }
 
+    // ── Overlay boxes (image + video): resize handles and resize math ──
+    // The box keeps the media's own shape and the media fills it (cover, as in
+    // the render), so the corner handles only scale it: nothing is stretched.
+    // Each handle has a 22px grab area (shell.css).
+    const OVERLAY_HANDLE_DIRS = ["nw", "ne", "se", "sw"];
+    function addOverlayHandles(wrapper, kindClass, onStart) {
+      OVERLAY_HANDLE_DIRS.forEach((dir) => {
+        const h = document.createElement("div");
+        h.className = `${kindClass} ov-handle ov-handle--${dir} hidden`;
+        h.dataset.dir = dir;
+        h.addEventListener("mousedown", (e) => {
+          e.stopPropagation();
+          onStart(dir, e);
+        });
+        wrapper.appendChild(h);
+      });
+    }
+
+    // New left/top/width/height (in % of the container) for a corner drag.
+    // st: { dir, startX, startY, startLeft, startTop, startWidth, startHeight }.
+    // The box scales with its shape kept, anchored at the opposite corner, and
+    // stops at the container's edges instead of refusing the move.
+    function resizeOverlayBox(st, e, parentW, parentH) {
+      const MIN_PX = 16;
+      const dir = st.dir;
+      const hasW = dir.includes("w"), hasN = dir.includes("n");
+      const l = (st.startLeft / 100) * parentW, t = (st.startTop / 100) * parentH;
+      const w = (st.startWidth / 100) * parentW, h = (st.startHeight / 100) * parentH;
+      const right = l + w, bottom = t + h;
+      const maxW = hasW ? right : parentW - l;
+      const maxH = hasN ? bottom : parentH - t;
+      const dx = e.clientX - st.startX, dy = e.clientY - st.startY;
+      let nw = w, nh = h;
+      if (w > 0 && h > 0) {
+        // Scale by whichever axis moved more, then fit inside the container.
+        const sw = (hasW ? w - dx : w + dx) / w, sh = (hasN ? h - dy : h + dy) / h;
+        let scale = Math.abs(sw - 1) > Math.abs(sh - 1) ? sw : sh;
+        scale = Math.max(scale, MIN_PX / w, MIN_PX / h);
+        scale = Math.min(scale, maxW / w, maxH / h);
+        nw = w * scale;
+        nh = h * scale;
+      }
+      const nl = hasW ? right - nw : l;
+      const nt = hasN ? bottom - nh : t;
+      return { left: (nl / parentW) * 100, top: (nt / parentH) * 100, width: (nw / parentW) * 100, height: (nh / parentH) * 100 };
+    }
+
+    // Give a newly added overlay box the media's own shape (same width, height
+    // from the aspect ratio), kept inside the container and centred where it
+    // was, so the media fills it without being cropped or stretched.
+    function fitOverlayBoxToMedia(wrapper, container, mediaW, mediaH) {
+      const rect = container.getBoundingClientRect();
+      if (!mediaW || !mediaH || !rect.width || !rect.height) return false;
+      const ratio = mediaW / mediaH;
+      let wPx = (parseFloat(wrapper.style.width) / 100) * rect.width;
+      let hPx = wPx / ratio;
+      const maxH = rect.height * 0.6;
+      if (hPx > maxH) {
+        hPx = maxH;
+        wPx = hPx * ratio;
+      }
+      const cx = ((parseFloat(wrapper.style.left) + parseFloat(wrapper.style.width) / 2) / 100) * rect.width;
+      const cy = ((parseFloat(wrapper.style.top) + parseFloat(wrapper.style.height) / 2) / 100) * rect.height;
+      const left = Math.min(Math.max(cx - wPx / 2, 0), rect.width - wPx);
+      const top = Math.min(Math.max(cy - hPx / 2, 0), rect.height - hPx);
+      wrapper.style.left = `${(left / rect.width) * 100}%`;
+      wrapper.style.top = `${(top / rect.height) * 100}%`;
+      wrapper.style.width = `${(wPx / rect.width) * 100}%`;
+      wrapper.style.height = `${(hPx / rect.height) * 100}%`;
+      return true;
+    }
+
+    // Delete / apply-to-all buttons sit in a small bar outside the box, so
+    // they never cover the media or the corner handles.
+    function addOverlayActions(wrapper, ...buttons) {
+      const bar = document.createElement("div");
+      bar.className = "ov-actions";
+      buttons.forEach((b) => bar.appendChild(b));
+      wrapper.appendChild(bar);
+    }
+
+    // The overlay container clips at the picture's edges, so the bar goes
+    // above the box when there is room, else below, else inside the top; and
+    // it slides sideways to stay within the picture.
+    function placeOverlayActions(wrapper) {
+      const bar = wrapper && wrapper.querySelector(".ov-actions");
+      const container = wrapper && wrapper.parentElement;
+      if (!bar || !container) return;
+      const GAP = 8;
+      const c = container.getBoundingClientRect();
+      const w = wrapper.getBoundingClientRect();
+      const barH = bar.offsetHeight || 26;
+      const barW = bar.offsetWidth || 56;
+      const side = w.top - c.top >= barH + GAP + 4 ? "above" : c.bottom - w.bottom >= barH + GAP + 4 ? "below" : "inside";
+      bar.classList.toggle("ov-actions--above", side === "above");
+      bar.classList.toggle("ov-actions--below", side === "below");
+      bar.classList.toggle("ov-actions--inside", side === "inside");
+      const centred = w.width / 2 - barW / 2;
+      const minX = c.left + 4 - w.left;
+      const maxX = c.right - 4 - barW - w.left;
+      bar.style.left = `${Math.max(minX, Math.min(maxX, centred))}px`;
+    }
+
     function createVideoOverlay(src, id, autoSelect = false) {
       const wrapper = document.createElement("div");
       wrapper.className = "absolute pointer-events-auto cursor-move video-overlay-item";
@@ -26466,6 +26738,18 @@
       const vid = document.createElement("video");
       vid.src = src;
       vid.className = "w-full h-full object-cover pointer-events-none";
+      if (autoSelect) {
+        vid.addEventListener(
+          "loadedmetadata",
+          () => {
+            if (fitOverlayBoxToMedia(wrapper, videoOverlayContainer, vid.videoWidth, vid.videoHeight)) {
+              updateVideoOverlayState(id, wrapper);
+              placeOverlayActions(wrapper);
+            }
+          },
+          { once: true },
+        );
+      }
       vid.autoplay = true;
       vid.loop = true;
       vid.muted = true;
@@ -26529,42 +26813,26 @@
       clipDiv.appendChild(ctrlBar);
 
       // ── Resize handles ──
-      ["nw", "ne", "se", "sw"].forEach((dir) => {
-        const h = document.createElement("div");
-        h.className = `vid-handle cursor-${dir}-resize absolute w-3.5 h-3.5 bg-white border-2 border-sky-400 rounded-full z-50 hidden`;
-        const pos = {
-          nw: ["top:-6px", "left:-6px"],
-          ne: ["top:-6px", "right:-6px"],
-          se: ["bottom:-6px", "right:-6px"],
-          sw: ["bottom:-6px", "left:-6px"],
-        };
-        pos[dir].forEach((s) => {
-          const [k, v] = s.split(":");
-          h.style[k] = v;
-        });
-        h.dataset.dir = dir;
-        wrapper.appendChild(h);
-        h.addEventListener("mousedown", (e) => {
-          e.stopPropagation();
-          selectVideoItem(wrapper);
-          vidDragState.isResizing = true;
-          const pr = videoOverlayContainer.getBoundingClientRect();
-          vidDragState.parentW = pr.width;
-          vidDragState.parentH = pr.height;
-          vidDragState.dir = dir;
-          vidDragState.startX = e.clientX;
-          vidDragState.startY = e.clientY;
-          vidDragState.startLeft = parseFloat(wrapper.style.left) || 0;
-          vidDragState.startTop = parseFloat(wrapper.style.top) || 0;
-          vidDragState.startWidth = parseFloat(wrapper.style.width) || 0;
-          vidDragState.startHeight = parseFloat(wrapper.style.height) || 0;
-        });
+      addOverlayHandles(wrapper, "vid-handle", (dir, e) => {
+        selectVideoItem(wrapper);
+        vidDragState.isResizing = true;
+        const pr = videoOverlayContainer.getBoundingClientRect();
+        vidDragState.parentW = pr.width;
+        vidDragState.parentH = pr.height;
+        vidDragState.dir = dir;
+        vidDragState.startX = e.clientX;
+        vidDragState.startY = e.clientY;
+        vidDragState.startLeft = parseFloat(wrapper.style.left) || 0;
+        vidDragState.startTop = parseFloat(wrapper.style.top) || 0;
+        vidDragState.startWidth = parseFloat(wrapper.style.width) || 0;
+        vidDragState.startHeight = parseFloat(wrapper.style.height) || 0;
       });
 
       // ── Delete button ──
       const delBtn = document.createElement("button");
       delBtn.innerHTML = `<i data-lucide="x" class="w-3.5 h-3.5 text-white"></i>`;
-      delBtn.className = "absolute -top-4 -right-4 bg-red-500 rounded-full p-1 hidden delete-vid-btn shadow-lg hover:scale-110 transition-transform z-50";
+      delBtn.className = "bg-red-500 rounded-full p-1 hidden delete-vid-btn shadow-lg hover:scale-110 transition-transform";
+      delBtn.title = "Delete Overlay";
       delBtn.onclick = (e) => {
         e.stopPropagation();
         vid.pause();
@@ -26575,18 +26843,17 @@
         const menu = document.getElementById("vid-context-menu");
         if (menu) menu.classList.add("hidden");
       };
-      wrapper.appendChild(delBtn);
 
-      // ── Apply All button (top-left) ──
+      // ── Apply All button ──
       const applyAllBtn = document.createElement("button");
       applyAllBtn.innerHTML = `<i data-lucide="layers" class="w-3.5 h-3.5 text-white"></i>`;
-      applyAllBtn.className = "absolute -top-4 -left-4 bg-amber-500 hover:bg-amber-400 rounded-full p-1 hidden apply-all-vid-btn shadow-lg hover:scale-110 active:scale-95 transition-transform z-50";
+      applyAllBtn.className = "bg-amber-500 hover:bg-amber-400 rounded-full p-1 hidden apply-all-vid-btn shadow-lg hover:scale-110 active:scale-95 transition-transform";
       applyAllBtn.title = "Apply all video overlays to all project tabs";
       applyAllBtn.onclick = (e) => {
         e.stopPropagation();
         applyVideoOverlaysToAllProjects(applyAllBtn);
       };
-      wrapper.appendChild(applyAllBtn);
+      addOverlayActions(wrapper, applyAllBtn, delBtn);
 
       // ── Drag ──
       wrapper.addEventListener("mousedown", (e) => {
@@ -26650,6 +26917,7 @@
       if (targetWrapper) {
         targetWrapper.style.outline = "2px dashed #38bdf8";
         targetWrapper.querySelectorAll(".vid-handle, .delete-vid-btn, .apply-all-vid-btn").forEach((h) => (h.style.display = "block"));
+        placeOverlayActions(targetWrapper);
         const bar = targetWrapper.querySelector(".vid-ctrl-bar");
         if (bar) {
           bar.classList.remove("hidden");
@@ -26678,29 +26946,13 @@
         activeVideoItem.style.left = `${newL}%`;
         activeVideoItem.style.top = `${newT}%`;
       } else if (vidDragState.isResizing) {
-        let newL = vidDragState.startLeft,
-          newT = vidDragState.startTop,
-          newW = vidDragState.startWidth,
-          newH = vidDragState.startHeight;
-        if (vidDragState.dir.includes("e")) newW = vidDragState.startWidth + dxPct;
-        if (vidDragState.dir.includes("s")) newH = vidDragState.startHeight + dyPct;
-        if (vidDragState.dir.includes("w")) {
-          newL = vidDragState.startLeft + dxPct;
-          newW = vidDragState.startWidth - dxPct;
-        }
-        if (vidDragState.dir.includes("n")) {
-          newT = vidDragState.startTop + dyPct;
-          newH = vidDragState.startHeight - dyPct;
-        }
-        if (newW > 2 && newL >= 0 && newL + newW <= 100) {
-          activeVideoItem.style.left = `${newL}%`;
-          activeVideoItem.style.width = `${newW}%`;
-        }
-        if (newH > 2 && newT >= 0 && newT + newH <= 100) {
-          activeVideoItem.style.top = `${newT}%`;
-          activeVideoItem.style.height = `${newH}%`;
-        }
+        const box = resizeOverlayBox(vidDragState, e, vidDragState.parentW, vidDragState.parentH);
+        activeVideoItem.style.left = `${box.left}%`;
+        activeVideoItem.style.top = `${box.top}%`;
+        activeVideoItem.style.width = `${box.width}%`;
+        activeVideoItem.style.height = `${box.height}%`;
       }
+      placeOverlayActions(activeVideoItem);
     });
 
     window.addEventListener("mouseup", () => {
@@ -26993,48 +27245,35 @@
       const img = document.createElement("img");
       img.src = src;
       img.className = "w-full h-full object-cover pointer-events-none";
+      if (autoSelect) {
+        img.addEventListener(
+          "load",
+          () => {
+            if (fitOverlayBoxToMedia(wrapper, imageOverlayContainer, img.naturalWidth, img.naturalHeight)) {
+              updateImageState(id, wrapper);
+              placeOverlayActions(wrapper);
+            }
+          },
+          { once: true },
+        );
+      }
       wrapper.appendChild(img);
 
-      const handles = ["nw", "ne", "se", "sw"];
-      handles.forEach((dir) => {
-        const h = document.createElement("div");
-        h.className = `img-handle cursor-${dir}-resize absolute w-3.5 h-3.5 bg-white border-2 border-emerald-500 rounded-full z-50 hidden`;
-        if (dir === "nw") {
-          h.style.top = "-6px";
-          h.style.left = "-6px";
-        }
-        if (dir === "ne") {
-          h.style.top = "-6px";
-          h.style.right = "-6px";
-        }
-        if (dir === "se") {
-          h.style.bottom = "-6px";
-          h.style.right = "-6px";
-        }
-        if (dir === "sw") {
-          h.style.bottom = "-6px";
-          h.style.left = "-6px";
-        }
-        h.dataset.dir = dir;
-        wrapper.appendChild(h);
-
-        h.addEventListener("mousedown", (e) => {
-          e.stopPropagation();
-          selectImageItem(wrapper);
-          imgDragState.isResizing = true;
-          imgDragState.dir = dir;
-          imgDragState.startX = e.clientX;
-          imgDragState.startY = e.clientY;
-          imgDragState.startLeft = parseFloat(wrapper.style.left) || 0;
-          imgDragState.startTop = parseFloat(wrapper.style.top) || 0;
-          imgDragState.startWidth = parseFloat(wrapper.style.width) || 0;
-          imgDragState.startHeight = parseFloat(wrapper.style.height) || 0;
-        });
+      addOverlayHandles(wrapper, "img-handle", (dir, e) => {
+        selectImageItem(wrapper);
+        imgDragState.isResizing = true;
+        imgDragState.dir = dir;
+        imgDragState.startX = e.clientX;
+        imgDragState.startY = e.clientY;
+        imgDragState.startLeft = parseFloat(wrapper.style.left) || 0;
+        imgDragState.startTop = parseFloat(wrapper.style.top) || 0;
+        imgDragState.startWidth = parseFloat(wrapper.style.width) || 0;
+        imgDragState.startHeight = parseFloat(wrapper.style.height) || 0;
       });
 
       const delBtn = document.createElement("button");
       delBtn.innerHTML = `<i data-lucide="x" class="w-3.5 h-3.5 text-white"></i>`;
-      delBtn.className = "absolute -top-4 -right-4 bg-red-500 rounded-full p-1 hidden delete-img-btn shadow-lg hover:scale-110 transition-transform z-50";
+      delBtn.className = "bg-red-500 rounded-full p-1 hidden delete-img-btn shadow-lg hover:scale-110 transition-transform";
       delBtn.title = "Delete Overlay";
       delBtn.onclick = (e) => {
         e.stopPropagation();
@@ -27043,17 +27282,16 @@
         activeImageItem = null;
         document.getElementById("text-context-menu").classList.add("hidden");
       };
-      wrapper.appendChild(delBtn);
 
       const applyAllBtn = document.createElement("button");
       applyAllBtn.innerHTML = `<i data-lucide="layers" class="w-3.5 h-3.5 text-white"></i>`;
-      applyAllBtn.className = "absolute -top-4 -left-4 bg-amber-500 hover:bg-amber-400 rounded-full p-1 hidden apply-all-img-btn shadow-lg hover:scale-110 active:scale-95 transition-transform z-50";
+      applyAllBtn.className = "bg-amber-500 hover:bg-amber-400 rounded-full p-1 hidden apply-all-img-btn shadow-lg hover:scale-110 active:scale-95 transition-transform";
       applyAllBtn.title = "Apply all overlays to all project tabs";
       applyAllBtn.onclick = (e) => {
         e.stopPropagation();
         applyImageOverlaysToAllProjects(applyAllBtn);
       };
-      wrapper.appendChild(applyAllBtn);
+      addOverlayActions(wrapper, applyAllBtn, delBtn);
 
       wrapper.addEventListener("mousedown", (e) => {
         e.stopPropagation();
@@ -27136,6 +27374,7 @@
       if (targetWrapper) {
         targetWrapper.style.outline = "2px dashed #10b981";
         targetWrapper.querySelectorAll(".img-handle, .delete-img-btn, .apply-all-img-btn").forEach((h) => (h.style.display = "block"));
+        placeOverlayActions(targetWrapper);
       }
     }
 
@@ -27159,30 +27398,13 @@
       }
 
       if (imgDragState.isResizing) {
-        let newL = imgDragState.startLeft,
-          newT = imgDragState.startTop,
-          newW = imgDragState.startWidth,
-          newH = imgDragState.startHeight;
-        if (imgDragState.dir.includes("e")) newW = imgDragState.startWidth + deltaXPercent;
-        if (imgDragState.dir.includes("s")) newH = imgDragState.startHeight + deltaYPercent;
-        if (imgDragState.dir.includes("w")) {
-          newL = imgDragState.startLeft + deltaXPercent;
-          newW = imgDragState.startWidth - deltaXPercent;
-        }
-        if (imgDragState.dir.includes("n")) {
-          newT = imgDragState.startTop + deltaYPercent;
-          newH = imgDragState.startHeight - deltaYPercent;
-        }
-
-        if (newW > 2 && newL >= 0 && newL + newW <= 100) {
-          activeImageItem.style.left = `${newL}%`;
-          activeImageItem.style.width = `${newW}%`;
-        }
-        if (newH > 2 && newT >= 0 && newT + newH <= 100) {
-          activeImageItem.style.top = `${newT}%`;
-          activeImageItem.style.height = `${newH}%`;
-        }
+        const box = resizeOverlayBox(imgDragState, e, parentRect.width, parentRect.height);
+        activeImageItem.style.left = `${box.left}%`;
+        activeImageItem.style.top = `${box.top}%`;
+        activeImageItem.style.width = `${box.width}%`;
+        activeImageItem.style.height = `${box.height}%`;
       }
+      if (imgDragState.isDragging || imgDragState.isResizing) placeOverlayActions(activeImageItem);
     });
 
     window.addEventListener("mouseup", () => {
@@ -27224,12 +27446,6 @@
         if (imgTag) {
           imgTag.style.borderRadius = `${val}px`;
           imgTag.style.overflow = "hidden";
-
-          if (val > 0) {
-            imgTag.style.objectFit = "cover";
-          } else {
-            imgTag.style.objectFit = "contain";
-          }
         }
 
         const imgState = window.imageOverlays.find((i) => i.id === activeImageItem.dataset.id);
@@ -27518,215 +27734,6 @@
       if (overlayAnimFrame) {
         cancelAnimationFrame(overlayAnimFrame);
         overlayAnimFrame = null;
-      }
-    });
-
-    document.addEventListener("DOMContentLoaded", () => {
-      // Play/Pause — two containers swapped by play state
-      const animPlay = lottie.loadAnimation({
-        container: document.getElementById("lottie-play-icon"),
-        renderer: "svg",
-        loop: false,
-        autoplay: false,
-        path: "assets/animations/iconsax-play.json",
-      });
-      const animPause = lottie.loadAnimation({
-        container: document.getElementById("lottie-pause-icon"),
-        renderer: "svg",
-        loop: false,
-        autoplay: false,
-        path: "assets/animations/iconsax-pause.json",
-      });
-      window._animPlay = animPlay;
-      window._animPause = animPause;
-
-      document.getElementById("btn-play-pause").addEventListener("mouseenter", () => {
-        const anim = isPlaying ? animPause : animPlay;
-        anim.stop();
-        anim.setDirection(1);
-        anim.play();
-      });
-      document.getElementById("btn-play-pause").addEventListener("mouseleave", () => {
-        const anim = isPlaying ? animPause : animPlay;
-        anim.setDirection(-1);
-        anim.play();
-      });
-
-      // Stop — loop forever + bounce on click
-      lottie.loadAnimation({
-        container: document.getElementById("lottie-stop"),
-        renderer: "svg",
-        loop: true,
-        autoplay: false,
-        path: "assets/animations/iconsax-stop.json",
-      });
-
-      // Subtitle — hover to animate + bounce on click
-      const animSubtitle = lottie.loadAnimation({
-        container: document.getElementById("lottie-subtitle"),
-        renderer: "svg",
-        loop: false,
-        autoplay: false,
-        path: "assets/animations/iconsax-subtitle.json",
-      });
-      document.getElementById("btn-toggle-subtitles").addEventListener("mouseenter", () => {
-        animSubtitle.setDirection(1);
-        animSubtitle.play();
-      });
-      document.getElementById("btn-toggle-subtitles").addEventListener("mouseleave", () => {
-        animSubtitle.setDirection(-1);
-        animSubtitle.play();
-      });
-
-      // Volume — two containers, swap hidden/visible on mute state change + bounce on click
-      const animVolHigh = lottie.loadAnimation({
-        container: document.getElementById("lottie-volume-high"),
-        renderer: "svg",
-        loop: false,
-        autoplay: false,
-        path: "assets/animations/iconsax-volume-high.json",
-      });
-      const animVolSlash = lottie.loadAnimation({
-        container: document.getElementById("lottie-volume-slash"),
-        renderer: "svg",
-        loop: false,
-        autoplay: false,
-        path: "assets/animations/iconsax-volume-slash.json",
-      });
-      window._animVolHigh = animVolHigh;
-      window._animVolSlash = animVolSlash;
-
-      document.getElementById("btn-mute-toggle").addEventListener("mouseenter", () => {
-        const anim = isMuted ? animVolSlash : animVolHigh;
-        anim.setDirection(1);
-        anim.play();
-      });
-      document.getElementById("btn-mute-toggle").addEventListener("mouseleave", () => {
-        const anim = isMuted ? animVolSlash : animVolHigh;
-        anim.setDirection(-1);
-        anim.play();
-      });
-
-      // Setup the icons and their paths
-      const animatedIcons = [
-        {
-          containerId: "lottie-subtitle-data",
-          path: "assets/animations/subtitle-data.json",
-        },
-        {
-          containerId: "lottie-timeline-editor",
-          path: "assets/animations/timeline-editor.json",
-        },
-        {
-          btnId: "btn-video-preset",
-          containerId: "lottie-video-preset",
-          path: "assets/animations/video-preset.json",
-        },
-        {
-          btnId: "btn-color-adjust",
-          containerId: "lottie-color-adjust",
-          path: "assets/animations/colorfilter.json",
-        },
-        {
-          btnId: "btn-add-image",
-          containerId: "lottie-add-image",
-          path: "assets/animations/gallery-add.json",
-        },
-        {
-          btnId: "btn-flip-h",
-          containerId: "lottie-flip-h",
-          path: "assets/animations/iconsax-arrow-swap-horizontal.json",
-        },
-        {
-          btnId: "btn-flip-v",
-          containerId: "lottie-flip-v",
-          path: "assets/animations/iconsax-arrow-swap-vertical.json",
-        },
-        {
-          btnId: "btn-crop-mode",
-          containerId: "lottie-crop-mode",
-          path: "assets/animations/iconsax-crop.json",
-        },
-        {
-          btnId: "btn-reset-crop",
-          containerId: "lottie-reset-crop",
-          path: "assets/animations/iconsax-rotate-left.json",
-        },
-        {
-          btnId: "btn-add-free-text",
-          containerId: "lottie-add-free-text",
-          path: "assets/animations/iconsax-text-block.json",
-        },
-        {
-          btnId: "video-title",
-          containerId: "lottie-video-title",
-          path: "assets/animations/video-title.json",
-        },
-        {
-          btnId: "btn-add-video-overlay",
-          containerId: "lottie-video-overlay",
-          path: "assets/animations/video-vertical.json",
-        },
-      ];
-
-      // Loop through and initialize
-      // Loop through and initialize (all icons EXCEPT video-title)
-      animatedIcons.forEach((config) => {
-        if (config.btnId === "video-title") return; // handled separately below
-
-        const container = document.getElementById(config.containerId);
-        if (!container) return;
-
-        // No btnId = always-on loop (the Subtitles / Timeline heading icons)
-        if (!config.btnId) {
-          const idleAnim = lottie.loadAnimation({
-            container: container,
-            renderer: "svg",
-            loop: 3,
-            autoplay: true,
-            path: config.path,
-          });
-          idleAnim.setSubframe(false);
-          (container.parentElement || container).addEventListener("mouseenter", () => idleAnim.goToAndPlay(0, true));
-          return;
-        }
-
-        const btn = document.getElementById(config.btnId);
-        if (!btn) return;
-
-        const anim = lottie.loadAnimation({
-          container: container,
-          renderer: "svg",
-          loop: false,
-          autoplay: false,
-          path: config.path,
-        });
-
-        // Play forward on hover
-        btn.addEventListener("mouseenter", () => {
-          anim.setDirection(1);
-          anim.play();
-        });
-
-        // Rewind smoothly on mouse leave
-        btn.addEventListener("mouseleave", () => {
-          anim.setDirection(-1);
-          anim.play();
-        });
-      });
-
-      // video-title icon: loops forever automatically, no hover needed
-      const videoTitleContainer = document.getElementById("lottie-video-title");
-      if (videoTitleContainer) {
-        const titleAnim = lottie.loadAnimation({
-          container: videoTitleContainer,
-          renderer: "svg",
-          loop: 3,
-          autoplay: true,
-          path: "assets/animations/video-title.json",
-        });
-        titleAnim.setSubframe(false);
-        (videoTitleContainer.parentElement || videoTitleContainer).addEventListener("mouseenter", () => titleAnim.goToAndPlay(0, true));
       }
     });
 
@@ -28316,9 +28323,25 @@
         btn.title = ar ? `Aspect Ratio: ${ar.w}×${ar.h}` : "Aspect Ratio";
       }
 
+      const sameAR = (a, b) => (!a && !b) || (!!a && !!b && a.w === b.w && a.h === b.h && (a.fit || "crop") === (b.fit || "crop"));
+
       // ── Core: apply AR to one project object without switching tabs ─
-      function applyARToProject(proj, ar) {
+      // A tab whose shape changes starts from the full picture again: a zoom or position
+      // chosen for the old shape leaves black bars or cuts off the wrong part, and needed
+      // Reset by hand on every tab. A tab that already had this AR keeps its framing.
+      function applyARToProject(proj, ar, isActive) {
+        const changed = !sameAR(proj.customAspectRatio, ar);
         proj.customAspectRatio = ar ? { ...ar } : null;
+        if (!changed) return;
+        if (isActive) {
+          resetVideoFraming();
+        } else {
+          proj.cropConfig = { x: 0, y: 0, w: 100, h: 100 };
+          proj.videoPan = { x: 0, y: 0 };
+          proj.videoZoom = 1;
+          proj.videoScaleX = 1;
+          proj.videoScaleY = 1;
+        }
       }
 
       function openModal() {
@@ -28345,7 +28368,7 @@
       function applyAR(ar) {
         const activeProj = typeof activeProjectIndex !== "undefined" ? (typeof projects !== "undefined" ? projects[activeProjectIndex] : null) : null;
         window.customAspectRatio = ar;
-        if (activeProj) applyARToProject(activeProj, ar);
+        if (activeProj) applyARToProject(activeProj, ar, true);
         updatePreviewAspect();
         updateARButtonState();
         currentLbl.textContent = ar ? `${ar.w}×${ar.h}` : "Original";
@@ -28368,8 +28391,8 @@
         const allProjects = typeof projects !== "undefined" ? projects : [];
         if (allProjects.length === 0) return;
 
-        // 1. Write AR into every project object in memory
-        allProjects.forEach((proj) => applyARToProject(proj, ar));
+        // 1. Write AR into every project object in memory (and reset framing where the shape changed)
+        allProjects.forEach((proj, i) => applyARToProject(proj, ar, i === activeProjectIndex));
 
         // 2. Apply live to the currently visible tab
         window.customAspectRatio = ar;
