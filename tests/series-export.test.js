@@ -62,27 +62,28 @@ function makeSeries({ parts = 3, outcome = () => 'done', renderMs = 10, dubMs = 
 
     // The render queue: runs pending items one at a time; Stop cancels what hasn't finished.
     const renderQueue = env.renderQueue;
-    let queueRunning = false, queueStops = 0, stopRequested = false;
+    let queueRunning = false, queueStops = 0, queueStopRequested = false;
+    const fetch = async () => { }; // the server's cancel-render
     const renderQueueList = () => { };
     const runRenderQueue = async (only) => {
       if (queueRunning) return;
       queueRunning = true;
-      stopRequested = false;
+      queueStopRequested = false;
       for (const item of renderQueue) {
-        if (stopRequested) break;
+        if (queueStopRequested) break;
         if (item.status !== 'pending' || (only && !only.has(item))) continue;
         item.status = 'running';
         item.tries = (item.tries || 0) + 1;
         env.log.push('render ' + item.tab);
         await sleep(renderMs);
-        item.status = stopRequested ? 'cancelled' : outcome(item);
+        item.status = queueStopRequested ? 'cancelled' : outcome(item);
       }
       queueRunning = false;
-      stopRequested = false;
+      queueStopRequested = false;
     };
     const stopRenderQueue = async () => {
       if (!queueRunning) return;
-      stopRequested = true;
+      queueStopRequested = true;
       queueStops++;
       renderQueue.forEach((i) => { if (i.status === 'pending') i.status = 'cancelled'; });
     };
@@ -96,6 +97,7 @@ function makeSeries({ parts = 3, outcome = () => 'done', renderMs = 10, dubMs = 
       },
       renderItems: renderSeriesItems,
       stop: stopRenderQueue,
+      stopItems: stopSeriesItems, // the real one (in renderBlock)
     } };
 
     let stopSeriesBackgroundExport = () => { };

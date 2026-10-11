@@ -110,12 +110,22 @@
       show(saved || "subs");
     })();
 
-    // Header "Auto Save" chip: lit while Settings › Auto Save Subtitle is on.
+    // Header "Auto Save" status: lit while Settings › Auto Save Subtitle is on,
+    // and names the time of the last save ("Saved 5 minutes ago").
     // A click presses that switch (data-click); its class change re-syncs the chip.
     (function () {
       const chip = document.getElementById("hdr-autosave");
+      const text = document.getElementById("hdr-autosave-text");
       const toggle = document.getElementById("autosave-srt-toggle");
       if (!chip) return;
+      let lastSaved = 0;
+      const ago = (ms) => {
+        const mins = Math.floor(ms / 60000);
+        if (mins < 1) return "just now";
+        if (mins < 60) return `${mins} minute${mins === 1 ? "" : "s"} ago`;
+        const hrs = Math.floor(mins / 60);
+        return `${hrs} hour${hrs === 1 ? "" : "s"} ago`;
+      };
       const sync = () => {
         let on = false;
         try {
@@ -123,9 +133,100 @@
         } catch (e) {}
         chip.classList.toggle("is-on", on);
         chip.setAttribute("aria-pressed", on ? "true" : "false");
+        if (text) text.textContent = !on ? "Auto Save off" : lastSaved ? `Saved ${ago(Date.now() - lastSaved)}` : "Auto Save on";
       };
       sync();
       if (toggle) new MutationObserver(sync).observe(toggle, { attributes: true, attributeFilter: ["class"] });
+      window.addEventListener("dr:srt-autosaved", () => {
+        lastSaved = Date.now();
+        sync();
+      });
+      setInterval(() => lastSaved && sync(), 30000);
+    })();
+
+    // Header drop-down menus (project, Quick Tools, Export): a button with
+    // data-hdr-menu opens the menu it names. A click on a menu row, anywhere
+    // else, or Escape closes it.
+    (function () {
+      const triggers = document.querySelectorAll("[data-hdr-menu]");
+      if (!triggers.length) return;
+      let open = null;
+
+      const setOpen = (trigger) => {
+        triggers.forEach((t) => {
+          const menu = document.getElementById(t.dataset.hdrMenu);
+          const isOpen = t === trigger;
+          if (menu) menu.hidden = !isOpen;
+          t.classList.toggle("is-open", isOpen);
+          t.setAttribute("aria-expanded", isOpen ? "true" : "false");
+        });
+        open = trigger || null;
+        if (!open) return;
+        // Shortcut rows follow their tool: disabled while it is (no video yet,
+        // or Render Video while a render runs).
+        const menu = document.getElementById(open.dataset.hdrMenu);
+        menu?.querySelectorAll("[data-click]").forEach((row) => {
+          const tool = document.getElementById(row.dataset.click);
+          if (tool) row.disabled = tool.disabled || (tool.id === "btn-render" && tool.classList.contains("bg-red-600"));
+        });
+      };
+
+      triggers.forEach((t) =>
+        t.addEventListener("click", () => setOpen(open === t ? null : t))
+      );
+
+      document.addEventListener("click", (e) => {
+        if (!open) return;
+        const menu = document.getElementById(open.dataset.hdrMenu);
+        if (open.contains(e.target)) return;
+        // Rows close the menu; the ✕ on a project tab keeps it open.
+        if (menu && menu.contains(e.target) && !e.target.closest(".hdr-menu__item, .proj-tab-btn")) return;
+        if (e.target.closest(".close-tab")) return;
+        setOpen(null);
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && open) setOpen(null);
+      });
+    })();
+
+    // Header project pill: names the active project tab. The tabs themselves
+    // (studio-main.js renderProjectTabs) live in the pill's menu.
+    (function () {
+      const bar = document.getElementById("project-tabs-bar");
+      const name = document.getElementById("hdr-project-name");
+      if (!bar || !name) return;
+      const fallback = name.textContent;
+      const sync = () => {
+        const active = bar.querySelector(".proj-tab-btn.font-semibold");
+        const title = active ? (active.title || "").replace(/\s*\(.*\)$/, "").replace(/\.[^/.]+$/, "") : "";
+        name.textContent = title || fallback;
+        name.title = active?.title || "";
+      };
+      sync();
+      new MutationObserver(sync).observe(bar, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "title"] });
+    })();
+
+    // Header light / dark switch: #theme-toggle flips the mode (studio-main.js);
+    // pressing the half that is already active does nothing.
+    (function () {
+      const group = document.getElementById("theme-toggle");
+      if (!group) return;
+      const root = document.documentElement;
+      const sync = () => {
+        const mode = root.classList.contains("light-theme") ? "light" : "dark";
+        group.querySelectorAll("[data-theme-opt]").forEach((opt) => {
+          const active = opt.dataset.themeOpt === mode;
+          opt.classList.toggle("is-active", active);
+          opt.setAttribute("aria-pressed", active ? "true" : "false");
+        });
+      };
+      group.querySelectorAll("[data-theme-opt]").forEach((opt) =>
+        opt.addEventListener("click", (e) => {
+          if (opt.classList.contains("is-active")) e.stopPropagation();
+        })
+      );
+      sync();
+      new MutationObserver(sync).observe(root, { attributes: true, attributeFilter: ["class"] });
     })();
 
     // Video inspector (preset / colour / vignette panels): its close button

@@ -311,10 +311,18 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
         await Promise.all(Array.from({ length: Math.min(4, all.length) }, async () => {
             while (next < all.length && !job.cancelled) {
                 const { part, file, i } = all[next++];
-                const info = await probe(file);
-                if (info.error) continue;
-                const d = describe(info);
-                if ((!d.video && !d.audio) || !(d.duration > 0)) continue;
+                // Every file was readable when the folder was scanned: a read that fails now
+                // (timed out beside other jobs, locked by a sync app) gets one more try.
+                let info = await probe(file);
+                if (info.error && !job.cancelled) {
+                    await new Promise(r => setTimeout(r, 2000));
+                    info = await probe(file);
+                }
+                const d = info.error ? null : describe(info);
+                if (!d || (!d.video && !d.audio) || !(d.duration > 0)) {
+                    (part.unreadable = part.unreadable || []).push(`${path.basename(file)} (${info.error || 'no audio or video'})`);
+                    continue;
+                }
                 part.found[i] = { path: file, name: path.basename(file), episode: episodeNumber(path.basename(file)), ...d };
             }
         }));
@@ -322,6 +330,9 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
             part.episodes = part.found.filter(Boolean);
             delete part.found;
             if (!part.episodes.length && !job.cancelled) Object.assign(part, { status: 'error', error: 'none of its files can be read' });
+            // Joined without it, the part would be missing an episode and still say "done".
+            else if (part.unreadable && !job.cancelled) Object.assign(part, { status: 'error', error: `${part.unreadable.length} episode(s) could not be read: ${part.unreadable.slice(0, 3).join(', ')}` });
+            delete part.unreadable;
             // No episode has video: the part is audio only, saved as .m4a.
             part.audioOnly = part.episodes.length > 0 && part.episodes.every(e => !e.video);
             if (part.audioOnly) part.outPath = part.outPath.replace(/\.mp4$/i, '.m4a');
@@ -355,7 +366,7 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
                 try {
                     part.status = 'running';
                     if (part.audioOnly) {
-                        const partial = part.outPath + '.part.mp4';
+                        const partial = partialPath(job, part); // each job its own: two jobs on one part never delete each other's
                         await buildPartAudio(job, part, partial, progress);
                         fs.renameSync(partial, part.outPath);
                         fs.writeFileSync(episodesListPath(part), episodesListText(part));
@@ -379,7 +390,7 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
                     const failedHalf = halves.find((h) => h.status === 'rejected');
                     if (failedHalf) throw failedHalf.reason;
                     part.videoMode = job.videoMode;
-                    const partial = part.outPath + '.part.mp4';
+                    const partial = partialPath(job, part); // each job its own: two jobs on one part never delete each other's
                     const r = await runFFmpeg(job, ['-hide_banner', '-nostdin', '-y', '-i', videoPath, '-i', audioPath, '-map', '0:v:0', '-map', '1:a:0',
                         '-c', 'copy', '-movflags', '+faststart', '-shortest', partial]);
                     if (r.code !== 0) throw new Error(`could not combine audio and video: ${lastLine(r.tail)}`);
@@ -394,8 +405,9 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
                     part.error = e.message;
                     console.warn(`[Join] Part ${p + 1} failed:`, e.message);
                 } finally {
-                    fs.rm(workDir, { recursive: true, force: true }, () => { });
-                    fs.rm(part.outPath + '.part.mp4', { force: true }, () => { });
+                    // Retried: on Windows an FFmpeg that is still exiting keeps its files locked (EBUSY).
+                    fs.rm(workDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 1000 }, () => { });
+                    fs.rm(partialPath(job, part), { force: true, maxRetries: 10, retryDelay: 1000 }, () => { });
                 }
             }
         } finally {
@@ -409,6 +421,7 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
     async function start({ parts, outDir, seriesName, partNumbers }) {
         if (!Array.isArray(parts) || !parts.length) throw new Error('No parts to join.');
         fs.mkdirSync(outDir, { recursive: true });
+        sweepStaleJoinFiles(outDir);
         const safeName = String(seriesName || 'Drama').replace(/[<>:"/\\|?*]+/g, '').trim() || 'Drama';
         const job = { id: crypto.randomUUID(), status: 'running', current: 0, cancelled: false, partFailed: null, procs: new Set(), outDir, repairedEpisodes: [], parts: [] };
         for (let p = 0; p < parts.length; p++) {
@@ -421,6 +434,24 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
         jobs.set(job.id, job);
         runJob(job);
         return job.id;
+    }
+
+    const partialPath = (job, part) => `${part.outPath}.${job.id.slice(0, 8)}.part.mp4`;
+
+    // Work folders and half-joined files a crash, a Stop or a locked file left behind - each try
+    // makes new ones, so they pile up (gigabytes of converted episodes). Only old ones: a job
+    // running right now is never touched.
+    const STALE_JOIN_MS = 6 * 60 * 60 * 1000;
+    function sweepStaleJoinFiles(outDir) {
+        let names = [];
+        try { names = fs.readdirSync(outDir); } catch (e) { return; }
+        for (const name of names) {
+            if (!/^\.join_tmp_/.test(name) && !/\.part\.mp4$/i.test(name)) continue;
+            const p = path.join(outDir, name);
+            try {
+                if (Date.now() - fs.statSync(p).mtimeMs > STALE_JOIN_MS) fs.rm(p, { recursive: true, force: true, maxRetries: 5, retryDelay: 1000 }, () => { });
+            } catch (e) { }
+        }
     }
 
     function status(jobId) {

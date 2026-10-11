@@ -36,6 +36,7 @@ function makeStep(tabs, runs) {
     const run = runs[calls.length] || runs[runs.length - 1];
     calls.push(opts);
     const res = { total: tabs.length, fellBack: [], failed: [], substituted: [] };
+    if (run === 'STOPPED') return { ...res, ok: true, stopped: true }; // stopped by its own button
     for (const p of opts.only || tabs) {
       const r = run(p);
       if (r === 'fail') { p.bgmError = 'boom'; res.failed.push(p); continue; }
@@ -48,14 +49,17 @@ function makeStep(tabs, runs) {
   };
   const isolateStep = new Function('projects', 'isolateBgmAllProjects', 'vocalEngineSetting', 'VOCAL_ENGINE_LABELS', `
     const plan = { current: 0, parts: [{}] };
+    const isIsolatingBgmAll = false;
+    const fmtDur = (sec) => { const s = Math.round(sec), m = Math.floor(s / 60); return m + ":" + String(s % 60).padStart(2, "0"); };
+    let stopSeriesBackgroundIsolate = () => { };
     const checkStop = () => { };
     const setLabel = () => { };
     const stoppedError = () => new Error('stopped');
     const tabNumbers = (list) => list.map((p) => projects.indexOf(p) + 1).join(", ");
     ${block}
-    return isolateStep;
+    return Object.assign(isolateStep, { startBackgroundIsolate });
   `)(tabs, isolateBgmAllProjects, () => 'mdx', LABELS);
-  return { isolateStep, calls };
+  return { isolateStep, calls, startBackgroundIsolate: isolateStep.startBackgroundIsolate };
 }
 
 const tabs = (n) => Array.from({ length: n }, (_, i) => ({ name: `tab${i + 1}` }));
@@ -120,4 +124,52 @@ test('a crash that is gone on the retry goes on, with the no-engine tabs noted',
   const note = await isolateStep();
   assert.match(note, /1 tab\(s\) needed a second try/);
   assert.match(note, /tab 2 used FFmpeg phase cancellation/);
+});
+
+// Isolate BGM starts beside Transcribe and Generate (runPart); the step only waits for it.
+test('isolated in the background: the step waits for that run instead of isolating again', async () => {
+  const t = tabs(3);
+  const { isolateStep, calls, startBackgroundIsolate } = makeStep(t, [() => ({ method: 'mdx' })]);
+  startBackgroundIsolate();
+  startBackgroundIsolate(); // already running: not started twice
+  assert.equal(calls.length, 1);
+  const note = await isolateStep();
+  assert.equal(calls.length, 1);
+  assert.match(note, /^3 of 3 tabs/);
+});
+
+test('a background run stopped by its own button is isolated again by the step', async () => {
+  const t = tabs(2);
+  const { isolateStep, calls, startBackgroundIsolate } = makeStep(t, ['STOPPED', () => ({ method: 'mdx' })]);
+  startBackgroundIsolate();
+  assert.match(await isolateStep(), /^2 of 2 tabs/);
+  assert.equal(calls.length, 2);
+});
+
+test('the open part is isolated beside Transcribe once its subtitles are found', () => {
+  assert.match(src, /if \(finding\) finding\.then\(startIsolate\);\r?\n\s+else startIsolate\(\);/);
+  // A tab being isolated can still be transcribed (DAI skips busy tabs).
+  assert.match(src, /isTabBusy: \(ref\) => !!\(ref && \(ref\.isTranscribing \|\| ref\.isGeneratingAudio \|\| ref\.isBatchTranscribing \|\| ref\.isFixingMissing\)\)/);
+  // A pause or Stop ends it, so Continue isn't blocked by "another job is running".
+  assert.match(src, /stopSeriesBackgroundIsolate\(\);\r?\n\s+seriesRun = null;/);
+});
+
+test('the note says how long the background isolation took (does it still hold the part up?)', async () => {
+  const realNow = Date.now;
+  let clock = 1_000_000;
+  Date.now = () => clock;
+  try {
+    const t = tabs(2);
+    const { isolateStep, startBackgroundIsolate } = makeStep(t, [(p) => { clock += 95_000; return { method: 'mdx' }; }]);
+    startBackgroundIsolate(); // 2 tabs x 95 s
+    assert.match(await isolateStep(), /^2 of 2 tabs · isolated in 3:10 beside the other steps$/);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test('every step keeps how long it took, and the part report keeps the times', () => {
+  assert.match(src, /plan\.stepState\[name\] = \{ state: "done", note: note \|\| "", ms: Date\.now\(\) - startedAt \};/);
+  assert.match(src, /\[k, \{ state: v\.state, note: v\.note \|\| "", ms: v\.ms \|\| 0 \}\]/);
+  assert.match(src, /Steps took \$\{fmtDur\(stepsTotalMs\(p\.report\.steps\) \/ 1000\)\} in all/);
 });

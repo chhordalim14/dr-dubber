@@ -353,7 +353,7 @@
     const transModelSelect = $('dai-trans-model-select');
 
     if (badge) {
-      badge.onclick = () => openApiKeyModal();
+      badge.onclick = () => openApiKeySettings();
       if (keys.length > 0) {
         badge.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
           <span>${keys.length} API Key${keys.length > 1 ? 's' : ''} Active</span>
@@ -1024,6 +1024,7 @@
             apiKeys: ownKey ? [ownKey, ...liveKeys.filter((k) => k !== ownKey)] : [...liveKeys.slice(offset), ...liveKeys.slice(0, offset)],
             maxLanes: keyPerTab ? 1 : null,
             stayOnModel: keyPerTab,
+            forSeries: keyPerTab,
             model,
             genre,
             glossaryDict,
@@ -1059,6 +1060,7 @@
           }
           item.status = 'failed';
           item.error = err.message || 'Processing failed';
+          item.errorCode = err.code || null; // INVALID_API_KEY: Google refused every key tried
           console.error(`[DAI Batch] Error processing ${item.fileName}:`, err);
           if (err.isDailyQuota && !quotaOut) {
             quotaOut = true;
@@ -1092,6 +1094,9 @@
       fallbackTabs: pendingItems.filter(q => reachedTab(q) && q.fallbackModels?.length).map(q => ({ tab: q.targetTab, models: q.fallbackModels })),
       total: pendingItems.length,
       quotaOut,
+      // Google's own words for a refused key (dead, deleted or restricted): trying again can't
+      // fix it, a new key in Settings can.
+      keyRefused: pendingItems.find(q => q.status === 'failed' && q.errorCode === 'INVALID_API_KEY')?.error || null,
       stopped: batchAbort.signal.aborted
     });
     if (state.batchAbortController !== batchAbort || batchAbort.signal.aborted) return batchSummary();
@@ -1104,8 +1109,11 @@
     renderQueueTable();
 
     const successCount = state.queue.filter(q => q.status === 'completed').length;
+    const failedItems = pendingItems.filter(q => q.status === 'failed'); // this run's files only
     if (quotaOut) {
       showToast(`Batch paused: daily Gemini quota used up. ${successCount}/${state.queue.length} completed - press Start again after the reset to continue.`, 'warning');
+    } else if (failedItems.length === pendingItems.length && failedItems.length) {
+      showToast(`Batch failed: 0/${pendingItems.length} completed. ${failedItems[0].error || ''}`.trim(), 'error');
     } else {
       showToast(`🎉 Batch processing finished! ${successCount}/${state.queue.length} completed.`, 'success');
     }
@@ -1171,7 +1179,7 @@
   }
 
   async function processSingleBatchItem(item, opts) {
-    const { apiKeys, model, genre, glossaryDict, customFolder, signal, stayOnModel = false, maxLanes = null } = opts;
+    const { apiKeys, model, genre, glossaryDict, customFolder, signal, stayOnModel = false, maxLanes = null, forSeries = false } = opts;
     const backendBase = getBackendBase();
 
     // Step 1: Extract Audio (if video or not already an mp3)
@@ -1285,6 +1293,8 @@
             sourceFilePath: item.filePath,
             apiSaver: localStorage.getItem('aiDubberApiSaver') !== 'false',
             stayOnModel,
+            // Dub Whole Series matches the lines to the video and fits the voices afterwards.
+            ...(forSeries ? { fitToTime: false } : {}),
             ...(maxLanes ? { maxLanes } : {})
           }),
           signal
@@ -1308,7 +1318,13 @@
     if (!Array.isArray(rawCues) || rawCues.length === 0) {
       throw new Error('No spoken dialogue detected in audio.');
     }
-    if (!item.reusedSaved && item.filePath) {
+    // Kept for a later run only when it is complete: a result with holes (lines left without
+    // Khmer, a missed-dialogue check that failed, lines merged by a fallback model) is
+    // transcribed again next time instead of being reused as it is.
+    const repairReport = transcribeResult.repair || {};
+    const incomplete = repairReport.stillUntranslated > 0 || !!repairReport.translateError || !!repairReport.quotaError || !!repairReport.gapsFailed || !!repairReport.gapsSkippedForTime ||
+      (transcribeResult.fallbackModels || []).length > 0;
+    if (!item.reusedSaved && item.filePath && !incomplete) {
       fetch(`${backendBase}/api/batch-result/save`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1776,6 +1792,15 @@
     skipped: ['Skipped', 'text-[var(--text-muted)]'],
   };
 
+  // " · 84k tokens · 6 long lines fitted" for the done message (the server's token count and the
+  // lines it re-worded to fit their time). Empty when there's nothing to say.
+  function translateStatsNote(tokens, fitted) {
+    const parts = [];
+    if (tokens > 0) parts.push(`${tokens >= 1000 ? `${Math.round(tokens / 1000)}k` : tokens} tokens`);
+    if (fitted > 0) parts.push(`${fitted} long line(s) fitted to their time`);
+    return parts.length ? ` · ${parts.join(' · ')}` : '';
+  }
+
   function loadTabsIntoTranslator() {
     const bridge = window.dubberBridge;
     state.translator.tabJobs = (bridge ? bridge.tabTranscripts() : []).map((t) => ({
@@ -1819,7 +1844,8 @@
       showToast('No tab has an original-language transcript to translate. Transcribe the tabs first.', 'warning');
       return;
     }
-    const apiKeys = getActiveApiKeys();
+    // No Gemini key but CodeCraft set up (Settings → API): the server translates with CodeCraft.
+    const apiKeys = getActiveApiKeys().length ? getActiveApiKeys() : (window.textAi?.ready() ? [''] : []);
     if (apiKeys.length === 0) {
       showToast('Please add your Gemini API Key in Settings ➔ General.', 'error');
       document.getElementById('btn-open-settings')?.click();
@@ -1845,7 +1871,7 @@
     const progressLabel = $('dai-trans-progress-label');
     progressBox?.classList.remove('hidden');
 
-    let doneTabs = 0, changedLines = 0, stoppedFor = null;
+    let doneTabs = 0, changedLines = 0, stoppedFor = null, usageTotal = 0, fittedLines = 0;
     const transConcurrency = Math.max(1, Math.min(3, jobs.length));
     let nextJobIdx = 0;
     const retryJobs = []; // tabs that failed for a passing reason: taken before new ones
@@ -1882,7 +1908,7 @@
           const res = await fetch(`${getBackendBase()}/api/translate-srt`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ srtText, genre, dramaRegister: genre, glossary: glossaryDict, apiKey: workerKeys[0], apiKeys: workerKeys, model, requestId }),
+            body: JSON.stringify({ srtText, genre, dramaRegister: genre, glossary: glossaryDict, apiKey: workerKeys[0], apiKeys: workerKeys, model, requestId, sourceFilePath: job.sourceFilePath || null }),
             signal: state.translator.abortController.signal
           });
           const data = await res.json();
@@ -1890,6 +1916,9 @@
           if (!data.success || !Array.isArray(data.data)) {
             throw Object.assign(new Error(data.message || data.error || 'Translation failed'), { code: data.error, status: data.status });
           }
+          if (data.notice) job.notice = data.notice;
+          if (data.usage) usageTotal += (data.usage.input || 0) + (data.usage.output || 0) + (data.usage.thinking || 0);
+          fittedLines += data.fitted || 0;
           const results = job.lines
             .map((l, i) => data.data[i] && { id: l.id, text: data.data[i].text, gender: data.data[i].gender, emotion: data.data[i].emotion })
             .filter(Boolean);
@@ -1943,7 +1972,9 @@
     if (progressLabel) progressLabel.textContent = `${doneTabs}/${jobs.length} tab(s) translated`;
     if (stoppedFor) showToast(`Stopped: ${stoppedFor}. Finished tabs are kept - run again later for the rest.`, 'error');
     else if (stopped) showToast(`Translation stopped. ${doneTabs} tab(s) were translated.`, 'warning');
-    else showToast(`✓ Translated ${doneTabs}/${jobs.length} tab(s), ${changedLines} line(s) changed. Generate the voices again for those tabs.`, doneTabs === jobs.length ? 'success' : 'warning');
+    else showToast(`✓ Translated ${doneTabs}/${jobs.length} tab(s), ${changedLines} line(s) changed${translateStatsNote(usageTotal, fittedLines)}. Generate the voices again for those tabs.`, doneTabs === jobs.length ? 'success' : 'warning');
+    const notice = jobs.map((j) => j.notice).find(Boolean);
+    if (notice) showToast(notice, 'warning'); // CodeCraft failed; the Gemini keys finished those tabs
   }
 
   // Toolbar "DAI Translate All": open the translator on the All Project Tabs queue.
@@ -1969,7 +2000,7 @@
       return;
     }
 
-    const apiKeys = getActiveApiKeys();
+    const apiKeys = getActiveApiKeys().length ? getActiveApiKeys() : (window.textAi?.ready() ? [''] : []);
     if (apiKeys.length === 0) {
       showToast('Please add your Gemini API Key in Settings ➔ General.', 'error');
       document.getElementById('btn-open-settings')?.click();
@@ -1996,7 +2027,7 @@
     if (progressBox) progressBox.classList.remove('hidden');
 
     try {
-      showToast('Translating subtitle with Gemini Large File Engine...', 'info');
+      showToast(`Translating subtitle with ${window.textAi?.ready() ? window.textAi.label() : 'Gemini Large File Engine'}...`, 'info');
       const backendBase = getBackendBase();
       const res = await fetch(`${backendBase}/api/translate-srt`, {
         method: 'POST',
@@ -2016,8 +2047,9 @@
 
       const data = await res.json();
       if (!data.success) {
-        throw new Error(data.error || 'Subtitle translation failed');
+        throw new Error(data.message || data.error || 'Subtitle translation failed');
       }
+      if (data.notice) showToast(data.notice, 'warning'); // CodeCraft failed; the Gemini keys finished it
 
       // Format translated results
       if (window.dubberBridge) {
@@ -2034,7 +2066,8 @@
         renderTranslatorResultsTable(parsed);
       }
 
-      showToast('Subtitle translation completed!', 'success');
+      const usageTokens = data.usage ? (data.usage.input || 0) + (data.usage.output || 0) + (data.usage.thinking || 0) : 0;
+      showToast(`Subtitle translation completed${translateStatsNote(usageTokens, data.fitted || 0)}!`, 'success');
       if (progressLabel) progressLabel.textContent = 'Translation Complete';
     } catch (err) {
       if (progressLabel) progressLabel.textContent = err.name === 'AbortError' ? 'Translation stopped' : 'Translation failed';
@@ -2206,173 +2239,29 @@
   }
 
   // ──────────────────────────────────────────────────────────────────────────
-  // API KEY MANAGEMENT
+  // API KEYS live in Settings → API (one key list for the whole app, with each key's
+  // quota state - refreshKeyStatuses fills those rows). The key badge opens it.
   // ──────────────────────────────────────────────────────────────────────────
 
-  function openApiKeyModal() {
-    const modal = $('dai-apikey-modal');
-    if (!modal) return;
-    renderApiKeyList();
-    modal.classList.remove('hidden');
-    modal.classList.add('flex');
+  function openApiKeySettings() {
+    const settings = document.getElementById('modal-settings');
+    // Opened over this studio (z 990): lift Settings above it until it closes. Its own pop-ups
+    // (z 996+) stay above Settings.
+    if (settings && !$('modal-dai-transcribe')?.classList.contains('hidden')) {
+      settings.style.zIndex = '994';
+      const obs = new MutationObserver(() => {
+        if (!settings.classList.contains('hidden')) return;
+        settings.style.zIndex = '';
+        obs.disconnect();
+        updateApiStatusDisplay();
+      });
+      obs.observe(settings, { attributes: true, attributeFilter: ['class'] });
+    }
+    document.getElementById('btn-open-settings')?.click();
     setTimeout(() => {
-      $('dai-new-apikey-input')?.focus();
-    }, 100);
-    if (window.lucide && typeof window.lucide.createIcons === 'function') {
-      window.lucide.createIcons();
-    }
-  }
-
-  function closeApiKeyModal() {
-    const modal = $('dai-apikey-modal');
-    if (modal) {
-      modal.classList.add('hidden');
-      modal.classList.remove('flex');
-    }
-    updateApiStatusDisplay();
-  }
-
-  function renderApiKeyList() {
-    const listEl = $('dai-apikey-list');
-    const countEl = $('dai-apikey-count');
-    const keys = getActiveApiKeys();
-
-    if (countEl) countEl.textContent = keys.length;
-    if (!listEl) return;
-
-    if (keys.length === 0) {
-      listEl.innerHTML = `
-        <div class="p-6 text-center text-xs text-[var(--text-muted)] flex flex-col items-center gap-2">
-          <i data-lucide="key-round" class="w-8 h-8 text-slate-500 opacity-60"></i>
-          <p class="font-medium text-slate-300">No Gemini API keys configured yet</p>
-          <p class="text-[11px] max-w-xs text-slate-400">Add an API key above from Google AI Studio to unlock automated batch transcription and translation.</p>
-        </div>
-      `;
-      if (window.lucide && typeof window.lucide.createIcons === 'function') {
-        window.lucide.createIcons();
-      }
-      return;
-    }
-
-    listEl.innerHTML = keys.map((key, idx) => {
-      const masked = key.length > 12 
-        ? `${key.slice(0, 8)}••••••••${key.slice(-4)}` 
-        : '••••••••••••';
-      return `
-        <div class="px-3 py-2.5 flex items-center justify-between hover:bg-[var(--bg-hover)] transition-colors group">
-          <div class="flex items-center gap-2.5 min-w-0">
-            <span class="w-5 h-5 rounded-full bg-indigo-500/20 text-indigo-300 flex items-center justify-center text-[10px] font-bold shrink-0">
-              ${idx + 1}
-            </span>
-            <div class="flex flex-col min-w-0">
-              <span class="font-mono text-xs text-slate-200 select-all truncate">${escapeHtml(masked)}</span>
-              <span data-dai-keystatus="${idx}" class="text-[10px] text-emerald-400 flex items-center gap-1 min-w-0">
-                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0"></span> Active Key Pool
-              </span>
-            </div>
-          </div>
-          <div class="flex items-center gap-1 shrink-0">
-            <button type="button" title="Copy Key" data-dai-key-action="copy" data-dai-key-idx="${idx}"
-              class="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-white hover:bg-slate-700/50 transition-colors">
-              <i data-lucide="copy" class="w-3.5 h-3.5"></i>
-            </button>
-            <button type="button" title="Remove Key" data-dai-key-action="remove" data-dai-key-idx="${idx}"
-              class="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-rose-400 hover:bg-rose-500/10 transition-colors">
-              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
-            </button>
-          </div>
-        </div>
-      `;
-    }).join('');
-
-    listEl.querySelectorAll('button[data-dai-key-action]').forEach((btn) => {
-      const idx = Number(btn.getAttribute('data-dai-key-idx'));
-      const action = btn.getAttribute('data-dai-key-action');
-      btn.addEventListener('click', () => {
-        if (!window.daiStudio) return;
-        if (action === 'copy') window.daiStudio.copyApiKey(idx);
-        else window.daiStudio.removeApiKey(idx);
-      });
-    });
-
-    if (window.lucide && typeof window.lucide.createIcons === 'function') {
-      window.lucide.createIcons();
-    }
-    refreshKeyStatuses();
-  }
-
-  function addApiKey(rawKey) {
-    const key = (rawKey || '').trim();
-    if (!key) return;
-
-    if (key.length < 20) {
-      showToast("API key is too short. Please paste a valid Gemini API Key from Google AI Studio.", "error");
-      return;
-    }
-
-    let keys = [];
-    try {
-      keys = JSON.parse(localStorage.getItem('aiDubberApiKeys') || '[]');
-      if (!Array.isArray(keys)) keys = [];
-    } catch (e) {
-      keys = [];
-    }
-
-    if (keys.includes(key)) {
-      showToast("This API Key is already in your pool.", "warning");
-      return;
-    }
-
-    keys.push(key);
-    localStorage.setItem('aiDubberApiKeys', JSON.stringify(keys));
-    if (!localStorage.getItem('aiDubberApiKey')) {
-      localStorage.setItem('aiDubberApiKey', key);
-    }
-
-    const input = $('dai-new-apikey-input');
-    if (input) input.value = '';
-
-    renderApiKeyList();
-    updateApiStatusDisplay();
-    showToast(`Added Gemini API Key (${keys.length} active in pool)`, "success");
-
-    // Also sync global settings if open
-    try { window.dubberBridge?.reloadApiKeys(); } catch (e) {}
-  }
-
-  function removeApiKey(index) {
-    let keys = [];
-    try {
-      keys = JSON.parse(localStorage.getItem('aiDubberApiKeys') || '[]');
-    } catch (e) {
-      keys = [];
-    }
-
-    if (index >= 0 && index < keys.length) {
-      keys.splice(index, 1);
-      localStorage.setItem('aiDubberApiKeys', JSON.stringify(keys));
-      if (keys.length > 0) {
-        localStorage.setItem('aiDubberApiKey', keys[0]);
-      } else {
-        localStorage.removeItem('aiDubberApiKey');
-      }
-      renderApiKeyList();
-      updateApiStatusDisplay();
-      showToast("API Key removed from pool", "info");
-
-      try { window.dubberBridge?.reloadApiKeys(); } catch (e) {}
-    }
-  }
-
-  function copyApiKey(index) {
-    const keys = getActiveApiKeys();
-    if (index >= 0 && index < keys.length) {
-      navigator.clipboard.writeText(keys[index]).then(() => {
-        showToast("API Key copied to clipboard", "success");
-      }).catch(() => {
-        showToast("Failed to copy API key", "error");
-      });
-    }
+      document.querySelector('.settings-tab-btn[data-target="settings-api"]')?.click();
+      refreshKeyStatuses();
+    }, 150);
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -2532,41 +2421,6 @@
     $('dai-btn-close-glossary')?.addEventListener('click', closeGlossaryModal);
     $('dai-btn-add-glossary-item')?.addEventListener('click', addGlossaryItem);
 
-    // API Key Modal Buttons
-    $('dai-btn-close-apikey-modal')?.addEventListener('click', closeApiKeyModal);
-    $('dai-btn-add-apikey')?.addEventListener('click', () => {
-      const input = $('dai-new-apikey-input');
-      if (input) addApiKey(input.value);
-    });
-    $('dai-new-apikey-input')?.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        addApiKey(e.target.value);
-      }
-    });
-    $('dai-btn-toggle-apikey-visibility')?.addEventListener('click', () => {
-      const input = $('dai-new-apikey-input');
-      if (!input) return;
-      input.type = input.type === 'password' ? 'text' : 'password';
-    });
-    $('dai-btn-paste-apikey')?.addEventListener('click', async () => {
-      try {
-        const text = await navigator.clipboard.readText();
-        const input = $('dai-new-apikey-input');
-        if (input && text) {
-          input.value = text.trim();
-          input.focus();
-        }
-      } catch (e) {}
-    });
-    $('dai-btn-open-full-settings')?.addEventListener('click', () => {
-      closeApiKeyModal();
-      document.getElementById('btn-open-settings')?.click();
-      setTimeout(() => {
-        const apiTab = document.querySelector('.settings-tab-btn[data-target="settings-api"]');
-        if (apiTab) apiTab.click();
-      }, 150);
-    });
 
     // Preview Modal Buttons
     $('dai-btn-close-preview')?.addEventListener('click', closePreviewModal);
@@ -2610,11 +2464,11 @@
       if (!$('dai-glossary-modal')?.classList.contains('hidden')) renderGlossaryTable();
     },
     removeGlossaryItem,
-    openApiKeyModal,
-    closeApiKeyModal,
-    addApiKey,
-    removeApiKey,
-    copyApiKey
+    // The key badge (index.html calls it by this name) - opens Settings → API.
+    openApiKeyModal: openApiKeySettings,
+    // Settings → API's key list asks for each key's quota state.
+    refreshKeyStatuses,
+    updateApiStatusDisplay
   };
 
   // Auto-init once DOM ready

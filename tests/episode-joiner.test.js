@@ -72,6 +72,15 @@ describe('episode joiner', { skip }, () => {
         assert.equal(st.parts[0].reused, false);
     });
 
+    test('an episode that can no longer be read fails its part instead of being left out', async () => {
+        const broken = path.join(root, 'E05.mp4');
+        fs.writeFileSync(broken, 'not a video'); // scanned fine, then damaged or locked
+        const st = await join([[path.join(vdir, 'E01.mp4'), broken]], [5]);
+        assert.equal(st.parts[0].status, 'error');
+        assert.match(st.parts[0].error, /1 episode\(s\) could not be read: E05\.mp4/);
+        assert.ok(!fs.existsSync(path.join(out, 'S_part05.mp4')));
+    });
+
     test('mixed formats and sizes join into one playable part of the right length', async () => {
         const files = ['E01.mp4', 'E02.mp4', 'E03.avi', 'E04.wmv'].map((n) => path.join(vdir, n));
         const st = await join([files], [4]);

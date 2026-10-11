@@ -100,7 +100,24 @@ describe('matching subtitles to on-screen lines', () => {
             { start: 5.5, end: 5.9, matched: false },
         ]);
         assert.deepEqual(placed[1], { start: 3.0, end: 4.8 });
-        assert.deepEqual(placed[3], { start: 5.5, end: 5.9 }); // no room left: unchanged
+        // Inside a matched line, with room after it: moved there (its length kept), not left overlapping.
+        assert.deepEqual(placed[3], { start: 6.0, end: 6.4 });
+    });
+
+    test('an unmatched line its neighbours moved past goes into the room between them', () => {
+        const placed = SS.placeUnmatched([
+            { start: 7.0, end: 8.5, matched: true },
+            { start: 10.0, end: 11.0, matched: false }, // its next neighbour was moved back to 9.8
+            { start: 9.8, end: 12.0, matched: true },
+        ]);
+        const r = (v) => Math.round(v * 1000) / 1000;
+        assert.deepEqual({ start: r(placed[1].start), end: r(placed[1].end) }, { start: 8.8, end: 9.8 }, 'its 1 s kept, ending where the next line starts');
+        const noRoom = SS.placeUnmatched([
+            { start: 1.0, end: 3.0, matched: true },
+            { start: 2.0, end: 2.5, matched: false },
+            { start: 3.1, end: 5.0, matched: true },
+        ]);
+        assert.deepEqual(noRoom[1], { start: 2.0, end: 2.5 }, 'only 0.1 s between the neighbours: unchanged');
     });
 });
 

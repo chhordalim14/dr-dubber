@@ -13,6 +13,7 @@ import json
 import re
 import shutil
 import subprocess
+import threading
 from array import array
 import edge_tts
 
@@ -457,6 +458,64 @@ async def generate_batch(batch_items, max_concurrency=6):
         "results": results
     }))
 
+async def serve(max_concurrency=6):
+    """
+    Long-running worker for the server: one JSON request per stdin line
+    ({"id", "text", "voice", "rate", "pitch", "volume", "output"}, or {"cancel": id}),
+    one JSON result per stdout line ({"id", ...}). Saves starting Python and importing
+    edge_tts for every voice line (measured: 12 lines took 10.3s as separate processes,
+    1.7s here). Ends when stdin closes.
+    """
+    loop = asyncio.get_running_loop()
+    sem = asyncio.Semaphore(max_concurrency)
+    tasks = {}
+    lines = asyncio.Queue()
+
+    def reader():
+        for raw in sys.stdin:
+            loop.call_soon_threadsafe(lines.put_nowait, raw)
+        loop.call_soon_threadsafe(lines.put_nowait, None)
+
+    def reply(obj):
+        sys.stdout.write(json.dumps(obj) + "\n")
+        sys.stdout.flush()
+
+    async def run(item_id, item):
+        try:
+            res = await generate_single_item(
+                item.get("text", ""), item.get("voice", "km-KH-PisethNeural"),
+                item.get("rate", "+0%"), item.get("pitch", "+0Hz"), item.get("volume", "+0%"),
+                item.get("output", ""), sem)
+        except asyncio.CancelledError:
+            res = {"success": False, "error": "cancelled", "cancelled": True}
+        except Exception as e:
+            res = {"success": False, "error": str(e)}
+        tasks.pop(item_id, None)
+        res["id"] = item_id
+        reply(res)
+
+    threading.Thread(target=reader, daemon=True).start()
+    while True:
+        raw = await lines.get()
+        if raw is None:
+            break
+        try:
+            item = json.loads(raw)
+        except Exception:
+            continue
+        if "cancel" in item:
+            task = tasks.get(item["cancel"])
+            if task:
+                task.cancel()
+            continue
+        item_id = item.get("id")
+        if not item.get("text") or not item.get("output"):
+            reply({"id": item_id, "success": False, "error": "Missing text or output path"})
+            continue
+        tasks[item_id] = asyncio.ensure_future(run(item_id, item))
+    if tasks:
+        await asyncio.gather(*tasks.values(), return_exceptions=True)
+
 async def list_voices():
     try:
         voices = await edge_tts.list_voices()
@@ -490,8 +549,17 @@ def main():
     parser.add_argument("--list-voices", action="store_true", help="List all available voices")
     parser.add_argument("--presets", action="store_true", help="List preset voices")
     parser.add_argument("--trim-only", type=str, help="Only trim the silence around an existing MP3 clip (in place)")
+    parser.add_argument("--serve", action="store_true", help="Stay running: JSON requests on stdin, JSON results on stdout")
 
     args = parser.parse_args()
+
+    if args.serve:
+        try:
+            sys.stdin.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+        asyncio.run(serve(max_concurrency=args.concurrency))
+        return
 
     if args.trim_only:
         if not os.path.isfile(args.trim_only):

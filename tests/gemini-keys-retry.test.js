@@ -20,6 +20,7 @@ function load() {
   const api = new Function('setTimeout', 'console', 'Date', `
     const formatWait = (ms) => Math.round(ms / 1000) + 's';
     const geminiModelCooldowns = new Map();
+    const isCodeCraftKey = (k) => /^cc_/i.test(k);
     ${block}
     return { geminiWithKeys, geminiShouldRetry, GEMINI_RETRY_DELAYS_MS, GEMINI_BUSY_RETRY_BUDGET_MS };
   `)(fastTimeout, { warn: () => { }, log: () => { } }, FakeDate);
@@ -113,28 +114,78 @@ describe('geminiWithKeys', () => {
     assert.equal(out.result.isDailyQuota, true);
     assert.deepEqual(waits, []);
   });
+
+  test('a CodeCraft key that is out of credit (PROVIDER_KEY) is skipped: the Gemini keys after it answer', async () => {
+    const { geminiWithKeys, waits } = load();
+    const noCredit = { ok: false, result: { success: false, status: 402, code: 'PROVIDER_KEY', outOfCredit: true, error: 'CodeCraft is out of credit.' } };
+    const asked = [];
+    const call = async (key) => { asked.push(key); return key === 'cc_x' ? noCredit : { ok: true, key }; };
+    const out = await geminiWithKeys(['cc_x', 'g1'], call, null);
+    assert.equal(out.ok, true);
+    assert.equal(out.key, 'g1');
+    assert.deepEqual(waits, []);
+    // ...and left out of the next jobs for a while, instead of being asked first every time.
+    await geminiWithKeys(['cc_x', 'g1'], call, null);
+    assert.deepEqual(asked, ['cc_x', 'g1', 'g1']);
+  });
+
+  test('several CodeCraft keys: a refused or rate-limited one hands over to the next CodeCraft key, Gemini only last', async () => {
+    const { geminiWithKeys } = load();
+    const refused = { ok: false, result: { success: false, status: 401, code: 'PROVIDER_KEY', error: 'rejected' } };
+    const asked = [];
+    const out = await geminiWithKeys(['cc_a', 'cc_b', 'cc_c', 'g1'], async (key) => {
+      asked.push(key);
+      if (key === 'cc_a') return refused;
+      if (key === 'cc_b') return perMinute;
+      return { ok: true, key };
+    }, null);
+    assert.equal(out.ok, true);
+    assert.equal(out.key, 'cc_c');
+    assert.deepEqual(asked, ['cc_a', 'cc_b', 'cc_c']);
+  });
+
+  test('every CodeCraft key out: the Gemini keys finish the job', async () => {
+    const { geminiWithKeys } = load();
+    const noCredit = { ok: false, result: { success: false, status: 402, code: 'PROVIDER_KEY', outOfCredit: true, error: 'no credit' } };
+    const asked = [];
+    const out = await geminiWithKeys(['cc_a', 'cc_b', 'g1', 'g2'], async (key) => { asked.push(key); return key.startsWith('cc_') ? noCredit : { ok: true, key }; }, null);
+    assert.equal(out.ok, true);
+    assert.equal(out.key, 'g1');
+    assert.deepEqual(asked, ['cc_a', 'cc_b', 'g1']);
+  });
 });
 
-describe('Shorten rushed lines endpoint', () => {
-  const route = serverSource.slice(serverSource.indexOf("app.post('/api/condense-fast-subtitles'"), serverSource.indexOf("app.get('/api/transcribe-progress'"));
+describe('Shortening engine (Shorten rushed lines, Ultra-Short, a row\'s Shorten)', () => {
+  const engine = serverSource.slice(serverSource.indexOf('async function shortenLines('), serverSource.indexOf("app.post('/api/condense-fast-subtitles'"));
+  const route = (name) => {
+    const from = serverSource.indexOf(`app.post('/api/${name}'`);
+    return serverSource.slice(from, serverSource.indexOf('\napp.', from + 10));
+  };
 
   test('goes through geminiWithKeys with the short text timeout and the full backoff', () => {
-    assert.match(route, /geminiWithKeys\(keyPool,/);
-    assert.match(route, /timeoutMs: GEMINI_TEXT_TIMEOUT_MS/);
-    assert.match(route, /retries: GEMINI_RETRY_DELAYS_MS\.length/);
+    assert.ok(engine.length > 0, 'shortenLines moved - update this test');
+    assert.match(engine, /geminiWithKeys\(keyPool,/);
+    assert.match(engine, /timeoutMs: GEMINI_TEXT_TIMEOUT_MS/);
+    assert.match(engine, /retries: GEMINI_RETRY_DELAYS_MS\.length/);
   });
 
   test('no longer asks every key in turn', () => {
-    assert.doesNotMatch(route, /for \(const k of keyPool\)/);
+    assert.doesNotMatch(engine, /for \(const k of keyPool\)/);
+  });
+
+  test('all three shortening tools use it: fit for rushed lines, shorter for Ultra-Short and a row', () => {
+    assert.match(route('condense-fast-subtitles'), /shortenLines\(\{[\s\S]*strength: 'fit'/);
+    assert.match(route('refactor-subtitles-batch'), /mode === 'shorten'[\s\S]*shortenLines\(\{[\s\S]*strength: 'shorter'/);
+    assert.match(route('rewrite-dialogue'), /mode === 'shorten'[\s\S]*shortenLines\(\{[\s\S]*strength: 'shorter'/);
   });
 });
 
 describe('short text requests time out sooner than audio', () => {
-  test('re-translate, names and shorten use GEMINI_TEXT_TIMEOUT_MS; it is shorter than an audio attempt', () => {
+  test('re-translate, names, shorten and the character sheet use GEMINI_TEXT_TIMEOUT_MS; it is shorter than an audio attempt', () => {
     const text = Number(serverSource.match(/const GEMINI_TEXT_TIMEOUT_MS = (\d+);/)[1]);
     const audio = Number(serverSource.match(/const GEMINI_ATTEMPT_TIMEOUT_MS = (\d+);/)[1]);
     assert.ok(text < audio);
-    assert.equal((serverSource.match(/timeoutMs: GEMINI_TEXT_TIMEOUT_MS/g) || []).length, 3);
+    assert.equal((serverSource.match(/timeoutMs: GEMINI_TEXT_TIMEOUT_MS/g) || []).length, 4);
   });
 });
 

@@ -3445,6 +3445,8 @@
 
           if (result && result.success) {
             showToast(`Subtitle saved: ${result.filePath}`, "success");
+            // The header's Auto Save status shows the time of the last save.
+            window.dispatchEvent(new CustomEvent("dr:srt-autosaved"));
           }
         }
       } catch (e) {
@@ -3929,11 +3931,13 @@
         }
       }
 
-      // Gemini API Key Guard
+      // Gemini API Key Guard (Whisper + Translate needs none when CodeCraft translates)
       let apiKeys = [];
       {
         apiKeys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]");
-        if (apiKeys.length === 0) {
+        if (apiKeys.length === 0 && engineMode === "whisper" && window.textAi?.ready()) {
+          apiKeys = [""]; // one pass of the translate loop below; the server uses the CodeCraft key
+        } else if (apiKeys.length === 0) {
           showToast("Please add at least one Gemini API Key in Settings.", "error");
           document.getElementById("btn-open-settings")?.click();
           abortStart();
@@ -4089,7 +4093,7 @@
             maybeAutoSaveSubtitles(targetProject, targetProject.subtitles, true);
           }
 
-          if (projects[activeProjectIndex] === targetProject) showToast("Translating transcript with AI...", "info");
+          if (projects[activeProjectIndex] === targetProject) showToast(`Translating transcript with ${window.textAi?.label() || "AI"}...`, "info");
 
           let activeModel = localStorage.getItem("aiDubberModel") || "gemini-3.8-flash";
           let lastErrorType = "UNKNOWN_ERROR";
@@ -4113,6 +4117,8 @@
                   apiKeys: [...apiKeys.slice(keyIdx), ...apiKeys.slice(0, keyIdx)],
                   model: activeModel,
                   requestId: targetProject.geminiRequestId,
+                  // Its folder keeps the series' character sheet (names, forms of address).
+                  sourceFilePath: targetProject.videoFilePath || (targetProject.file && targetProject.file.path) || null,
                 }),
                 signal,
               });
@@ -4125,6 +4131,8 @@
                 throw new Error(`GENERATION_FAILED|${errorText}`);
               }
 
+              // CodeCraft rejected the key or ran out of credit; the Gemini keys finished the job.
+              if (genData.notice) showToast(genData.notice, "warning");
               const translatedMap = genData.data;
               const finalSubs = parsedSubs.map((sub, idx) => {
                 const tr = Array.isArray(translatedMap) ? translatedMap[idx] : null;
@@ -4171,6 +4179,7 @@
               success = true;
               Stats.inc(Stats.keys.lines, finalSubs.length);
               maybeAutoSaveSubtitles(targetProject, finalSubs);
+              window.queueAutoTitleIdeas?.(targetProject);
               break;
             } catch (err) {
               if (err.name === "AbortError") throw err;
@@ -4193,7 +4202,7 @@
             } else if (lastErrorType === "INVALID_API_KEY") {
               userFriendlyMessage = "Your Gemini API Keys are invalid. Please update them in Settings.";
             } else if (lastErrorType.includes("|")) {
-              userFriendlyMessage = `Google API Error: ${lastErrorType.split("|")[1]}`;
+              userFriendlyMessage = `${window.textAi?.ready() ? "Translation" : "Google API"} Error: ${lastErrorType.split("|")[1]}`;
               toastOptions = { linkUrl: "https://t.me/daidubberpro_official/151", linkText: "ចុចទីនេះ អានបន្ថែម" };
             }
             showToast(userFriendlyMessage, "error", toastOptions);
@@ -4321,6 +4330,7 @@
               success = true;
               Stats.inc(Stats.keys.lines, formattedSubs.length);
               maybeAutoSaveSubtitles(targetProject, formattedSubs);
+              window.queueAutoTitleIdeas?.(targetProject);
               break;
             } catch (err) {
               if (err.name === "AbortError") throw err;
@@ -4548,7 +4558,8 @@
       }
       if (btnFixMissing.dataset.busy === "1" || fixMissingAllRun) return;
       const apiKeys = getGeminiKeys();
-      if (!apiKeys.length) {
+      // With CodeCraft, lines are re-translated without a Gemini key (only the audio check needs one).
+      if (!apiKeys.length && !window.textAi?.ready()) {
         showToast("Please enter your Gemini API Key in Settings ➔ General.", "error");
         return;
       }
@@ -4609,7 +4620,7 @@
         return null;
       }
       const apiKeys = getGeminiKeys();
-      if (!apiKeys.length) {
+      if (!apiKeys.length && !window.textAi?.ready()) {
         showToast("Please enter your Gemini API Key in Settings ➔ General.", "error");
         return null;
       }
@@ -4723,7 +4734,7 @@
         return;
       }
       const apiKeys = getGeminiKeys();
-      if (!apiKeys.length) {
+      if (!apiKeys.length && !window.textAi?.ready()) {
         showToast("Please enter your Gemini API Key in Settings ➔ General.", "error");
         return;
       }
@@ -4798,7 +4809,7 @@
       const tabProjects = projects.filter((p) =>
         liveSubtitlesOf(p).some((s) => String(s.originalText || "").trim() && String(s.text || "").trim()));
       const apiKeys = getGeminiKeys();
-      if (!tabProjects.length || !apiKeys.length) return null;
+      if (!tabProjects.length || (!apiKeys.length && !window.textAi?.ready())) return null;
       const tabs = tabProjects.map((p, i) => ({
         id: `tab${i}`,
         title: projectTabName(p),
@@ -6634,6 +6645,7 @@
     // the source picture, so zoom, flip, pan and crop carry it along like the video itself.
     const TEXT_DETECT_POLL_MS = 1500;
     let textDetectAllRun = null; // { stopped, promise } while subtitles are found for several tabs
+    let textDetectStops = 0; // every Stop all - Match Subtitles on all tabs ends at the next tab too
 
     // What a tab's export blurs: the lines found in its current video, if switched on.
     function activeTextBlurs(proj) {
@@ -6868,9 +6880,10 @@
       return run.promise;
     }
 
+    // Also stops a tab that Match Subtitles is reading by itself (after the run for all tabs).
     function stopDetectTextAll() {
-      if (!textDetectAllRun) return;
-      textDetectAllRun.stopped = true;
+      textDetectStops++;
+      if (textDetectAllRun) textDetectAllRun.stopped = true;
       projects.forEach(stopDetectText);
     }
 
@@ -7071,9 +7084,11 @@
         && !(onlyNew && p.subtitles.some((s) => s.screenMatched)) && (!only || only.includes(p)));
       let matched = 0, total = 0;
       const failed = [];
+      const stopsBefore = textDetectStops;
       for (const p of targets) {
+        if (textDetectStops !== stopsBefore) break;
         const r = await syncSubtitlesToScreen(p, { quiet: true });
-        if (r.cancelled) break;
+        if (r.cancelled || textDetectStops !== stopsBefore) break;
         if (!r.ok) failed.push(p);
         matched += r.matched || 0;
         total += r.total || 0;
@@ -9733,7 +9748,7 @@
         }
       } catch (e) { }
 
-      if (!activeKey) {
+      if (!activeKey && !window.textAi?.ready()) {
         showToast("Please enter a Gemini API Key in Settings ➔ General first.", "error");
         if (typeof openSettingsModal === "function") openSettingsModal();
         return;
@@ -9765,10 +9780,14 @@
           body: JSON.stringify({
             text: sub.text,
             originalText: sub.originalText || "",
+            // The line's slot: Shorten sizes the line to it (same engine as AI Shorten All).
+            textStart: sub.textStart,
+            textEnd: sub.textEnd,
             mode: refactorMode,
             genre: activeDramaGenre || "historical",
             glossary: glossary,
             apiKey: activeKey,
+            apiKeys: JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]").filter(Boolean),
             model: activeModel,
           }),
         });
@@ -9804,7 +9823,7 @@
         if (Array.isArray(keys) && keys.length > 0) activeKey = keys[0];
       } catch (e) { }
 
-      if (!activeKey) {
+      if (!activeKey && !window.textAi?.ready()) {
         if (!isBatch) {
           showToast("Please add at least one Gemini API Key in Settings.", "error");
           document.getElementById("btn-open-settings")?.click();
@@ -9855,6 +9874,7 @@
             genre: activeDramaGenre || "historical",
             glossary: glossary,
             apiKey: activeKey,
+            apiKeys: JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]").filter(Boolean),
             model: activeModel,
           }),
         });
@@ -11160,19 +11180,31 @@
     const GEMINI_KEY_PATTERN = /^[A-Za-z0-9._-]{20,100}$/;
     const isValidGeminiKey = (val) => GEMINI_KEY_PATTERN.test(val);
 
+    // The one Gemini key list (DAI Studio reads it too). "aiDubberApiKey" is the old single-key
+    // setting DAI still falls back to when the list is empty: keep it in step.
+    const saveGeminiKeys = () => {
+      localStorage.setItem("aiDubberApiKeys", JSON.stringify(apiKeys));
+      if (apiKeys.length) localStorage.setItem("aiDubberApiKey", apiKeys[0]);
+      else localStorage.removeItem("aiDubberApiKey");
+    };
+
     const renderApiKeys = () => {
       const list = document.getElementById("api-keys-list");
       if (apiKeys.length === 0) {
         list.innerHTML = `<p class="text-xs text-[var(--text-muted)] italic border border-dashed border-[var(--border-light)] p-3 rounded-lg text-center">No API Keys added. Transcription will not work.</p>`;
+        window.daiStudio?.updateApiStatusDisplay?.();
         return;
       }
       list.innerHTML = apiKeys
         .map(
           (key, i) => `
             <div class="api-key-row flex justify-between items-center bg-[var(--bg-base)] border border-[var(--border-light)] p-2.5 rounded-lg transition-colors duration-300">
-                <div class="flex items-center gap-3">
+                <div class="flex items-center gap-3 min-w-0">
                     <span class="text-xs font-mono text-[var(--text-secondary)] bg-[var(--bg-panel)] px-2 py-1 rounded border border-[var(--border-color)]">Key ${i + 1}</span>
-                    <span class="text-sm font-mono text-[var(--text-primary)]">${escHtml(key.substring(0, 8))}...${escHtml(key.substring(key.length - 4))}</span>
+                    <div class="flex flex-col min-w-0">
+                        <span class="text-sm font-mono text-[var(--text-primary)]">${escHtml(key.substring(0, 8))}...${escHtml(key.substring(key.length - 4))}</span>
+                        <span data-dai-keystatus="${i}" class="text-[10px] text-[var(--text-muted)] flex items-center gap-1 min-w-0">Checking quota…</span>
+                    </div>
                 </div>
                 <div class="flex items-center gap-1">
                     <button data-copy-index="${i}" title="Copy" class="btn-copy-apikey text-[var(--text-secondary)] hover:text-[var(--accent-primary)] transition-colors p-1"><i data-lucide="copy" class="w-4 h-4"></i></button>
@@ -11183,6 +11215,9 @@
         )
         .join("");
       _lucideCreateIcons();
+      // Each key's quota state (ready / rate-limited / daily limit) and DAI's key badge.
+      window.daiStudio?.refreshKeyStatuses?.();
+      window.daiStudio?.updateApiStatusDisplay?.();
     };
 
     // Event delegation — avoids ever re-embedding raw key text (which may
@@ -11220,7 +11255,7 @@
       if (!btn) return;
       const index = Number(btn.dataset.removeIndex);
       apiKeys.splice(index, 1);
-      localStorage.setItem("aiDubberApiKeys", JSON.stringify(apiKeys));
+      saveGeminiKeys();
       renderApiKeys();
     });
 
@@ -11255,7 +11290,7 @@
       }
 
       apiKeys.push(val);
-      localStorage.setItem("aiDubberApiKeys", JSON.stringify(apiKeys));
+      saveGeminiKeys();
       input.value = "";
       renderApiKeys();
       updateApiKeyPasteButtonState();
@@ -13245,6 +13280,7 @@
         if (typeof updateGenerateButtonState === "function") updateGenerateButtonState();
         Stats.inc(Stats.keys.lines, formattedSubs.length);
         maybeAutoSaveSubtitles(ref, formattedSubs);
+        window.queueAutoTitleIdeas?.(ref);
         return true;
       },
       // The tab's "working" dot while DAI-Transcribe works on it.
@@ -13267,6 +13303,7 @@
         saveCurrentProjectState(); // the active tab's live edits live in `subtitles`
         return projects.map((proj, i) => ({
           ref: proj,
+          sourceFilePath: proj.videoFilePath || (proj.file && proj.file.path) || null,
           name: proj.tabTitle || (proj.file?.name || `Video ${i + 1}`).replace(/\.[^/.]+$/, ""),
           total: proj.subtitles.length,
           lines: proj.subtitles
@@ -13274,7 +13311,9 @@
             .map((s) => ({ id: s.id, textStart: s.textStart, textEnd: s.textEnd, source: String(s.originalText).trim(), gender: knownVoiceGender(s) })),
         }));
       },
-      isTabBusy: (ref) => !!(ref && (ref.isTranscribing || ref.isGeneratingAudio || ref.isIsolatingBgm || ref.isBatchTranscribing || ref.isFixingMissing)),
+      // Isolating BGM doesn't count: it only writes the tab's BGM track, never its lines, so it
+      // runs beside Transcribe (Dub Whole Series does that).
+      isTabBusy: (ref) => !!(ref && (ref.isTranscribing || ref.isGeneratingAudio || ref.isBatchTranscribing || ref.isFixingMissing)),
       // Writes translations ([{ id, text, gender, emotion }]) into a tab. A line whose text changes loses
       // its old voice clip (it no longer matches). Returns how many lines changed, or -1 if the tab is gone.
       applyTabTranslation: (ref, results) => {
@@ -13309,6 +13348,7 @@
         updateGenerateAllButtonState();
         renderProjectTabs();
         maybeAutoSaveSubtitles(ref, ref.subtitles);
+        if (changed > 0) window.queueAutoTitleIdeas?.(ref);
         return changed;
       },
       // Re-read the key pool after another window/modal changed it in localStorage.
@@ -15733,13 +15773,14 @@
           a1Block.className = `audio-timeline-item absolute rounded text-[10px] text-white overflow-hidden transition-colors cursor-move select-none z-10 px-1 flex items-center shadow-sm ${sub.audioStatus === "generating"
             ? "bg-indigo-600/50 border border-indigo-400/50 animate-pulse"
             : a1IsOrphaned
-              ? "bg-amber-600/90 border border-amber-400/60 hover:bg-amber-500/80"
+              ? "bg-amber-500/20 border border-amber-400/70 hover:bg-amber-500/30"
               : customColor
                 ? "hover:brightness-110"
-                : "bg-indigo-500/90 border border-indigo-300/60 hover:bg-indigo-400/40 hover:border-indigo-300"
+                : "a1-clip-default bg-violet-500/15 border border-violet-400/40 hover:bg-violet-500/25 hover:border-violet-300"
             }`;
           if (customColor) {
-            a1Block.style.backgroundColor = customColor;
+            // Tinted lane with the waveform in the voice's own colour.
+            a1Block.style.backgroundColor = `color-mix(in srgb, ${customColor} 24%, transparent)`;
             a1Block.style.borderColor = customColor;
             a1Block.style.borderWidth = "1px";
             a1Block.style.borderStyle = "solid";
@@ -15761,26 +15802,23 @@
 
           let iconHtml = sub.audioStatus === "ready" ? `<i data-lucide="audio-lines" class="w-3 h-3 mr-1 opacity-70 shrink-0"></i>` : `<i data-lucide="loader-2" class="w-3 h-3 mr-1 animate-spin shrink-0"></i>`;
 
-          const waveformBars = sub.audioStatus === "ready" ? `
-              <div class="waveform-bars-visual flex items-center gap-[1.5px] h-3 ml-2 mr-1 opacity-60 overflow-hidden shrink-0 select-none">
-                <span class="w-[2px] h-[35%] bg-white rounded-full"></span>
-                <span class="w-[2px] h-[70%] bg-white rounded-full"></span>
-                <span class="w-[2px] h-[100%] bg-white rounded-full"></span>
-                <span class="w-[2px] h-[60%] bg-white rounded-full"></span>
-                <span class="w-[2px] h-[85%] bg-white rounded-full"></span>
-                <span class="w-[2px] h-[40%] bg-white rounded-full"></span>
-                <span class="w-[2px] h-[95%] bg-white rounded-full"></span>
-                <span class="w-[2px] h-[50%] bg-white rounded-full"></span>
-              </div>
-            ` : '';
+          // Real waveform of the dubbed line, drawn by timeline-visuals.js.
+          const waveColor = a1IsOrphaned ? "#fbbf24" : customColor || "#a855f7";
+          const waveCanvas = sub.audioStatus === "ready" && sub.audioUrl ? `<canvas class="a1-clip-wave" data-wave-color="${escHtml(waveColor)}"></canvas>` : "";
 
           a1Block.innerHTML = `
+                ${waveCanvas}
                 ${iconHtml}
-                <span class="font-mono text-[9px] shrink-0">${(sub.speed || 1.0).toFixed(1)}x</span>
-                <span class="font-mono text-[9px] ml-1.5 opacity-60 shrink-0">V:${(sub.volume ?? 1.0).toFixed(1)}</span>
-                ${waveformBars}
-                ${sub.reverb?.enabled ? `<span class="ml-1 text-[8px] font-bold text-purple-200 bg-purple-500/40 border border-purple-400/50 rounded px-0.5 leading-tight shrink-0">RVB</span>` : ""}
+                <span class="a1-clip-label font-mono text-[9px] shrink-0">${(sub.speed || 1.0).toFixed(1)}x</span>
+                <span class="a1-clip-label font-mono text-[9px] ml-1.5 opacity-60 shrink-0">V:${(sub.volume ?? 1.0).toFixed(1)}</span>
+                ${sub.reverb?.enabled ? `<span class="a1-clip-label ml-1 text-[8px] font-bold text-purple-200 bg-purple-500/40 border border-purple-400/50 rounded px-0.5 leading-tight shrink-0">RVB</span>` : ""}
             `;
+          const waveCanvasEl = a1Block.querySelector("canvas.a1-clip-wave");
+          if (waveCanvasEl && window.TimelineVisuals) {
+            const rawUrl = sub.audioUrl;
+            const waveUrl = rawUrl.startsWith("file:") ? diskPathToMediaUrl(rawUrl.split("&t=")[0]) : rawUrl.startsWith("blob:") || rawUrl.startsWith("http") ? rawUrl : `http://localhost:3001${rawUrl}`;
+            window.TimelineVisuals.paintClipWave(waveCanvasEl, waveUrl);
+          }
           a1Block.addEventListener("mousedown", (e) => {
             if (window.splitModeActive) {
               e.preventDefault();
@@ -16961,6 +16999,7 @@
     let seriesRun = null; // { stopped, step, joinJobId, splitJobId } while the pipeline runs
     let cancelSeriesBackgroundJoin = () => { }; // set by Dub Whole Series below
     let stopSeriesBackgroundExport = () => { }; // set by Dub Whole Series below
+    let stopSeriesBackgroundIsolate = () => { }; // set by Dub Whole Series below
 
     // Called from stopAllTabsJob (the All Tabs Stop button and this window's Stop button).
     // Transcribe is stopped by stopAllTabsJob itself.
@@ -16976,6 +17015,7 @@
       if (seriesRun.step === "generate" && (isGeneratingAudioAll || voxQueueRunning)) generateSelectedAudioAllProjects();
       if (seriesRun.step === "generate") cancelFastCondenseRequests(); // "Shortening rushed lines"
       if (seriesRun.step === "isolate" && isIsolatingBgmAll) isolateBgmAllProjects({ skipConfirm: true });
+      else stopSeriesBackgroundIsolate(); // isolating beside the other steps
       stopDetectTextAll(); // reading the tabs for subtitles runs beside the other steps
       // A finished part rendering while the next one is dubbed stops too (Continue renders the
       // rest of it).
@@ -16994,6 +17034,9 @@
         const s = Math.round(sec || 0), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
         return h ? `${h}:${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}` : `${m}:${String(r).padStart(2, "0")}`;
       };
+      // How long a step took ("" under a second, or not timed - a plan saved before).
+      const tookText = (st) => (st && st.ms >= 1000 ? fmtDur(st.ms / 1000) : "");
+      const stepsTotalMs = (steps) => Object.values(steps || {}).reduce((n, st) => n + (st.ms || 0), 0);
       const esc = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
       const dirOf = (p) => p.replace(/[\\/][^\\/]*$/, "");
       const pathJoin = (dir, name) => (dir.includes("\\") ? `${dir}\\${name}` : `${dir}/${name}`);
@@ -17064,7 +17107,13 @@
       const handsFree = () => !!$("ds-handsfree")?.checked;
       // A finished part whose hands-free export didn't complete, with its tabs still open (tabs
       // open after its own were closed belong to something else).
-      const exportPending = () => !!(handsFree() && plan && unfinishedIndex() < 0 && plan.lastDone && !plan.parts[plan.lastDone.index].exported && projects.length &&
+      // The finished part's own tabs are open (a plan saved before parts kept their pieces: any tab).
+      const lastDoneTabsOpen = () => {
+        const pieces = plan?.lastDone?.pieces;
+        if (!pieces?.length) return projects.length > 0;
+        return pieces.every((p) => projects.some((pr) => pr.videoFilePath === p));
+      };
+      const exportPending = () => !!(handsFree() && plan && unfinishedIndex() < 0 && plan.lastDone && !plan.parts[plan.lastDone.index].exported && lastDoneTabsOpen() &&
         !seriesExports.get(plan.parts[plan.lastDone.index])?.tabsClosed);
       // The part whose export Continue finishes first: an earlier part's, else the open one's.
       const exportPendingPart = () => Math.min(plan.lastDone.index, ...unfinishedExports()) + 1;
@@ -17075,6 +17124,7 @@
         if (!handsFree() && plan) {
           plan.parts.forEach((p) => { if (p.autoExport && !p.exported && !seriesExports.has(p)) delete p.autoExport; });
           savePlan();
+          cancelAutoResume(); // only hands-free continues by itself
         }
         render();
       });
@@ -17136,12 +17186,17 @@
           else if (p.status === "preview" || p.status === "planned") state = `<span class="text-[var(--text-muted)]">${p.status === "planned" ? "not joined yet" : ""}</span>`;
           else if (p.status === "failed") state = `<span class="text-red-400" title="${esc(p.error)}">join failed</span>`;
           else if (p.status === "done") {
+            const report = p.report ? [
+              ...(stepsTotalMs(p.report.steps) >= 1000 ? [`Steps took ${fmtDur(stepsTotalMs(p.report.steps) / 1000)} in all`] : []),
+              ...STEP_ORDER.filter((k) => p.report.steps[k]).map((k) => `${STEP_NAMES[k]}: ${p.report.steps[k].state}${tookText(p.report.steps[k]) ? ` in ${tookText(p.report.steps[k])}` : ""}${p.report.steps[k].note ? ` - ${p.report.steps[k].note}` : ""}`),
+            ].join("\n") : "";
+            const tip = report ? ` title="${esc(report)}"` : "";
             const job = plan && seriesExports.get(p);
             const r = job?.result;
-            if (job?.rendering) state = `<span class="text-sky-400">✓ dubbed · exporting</span>`;
-            else if (p.exported) state = `<span class="text-emerald-400">✓ dubbed & exported</span>`;
-            else if (r && !exportComplete(r)) state = `<span class="text-amber-400" title="${r.done} of ${r.total} tab(s) exported">✓ dubbed · export failed</span>`;
-            else state = `<span class="text-emerald-400">✓ dubbed</span>`;
+            if (job?.rendering) state = `<span class="text-sky-400"${tip}>✓ dubbed · exporting</span>`;
+            else if (p.exported) state = `<span class="text-emerald-400"${tip}>✓ dubbed & exported</span>`;
+            else if (r && !exportComplete(r)) state = `<span class="text-amber-400" title="${esc(`${r.done} of ${r.total} tab(s) exported${report ? `\n${report}` : ""}`)}">✓ dubbed · export failed</span>`;
+            else state = `<span class="text-emerald-400"${tip}>✓ dubbed</span>`;
           }
           else if (i === u) state = running ? `<span class="text-violet-300">working…</span>` : `<span class="text-amber-400">stopped - Continue</span>`;
           else state = `<span class="text-[var(--text-secondary)]">joined, waiting</span>`;
@@ -17170,7 +17225,7 @@
                   : st.state === "skipped" ? ["–", "text-[var(--text-muted)]"]
                     : st.state === "stopped" ? ["■", "text-amber-400"] : ["✗", "text-red-400"];
             const label = off ? `${STEP_NAMES[name]} (off)` : STEP_NAMES[name];
-            return `<div class="flex items-start gap-2 text-xs"><span class="w-4 shrink-0 text-center ${cls}">${icon}</span><span class="shrink-0">${label}</span><span class="text-[var(--text-muted)] truncate" title="${esc(st?.note)}">${st?.note ? "· " + esc(st.note) : ""}</span></div>`;
+            return `<div class="flex items-start gap-2 text-xs"><span class="w-4 shrink-0 text-center ${cls}">${icon}</span><span class="shrink-0">${label}</span><span class="text-[var(--text-muted)] truncate flex-1 min-w-0" title="${esc(st?.note)}">${st?.note ? "· " + esc(st.note) : ""}</span><span class="font-mono text-[var(--text-muted)] shrink-0">${tookText(st)}</span></div>`;
           }).join("");
         }
 
@@ -17179,7 +17234,11 @@
         const joining = joiningIndices();
         const note = $("ds-note");
         let noteText = "";
-        if (plan && !running && lostExportsNote) noteText = lostExportsNote;
+        if (plan && !running && autoResume) {
+          const left = Math.max(0, Math.round((autoResume.at - Date.now()) / 1000));
+          noteText = `Paused: ${autoResume.reason} Continuing by itself in ${fmtDur(left)} (try ${plan.autoResume?.tries || 1} of ${AUTO_RESUME_MAX[plan.autoResume?.kind] || 1}) - or press Continue now.`;
+        }
+        else if (plan && !running && lostExportsNote) noteText = lostExportsNote;
         else if (plan && !running && u < 0 && nextIdx < 0 && !toJoin.length && !joining.length) noteText = "All parts are dubbed ✓ Start over to dub another series.";
         else if (plan && !running && u < 0 && (nextIdx >= 0 || joining.length) && plan.lastDone) {
           noteText = !handsFree() ? `Export part ${plan.lastDone.index + 1} first if you haven't - Next part closes its tabs.`
@@ -17218,8 +17277,9 @@
       }
 
       // ── Checks and helpers ────────────────────────────────────────────────
+      const otherJobRunning = () => !!(allTabsJob || isTranscribingAll || isTranscribing || isGeneratingAudioAll || isGeneratingAudio || isIsolatingBgmAll || voxQueueRunning);
       function preflight() {
-        if (allTabsJob || isTranscribingAll || isTranscribing || isGeneratingAudioAll || isGeneratingAudio || isIsolatingBgmAll || voxQueueRunning) {
+        if (otherJobRunning()) {
           showToast("Another job is running. Wait for it to finish or stop it first.", "warning");
           return false;
         }
@@ -17261,7 +17321,74 @@
         render();
       };
 
+      // ── Hands-free: continue by itself after a pause that time fixes ─────────
+      // Hands-free runs overnight. Google's daily quota, Google being busy or the network
+      // dropping used to pause the series until someone pressed Continue in the morning; now
+      // it waits and continues by itself. Anything a person has to fix (Settings, an engine,
+      // the VoxCPM2 server) still waits for Continue. The tries are counted per part and kept
+      // in the plan, so a pause that keeps coming back stops after a while instead of looping.
+      // busy: another job of the app was running when the continue came - checked again later.
+      const AUTO_RESUME_WAITS_MS = { quota: [15, 30, 60].map((m) => m * 60000), other: [3 * 60000], busy: [3 * 60000] };
+      const AUTO_RESUME_MAX = { quota: 16, other: 3, busy: 20 }; // quota: up to ~14 h, until Google's daily reset
+      let autoResume = null; // { at, reason, timer, tick } while a continue is scheduled
+      const autoResumeKind = (msg) => {
+        const m = String(msg || "");
+        if (m === QUOTA_MSG || /daily (free )?Gemini quota|quota used up/i.test(m)) return "quota";
+        if (/Settings|VoxCPM2|engine|installed|not closed|switch .* off|Fix it/i.test(m)) return null; // a person has to fix it
+        if (/busy|overloaded|high demand|rate.?limit|network|internet|connection|timed? ?out|did not respond|did not answer|Lost track|still have no voice|could not be transcribed|did not start|Failed to fetch|503|429/i.test(m)) return "other";
+        return null;
+      };
+      function cancelAutoResume() {
+        if (!autoResume) return;
+        clearTimeout(autoResume.timer);
+        clearInterval(autoResume.tick);
+        autoResume = null;
+        render();
+      }
+      function armAutoResume(wait, reason) {
+        cancelAutoResume();
+        autoResume = {
+          at: Date.now() + wait,
+          reason,
+          timer: setTimeout(() => {
+            const why = autoResume?.reason || reason;
+            clearInterval(autoResume?.tick);
+            autoResume = null;
+            continueSeries({ auto: true, reason: why });
+          }, wait),
+          // The countdown in the window (only redrawn while the window is open).
+          tick: setInterval(() => { if (!modal.classList.contains("hidden")) render(); }, 1000),
+        };
+        render();
+      }
+      // Returns the wait (ms) when a continue was scheduled, else 0. Each kind of pause keeps its
+      // own count (plan.autoResume = { kind, tries, counts: { quota, other, busy } }), so pauses
+      // that take turns can't reset each other's limit.
+      function scheduleAutoResume(e, kindOverride) {
+        const kind = handsFree() && plan ? (kindOverride || autoResumeKind(e && e.message)) : null;
+        if (!kind) return 0;
+        const counts = { ...(plan.autoResume?.counts || {}) };
+        const tries = counts[kind] || 0;
+        if (tries >= AUTO_RESUME_MAX[kind]) return 0;
+        const waits = AUTO_RESUME_WAITS_MS[kind];
+        const wait = waits[Math.min(tries, waits.length - 1)];
+        counts[kind] = tries + 1;
+        plan.autoResume = { kind, tries: tries + 1, counts };
+        savePlan();
+        armAutoResume(wait, e.message);
+        return wait;
+      }
+      // Something to answer before a series step starts (a confirm): no auto-continue may start
+      // a run under it. Returns a function that puts the countdown back if the answer was no.
+      function holdAutoResume() {
+        if (!autoResume) return () => { };
+        const held = { left: autoResume.at - Date.now(), reason: autoResume.reason };
+        cancelAutoResume();
+        return () => { if (plan && handsFree()) armAutoResume(Math.max(5000, held.left), held.reason); };
+      }
+
       async function withRun(fn) {
+        cancelAutoResume();
         seriesRun = { stopped: false, step: null, joinJobId: null, splitJobId: null };
         lostExportsNote = ""; // shown until the series goes on
         allTabsJob = "series";
@@ -17272,10 +17399,16 @@
           if (e && e.seriesStopped) showToast("Dub Whole Series stopped. Open it and press Continue to pick up where it stopped.", "warning");
           else {
             console.error("[Dub Whole Series]", e);
-            showToast(`Dub Whole Series paused: ${e.message} Fix it, then press Continue.`, "error");
+            const wait = scheduleAutoResume(e);
+            showToast(wait
+              ? `Dub Whole Series paused: ${e.message} Hands-free continues by itself in ${Math.round(wait / 60000)} min.`
+              : `Dub Whole Series paused: ${e.message} Fix it, then press Continue.`, wait ? "warning" : "error");
             modal.classList.remove("hidden");
           }
         } finally {
+          // A pause ends the run: isolating beside it would keep Continue waiting ("another job
+          // is running"). Tabs already isolated come back from the server's cache.
+          stopSeriesBackgroundIsolate();
           seriesRun = null;
           allTabsJob = null;
           allTabsJobLabel = "";
@@ -17345,6 +17478,14 @@
       async function runStep(name, fn) {
         checkStop();
         if (!wanted(name)) {
+          if (name === "isolate") stopSeriesBackgroundIsolate(); // switched off while it ran beside the other steps
+          if (name === "blurtext") {
+            // Match found the burned-in lines too, and found lines are blurred by default: off
+            // means the export shows them (same as the tab's own Blur switch turned off).
+            projects.forEach((p) => { if (p.textBlur) p.textBlur.enabled = false; });
+            updateTextBlurPreview(true);
+            updateDetectTextButton();
+          }
           plan.stepState[name] = { state: "skipped" };
           savePlan();
           render();
@@ -17355,17 +17496,18 @@
         savePlan();
         setLabel(`Part ${plan.current + 1}/${plan.parts.length} · ${STEP_NAMES[name]}`);
         let note = "";
+        const startedAt = Date.now(); // how long each step takes is kept with it (shown in the window)
         try {
           note = await fn();
           checkStop();
         } catch (e) {
-          plan.stepState[name] = e.seriesStopped || seriesRun.stopped ? { state: "stopped" } : { state: "failed", note: e.message };
+          plan.stepState[name] = e.seriesStopped || seriesRun.stopped ? { state: "stopped", ms: Date.now() - startedAt } : { state: "failed", note: e.message, ms: Date.now() - startedAt };
           savePlan();
           throw e.seriesStopped || seriesRun.stopped ? stoppedError() : e;
         } finally {
           if (seriesRun) seriesRun.step = null;
         }
-        plan.stepState[name] = { state: "done", note: note || "" };
+        plan.stepState[name] = { state: "done", note: note || "", ms: Date.now() - startedAt };
         savePlan();
         render();
       }
@@ -17422,6 +17564,7 @@
       async function transcribeStep() {
         const emptyTabs = () => projects.filter((p) => !liveSubtitlesOf(p).length);
         const fallbackTabs = new Map(); // tab -> fallback model(s) Gemini used for it
+        let partialTabs = 0; // tabs whose own missed-dialogue / re-translate pass didn't finish
         const runTranscribe = async (onlyTabs) => {
           // One API key per tab, all tabs at once: each key (its own Google project) carries one
           // request at a time, and a rate limit is waited out on the same model. Spreading every
@@ -17433,7 +17576,11 @@
           if (!t) throw new Error("Transcribe did not start (see the message above).");
           if (t.stopped) throw stoppedError();
           if (t.quotaOut) throw new Error(QUOTA_MSG);
+          // A refused key fails every try the same way: say so now instead of "No tab could be
+          // transcribed" after two more passes. ("Settings": hands-free waits for a person.)
+          if (t.keyRefused) throw new Error(`Google refused the Gemini API key (${String(t.keyRefused).replace(/\s*See https?:\S+/g, "").trim()}). Add a working key in Settings.`);
           (t.fallbackTabs || []).forEach((f) => fallbackTabs.set(f.tab, f.models));
+          partialTabs += t.partial || 0;
           return t;
         };
 
@@ -17453,8 +17600,12 @@
           showToast(`Warning: Tab ${tabNumbers(stillEmpty)} had an issue - continuing with the other tabs.`, "warning");
         }
 
-        // Only run Fix Missing if there are actually empty or un-translated lines, skipping redundant gap scans on clean tabs
-        const hasUntranslated = projects.some(p => liveSubtitlesOf(p).some(s => !isSpeakableText(s.text)));
+        // Fix Missing only when something is left to fix: a line without Khmer (empty, or still
+        // Chinese/other text - Chinese counts as "speakable", so it is checked for Khmer letters),
+        // or a tab whose own repair pass didn't finish (busy Google, quota). Clean tabs are not
+        // scanned again.
+        const hasKhmer = (text) => /[\u1780-\u17FF]/.test(text || "");
+        const hasUntranslated = partialTabs > 0 || projects.some((p) => liveSubtitlesOf(p).some((s) => !hasKhmer(s.text) && (isSpeakableText(s.text) || String(s.originalText || "").trim())));
         const f = (hasUntranslated && getGeminiKeys().length) ? await fixMissingAllTabs({ keyPerTab: true }) : null;
         checkStop();
         if (f?.stopped) throw stoppedError();
@@ -17465,10 +17616,13 @@
         const nm = await unifyNamesForSeries();
         checkStop();
         if (nm?.cancelled) throw stoppedError();
-        const noKhmer = projects.reduce((n, p) => n + liveSubtitlesOf(p).filter((s) => !isSpeakableText(s.text)).length, 0);
-        let note = `${projects.length} of ${projects.length} tabs`;
+        const noKhmer = projects.reduce((n, p) => n + liveSubtitlesOf(p).filter((s) => !hasKhmer(s.text)).length, 0);
+        const empty = emptyTabs();
+        let note = `${projects.length - empty.length} of ${projects.length} tabs`;
+        if (empty.length) note += ` · tab ${tabNumbers(empty)} has no subtitles (exported without a dub)`;
         if (f?.fixedLines) note += ` · ${f.fixedLines} missing line(s) filled`;
-        if (noKhmer) note += ` · ${noKhmer} line(s) have no text to voice`;
+        if (noKhmer) note += ` · ${noKhmer} line(s) have no Khmer text`;
+        if (nm?.error) note += ` · name check skipped (${nm.error})`;
         if (nm?.changedLines) note += ` · names made consistent in ${nm.changedLines} line(s)`;
         if (nm?.glossarySaved) note += ` · ${nm.glossarySaved} name(s) saved to the glossary`;
         const fellBack = [...fallbackTabs].filter(([tab]) => projects.includes(tab));
@@ -17503,7 +17657,7 @@
       async function generateStep() {
         const missingVoice = () => projects.reduce((n, p) => n + liveSubtitlesOf(p).filter((s) => isSpeakableText(s.text) && (s.audioStatus !== "ready" || !s.file)).length, 0);
         const runGenerate = async () => {
-          const g = await generateSelectedAudioAllProjects();
+          const g = await generateSelectedAudioAllProjects({ ignoreSelection: true });
           checkStop();
           if (g && g.ok === false && g.reason === "no-subtitles") return g;
           if (!g || g.ok === false) {
@@ -17564,8 +17718,33 @@
       // A tab that only got the FFmpeg phase-cancel fallback has almost no music on these
       // near-mono mixes, and one that failed has none - so those get one more try with the ML
       // engine, and if any still went wrong the series pauses instead of exporting them.
+      // Started by runPart while the part is transcribed and voiced; the step waits for it.
+      let bgIsolate = null; // { promise } while that isolation runs
+      function startBackgroundIsolate() {
+        if (bgIsolate || isIsolatingBgmAll) return;
+        const job = { startedAt: Date.now(), ms: 0 };
+        job.promise = isolateBgmAllProjects({ quiet: true })
+          .catch(() => null)
+          .finally(() => {
+            job.ms = Date.now() - job.startedAt;
+            if (bgIsolate === job) bgIsolate = null;
+          });
+        bgIsolate = job;
+      }
+      stopSeriesBackgroundIsolate = () => {
+        if (bgIsolate && isIsolatingBgmAll) isolateBgmAllProjects({ skipConfirm: true, quiet: true });
+      };
+
       async function isolateStep() {
-        const b = await isolateBgmAllProjects({ quiet: true });
+        const bg = bgIsolate;
+        let b = bg ? await bg.promise : null;
+        checkStop();
+        // The step's own time is only the wait; this is the whole isolation (tells whether it
+        // still holds the part up).
+        const besideMs = b && b.ok !== false && !b.stopped ? bg.ms : 0;
+        // Not started (or stopped by its own button): isolate now - tabs already done come
+        // back from the server's cache in a second.
+        if (!b || b.ok === false || b.stopped) b = await isolateBgmAllProjects({ quiet: true });
         checkStop();
         if (!b || b.ok === false) throw new Error(b?.reason === "no-video" ? "No video tabs to isolate." : "Isolate BGM did not start.");
         if (b.stopped) throw stoppedError();
@@ -17607,6 +17786,7 @@
         if (stillThere.length) note += ` · tab ${tabNumbers(stillThere)} used ${VOCAL_ENGINE_LABELS[stillThere[0].bgmMethod] || "another engine"} instead (${stillThere[0].bgmFallbackReason.split(";")[0]})`;
         const ffmpegOnly = noEngine.filter((p) => projects.includes(p));
         if (ffmpegOnly.length) note += ` · tab ${tabNumbers(ffmpegOnly)} used FFmpeg phase cancellation (no AI separation engine is installed)`;
+        if (besideMs >= 1000) note += ` · isolated in ${fmtDur(besideMs / 1000)} beside the other steps`;
         return note;
       }
 
@@ -17659,7 +17839,18 @@
         // network work); the "blurtext" step at the end only waits for it.
         // (Match Subtitles to Video uses the same lines, right after Transcribe.)
         const needsLines = (wanted("blurtext") && plan.stepState.blurtext?.state !== "done") || (wanted("match") && plan.stepState.match?.state !== "done");
-        if (needsLines) detectTextAllProjects({ quiet: true }).catch(() => { });
+        const finding = needsLines ? detectTextAllProjects({ quiet: true }).catch(() => { }) : null;
+        // Isolate BGM only needs the video, so it runs beside Transcribe and Generate too, once
+        // the subtitles are found (both are CPU work, and Match waits for the subtitles).
+        if (wanted("isolate") && plan.stepState.isolate?.state !== "done") {
+          const run = seriesRun;
+          const startIsolate = () => {
+            if (seriesRun !== run || run.stopped || plan?.current !== i || plan.stepState?.isolate || !piecesOpen()) return;
+            startBackgroundIsolate();
+          };
+          if (finding) finding.then(startIsolate);
+          else startIsolate();
+        }
         for (const [name, fn] of [["transcribe", transcribeStep], ["match", matchStep], ["generate", generateStep], ["isolate", isolateStep], ["blurtext", blurTextStep]]) {
           if (plan.stepState[name]?.state === "done") continue;
           await runStep(name, fn);
@@ -17667,7 +17858,11 @@
         const autoExport = handsFree();
         plan.parts[i].status = "done";
         if (autoExport) plan.parts[i].autoExport = true; // see lostExportsNote
-        plan.lastDone = { index: i, steps: plan.stepState };
+        plan.lastDone = { index: i, steps: plan.stepState, pieces: plan.pieces }; // pieces: the part's tabs, for its export
+        // What each step did, kept with the part: after a night hands-free, the window shows it
+        // for every part (hover its row), not only for the last one.
+        plan.parts[i].report = { at: Date.now(), steps: Object.fromEntries(Object.entries(plan.stepState || {}).map(([k, v]) => [k, { state: v.state, note: v.note || "", ms: v.ms || 0 }])) };
+        plan.autoResume = null; // a new part starts with its own auto-continue tries
         plan.current = null;
         plan.stepState = null;
         plan.pieces = null;
@@ -17703,7 +17898,9 @@
           renderPartExport(i).then((r) => {
             if (!exportComplete(r) && !r.stopped) showToast(`Part ${i + 1}: ${r.done} of ${r.total} tab(s) exported (${r.failed} failed). They are tried again before the next part is exported.`, "warning");
           }).catch(() => { });
-          for (let k = projects.length - 1; k >= 0; k--) closeProjectTab(k); // in the render queue: safe to close
+          // In the render queue: safe to close. Only the part's own tabs.
+          const own = plan.lastDone?.index === i ? plan.lastDone.pieces : null;
+          for (let k = projects.length - 1; k >= 0; k--) if (!own || own.includes(projects[k].videoFilePath)) closeProjectTab(k);
           seriesExports.get(plan.parts[i]).tabsClosed = true;
           await ensureNextPartJoined();
           await startBackgroundJoin(partsToJoin());
@@ -17718,7 +17915,10 @@
       function queuePartExport(i) {
         const part = plan.parts[i];
         if (seriesExports.has(part)) return;
-        const items = window.seriesRenderApi.queueAllTabs(`${plan.outDir}|part${i + 1}`);
+        // Only the part's own tabs; the tag names this series run (plan.id), so dubbing the same
+        // folder again never takes an earlier run's export as this one.
+        const pieces = plan.lastDone?.index === i ? plan.lastDone.pieces : null;
+        const items = window.seriesRenderApi.queueAllTabs(`${plan.outDir}|${plan.id || ""}|part${i + 1}`, pieces || null);
         if (!items.length) throw new Error(`Part ${i + 1}: no tab to export.`);
         seriesExports.set(part, { items, run: null, rendering: false, result: null, tabsClosed: false });
         part.autoExport = true;
@@ -17760,6 +17960,7 @@
         let r = waited ? await job.run : job.result;
         checkStop();
         if (!exportComplete(r) && !(waited && r.stopped)) {
+          if (!job.tabsClosed) window.seriesRenderApi.refreshItems?.(job.items); // the tabs as they are now
           r = await renderPartExport(i);
           checkStop();
         }
@@ -17770,7 +17971,7 @@
       }
 
       stopSeriesBackgroundExport = () => {
-        if ([...seriesExports.values()].some((job) => job.rendering)) window.seriesRenderApi?.stop();
+        for (const job of seriesExports.values()) if (job.rendering) window.seriesRenderApi?.stopItems(job.items);
       };
 
       async function startBackgroundJoin(indices) {
@@ -17778,6 +17979,10 @@
         const r = await postJson(`${API}/episodes/join`, { parts: indices.map((k) => plan.parts[k].files), partNumbers: indices.map((k) => k + 1), outDir: plan.outDir, seriesName: plan.seriesName }).catch((e) => ({ success: false, error: e.message }));
         if (!r.success) {
           showToast(`Could not start joining the next parts (${r.error}). They are joined when you press Next part.`, "warning");
+          return;
+        }
+        if (seriesRun?.stopped) { // Stop came while the join was being started
+          postJson(`${API}/episodes/cancel`, { jobId: r.jobId }).catch(() => { });
           return;
         }
         // Back to "planned": the background job owns them now (a failed part is tried again).
@@ -17872,11 +18077,13 @@
       // ── Buttons ──────────────────────────────────────────────────────────
       async function startSeries() {
         if (!scan || seriesRun || !preflight()) return;
+        cancelAutoResume();
         const groups = scan.joinedParts ? [] : planEpisodeParts(scan.files, joinMinutes());
         if (!groups.length && !scan.joinedParts?.length) return;
         if (!(await closeOpenTabs("Dub Whole Series opens each part as new tabs."))) return;
         savePrefs();
         plan = {
+          id: Date.now(), // this series run (its exports' tag)
           folder: scan.folder,
           seriesName: $("ds-name").value.trim() || scan.seriesName,
           outDir: scan.joinedParts ? scan.folder : pathJoin(scan.folder, "DR Dubber Joined"),
@@ -17914,8 +18121,33 @@
         });
       }
 
-      async function continueSeries() {
-        if (!plan || seriesRun || !preflight()) return;
+      // auto: started by the hands-free auto-continue (a click passes its event here).
+      async function continueSeries(opts) {
+        const auto = !!(opts && opts.auto === true);
+        if (!auto) cancelAutoResume();
+        if (!plan || seriesRun) return;
+        if (auto && otherJobRunning()) {
+          // Another job of the app is running when the auto-continue comes: look again later
+          // (counted, so it doesn't go on forever).
+          if (!scheduleAutoResume({ message: opts.reason || "Another job was running." }, "busy")) {
+            showToast("Dub Whole Series could not continue by itself: another job kept running. Press Continue when it is done.", "warning");
+          }
+          return;
+        }
+        if (!preflight()) return; // a setting is missing: preflight says which; a person fixes it
+        if (!auto) plan.autoResume = null; // pressed by hand: the auto-continue tries start over
+        // A hands-free part that finished but whose export never started this session and whose
+        // tabs are gone can't be exported any more: dub it again instead of leaving a hole.
+        const orphaned = plan.parts.map((p, k) => k).filter((k) => {
+          const p = plan.parts[k];
+          return p.status === "done" && p.autoExport && !p.exported && !seriesExports.has(p) && !(plan.lastDone?.index === k && lastDoneTabsOpen());
+        });
+        if (orphaned.length) {
+          orphaned.forEach((k) => { plan.parts[k].status = "joined"; delete plan.parts[k].autoExport; });
+          if (plan.lastDone && orphaned.includes(plan.lastDone.index)) plan.lastDone = null;
+          savePlan();
+          showToast(`Part ${orphaned.map((k) => k + 1).join(", ")} was dubbed but its tabs were closed before it was exported, so ${orphaned.length === 1 ? "it is" : "they are"} dubbed again.`, "info");
+        }
         const u = unfinishedIndex();
         // Hands-free and the last part's export didn't finish (its tabs are still open): try the
         // export again before anything is closed.
@@ -17932,8 +18164,10 @@
         if (!keepTabs && !(await closeOpenTabs(`Part ${target + 1} opens as new tabs.`))) return;
         await withRun(async () => {
           await ensureNextPartJoined();
-          // Parts not joined yet (stopped, failed, or the app was restarted) join in the background.
-          await startBackgroundJoin(partsToJoin());
+          // Parts not joined yet (stopped, failed, or the app was restarted) join in the background -
+          // except the part being continued: runPart joins that one itself (two joins of one part
+          // at once wrote the same file).
+          await startBackgroundJoin(partsToJoin().filter((k) => k !== unfinishedIndex()));
           const idx = unfinishedIndex() >= 0 ? unfinishedIndex() : nextPartIndex();
           if (idx >= 0) await runPart(idx);
           await exportAndContinue();
@@ -17954,8 +18188,10 @@
       $("ds-pick").addEventListener("click", async () => {
         if (seriesRun) return;
         if (plan) {
+          const resume = holdAutoResume();
           const ok = await customConfirm("Start over with another folder? The files already made stay where they are.", "Start over", "Yes, start over");
-          if (!ok) return;
+          if (!ok) return resume();
+          if (seriesRun) return;
           cancelBackgroundJoin();
           plan = null;
           savePlan();
@@ -17993,6 +18229,7 @@
           return;
         }
         if (plan?.bgJoin) {
+          cancelAutoResume(); // Stop means stop: no continue by itself either
           cancelBackgroundJoin();
           showToast("Stopped joining. Next part joins what is left (finished parts are reused).", "info");
           return;
@@ -18002,8 +18239,10 @@
       $("ds-next").addEventListener("click", continueSeries);
       $("ds-reset").addEventListener("click", async () => {
         if (seriesRun || !plan) return;
+        const resume = holdAutoResume();
         const ok = await customConfirm("Forget this series and start over? The joined and split files stay in their folders.", "Start over", "Yes, start over");
-        if (!ok) return;
+        if (!ok) return resume();
+        if (seriesRun) return;
         cancelBackgroundJoin();
         plan = null;
         scan = null;
@@ -19007,7 +19246,7 @@
       const config = getFastGeminiConfig();
       const keys = apiKeys || config.keys;
       const model = config.model;
-      if (keys.length === 0) {
+      if (keys.length === 0 && !window.textAi?.ready()) {
         if (!quiet) showToast("Please add at least one Gemini API Key in Settings.", "error");
         return null;
       }
@@ -19103,7 +19342,7 @@
         showToast("No fast subtitles found to shorten.", "info");
         return;
       }
-      if (getFastGeminiConfig().keys.length === 0) {
+      if (getFastGeminiConfig().keys.length === 0 && !window.textAi?.ready()) {
         showToast("Please add at least one Gemini API Key in Settings.", "error");
         return;
       }
@@ -19167,7 +19406,9 @@
 
       const total = [...toShorten.values()].reduce((n, l) => n + l.length, 0);
       let shortened = 0, done = 0;
-      const keys = getFastGeminiConfig().keys;
+      const geminiKeys = getFastGeminiConfig().keys;
+      // No Gemini key but CodeCraft set up: one worker; the server sends it to CodeCraft.
+      const keys = geminiKeys.length ? geminiKeys : (window.textAi?.ready() ? [""] : []);
       if (total && keys.length) {
         const tabs = [...toShorten];
         let next = 0;
@@ -19193,6 +19434,7 @@
                 const sub = chunk.find((s) => String(s.id) === String(r.id));
                 const text = String(r.condensedText || "").trim();
                 if (!sub || !text || text === String(sub.text).trim() || !isSpeakableText(text)) return;
+                if (fastSpokenLength(text) >= fastSpokenLength(sub.text)) return; // no shorter: keep the line as it is
                 sub.text = text;
                 sub.speed = 1.0;
                 sub.audioStatus = "idle"; // Generate voices it again
@@ -20447,7 +20689,9 @@
     }
 
     let genAllRunId = 0;
-    async function generateSelectedAudioAllProjects() {
+    // opts.ignoreSelection (Dub Whole Series): every pending line, not the lines selected in the
+    // active tab (Fix Missing and the name check leave their changed lines selected).
+    async function generateSelectedAudioAllProjects(opts = {}) {
       const isAnyRunning = isGeneratingAudioAll || isGeneratingAudio || voxQueueRunning || projects.some((p) => p.isGeneratingAudio || p._voxQueued);
 
       if (isAnyRunning) {
@@ -20531,7 +20775,7 @@
 
         eligibleProjects.forEach((p) => {
           if (p === projects[activeProjectIndex]) {
-            const selectedSubIds = [...new Set(selectedItems.filter((id) => id.startsWith("text-") || id.startsWith("audio-")).map((id) => id.split("-").slice(1).join("-")))];
+            const selectedSubIds = opts.ignoreSelection ? [] : [...new Set(selectedItems.filter((id) => id.startsWith("text-") || id.startsWith("audio-")).map((id) => id.split("-").slice(1).join("-")))];
             p._selectedIds = selectedSubIds.length > 0 ? selectedSubIds : p.subtitles.filter((s) => s.audioStatus === "idle" || s.audioStatus === "error").map((s) => s.id);
           } else if (!p._selectedIds) {
             const pending = p.subtitles.filter((s) => s.audioStatus === "idle" || s.audioStatus === "error");
@@ -20653,7 +20897,29 @@
     // --- 🟣 VOXCPM2 CROSS-PROJECT QUEUE ---
     let voxQueueRunning = false;
 
+    // A tab queued with nothing left to voice is never picked by the loop, so its _voxQueued
+    // flag used to stay on: the next Generate All took it for a running job and stopped
+    // instead (Dub Whole Series: "Generate voices did not start" on every Continue). Same if the
+    // loop threw - voxQueueRunning stayed on and blocked every other job.
+    let voxQueueToken = 0;
     async function voxCmp2RunProjectQueue() {
+      if (voxQueueRunning) return;
+      const token = ++voxQueueToken;
+      try {
+        await voxCmp2RunQueueLoop();
+      } finally {
+        if (token === voxQueueToken) { // not stopped and started again meanwhile
+          voxQueueRunning = false;
+          projects.forEach((p) => {
+            if (p._voxQueued && !p.isGeneratingAudio) { p._voxQueued = false; p._selectedIds = null; }
+          });
+          updateGenerateButtonState();
+          updateGenerateAllButtonState();
+        }
+      }
+    }
+
+    async function voxCmp2RunQueueLoop() {
       if (voxQueueRunning) return;
 
       const voxCmp2Data =
@@ -20883,7 +21149,9 @@
         {
           const isActiveProject = projects[activeProjectIndex] === proj;
           const succeededCount = proj.subtitles.filter((s) => s.audioStatus === "ready").length;
-          const projDuration = proj.duration || duration || Infinity;
+          // A tab that was never opened has no duration yet: no limit, not the open tab's length
+          // (Dub Whole Series' pieces differ in length - a longer one had its last lines cut short).
+          const projDuration = proj.duration > 0 ? proj.duration : (isActiveProject && duration > 0 ? duration : Infinity);
 
           // ── DOUBLE-CHECK HELPERS (VoxCPM2 queue) ────────────────────────
           const isAutoFitAlreadyApplied = (subsArray, projDur) => {
@@ -21015,6 +21283,13 @@
       if (subtitles.length > 0) renderSubtitles();
       timelinePlayhead.classList.remove("hidden");
       syncVideoDimensions();
+
+      // Video thumbnails + original-audio waveform tracks.
+      if (window.TimelineVisuals) {
+        const proj = projects[activeProjectIndex] || {};
+        const diskPath = proj.videoFilePath || (proj.file && typeof proj.file.path === "string" ? proj.file.path : "");
+        window.TimelineVisuals.setSource({ videoSrc: mainVideo.currentSrc || mainVideo.src, filePath: diskPath, duration, isAudioOnly: !!proj.isAudioOnly });
+      }
     });
 
     const ambientCanvas = document.createElement("canvas");
@@ -22333,7 +22608,7 @@
       const trackA2HTML = `
         <div id="track-a2" class="bg-[var(--bg-panel)] rounded border border-[var(--border-color)] flex items-center relative group shrink-0" style="height: ${trackHeights.a2}px;">
             <div class="track-head absolute left-2 text-xs text-[var(--text-secondary)] font-semibold z-30 bg-[var(--bg-base)] px-1.5 py-0.5 rounded shadow-md pointer-events-none sticky flex items-center gap-1.5">
-                <span class="track-name"><i data-lucide="music"></i>Music<em>A2</em></span>
+                <span class="track-name"><i data-lucide="music"></i>Music</span>
                 <button id="btn-mute-a2" class="pointer-events-auto hover:text-[var(--text-bright)] text-[var(--text-muted)] transition-colors p-1 -m-1 rounded hover:bg-[var(--bg-hover)]">
                     <i id="icon-mute-a2" data-lucide="${bgmTrack.isMuted ? "volume-x" : "volume-2"}" class="w-3.5 h-3.5 ${bgmTrack.isMuted ? "text-red-400" : ""}"></i>
                 </button>
@@ -23005,7 +23280,7 @@
         });
         updateIsolateBgmButton();
         if (typeof renderProjectTabs === "function") renderProjectTabs();
-        showToast("Batch BGM Isolation Stopped.", "info");
+        if (!opts.quiet) showToast("Batch BGM Isolation Stopped.", "info");
         return { ok: false, reason: "stop-request" };
       }
 
@@ -23017,7 +23292,7 @@
 
       isIsolatingBgmAll = true;
       updateIsolateBgmButton();
-      showToast(`⚡ Isolating BGM for all ${eligible.length} project tab(s)...`, "success");
+      if (!opts.quiet) showToast(`⚡ Isolating BGM for all ${eligible.length} project tab(s)...`, "success");
 
       // Immediately mark all eligible projects as active
       eligible.forEach((p) => {
@@ -23161,7 +23436,6 @@
     // Native Theme Toggle Script
     document.addEventListener("DOMContentLoaded", () => {
       const themeToggleBtn = document.getElementById("theme-toggle");
-      const themeIcon = document.getElementById("theme-icon");
       const root = document.documentElement;
 
       let isDarkMode = localStorage.getItem("aiDubberIsDarkMode") !== "false";
@@ -23169,10 +23443,8 @@
       const applyTheme = () => {
         if (isDarkMode) {
           root.classList.remove("light-theme");
-          themeIcon.setAttribute("data-lucide", "sun");
         } else {
           root.classList.add("light-theme");
-          themeIcon.setAttribute("data-lucide", "moon");
         }
 
         applyStoredTheme();
@@ -23690,8 +23962,8 @@
             btnRender.innerHTML =
               proj.renderOriginalBtnHTML ||
               `
-                <i data-lucide="film" class="w-4 h-4 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
-                Render Video
+                <i data-lucide="square-arrow-out-up-right" class="w-4 h-4 group-hover:scale-110 transition-transform"></i>
+                <span>Export</span>
               `;
             _lucideCreateIcons();
           }
@@ -24057,8 +24329,8 @@
             targetProject.renderProgress = 0;
             targetProject.renderAbortController = new AbortController();
             targetProject.renderOriginalBtnHTML = `
-                <i data-lucide="film" class="w-4 h-4 transition-transform duration-300 group-hover:scale-110 group-active:scale-90 group-hover:-translate-y-0.5"></i>
-                Render Video
+                <i data-lucide="square-arrow-out-up-right" class="w-4 h-4 group-hover:scale-110 transition-transform"></i>
+                <span>Export</span>
               `;
 
             // Update button UI for the active tab
@@ -24758,6 +25030,7 @@
           const input = document.getElementById("title-ai-input");
           const proj = projects[activeProjectIndex];
           if (input && !input.value && proj?.file?.name) input.placeholder = proj.file.name.replace(/\.[^.]+$/, "");
+          showTitleIdeasForActiveTab();
           openTitleAiDrawer();
         });
 
@@ -24797,6 +25070,9 @@
           document.getElementById("title-ai-input").value = "";
           titleAiFiles = [];
           titleAiSuggestions = [];
+          const proj = projects[activeProjectIndex];
+          if (proj?.titleIdeas?.status === "done" || proj?.titleIdeas?.status === "failed") delete proj.titleIdeas;
+          setTitleAutoStatus("");
           renderTitleAiFileList();
           document.getElementById("title-ai-results").innerHTML = "";
           document.getElementById("btn-title-ai-export").classList.add("hidden");
@@ -24848,6 +25124,239 @@
           }
         });
 
+        // Title ideas are kept per tab: proj.titleIdeas = { status: "queued" | "running" | "done" | "failed",
+        // suggestions, synopsis, error, sig, auto }. Opening the drawer shows the open tab's ideas.
+        const titleStorySig = (subs) => {
+          const lines = (subs || []).filter((s) => String(s.text || "").trim());
+          return `${lines.length}:${lines.reduce((n, s) => n + String(s.text).length, 0)}`;
+        };
+        const titleProjectLines = (subs) => (subs || []).filter((s) => s.text || s.originalText).map((s) => ({ originalText: s.originalText || "", text: s.text || "" }));
+        const titleDrawerOpen = () => document.getElementById("title-ai-drawer")?.classList.contains("translate-x-0");
+
+        // One /api/suggest-movie-title call. The server rotates through every key itself (and
+        // waits/retries if Google is busy); with CodeCraft chosen it goes there.
+        async function requestTitleIdeas({ originalTitle = "", subtitlesContent = "", projectSubtitles = [] }) {
+          const activeModel = localStorage.getItem("aiDubberModel") || "gemini-2.5-flash";
+          const keys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]").filter(Boolean);
+          if (!keys.length && !window.textAi?.ready()) throw new Error("Please enter your Gemini API Key in Settings ➔ General.");
+          const res = await fetch("http://localhost:3001/api/suggest-movie-title", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              originalTitle, subtitlesContent, projectSubtitles,
+              genre: typeof activeDramaGenre !== "undefined" ? activeDramaGenre : "historical",
+              glossary: typeof getDramaGlossaryDict === "function" ? getDramaGlossaryDict() : null,
+              apiKey: keys[0], apiKeys: keys, model: activeModel, count: 8,
+            }),
+          });
+          const data = await res.json();
+          if (!data.success) throw new Error(data.error === "RATE_LIMIT_EXCEEDED" ? "All API keys are rate-limited - try again in a minute." : data.error === "INVALID_API_KEY" ? "API key is invalid - check Settings." : data.message || data.error || "TITLE_SUGGEST_FAILED");
+          if (!Array.isArray(data.data) || !data.data.length) throw new Error("No suggestions returned.");
+          return { suggestions: data.data, synopsis: data.synopsis || "" };
+        }
+
+        const setTitleAutoStatus = (text) => {
+          const el = document.getElementById("title-ai-auto-status");
+          if (!el) return;
+          el.textContent = text || "";
+          el.classList.toggle("hidden", !text);
+        };
+        const showTitleSkeleton = () => {
+          document.getElementById("title-ai-results").innerHTML = Array.from({ length: 3 })
+            .map(
+              () => `
+              <div class="p-3 rounded-xl border border-[var(--border-light)] bg-[var(--bg-base)] flex flex-col gap-2 animate-pulse">
+                <div class="h-3.5 w-2/3 rounded bg-[var(--bg-hover)]"></div>
+                <div class="h-2.5 w-1/3 rounded bg-[var(--bg-hover)]"></div>
+                <div class="h-2 w-full rounded bg-[var(--bg-hover)]"></div>
+                <div class="h-2 w-5/6 rounded bg-[var(--bg-hover)]"></div>
+              </div>
+            `,
+            )
+            .join("");
+        };
+
+        function renderTitleIdeas(suggestions, synopsis, originalTitle) {
+          const resultsEl = document.getElementById("title-ai-results");
+          const exportBtn = document.getElementById("btn-title-ai-export");
+          resultsEl.innerHTML = "";
+          titleAiSuggestions = suggestions;
+          titleAiOriginalTitle = originalTitle || (projects[activeProjectIndex]?.file?.name || "").replace(/\.[^.]+$/, "");
+          window.__titleAiSynopsis = synopsis;
+          if (synopsis) {
+            const syn = document.createElement("div");
+            syn.className = "p-3 rounded-xl border border-[var(--accent-primary)]/30 bg-[var(--accent-primary)]/5 flex flex-col gap-1.5";
+            syn.innerHTML = `<div class="flex items-center justify-between"><span class="text-[10px] font-bold text-[var(--accent-primary)] tracking-wide">SYNOPSIS · សេចក្ដីសង្ខេប</span>
+                <button class="title-ai-syn-copy text-[10px] px-1.5 py-0.5 rounded hover:bg-[var(--accent-primary)]/15 text-[var(--text-secondary)]">Copy</button></div>
+              <p class="font-khmer text-xs text-[var(--text-primary)] leading-relaxed"></p>`;
+            syn.querySelector("p").textContent = synopsis;
+            syn.querySelector(".title-ai-syn-copy").addEventListener("click", () => navigator.clipboard.writeText(synopsis).then(() => showToast("Copied to clipboard", "success")));
+            resultsEl.appendChild(syn);
+          }
+          exportBtn.classList.remove("hidden");
+          exportBtn.classList.add("flex");
+          const esc = (v) => String(v || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+          suggestions.forEach((raw, idx) => {
+            const s = { ...raw, khmerTitle: esc(raw.khmerTitle), englishTitle: esc(raw.englishTitle), vibe: esc(raw.vibe), reasoning: esc(raw.reasoning) };
+            const card = document.createElement("div");
+            card.className = "title-ai-card group relative p-3 rounded-xl border border-[var(--border-light)] bg-[var(--bg-base)] flex flex-col gap-1 hover:border-[var(--accent-primary)]";
+            card.style.opacity = "0";
+            card.style.animation = "titleAiFadeIn 0.4s ease forwards";
+            card.style.animationDelay = `${idx * 60}ms`;
+            card.innerHTML = `
+                <div class="flex items-center justify-between gap-2 pr-5">
+                  <span class="font-khmer text-sm font-semibold text-[var(--text-bright)]">${s.khmerTitle || ""}</span>
+                  <span class="text-[9px] px-1.5 py-0.5 rounded bg-[var(--accent-primary)]/15 text-[var(--accent-primary)] font-bold shrink-0">${s.vibe || ""}</span>
+                </div>
+                ${s.englishTitle ? `<span class="text-[11px] text-[var(--text-muted)]">${s.englishTitle}</span>` : ""}
+                <p class="font-khmer text-[11px] text-[var(--text-secondary)] leading-relaxed">${s.reasoning || ""}</p>
+                <button class="title-ai-apply-btn absolute bottom-2.5 right-10 opacity-0 group-hover:opacity-100 transition-all duration-200 p-1.5 rounded-lg bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/10" title="Use as this tab's name">
+                  <i data-lucide="tag" class="w-3 h-3 pointer-events-none"></i>
+                </button>
+                <button class="title-ai-copy-btn absolute bottom-2.5 right-2.5 opacity-0 group-hover:opacity-100 transition-all duration-200 p-1.5 rounded-lg bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/10" title="Copy title">
+                  <i data-lucide="copy" class="w-3 h-3 pointer-events-none"></i>
+                </button>
+              `;
+            resultsEl.appendChild(card);
+
+            card.querySelector(".title-ai-apply-btn").addEventListener("click", (e) => {
+              e.stopPropagation();
+              const proj = projects[activeProjectIndex];
+              if (!proj) return showToast("Open a tab first.", "warning");
+              proj.tabTitle = raw.khmerTitle || "";
+              renderProjectTabs();
+              showToast(`Tab renamed: "${raw.khmerTitle}"`, "success");
+            });
+
+            const copyBtn = card.querySelector(".title-ai-copy-btn");
+            copyBtn.addEventListener("click", (e) => {
+              e.stopPropagation();
+              navigator.clipboard.writeText(raw.khmerTitle || "").then(() => {
+                const icon = copyBtn.querySelector("i, svg");
+
+                copyBtn.classList.add("scale-125");
+                copyBtn.classList.add("!opacity-100", "bg-green-400/10", "text-green-400");
+                if (icon) icon.style.transform = "scale(0)";
+
+                setTimeout(() => {
+                  const swapIcon = copyBtn.querySelector("i, svg");
+                  if (swapIcon) swapIcon.setAttribute("data-lucide", "check");
+                  _lucideCreateIcons({ root: copyBtn });
+                  const newIcon = copyBtn.querySelector("i, svg");
+                  if (newIcon) {
+                    newIcon.style.transition = "transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1)";
+                    newIcon.style.transform = "scale(1)";
+                  }
+                  copyBtn.classList.remove("scale-125");
+                }, 120);
+
+                showToast("Copied to clipboard", "success");
+
+                setTimeout(() => {
+                  const revertIcon = copyBtn.querySelector("i, svg");
+                  if (revertIcon) revertIcon.style.transform = "scale(0)";
+                  setTimeout(() => {
+                    const outIcon = copyBtn.querySelector("i, svg");
+                    if (outIcon) outIcon.setAttribute("data-lucide", "copy");
+                    _lucideCreateIcons({ root: copyBtn });
+                    const finalIcon = copyBtn.querySelector("i, svg");
+                    if (finalIcon) {
+                      finalIcon.style.transition = "transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1)";
+                      finalIcon.style.transform = "scale(1)";
+                    }
+                    copyBtn.classList.remove("!opacity-100", "bg-green-400/10", "text-green-400");
+                  }, 150);
+                }, 1400);
+              });
+            });
+          });
+          _lucideCreateIcons({ root: resultsEl });
+        }
+
+        // The drawer shows what the open tab has: its ideas, "making them…", or why the automatic run failed.
+        function showTitleIdeasForActiveTab() {
+          const proj = projects[activeProjectIndex];
+          const t = proj && proj.titleIdeas;
+          const exportBtn = document.getElementById("btn-title-ai-export");
+          const busy = document.getElementById("btn-title-ai-generate")?.disabled;
+          if (busy) return; // a manual run is filling the results
+          if (t && t.status === "done") {
+            renderTitleIdeas(t.suggestions, t.synopsis);
+            setTitleAutoStatus(t.auto ? "✓ Made automatically when this tab was translated. Press Analyze & Suggest for new ideas." : "");
+          } else if (t && (t.status === "queued" || t.status === "running")) {
+            exportBtn.classList.add("hidden");
+            exportBtn.classList.remove("flex");
+            showTitleSkeleton();
+            setTitleAutoStatus("Making title ideas for this tab…");
+          } else {
+            document.getElementById("title-ai-results").innerHTML = "";
+            titleAiSuggestions = [];
+            exportBtn.classList.add("hidden");
+            exportBtn.classList.remove("flex");
+            setTitleAutoStatus(t && t.status === "failed" ? `Automatic title ideas failed: ${t.error}. Press Analyze & Suggest to try again.` : "");
+          }
+        }
+
+        // ── Automatic title ideas after a tab is translated ──
+        // One request per translated tab, one at a time in the background. Skipped when the tab's
+        // story hasn't changed since its last ideas, and when switched off in the drawer.
+        const autoTitleQueue = [];
+        let autoTitleRunning = false;
+        const autoTitlesOn = () => localStorage.getItem("aiDubberAutoTitleIdeas") !== "false";
+
+        async function runAutoTitleQueue() {
+          if (autoTitleRunning) return;
+          autoTitleRunning = true;
+          try {
+            while (autoTitleQueue.length) {
+              const proj = autoTitleQueue.shift();
+              if (projects.indexOf(proj) < 0 || !proj.titleIdeas || proj.titleIdeas.status !== "queued") continue;
+              const subs = liveSubtitlesOf(proj);
+              const sig = titleStorySig(subs);
+              proj.titleIdeas = { ...proj.titleIdeas, status: "running", sig };
+              if (projects[activeProjectIndex] === proj && titleDrawerOpen()) showTitleIdeasForActiveTab();
+              try {
+                const { suggestions, synopsis } = await requestTitleIdeas({ projectSubtitles: titleProjectLines(subs) });
+                proj.titleIdeas = { status: "done", suggestions, synopsis, sig, auto: true, at: Date.now() };
+                if (projects[activeProjectIndex] === proj) {
+                  if (titleDrawerOpen()) showTitleIdeasForActiveTab();
+                  else showToast(`✨ ${suggestions.length} title ideas are ready for "${projectTabName(proj)}" - Quick Tools › Movie Title Ideas`, "info");
+                }
+              } catch (err) {
+                proj.titleIdeas = { status: "failed", error: err.message || String(err), sig, auto: true };
+                console.warn("[Title ideas] automatic run failed:", err.message || err);
+                if (projects[activeProjectIndex] === proj && titleDrawerOpen()) showTitleIdeasForActiveTab();
+              }
+            }
+          } finally {
+            autoTitleRunning = false;
+          }
+        }
+
+        // Called wherever a tab's translation lands (Transcribe, Whisper + Translate, DAI batch, DAI Translate).
+        window.queueAutoTitleIdeas = (proj) => {
+          if (!proj || !autoTitlesOn() || projects.indexOf(proj) < 0) return;
+          const subs = liveSubtitlesOf(proj);
+          // Needs a story to read: a few lines with text (the server asks for at least 5).
+          if (subs.filter((s) => String(s.text || "").trim()).length < 5) return;
+          const t = proj.titleIdeas;
+          if (t && (t.status === "queued" || t.status === "running")) return;
+          if (t && t.status === "done" && t.sig === titleStorySig(subs)) return; // same story, same ideas
+          proj.titleIdeas = { status: "queued" };
+          if (!autoTitleQueue.includes(proj)) autoTitleQueue.push(proj);
+          // A moment later, so the tab's own saving/rendering finishes first.
+          setTimeout(runAutoTitleQueue, 1500);
+        };
+
+        const autoTitleBox = document.getElementById("title-ai-auto");
+        if (autoTitleBox) {
+          autoTitleBox.checked = autoTitlesOn();
+          autoTitleBox.addEventListener("change", () => {
+            localStorage.setItem("aiDubberAutoTitleIdeas", autoTitleBox.checked ? "true" : "false");
+            showToast(autoTitleBox.checked ? "Title ideas will be made automatically after each tab is translated." : "Automatic title ideas are off.", "info");
+          });
+        }
+
         document.getElementById("btn-title-ai-generate")?.addEventListener("click", async () => {
           const originalTitle = document.getElementById("title-ai-input").value.trim();
           const resultsEl = document.getElementById("title-ai-results");
@@ -24856,7 +25365,7 @@
           exportBtn.classList.add("hidden");
 
           const useProject = document.getElementById("title-ai-use-project")?.checked !== false;
-          const projectSubtitles = useProject && Array.isArray(subtitles) ? subtitles.filter((s) => s.text || s.originalText).map((s) => ({ originalText: s.originalText || "", text: s.text || "" })) : [];
+          const projectSubtitles = useProject && Array.isArray(subtitles) ? titleProjectLines(subtitles) : [];
           if (!originalTitle && !titleAiFiles.length && !projectSubtitles.length) {
             showToast("សូមបញ្ចូលចំណងជើងរឿងដើម ឬ subtitle (Enter the original title, or open a project / add subtitle files)", "error");
             return;
@@ -24870,19 +25379,8 @@
           genIcon.classList.add("animate-spin");
           genLabel.textContent = "Analyzing...";
           _lucideCreateIcons({ root: btn });
-
-          resultsEl.innerHTML = Array.from({ length: 3 })
-            .map(
-              () => `
-              <div class="p-3 rounded-xl border border-[var(--border-light)] bg-[var(--bg-base)] flex flex-col gap-2 animate-pulse">
-                <div class="h-3.5 w-2/3 rounded bg-[var(--bg-hover)]"></div>
-                <div class="h-2.5 w-1/3 rounded bg-[var(--bg-hover)]"></div>
-                <div class="h-2 w-full rounded bg-[var(--bg-hover)]"></div>
-                <div class="h-2 w-5/6 rounded bg-[var(--bg-hover)]"></div>
-              </div>
-            `,
-            )
-            .join("");
+          setTitleAutoStatus("");
+          showTitleSkeleton();
 
           showToast("Gemini កំពុងវិភាគ និងបង្កើតចំណងជើង...", "info");
 
@@ -24901,128 +25399,11 @@
               subtitlesContent = (await Promise.all(readPromises)).join("\n\n");
             }
 
-            const activeModel = localStorage.getItem("aiDubberModel") || "gemini-2.5-flash";
-            const keys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]").filter(Boolean);
-            if (!keys.length) throw new Error("Please enter your Gemini API Key in Settings ➔ General.");
-            let suggestions = null;
-            let synopsis = "";
-            let lastErrorType = "";
-            try {
-              // The server rotates through every key itself (and waits/retries if Google is busy).
-              const res = await fetch("http://localhost:3001/api/suggest-movie-title", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  originalTitle, subtitlesContent, projectSubtitles,
-                  genre: typeof activeDramaGenre !== "undefined" ? activeDramaGenre : "historical",
-                  glossary: typeof getDramaGlossaryDict === "function" ? getDramaGlossaryDict() : null,
-                  apiKey: keys[0], apiKeys: keys, model: activeModel, count: 8,
-                }),
-              });
-              const data = await res.json();
-              if (!data.success) throw new Error(data.error === "RATE_LIMIT_EXCEEDED" ? "All API keys are rate-limited - try again in a minute." : data.error === "INVALID_API_KEY" ? "API key is invalid - check Settings." : data.message || data.error || "TITLE_SUGGEST_FAILED");
-              suggestions = data.data;
-              synopsis = data.synopsis || "";
-            } catch (err) {
-              lastErrorType = err.message || "UNKNOWN_ERROR";
-            }
-
-            if (!Array.isArray(suggestions) || suggestions.length === 0) {
-              throw new Error(lastErrorType || "No suggestions returned.");
-            }
-
-            resultsEl.innerHTML = "";
-            titleAiSuggestions = suggestions;
-            titleAiOriginalTitle = originalTitle || (projects[activeProjectIndex]?.file?.name || "").replace(/\.[^.]+$/, "");
-            window.__titleAiSynopsis = synopsis;
-            if (synopsis) {
-              const syn = document.createElement("div");
-              syn.className = "p-3 rounded-xl border border-[var(--accent-primary)]/30 bg-[var(--accent-primary)]/5 flex flex-col gap-1.5";
-              syn.innerHTML = `<div class="flex items-center justify-between"><span class="text-[10px] font-bold text-[var(--accent-primary)] tracking-wide">SYNOPSIS · សេចក្ដីសង្ខេប</span>
-                  <button class="title-ai-syn-copy text-[10px] px-1.5 py-0.5 rounded hover:bg-[var(--accent-primary)]/15 text-[var(--text-secondary)]">Copy</button></div>
-                <p class="font-khmer text-xs text-[var(--text-primary)] leading-relaxed"></p>`;
-              syn.querySelector("p").textContent = synopsis;
-              syn.querySelector(".title-ai-syn-copy").addEventListener("click", () => navigator.clipboard.writeText(synopsis).then(() => showToast("Copied to clipboard", "success")));
-              resultsEl.appendChild(syn);
-            }
-            exportBtn.classList.remove("hidden");
-            exportBtn.classList.add("flex");
-            const esc = (v) => String(v || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-            suggestions.forEach((raw, idx) => {
-              const s = { ...raw, khmerTitle: esc(raw.khmerTitle), englishTitle: esc(raw.englishTitle), vibe: esc(raw.vibe), reasoning: esc(raw.reasoning) };
-              const card = document.createElement("div");
-              card.className = "title-ai-card group relative p-3 rounded-xl border border-[var(--border-light)] bg-[var(--bg-base)] flex flex-col gap-1 hover:border-[var(--accent-primary)]";
-              card.style.opacity = "0";
-              card.style.animation = "titleAiFadeIn 0.4s ease forwards";
-              card.style.animationDelay = `${idx * 60}ms`;
-              card.innerHTML = `
-                  <div class="flex items-center justify-between gap-2 pr-5">
-                    <span class="font-khmer text-sm font-semibold text-[var(--text-bright)]">${s.khmerTitle || ""}</span>
-                    <span class="text-[9px] px-1.5 py-0.5 rounded bg-[var(--accent-primary)]/15 text-[var(--accent-primary)] font-bold shrink-0">${s.vibe || ""}</span>
-                  </div>
-                  ${s.englishTitle ? `<span class="text-[11px] text-[var(--text-muted)]">${s.englishTitle}</span>` : ""}
-                  <p class="font-khmer text-[11px] text-[var(--text-secondary)] leading-relaxed">${s.reasoning || ""}</p>
-                  <button class="title-ai-apply-btn absolute bottom-2.5 right-10 opacity-0 group-hover:opacity-100 transition-all duration-200 p-1.5 rounded-lg bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/10" title="Use as this tab's name">
-                    <i data-lucide="tag" class="w-3 h-3 pointer-events-none"></i>
-                  </button>
-                  <button class="title-ai-copy-btn absolute bottom-2.5 right-2.5 opacity-0 group-hover:opacity-100 transition-all duration-200 p-1.5 rounded-lg bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-[var(--accent-primary)] hover:bg-[var(--accent-primary)]/10" title="Copy title">
-                    <i data-lucide="copy" class="w-3 h-3 pointer-events-none"></i>
-                  </button>
-                `;
-              resultsEl.appendChild(card);
-
-              card.querySelector(".title-ai-apply-btn").addEventListener("click", (e) => {
-                e.stopPropagation();
-                const proj = projects[activeProjectIndex];
-                if (!proj) return showToast("Open a tab first.", "warning");
-                proj.tabTitle = raw.khmerTitle || "";
-                renderProjectTabs();
-                showToast(`Tab renamed: "${raw.khmerTitle}"`, "success");
-              });
-
-              const copyBtn = card.querySelector(".title-ai-copy-btn");
-              copyBtn.addEventListener("click", (e) => {
-                e.stopPropagation();
-                navigator.clipboard.writeText(raw.khmerTitle || "").then(() => {
-                  const icon = copyBtn.querySelector("i, svg");
-
-                  copyBtn.classList.add("scale-125");
-                  copyBtn.classList.add("!opacity-100", "bg-green-400/10", "text-green-400");
-                  if (icon) icon.style.transform = "scale(0)";
-
-                  setTimeout(() => {
-                    const swapIcon = copyBtn.querySelector("i, svg");
-                    if (swapIcon) swapIcon.setAttribute("data-lucide", "check");
-                    _lucideCreateIcons({ root: copyBtn });
-                    const newIcon = copyBtn.querySelector("i, svg");
-                    if (newIcon) {
-                      newIcon.style.transition = "transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1)";
-                      newIcon.style.transform = "scale(1)";
-                    }
-                    copyBtn.classList.remove("scale-125");
-                  }, 120);
-
-                  showToast("Copied to clipboard", "success");
-
-                  setTimeout(() => {
-                    const revertIcon = copyBtn.querySelector("i, svg");
-                    if (revertIcon) revertIcon.style.transform = "scale(0)";
-                    setTimeout(() => {
-                      const outIcon = copyBtn.querySelector("i, svg");
-                      if (outIcon) outIcon.setAttribute("data-lucide", "copy");
-                      _lucideCreateIcons({ root: copyBtn });
-                      const finalIcon = copyBtn.querySelector("i, svg");
-                      if (finalIcon) {
-                        finalIcon.style.transition = "transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1)";
-                        finalIcon.style.transform = "scale(1)";
-                      }
-                      copyBtn.classList.remove("!opacity-100", "bg-green-400/10", "text-green-400");
-                    }, 150);
-                  }, 1400);
-                });
-              });
-            });
-            _lucideCreateIcons({ root: resultsEl });
+            const { suggestions, synopsis } = await requestTitleIdeas({ originalTitle, subtitlesContent, projectSubtitles });
+            renderTitleIdeas(suggestions, synopsis, originalTitle);
+            // Kept with the tab, so reopening the drawer shows them again.
+            const proj = projects[activeProjectIndex];
+            if (proj) proj.titleIdeas = { status: "done", suggestions, synopsis, sig: titleStorySig(subtitles), auto: false, at: Date.now() };
 
             showToast("វិភាគ និងបង្កើតចំណងជើងបានជោគជ័យ!", "success");
           } catch (err) {
@@ -25376,19 +25757,23 @@
         // tabs can be closed while it renders. Returns the part's queue items.
         const SERIES_AUDIO_FILE_RE = /\.(mp3|wav|m4a|m4b|aac|flac|ogg|oga|opus|wma|ac3|eac3|dts|aif|aiff|caf|mp2|mka|amr|ape|wv|ra|weba)$/i;
         // tag: which series part these exports belong to - a retry reuses that part's finished
-        // exports instead of rendering them again.
-        const queueAllTabsForSeries = (tag = null) => {
+        // exports instead of rendering them again. onlyPaths: the part's own tabs (their video
+        // files) - a tab opened for something else is never exported as part of the series.
+        const queueAllTabsForSeries = (tag = null, onlyPaths = null) => {
           window._isSavingForRender = true;
           saveCurrentProjectState();
           window._isSavingForRender = false;
           const items = new Set();
           projects.forEach((proj) => {
             if (!proj.file) return;
+            if (onlyPaths && !onlyPaths.includes(proj.videoFilePath)) return;
             const audioOnly = !!proj.isAudioOnly || SERIES_AUDIO_FILE_RE.test(proj.videoFilePath || proj.file.name || "");
             const baseName = (proj.file.name || "video").replace(/\.[^/.]+$/, "");
             const fileName = `${baseName}_${proj.targetLanguage || targetLanguage || "Khmer"}_Dubbed.${audioOnly ? "mp3" : "mp4"}`;
+            // A waiting or running item of another series run (an earlier dub of the same files)
+            // is not this part's export.
             const queued = renderQueue.find((i) => i.projectLabel === proj.file.name && i.config?.outputFileName === fileName &&
-              (i.status === "pending" || i.status === "running" || (tag && i.seriesTag === tag && i.status === "done")));
+              (((i.status === "pending" || i.status === "running") && (!i.seriesTag || i.seriesTag === tag)) || (tag && i.seriesTag === tag && i.status === "done")));
             if (queued) {
               items.add(queued);
               return;
@@ -25414,7 +25799,8 @@
           const stopsBefore = queueStops;
           for (let attempt = 0; attempt < 2 && queueStops === stopsBefore; attempt++) {
             if (attempt) again(["error"]);
-            while (queueRunning) await new Promise((r) => setTimeout(r, 1000));
+            // Waiting behind the user's own queue run: a Stop ends the wait (it doesn't stop theirs).
+            while (queueRunning && queueStops === stopsBefore) await new Promise((r) => setTimeout(r, 1000));
             if (queueStops !== stopsBefore || !items.some((i) => i.status === "pending")) break;
             await runRenderQueue(new Set(items));
           }
@@ -25427,7 +25813,39 @@
             stopped: queueStops !== stopsBefore,
           };
         };
-        window.seriesRenderApi = { queueAllTabs: queueAllTabsForSeries, renderItems: renderSeriesItems, stop: stopRenderQueue };
+        // Dub Whole Series' Stop: only the series' own exports stop. The user's own queue items keep
+        // their place, and keep rendering when the queue is running for them.
+        const stopSeriesItems = async (items) => {
+          const own = new Set(items);
+          queueStops++; // renderSeriesItems doesn't start these again
+          const runningItem = renderQueue.find((i) => i.status === "running");
+          if (runningItem && own.has(runningItem)) {
+            queueStopRequested = true; // the run is the series' own (runRenderQueue(onlyItems))
+            runningItem._abortCtrl?.abort();
+            try { await fetch("http://localhost:3001/api/cancel-render", { method: "POST" }); } catch { }
+          }
+          renderQueue.forEach((i) => { if (own.has(i) && i.status === "pending") i.status = "cancelled"; });
+          renderQueueList();
+        };
+        // Before a failed export is tried again: an item whose tab is still open takes the tab as
+        // it is now, so a fix made after the failure (a voice generated again, BGM isolated again)
+        // is what gets rendered - not the snapshot taken before it.
+        const refreshSeriesItems = (items) => {
+          window._isSavingForRender = true;
+          saveCurrentProjectState();
+          window._isSavingForRender = false;
+          let refreshed = 0;
+          items.forEach((item) => {
+            if (item.status !== "error" && item.status !== "cancelled") return;
+            const proj = projects.find((p) => p.file && p.file.name === item.projectLabel);
+            if (!proj) return;
+            const audioOnly = /\.mp3$/i.test(item.config?.outputFileName || "");
+            Object.assign(item, buildConfigSnapshot(proj, item.config.outputFileName, audioOnly, "mp3"));
+            refreshed++;
+          });
+          return refreshed;
+        };
+        window.seriesRenderApi = { queueAllTabs: queueAllTabsForSeries, renderItems: renderSeriesItems, stop: stopRenderQueue, stopItems: stopSeriesItems, refreshItems: refreshSeriesItems };
 
         // Initial render of empty queue UI
         renderQueueList();

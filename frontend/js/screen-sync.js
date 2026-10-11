@@ -186,6 +186,12 @@
       if (e - s >= MIN_LEFT) {
         out[k].start = s;
         out[k].end = e;
+      } else if (hi - lo >= MIN_LEFT) {
+        // Its neighbours moved over (or past) it, but there is room between them: it goes into
+        // that room - keeping its length when it fits - instead of overlapping a matched line.
+        const len = Math.min(Math.max(out[k].end - out[k].start, MIN_LEFT), hi - lo);
+        out[k].start = Math.min(Math.max(out[k].start, lo), hi - len);
+        out[k].end = out[k].start + len;
       }
     });
     return out;

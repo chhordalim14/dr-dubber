@@ -206,17 +206,17 @@ function translatePromptLine(i, line) {
     return item;
 }
 
-function buildTranslatePrompt({ lines, glossaryHint, genreGuidance, previousLines }) {
-    const contextHint = previousLines && previousLines.length
-        ? `\n\nPREVIOUS DIALOGUE (context only, for consistent names and pronouns; do NOT translate or output these):\n${previousLines.map(l => `- [${l.gender || '?'}] ${l.source} => ${l.text}`).join('\n')}`
-        : '';
+// The translate prompt in two parts. The fixed part (rules, register, output format) is the same
+// for every batch of a job - and for every job in the same genre - so it goes first, as the system
+// instruction: Gemini's automatic cache bills a repeated prefix at a fraction of the price. The
+// per-batch part (glossary, character sheet, previous dialogue, the lines) comes after it.
+function buildTranslateSystemPrompt({ genreGuidance }) {
     return `You are an elite master film/TV dialogue adapter and dubbing director specializing in Asian and Chinese drama (C-Drama: 古装/宫斗/仙侠/武侠/现代甜宠/总裁/动作/悬疑/恐怖/家庭/校园) localization into cinematic, natural and highly readable Khmer.
 
 TASK:
 Translate each dialogue line into NATURAL, SPEAKABLE Khmer dialogue for voice dubbing, sized to the time the line has on screen.
 
 ${KHMER_DUBBING_RULES}
-${glossaryHint}${contextHint}
 
 LINE MATCHING & EMOTION RULES:
 1. Exact 1-to-1 Line Match:
@@ -238,10 +238,54 @@ LINE MATCHING & EMOTION RULES:
     "gender": "Male",
     "emotion": "Neutral"
   }
-]
+]`;
+}
+
+// previousLines: [{ source, text?, gender? }] - a line not translated yet (another batch is still
+// working on it) goes along as its original only, so a batch never starts without context.
+// sheetHint: the character sheet (character-sheet.js); note: an extra instruction for this request.
+function buildTranslateUserPrompt({ lines, glossaryHint = '', sheetHint = '', previousLines, note = '' }) {
+    const contextHint = previousLines && previousLines.length
+        ? `\n\nPREVIOUS DIALOGUE (context only, for consistent names and pronouns; do NOT translate or output these):\n${previousLines.map(l => `- [${l.gender || '?'}] ${l.source}${l.text ? ` => ${l.text}` : ''}`).join('\n')}`
+        : '';
+    return `${`${glossaryHint}${sheetHint}${contextHint}`.trim()}${note ? `\n\n${note}` : ''}
 
 LINES TO TRANSLATE:
-${JSON.stringify(lines)}`;
+${JSON.stringify(lines)}`.trim();
+}
+
+// Both parts as one text (for callers and tests that want the whole prompt).
+function buildTranslatePrompt({ lines, glossaryHint, sheetHint, genreGuidance, previousLines, note }) {
+    return `${buildTranslateSystemPrompt({ genreGuidance })}\n\n${buildTranslateUserPrompt({ lines, glossaryHint, sheetHint, previousLines, note })}`;
+}
+
+// The app's own estimate of how long a Khmer line takes to say before it is voiced (studio-main's
+// FAST_EST_CHARS_PER_SEC): letters per second, counting base characters only - vowel signs,
+// subscript marks and spaces don't add time.
+const KHMER_EST_CHARS_PER_SEC = 12;
+function estimateSpeechSeconds(text) {
+    return String(text || '').replace(/[\p{M}\s​-‍]/gu, '').length / KHMER_EST_CHARS_PER_SEC;
+}
+
+// Translated lines that would still sound rushed after the app's timing fix: a voice may run on
+// into the free time before the next line, so a line is only "too long" when it would need more
+// than maxSpeed even then (Dub Whole Series rewrites rushed lines from the same 1.3x). Tiny
+// overruns are left alone. texts[i] is line i's Khmer. -> [{ i, room, speed }]
+function findOverlongLines(sourceLines, texts, { maxSpeed = 1.3, gap = 0.05, minOverrun = 0.4 } = {}) {
+    const order = sourceLines.map((_, i) => i)
+        .filter(i => Number.isFinite(sourceLines[i].start))
+        .sort((a, b) => sourceLines[a].start - sourceLines[b].start);
+    const out = [];
+    order.forEach((i, k) => {
+        const line = sourceLines[i];
+        const text = texts[i];
+        if (!text || !(line.seconds > 0)) return;
+        const next = k + 1 < order.length ? sourceLines[order[k + 1]].start : null;
+        const room = Math.max(line.seconds, next != null ? next - gap - line.start : 0);
+        const est = estimateSpeechSeconds(text);
+        if (est > room * maxSpeed && est - room >= minOverrun) out.push({ i, room: Number(room.toFixed(2)), speed: Number((est / room).toFixed(2)) });
+    });
+    return out;
 }
 
 module.exports = {
@@ -254,5 +298,10 @@ module.exports = {
     getKhmerDramaRegisterGuidance,
     parseSrtBlocksForTranslate,
     translatePromptLine,
-    buildTranslatePrompt
+    buildTranslateSystemPrompt,
+    buildTranslateUserPrompt,
+    buildTranslatePrompt,
+    KHMER_EST_CHARS_PER_SEC,
+    estimateSpeechSeconds,
+    findOverlongLines
 };

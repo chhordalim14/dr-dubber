@@ -1052,6 +1052,12 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             outputFile: outputPath,
             error: null
         };
+        // Stop before FFmpeg has started (voice track, probes): cancelRender() marks this job,
+        // and the render ends at the next check instead of rendering the whole tab after Stop.
+        const job = currentRenderJob;
+        const stopIfCancelled = () => {
+            if (job.cancelRequested) throw Object.assign(new Error('Render cancelled'), { cancelled: true });
+        };
 
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dr_dubber_render_'));
 
@@ -1079,6 +1085,19 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                 console.warn('[Render Warning] Fast dialogue stem pre-assembly failed:', stemErr.message);
                 dialogueStemPath = null;
             }
+        }
+        stopIfCancelled();
+        // A dub without its voices is not a finished export: the render fails (the queue tries it
+        // again, and Dub Whole Series pauses) instead of reporting "done" with only the music.
+        const withVoicePath = (allAudioItems || []).filter(s => s.file || s.audioPath).length;
+        if (withVoicePath > 0 && validSubs.length === 0) {
+            throw new Error(`None of the ${withVoicePath} voice file(s) exist any more - generate the voices again, then export.`);
+        }
+        if (validSubs.length > 0 && !(dialogueStemPath && fs.existsSync(dialogueStemPath))) {
+            throw new Error('Could not build the voice track from the voice files (one may be damaged, or the disk is full).');
+        }
+        if (validSubs.length < withVoicePath) {
+            console.warn(`[Render Warning] ${withVoicePath - validSubs.length} of ${withVoicePath} voice file(s) are missing - those lines are silent.`);
         }
 
         const renderStartTime = Date.now();
@@ -1169,6 +1188,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             args.push(outputPath);
 
             console.log(`[Render] Spawning FFmpeg to export audio: ${outputPath}`);
+            stopIfCancelled();
             const ffmpeg = spawn(getFFmpegBinary(), args, { windowsHide: true });
             activeRenderProcess = ffmpeg;
 
@@ -1385,7 +1405,10 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         // flip/crop/scale, so the blur stays on the text), only while they show.
         if (Array.isArray(textBlurs) && textBlurs.length && videoPath) {
             const size = await probeDisplaySize(videoPath, getFFprobeBinary());
-            const tb = size && buildTextBlurFilters(textBlurs, { ...size, inTag: videoInTag });
+            // Without the size the blur can't be placed: fail (the queue tries again) rather than
+            // export with the old subtitles showing.
+            if (!size) throw new Error('Could not read the video size to blur the burned-in subtitles (the computer may be very busy) - try the export again.');
+            const tb = buildTextBlurFilters(textBlurs, { ...size, inTag: videoInTag });
             if (tb) {
                 filterComplex.push(...tb.parts);
                 videoInTag = tb.outTag;
@@ -1784,6 +1807,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         args.push(outputPath);
 
         console.log(`[Render] Spawning FFmpeg to render (${chosenEncoder}): ${outputPath}`);
+        stopIfCancelled();
         const ffmpeg = spawn(getFFmpegBinary(), args, { windowsHide: true });
         activeRenderProcess = ffmpeg;
 
@@ -1880,13 +1904,19 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         });
 
     } catch (err) {
-        currentRenderJob.status = 'error';
+        currentRenderJob.status = err.cancelled ? 'cancelled' : 'error';
         currentRenderJob.error = err.message;
         if (onError) onError(err);
     }
 }
 
 function cancelRender() {
+    // Still preparing (voice track, probes): FFmpeg hasn't started, so mark the job - it stops
+    // at its next check (renderVideo's stopIfCancelled).
+    if (!activeRenderProcess && currentRenderJob && currentRenderJob.status === 'rendering') {
+        currentRenderJob.cancelRequested = true;
+        return true;
+    }
     if (activeRenderProcess) {
         try {
             if (process.platform === 'win32') {

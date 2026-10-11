@@ -117,7 +117,7 @@ describe('shared syllable budget', () => {
         assert.ok(!/Remove redundant pronouns/i.test(serverSource));
         assert.match(serverSource, /Keep forms of address and pronouns \(បង, អូន, លោក, ព្រះអង្គ \.\.\.\) and names unchanged/);
         assert.ok(!/slot \* 3\.5/.test(serverSource));
-        assert.match(serverSource, /maxSyllables: khmerMaxSyllables\(slot\)/);
+        assert.match(serverSource, /maxSyllables: khmerMaxSyllables\(seconds\)/);
         assert.ok(!/0\.8 seconds/.test(serverSource));
     });
 });

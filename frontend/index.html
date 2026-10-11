@@ -1216,6 +1216,7 @@
     }
   </style>
   <link rel="stylesheet" href="css/shell.css" />
+  <link rel="stylesheet" href="css/text-ai.css" />
   <script src="app.js"></script>
 
 </head>
@@ -1230,57 +1231,81 @@
         <p class="app-brand__tag">Drama Dubbing Made Easy</p>
       </div>
     </div>
-    <!-- Project tabs (rendered by JS; the label shows while only one project is open) -->
-    <div id="project-tabs-bar" class="app-tabs">
-      <span id="footer-no-project" class="app-tabs__label font-khmer"><i data-lucide="folder"></i><span>Project: បកប្រែរឿង</span></span>
-      <button type="button" class="app-tabs__add" data-click="btn-load-video" title="Open another video in a new tab"><i data-lucide="plus"></i></button>
-    </div>
-    <!-- Header actions, left to right: app · tools · output -->
-    <div class="app-header__actions">
-      <!-- Mirrors Settings › Auto Save Subtitle (layout-shell.js); a click flips that switch -->
-      <button type="button" id="hdr-autosave" class="hdr-autosave" data-click="autosave-srt-toggle"
-        title="Auto-save subtitles (.srt) after transcribing. Click to turn on or off; options are in Settings.">
-        <i data-lucide="cloud-check"></i><span>Auto Save</span>
+    <!-- Project pill: shows the active project; its menu holds the project tabs
+         (rendered by JS into #project-tabs-bar) and "open in a new tab". -->
+    <div class="hdr-menu-wrap app-project">
+      <button type="button" id="hdr-project" class="hdr-project" data-hdr-menu="hdr-project-menu" aria-haspopup="true" aria-expanded="false" title="Open projects">
+        <i data-lucide="folder"></i>
+        <span id="hdr-project-name" class="hdr-project__name font-khmer">Project: បកប្រែរឿង</span>
+        <i data-lucide="chevron-down" class="hdr-chevron"></i>
       </button>
-      <div class="hdr-icons" aria-label="App">
-        <button id="theme-toggle" class="hdr-icon hdr-icon--tile group" style="--tile: var(--tile-amber)" title="Light / dark mode">
-          <i data-lucide="sun" id="theme-icon" class="w-[18px] h-[18px] transition-transform duration-300 group-hover:scale-110 group-active:scale-90"></i>
-        </button>
-        <button id="btn-open-settings" class="hdr-icon hdr-icon--tile group" style="--tile: var(--tile-lav)" title="Settings">
-          <i data-lucide="settings" class="w-[18px] h-[18px] transition-transform duration-500 group-hover:rotate-90"></i>
-        </button>
+      <div id="hdr-project-menu" class="hdr-menu hdr-menu--project" hidden>
+        <p class="hdr-menu__title">Open projects</p>
+        <div id="project-tabs-bar" class="app-tabs">
+          <span id="footer-no-project" class="app-tabs__label font-khmer">No video open yet</span>
+        </div>
+        <div class="hdr-menu__sep"></div>
+        <button type="button" class="hdr-menu__item" data-click="btn-load-video"><i data-lucide="plus"></i><span>Open video in new tab</span></button>
       </div>
-      <div class="hdr-divider"></div>
-      <div class="hdr-group" aria-label="Tools">
-        <button id="btn-open-title-ai"
-          class="hdr-icon hdr-icon--magic group relative text-white title-ai-btn-idle"
-          style="background: linear-gradient(135deg, #ff7a66, #ffa45c, #ff6f91, #ff7a66); background-size: 300% 300%"
-          title="Khmer Movie Title Suggestions">
-          <i data-lucide="sparkles" class="w-[18px] h-[18px] relative z-[1] transition-transform duration-300 group-hover:scale-110 group-hover:rotate-12"></i>
+    </div>
+    <!-- Mirrors Settings › Auto Save Subtitle (layout-shell.js): shows the last
+         save time while on; a click flips that switch -->
+    <button type="button" id="hdr-autosave" class="hdr-autosave" data-click="autosave-srt-toggle"
+      title="Auto-save subtitles (.srt) after transcribing. Click to turn on or off; options are in Settings.">
+      <i data-lucide="cloud-upload"></i><span id="hdr-autosave-text">Auto Save off</span>
+    </button>
+    <!-- Header actions, left to right: tools · output · app -->
+    <div class="app-header__actions">
+      <div class="hdr-menu-wrap">
+        <button type="button" class="hdr-btn hdr-btn--outline" data-hdr-menu="hdr-tools-menu" aria-haspopup="true" aria-expanded="false" title="Quick Tools">
+          <i data-lucide="zap" class="w-4 h-4"></i>
+          <span>Quick Tools</span>
         </button>
+        <div id="hdr-tools-menu" class="hdr-menu" hidden>
+          <button id="btn-open-title-ai" type="button" class="hdr-menu__item" title="Khmer Movie Title Suggestions">
+            <i data-lucide="sparkles" class="hdr-menu__magic"></i><span>Movie Title Ideas</span>
+          </button>
+          <!-- Shortcut: same file picker as Media › Import SRT -->
+          <button type="button" class="hdr-menu__item" data-click="btn-import-srt" title="Import SRT subtitles">
+            <i data-lucide="file-down"></i><span>Import SRT</span>
+          </button>
+          <button type="button" class="hdr-menu__item" data-click="btn-load-video" title="Open another video in a new tab">
+            <i data-lucide="film"></i><span>Open Video</span>
+          </button>
+        </div>
       </div>
-      <div class="hdr-divider"></div>
-      <div class="hdr-group" aria-label="Output">
-        <!-- Queue Button -->
-        <button id="btn-open-queue" class="hdr-icon hdr-icon--tile group relative" style="--tile: var(--tile-sky)" title="Render Queue">
-          <i data-lucide="list-video" class="w-[18px] h-[18px] transition-transform duration-300 group-hover:scale-110 group-active:scale-90"></i>
-          <span id="queue-badge"
-            class="hidden absolute -top-1 -right-1 min-w-[16px] h-4 px-1 bg-[var(--accent-primary)] text-white text-[9px] font-bold rounded-full flex items-center justify-center leading-none"></span>
-        </button>
-        <!-- Shortcut: same file picker as Media › Import SRT -->
-        <button type="button" class="hdr-btn hdr-btn--ghost group" data-click="btn-import-srt" title="Import SRT subtitles">
-          <i data-lucide="file-down" class="w-4 h-4 group-hover:translate-y-0.5 transition-transform"></i>
-          <span>Import SRT</span>
-        </button>
-        <button id="btn-export-srt" class="hdr-btn hdr-btn--ghost group" title="Export SRT Subtitles">
-          <i data-lucide="file-up" class="w-4 h-4 group-hover:-translate-y-0.5 transition-transform"></i>
-          <span>Export SRT</span>
-        </button>
+      <!-- Export: the main half renders the video; the chevron opens Export SRT -->
+      <div class="hdr-menu-wrap hdr-split">
         <button id="btn-render" class="hdr-btn hdr-btn--primary group" title="Final Studio Render">
-          <i data-lucide="film" class="w-4 h-4 group-hover:scale-110 transition-transform"></i>
-          <span>Render Video</span>
+          <i data-lucide="square-arrow-out-up-right" class="w-4 h-4 group-hover:scale-110 transition-transform"></i>
+          <span>Export</span>
         </button>
+        <button type="button" class="hdr-split__more" data-hdr-menu="hdr-export-menu" aria-haspopup="true" aria-expanded="false" title="More export options">
+          <i data-lucide="chevron-down"></i>
+        </button>
+        <div id="hdr-export-menu" class="hdr-menu hdr-menu--right" hidden>
+          <button type="button" class="hdr-menu__item" data-click="btn-render" title="Final Studio Render">
+            <i data-lucide="film"></i><span>Render Video</span>
+          </button>
+          <button id="btn-export-srt" type="button" class="hdr-menu__item" title="Export SRT Subtitles">
+            <i data-lucide="file-up"></i><span>Export SRT</span>
+          </button>
+        </div>
       </div>
+      <!-- Light / dark: #theme-toggle toggles (studio-main.js); the half that is
+           already active swallows its click (layout-shell.js) -->
+      <div id="theme-toggle" class="hdr-theme" role="group" aria-label="Light / dark mode">
+        <button type="button" class="hdr-theme__opt" data-theme-opt="light" title="Light mode"><i data-lucide="sun"></i></button>
+        <button type="button" class="hdr-theme__opt" data-theme-opt="dark" title="Dark mode"><i data-lucide="moon"></i></button>
+      </div>
+      <button id="btn-open-settings" class="hdr-icon group" title="Settings">
+        <i data-lucide="settings" class="w-5 h-5 transition-transform duration-500 group-hover:rotate-90"></i>
+      </button>
+      <!-- Queue Button -->
+      <button id="btn-open-queue" class="hdr-icon group relative" title="Render Queue">
+        <i data-lucide="list-video" class="w-5 h-5 transition-transform duration-300 group-hover:scale-110"></i>
+        <span id="queue-badge" class="hidden hdr-badge"></span>
+      </button>
     </div>
   </header>
 
@@ -2375,7 +2400,7 @@
       </div>
 
       <!-- Timeline Editor -->
-      <section id="timeline-panel" class="shell-card" style="height: min(290px, 36vh)">
+      <section id="timeline-panel" class="shell-card" style="height: min(340px, 42vh)">
         <div id="panel-resizer"
           class="absolute top-0 left-0 right-0 h-1.5 cursor-n-resize hover:bg-[var(--accent-primary)] z-[6] -translate-y-1/2">
         </div>
@@ -2511,6 +2536,7 @@
           </div>
         </div>
 
+        <div id="timeline-body">
         <div id="timeline-scroll-container"
           class="flex-1 min-h-[110px] overflow-x-auto overflow-y-auto bg-[var(--bg-base)] custom-scrollbar relative">
           <div id="timeline-content" class="min-h-full relative min-w-full transition-[width] duration-100 ease-linear"
@@ -2535,35 +2561,33 @@
                 00:00:000</div>
             </div>
 
-            <div id="timeline-tracks" class="pt-8 px-2 pb-32 flex flex-col gap-2 relative z-20 min-h-full">
-              <!-- Subtitle Track (T1) -->
-              <div id="track-t1"
-                class="bg-[var(--bg-panel)] rounded-xl border border-[var(--border-color)] hover:border-violet-500/30 flex items-center relative group shrink-0 transition-colors shadow-sm"
-                style="height: 48px">
-                <div
-                  class="absolute left-2.5 text-[11px] text-[var(--text-secondary)] font-semibold z-30 bg-studio-card/90 border border-white/[0.08] px-2 py-0.5 rounded-lg shadow-sm pointer-events-none sticky flex items-center gap-1.5 backdrop-blur-sm">
-                  <span class="track-name"><i data-lucide="type"></i>Subtitles<em>T1</em></span>
-                  <button id="btn-link-t1a1" title="T1 & A1 are linked — click to unlink"
-                    class="pointer-events-auto transition-colors text-indigo-400 hover:text-indigo-300 ml-0.5 p-1 -m-1 rounded hover:bg-white/[0.06]">
-                    <i id="icon-link-t1a1" data-lucide="link" class="w-3.5 h-3.5"></i>
-                  </button>
-                  <button id="btn-delete-t1"
-                    class="pointer-events-auto hover:text-rose-400 text-[var(--text-muted)] transition-colors ml-0.5 p-1 -m-1 rounded hover:bg-white/[0.06]">
-                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
-                  </button>
+            <div id="timeline-tracks" class="pt-8 px-2 pb-6 flex flex-col gap-2 relative z-20 min-h-full">
+              <!-- Video Track (V0): frame thumbnails (timeline-visuals.js) -->
+              <div id="track-v0" class="tl-visual-track relative shrink-0 rounded-xl border" style="height: 44px">
+                <div class="track-head">
+                  <span class="track-name"><i data-lucide="film"></i>Video</span>
                 </div>
-                <div onmousedown="startDrag(event, null, 'resize-track', 't1')"
-                  class="absolute bottom-0 left-0 right-0 h-1.5 cursor-s-resize hover:bg-indigo-500 z-40 transition-colors">
-                </div>
+                <canvas id="v0-filmstrip" class="tl-visual-canvas"></canvas>
               </div>
 
-              <!-- Audio Track (A1) -->
+              <!-- Original Audio Track (A0): the video's own sound (timeline-visuals.js) -->
+              <div id="track-a0" class="tl-visual-track relative shrink-0 rounded-xl border" style="height: 40px">
+                <div class="track-head">
+                  <span class="track-name"><i data-lucide="music-2"></i>Original Audio</span>
+                  <button id="btn-mute-a0" title="Mute the original video audio">
+                    <i data-lucide="volume-2" class="w-3.5 h-3.5"></i>
+                  </button>
+                </div>
+                <canvas id="a0-waveform-canvas" class="tl-visual-canvas"></canvas>
+              </div>
+
+              <!-- Dubbing Track (A1) -->
               <div id="track-a1"
                 class="bg-[var(--bg-panel)] rounded-xl border border-[var(--border-color)] hover:border-sky-500/30 flex items-center relative group shrink-0 transition-colors shadow-sm"
                 style="height: 48px">
                 <div
                   class="absolute left-2.5 text-[11px] text-[var(--text-secondary)] font-semibold z-30 bg-studio-card/90 border border-white/[0.08] px-2 py-0.5 rounded-lg shadow-sm pointer-events-none sticky flex items-center gap-1.5 backdrop-blur-sm">
-                  <span class="track-name"><i data-lucide="mic"></i>Dubbing<em>A1</em></span>
+                  <span class="track-name"><i data-lucide="mic"></i>Dubbing Audio</span>
                   <button id="btn-mute-a1"
                     class="pointer-events-auto hover:text-[var(--text-bright)] text-[var(--text-muted)] transition-colors p-1 -m-1 rounded hover:bg-white/[0.06]">
                     <i id="icon-mute-a1" data-lucide="volume-2" class="w-3.5 h-3.5"></i>
@@ -2583,14 +2607,44 @@
                   style="left: 0; top: 4px; bottom: 4px"></div>
 
                 <canvas id="a1-waveform-canvas"
-                  class="absolute inset-0 w-full h-full pointer-events-none opacity-45 z-[5]"></canvas>
+                  class="absolute inset-0 w-full h-full pointer-events-none opacity-25 z-[5]"></canvas>
 
                 <div onmousedown="startDrag(event, null, 'resize-track', 'a1')"
                   class="absolute bottom-0 left-0 right-0 h-1.5 cursor-s-resize hover:bg-sky-500 z-40 transition-colors">
                 </div>
               </div>
+
+              <!-- Subtitle Track (T1) -->
+              <div id="track-t1"
+                class="bg-[var(--bg-panel)] rounded-xl border border-[var(--border-color)] hover:border-violet-500/30 flex items-center relative group shrink-0 transition-colors shadow-sm"
+                style="height: 48px">
+                <div
+                  class="absolute left-2.5 text-[11px] text-[var(--text-secondary)] font-semibold z-30 bg-studio-card/90 border border-white/[0.08] px-2 py-0.5 rounded-lg shadow-sm pointer-events-none sticky flex items-center gap-1.5 backdrop-blur-sm">
+                  <span class="track-name"><i data-lucide="type"></i>Subtitles</span>
+                  <button id="btn-link-t1a1" title="T1 & A1 are linked — click to unlink"
+                    class="pointer-events-auto transition-colors text-indigo-400 hover:text-indigo-300 ml-0.5 p-1 -m-1 rounded hover:bg-white/[0.06]">
+                    <i id="icon-link-t1a1" data-lucide="link" class="w-3.5 h-3.5"></i>
+                  </button>
+                  <button id="btn-delete-t1"
+                    class="pointer-events-auto hover:text-rose-400 text-[var(--text-muted)] transition-colors ml-0.5 p-1 -m-1 rounded hover:bg-white/[0.06]">
+                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                  </button>
+                </div>
+                <div onmousedown="startDrag(event, null, 'resize-track', 't1')"
+                  class="absolute bottom-0 left-0 right-0 h-1.5 cursor-s-resize hover:bg-indigo-500 z-40 transition-colors">
+                </div>
+              </div>
             </div>
           </div>
+        </div>
+
+        <!-- Track names: after the scroll area in the DOM (so a re-rendered track's
+             button ids resolve to the new track first), shown on the left by CSS. -->
+        <div id="timeline-heads" aria-label="Tracks">
+          <div id="timeline-heads-list">
+            <div class="tl-heads-corner"><i data-lucide="layers"></i><span>Tracks</span></div>
+          </div>
+        </div>
         </div>
       </section>
     </div>
@@ -4201,94 +4255,6 @@
     </div>
   </div>
 
-  <!-- ── DAI API KEY MODAL ── -->
-  <div id="dai-apikey-modal"
-    class="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-[996] hidden modal-bg-enter"
-    onclick="window.daiStudio && window.daiStudio.closeApiKeyModal && window.daiStudio.closeApiKeyModal()">
-    <div
-      class="bg-[var(--bg-panel)] border border-indigo-500/40 rounded-2xl w-[580px] max-w-[95vw] shadow-2xl flex flex-col overflow-hidden text-[var(--text-primary)] animate-modal-center"
-      onclick="event.stopPropagation()">
-      <div class="px-5 py-3.5 border-b border-[var(--border-color)] bg-[var(--bg-base)] flex items-center justify-between shrink-0">
-        <div class="flex items-center gap-2.5">
-          <div class="w-7 h-7 rounded-lg bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
-            <i data-lucide="key" class="w-4 h-4"></i>
-          </div>
-          <div>
-            <h3 class="text-sm font-bold text-white">Google Gemini API Keys Pool</h3>
-            <p class="text-[11px] text-[var(--text-muted)]">Configure API key(s) for batch transcription, subtitle translation & title generation</p>
-          </div>
-        </div>
-        <button id="dai-btn-close-apikey-modal" onclick="window.daiStudio && window.daiStudio.closeApiKeyModal && window.daiStudio.closeApiKeyModal()" class="p-1.5 rounded-lg text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-hover)]">
-          <i data-lucide="x" class="w-4 h-4"></i>
-        </button>
-      </div>
-
-      <div class="p-4 flex flex-col gap-4">
-        <!-- Info Alert -->
-        <div class="p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/25 flex items-start gap-2.5 text-xs text-indigo-200">
-          <i data-lucide="info" class="w-4 h-4 text-indigo-400 shrink-0 mt-0.5"></i>
-          <div class="leading-relaxed">
-            <span class="font-bold text-white">Multi-Key Load Balancing:</span> You can add multiple Gemini API keys. The studio automatically rotates requests across your key pool to prevent rate limits (RPM / TPM) and speed up large batch files.
-          </div>
-        </div>
-
-        <!-- Add Key Input -->
-        <div class="flex flex-col gap-1.5">
-          <label class="text-xs font-semibold text-[var(--text-secondary)]">Add Gemini API Key</label>
-          <div class="flex items-center gap-2">
-            <div class="relative flex-1">
-              <input id="dai-new-apikey-input" type="password" placeholder="AIzaSy..."
-                class="w-full h-9 pl-3 pr-16 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)] text-xs text-[var(--text-primary)] outline-none focus:border-indigo-400 font-mono" />
-              <div class="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                <button id="dai-btn-toggle-apikey-visibility" type="button" title="Toggle visibility"
-                  class="p-1 text-[var(--text-muted)] hover:text-white rounded">
-                  <i data-lucide="eye" class="w-3.5 h-3.5"></i>
-                </button>
-                <button id="dai-btn-paste-apikey" type="button" title="Paste from clipboard"
-                  class="p-1 text-[var(--text-muted)] hover:text-white rounded">
-                  <i data-lucide="clipboard-paste" class="w-3.5 h-3.5"></i>
-                </button>
-              </div>
-            </div>
-            <button id="dai-btn-add-apikey"
-              class="h-9 px-4 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center gap-1.5 transition-all active:scale-95 shadow-md shrink-0">
-              <i data-lucide="plus" class="w-3.5 h-3.5"></i>
-              <span>Add Key</span>
-            </button>
-          </div>
-        </div>
-
-        <!-- Active Keys List -->
-        <div class="flex flex-col gap-1.5">
-          <div class="flex items-center justify-between text-xs font-semibold text-[var(--text-secondary)]">
-            <span>Configured Keys (<span id="dai-apikey-count">0</span>)</span>
-            <span class="text-[10px] text-emerald-400">Stored safely in local browser storage</span>
-          </div>
-
-          <div class="border border-[var(--border-color)] rounded-xl overflow-hidden max-h-52 overflow-y-auto custom-scrollbar bg-[var(--bg-base)]">
-            <div id="dai-apikey-list" class="divide-y divide-[var(--border-color)] text-xs">
-              <!-- Dynamically populated rows -->
-            </div>
-          </div>
-        </div>
-
-        <!-- External link & Settings button -->
-        <div class="pt-2 border-t border-[var(--border-color)] flex items-center justify-between text-xs">
-          <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer"
-            class="text-indigo-400 hover:text-indigo-300 underline flex items-center gap-1 text-[11px]">
-            <span>Get a Gemini API Key from Google AI Studio</span>
-            <i data-lucide="external-link" class="w-3 h-3"></i>
-          </a>
-          <button type="button" id="dai-btn-open-full-settings"
-            class="text-xs text-[var(--text-secondary)] hover:text-white flex items-center gap-1">
-            <i data-lucide="sliders" class="w-3.5 h-3.5"></i>
-            <span>All Preferences</span>
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-
   <div id="modal-settings"
     class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[200] hidden opacity-0 transition-opacity duration-300"
     onclick="closeSettingsModal()">
@@ -5130,6 +5096,9 @@
             </div>
 
             <div id="api-keys-list" class="flex flex-col gap-2 max-h-60 overflow-y-auto pr-1 custom-scrollbar"></div>
+
+            <!-- "Translate subtitles with": Google Gemini or CodeCraft API (filled by js/text-ai.js) -->
+            <div id="text-ai-settings"></div>
           </div>
 
           <div id="settings-shortcuts" class="settings-content-pane flex flex-col gap-6 hidden animate-tab-content">
@@ -6504,11 +6473,13 @@
   </div>
 
   <script src="js/gemini-models.js"></script>
+  <script src="js/text-ai.js"></script>
   <script src="js/name-consistency.js"></script>
   <script src="js/subtitle-layout.js"></script>
   <script src="js/screen-sync.js"></script>
   <script src="js/khmer-speech.js"></script>
   <script src="js/layout-shell.js"></script>
+  <script src="js/timeline-visuals.js"></script>
   <script src="js/studio-main.js"></script>
   <!-- ═══════════════ RENDER QUEUE DRAWER ═══════════════ -->
   <div id="queue-drawer-backdrop"
@@ -6642,6 +6613,12 @@
         <div id="title-ai-file-list" class="flex flex-col gap-1 max-h-[172px] overflow-y-auto custom-scrollbar pr-1">
         </div>
       </div>
+
+      <label class="flex items-center gap-2 text-[11px] text-[var(--text-secondary)] cursor-pointer select-none">
+        <input id="title-ai-auto" type="checkbox" checked class="w-3.5 h-3.5" style="accent-color: var(--accent-primary)">
+        <span>Make title ideas automatically when a tab finishes translating</span>
+      </label>
+      <div id="title-ai-auto-status" class="hidden text-[11px] text-[var(--text-secondary)]"></div>
 
       <button id="btn-title-ai-export"
         class="hidden self-end items-center gap-1.5 text-[11px] font-medium text-[var(--text-secondary)] hover:text-[var(--accent-primary)] transition-colors px-2 py-1 rounded-lg hover:bg-[var(--accent-primary)]/10">

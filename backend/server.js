@@ -73,8 +73,11 @@ const { isNetworkPath, isServableMedia, isAudioFile } = security;
 require('./lib/server-log').installServerLog(LOGS_DIR);
 const { FOREIGN_SCRIPT_RE, stripForeignScript, collapseRepeatedPartSuffix, buildTtsArgv } = require('./lib/text-rules');
 const { trackProcess } = require('./lib/process-tracker');
+const { createTtsWorker } = require('./lib/tts-worker');
 const { secureFetch, fetchBackend } = require('./lib/secure-fetch');
-const { KHMER_SYLLABLES_PER_SEC, KHMER_DUBBING_RULES, khmerMaxSyllables, lineSeconds, getKhmerDramaRegisterGuidance, parseSrtBlocksForTranslate, translatePromptLine, buildTranslatePrompt } = require('./lib/khmer-prompts');
+const { createCodeCraftClient } = require('./lib/codecraft');
+const { KHMER_SYLLABLES_PER_SEC, KHMER_DUBBING_RULES, khmerMaxSyllables, lineSeconds, getKhmerDramaRegisterGuidance, parseSrtBlocksForTranslate, translatePromptLine, buildTranslateSystemPrompt, buildTranslateUserPrompt, findOverlongLines } = require('./lib/khmer-prompts');
+const { CHARACTER_SHEET_SCHEMA, normalizeSheet, mergeSheets, sheetSize, applyGlossaryToSheet, formatSheetForPrompt, buildCharacterSheetPrompt, loadSeriesSheet, saveSeriesSheet, withSeriesLock } = require('./lib/character-sheet');
 
 // Clean stale temporary cache files (> 7 days old) asynchronously to prevent disk bloat
 function cleanStaleTempFiles() {
@@ -697,8 +700,11 @@ function removeDirQuietly(dir) {
     fs.rm(dir, { recursive: true, force: true }, () => {});
 }
 
-// Cached stems not used for 14 days, and work folders left by a crash or Stop.
-setTimeout(() => {
+// Cached stems not used for 14 days, work folders left by a crash or Stop, and the FFmpeg
+// separator's output (about 160 MB a tab, not cached) after 2 days - by then the tab it was made
+// for is exported. Checked at start and every hour: an overnight Dub Whole Series makes many.
+const FFMPEG_STEMS_MAX_AGE_MS = 2 * 24 * 60 * 60 * 1000;
+function pruneSeparatedFolders() {
     try {
         const removed = pruneBgmCache(SEPARATED_DIR, 14 * 24 * 60 * 60 * 1000);
         if (removed) console.log(`[BGM cache] Removed ${removed} unused entr${removed === 1 ? 'y' : 'ies'}.`);
@@ -709,8 +715,15 @@ setTimeout(() => {
                 try { if (Date.now() - fs.statSync(dir).mtimeMs > 24 * 60 * 60 * 1000) removeDirQuietly(dir); } catch (e) {}
             }
         }
+        for (const name of fs.readdirSync(SEPARATED_DIR)) {
+            if (!/^ffmpeg_\d+_\d+$/.test(name)) continue;
+            const dir = path.join(SEPARATED_DIR, name);
+            try { if (Date.now() - fs.statSync(dir).mtimeMs > FFMPEG_STEMS_MAX_AGE_MS) removeDirQuietly(dir); } catch (e) {}
+        }
     } catch (e) {}
-}, 15000);
+}
+setTimeout(pruneSeparatedFolders, 15000);
+setInterval(pruneSeparatedFolders, 60 * 60 * 1000).unref();
 
 // Direct native FFmpeg stem separation (stereo phase cancellation).
 // Needs no Python, but it only removes what sits dead-centre in the stereo
@@ -1124,6 +1137,49 @@ const geminiNoJsonModeModels = new Set();
 const geminiNoJsonOutputModels = new Set();
 const isJsonModeUnsupported = (msg) => /JSON mode is not enabled|response_?mime_?type|response_?schema/i.test(String(msg || ''));
 
+// Thinking tokens are billed as output. Text jobs that follow clear rules (translate, shorten, the
+// character sheet) ask for little of it: Gemini 3 by level, 2.5 by budget (2.5 Pro can't go below
+// 128); older and unknown models are sent nothing. A model that refuses the setting gets the
+// request again without it, and is remembered.
+const geminiNoThinkingConfigModels = new Set();
+function geminiThinkingConfig(model, level) {
+    const m = String(model || '').match(/^gemini-(\d+(?:\.\d+)?)-(flash-lite|flash|pro)\b/);
+    if (!m || !level) return null;
+    const version = parseFloat(m[1]);
+    if (version >= 3) return { thinkingLevel: level };
+    if (version >= 2.5) return { thinkingBudget: m[2] === 'pro' ? 128 : 0 };
+    return null;
+}
+
+// Token use of one reply, from Gemini's usageMetadata or an OpenAI-style usage (CodeCraft), added
+// into a job's running total: { requests, input, cached, output, thinking }.
+function createTokenUsage() {
+    return { requests: 0, input: 0, cached: 0, output: 0, thinking: 0 };
+}
+function addTokenUsage(acc, result) {
+    if (!acc || !result || !result.success) return acc;
+    acc.requests++;
+    const g = result.json && result.json.usageMetadata;
+    const o = result.usage;
+    if (g) {
+        acc.input += g.promptTokenCount || 0;
+        acc.cached += g.cachedContentTokenCount || 0;
+        acc.output += g.candidatesTokenCount || 0;
+        acc.thinking += g.thoughtsTokenCount || 0;
+    } else if (o) {
+        const reasoning = (o.completion_tokens_details && o.completion_tokens_details.reasoning_tokens) || 0;
+        acc.input += o.prompt_tokens || 0;
+        acc.cached += (o.prompt_tokens_details && o.prompt_tokens_details.cached_tokens) || 0;
+        acc.output += Math.max(0, (o.completion_tokens || 0) - reasoning);
+        acc.thinking += reasoning;
+    }
+    return acc;
+}
+function formatTokenUsage(u) {
+    const k = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+    return `${u.requests} request(s), input ${k(u.input)}${u.cached ? ` (${k(u.cached)} cached)` : ''}, output ${k(u.output)}${u.thinking ? ` + ${k(u.thinking)} thinking` : ''} tokens`;
+}
+
 // The first JSON array/object in a model's free-text reply: the whole text, a ```json fence
 // anywhere, or a balanced [...] / {...} inside prose. Brackets in prose ("[Male]") don't parse
 // and are skipped. An array cut off mid-way (MAX_TOKENS) keeps its complete items. undefined
@@ -1249,7 +1305,8 @@ function formatWait(ms) {
 // request moving to another model - for transcription, where another model splits the
 // dialogue differently (fewer, longer lines).
 // timeoutMs: how long one attempt may take before it counts as a dead connection.
-async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { stayOnModel = false, timeoutMs = GEMINI_ATTEMPT_TIMEOUT_MS } = {}) {
+// thinking: 'low' asks for little thinking (geminiThinkingConfig) - text jobs only.
+async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { stayOnModel = false, timeoutMs = GEMINI_ATTEMPT_TIMEOUT_MS, thinking = null } = {}) {
     apiKey = String(apiKey || '').trim();
     const allModels = await getCandidateModels(apiKey, requestedModel, signal);
     const body = JSON.stringify(payload);
@@ -1257,6 +1314,15 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { 
     const plainBody = gen && (gen.responseMimeType || gen.responseSchema)
         ? JSON.stringify({ ...payload, generationConfig: (({ responseMimeType, responseSchema, ...rest }) => rest)(gen) })
         : body;
+    // The body for one model: plain-JSON mode if it needs it, and its own thinking setting.
+    const bodyFor = (m) => {
+        const base = geminiNoJsonModeModels.has(m) ? plainBody : body;
+        const tc = thinking && !geminiNoThinkingConfigModels.has(m) ? geminiThinkingConfig(m, thinking) : null;
+        if (!tc) return base;
+        const p = JSON.parse(base);
+        p.generationConfig = { ...(p.generationConfig || {}), thinkingConfig: tc };
+        return JSON.stringify(p);
+    };
     // Models already known not to return JSON can't serve a JSON request. With
     // stayOnModel, staying on such a model meant every request failed with "No
     // usable Gemini model" (e.g. gemini-3.5-transcribe, which has no JSON mode and
@@ -1305,7 +1371,7 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { 
                     method: 'POST',
                     // Key in a header, not the URL: URLs end up in proxy logs and error messages.
                     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-                    body: geminiNoJsonModeModels.has(m) ? plainBody : body
+                    body: bodyFor(m)
                 }, signal, timeoutMs);
             } catch (fetchErr) {
                 if (fetchErr.name === 'AbortError' && signal && signal.aborted) throw fetchErr;
@@ -1389,6 +1455,12 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { 
                 return { success: false, status: 413, code: 'AUDIO_TOO_LARGE', error: `Audio is too large for Gemini: ${errMsg}`, message: errMsg };
             }
             if (res.status === 404) break; // model gone/renamed: next model, not worth reporting
+            if (res.status === 400 && thinking && /thinking/i.test(errMsg) && !geminiNoThinkingConfigModels.has(m) && geminiThinkingConfig(m, thinking)) {
+                geminiNoThinkingConfigModels.add(m);
+                console.warn(`[Gemini] ${m} refused the thinking setting - asking it again without one`);
+                attempt--; // not a transient failure: don't use up the retry
+                continue;
+            }
             if (res.status === 400 && isJsonModeUnsupported(errMsg)) {
                 if (plainBody !== body && !geminiNoJsonModeModels.has(m)) {
                     geminiNoJsonModeModels.add(m);
@@ -1454,6 +1526,107 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { 
     // a day per model): another key may still have those models - tryKeysOnce asks it.
     const otherModelsLimited = sawOverload && sawRateLimit;
     return { success: false, ...(primaryError || { status: 500, error: 'No usable Gemini model for this API key.', message: 'No usable Gemini model for this API key.' }), ...(otherModelsLimited ? { otherModelsLimited } : {}) };
+}
+
+// ── Text AI provider (Settings → API → "Translate subtitles with") ──────────
+// Text-only jobs (translate, Fix Missing's re-translation, shorten/rewrite, names, titles) can go
+// to CodeCraft instead of Google. The app sends the choice to /api/text-ai at start and on every
+// change. The CodeCraft keys then go first in those jobs' key list, with the Gemini keys after
+// them. Several CodeCraft keys share the work: each job starts on the least busy one and a
+// translation's lanes are spread over them. A CodeCraft key that is rejected, out of credit or
+// rate-limited is skipped like a bad Gemini key (the other CodeCraft keys first, then Gemini).
+// Audio (Direct transcription and its gap checks) always uses Gemini.
+const codecraft = createCodeCraftClient({ fetch: secureFetch, extractJsonValue });
+const CODECRAFT_LANES_PER_KEY = 4; // requests one translate job sends at once per CodeCraft key
+const textAi = {
+    provider: 'gemini', keys: [], model: '', backupModel: '',
+    issues: new Map(), // CodeCraft key -> { at, message, outOfCredit } (rejected / no credit)
+    okAt: new Map()    // CodeCraft key -> last time it answered
+};
+
+function codecraftActive() {
+    return textAi.provider === 'codecraft' && textAi.keys.length > 0 && !!textAi.model;
+}
+function isCodeCraftKey(key) {
+    return !!key && (textAi.keys.includes(key) || /^cc_/i.test(key));
+}
+// The CodeCraft keys, least busy first (requests running right now, across every job).
+function codecraftKeysByLoad() {
+    return textAi.keys
+        .map((k, i) => ({ k, i, busy: geminiKeyInFlight.get(k) || 0 }))
+        .sort((a, b) => a.busy - b.busy || a.i - b.i)
+        .map(x => x.k);
+}
+// enabled: false for jobs that must stay on Gemini (the re-translation inside Direct transcription).
+function textKeys(geminiKeys, enabled = true) {
+    const keys = (geminiKeys || []).map(k => String(k || '').trim()).filter((k, i, a) => k && a.indexOf(k) === i);
+    if (!(enabled && codecraftActive())) return keys;
+    return [...codecraftKeysByLoad(), ...keys.filter(k => !textAi.keys.includes(k))];
+}
+// Lane n's key order: its own key first, the others as backups - the CodeCraft keys (rotated)
+// always before the Gemini keys (rotated).
+function textLaneKeys(keys, lane) {
+    const rotate = (list) => (list.length ? [...list.slice(lane % list.length), ...list.slice(0, lane % list.length)] : list);
+    const cc = keys.filter(isCodeCraftKey);
+    return [...rotate(cc), ...rotate(keys.filter(k => !isCodeCraftKey(k)))];
+}
+function textLaneCount(keys) {
+    const cc = keys.filter(isCodeCraftKey).length;
+    return cc ? cc * CODECRAFT_LANES_PER_KEY : keys.length;
+}
+
+// executeGeminiGenerate for text-only jobs: a CodeCraft key goes to CodeCraft (with the model
+// chosen in Settings, not the Gemini one), any other key to Google.
+async function generateText(key, model, payload, signal, opts = {}) {
+    if (!isCodeCraftKey(key)) return executeGeminiGenerate(key, model, payload, signal, opts);
+    // opts.thinking is a Gemini setting; CodeCraft's models take the request as it is.
+    const r = await codecraft.generate({
+        key, model: textAi.model, backupModel: textAi.backupModel, payload, signal,
+        timeoutMs: opts.timeoutMs || GEMINI_ATTEMPT_TIMEOUT_MS, preferBackup: !!opts.preferBackup
+    });
+    if (r.success) {
+        textAi.issues.delete(key);
+        textAi.okAt.set(key, Date.now());
+        if (r.fellBack) console.warn(`[CodeCraft] ${textAi.model} failed - answered by backup model ${r.modelUsed}`);
+    } else {
+        console.warn(`[CodeCraft] key …${key.slice(-4)}: ${r.message || r.error}`);
+        if (r.code === 'PROVIDER_KEY') textAi.issues.set(key, { at: Date.now(), message: r.message, outOfCredit: !!r.outOfCredit });
+    }
+    return r;
+}
+
+// For routes that were given a single Gemini key: with CodeCraft on, CodeCraft first and that
+// Gemini key as the backup; otherwise exactly the old single-key call.
+async function generateTextForKey(apiKey, model, payload, signal, opts = {}) {
+    if (!codecraftActive()) return executeGeminiGenerate(apiKey, model, payload, signal, opts);
+    const out = await tryKeysOnce(textKeys([apiKey]), async (key) => {
+        const r = await generateText(key, model, payload, signal, opts);
+        return r.success ? { ok: true, r } : { ok: false, result: r };
+    });
+    return out.ok ? out.r : out.result;
+}
+
+// A CodeCraft key problem (rejected, no credit) seen since `since`: the app shows it, because the
+// job itself still finished on the other keys.
+function textAiNotice(since) {
+    const fresh = [...textAi.issues.values()].filter(x => x.at >= since);
+    if (!fresh.length) return undefined;
+    return `${fresh.map(x => x.message).join(' ')} The job carried on with your other keys.`;
+}
+
+// What one CodeCraft key can do right now, for the key list in Settings. probe: the answer of a
+// model-list request just made with it (proves the key is accepted; credit only shows on use).
+function codecraftKeyStatus(key, probe) {
+    const now = Date.now();
+    if (probe && !probe.success) {
+        return { state: probe.status === 401 || probe.status === 403 ? 'refused' : 'error', message: probe.error };
+    }
+    const issue = textAi.issues.get(key);
+    if (issue && isGeminiKeyInvalid(key)) return { state: issue.outOfCredit ? 'no-credit' : 'refused', message: issue.message };
+    const parked = rateLimitedGeminiKeys.get(key);
+    if (parked && parked.until > now) return { state: 'cooling', retryAfterMs: parked.until - now };
+    if (probe || textAi.okAt.has(key)) return { state: 'ok' };
+    return { state: 'unknown' };
 }
 
 // ── Khmer Dubbing & Subtitle Dialogue Engine ──────────────────────────
@@ -1685,22 +1858,47 @@ async function transcribeClipWithGemini({ apiKey, model, audioBase64, mimeType, 
         }
     };
 
+    // Thinking is billed as output, and transcribing is most of a dub's tokens. The first try asks
+    // for little of it; a reply that looks wrong (unreadable, cut off, or far too few lines for
+    // the clip) is asked again with Gemini's normal thinking, and the better answer is kept.
+    // promptOpts.usage: the job's token total (createTokenUsage), when the caller keeps one.
+    const usage = promptOpts && promptOpts.usage;
     let lastRaw = '';
-    // A malformed JSON reply is usually a one-off; ask once more before giving up.
+    let lowAnswer = null; // the low-thinking answer, if the normal-thinking try does no better
     for (let attempt = 0; attempt < 2; attempt++) {
-        const result = await executeGeminiGenerate(apiKey, model, payload, signal, { stayOnModel, timeoutMs });
-        if (!result.success) return { ok: false, result };
+        const thinking = attempt === 0 ? 'low' : null;
+        const result = await executeGeminiGenerate(apiKey, model, payload, signal, { stayOnModel, timeoutMs, thinking });
+        // The re-check failed (busy, rate limit): the low-thinking answer may still be missing
+        // lines, so it counts as cut off - not cached, and the missed-dialogue pass checks it.
+        if (!result.success) return lowAnswer ? { ...lowAnswer, truncated: true } : { ok: false, result };
+        addTokenUsage(usage, result);
         lastRaw = result.text || '';
         const items = parseJsonArrayLoose(lastRaw);
         if (items) {
             // Anything but a normal STOP (MAX_TOKENS, SAFETY, RECITATION, OTHER...) may have cut the reply short.
             const truncated = !!result.finishReason && result.finishReason !== 'STOP';
+            const answer = { ok: true, items, raw: lastRaw, modelUsed: result.modelUsed, fellBack: !!result.fellBack, truncated };
+            if (thinking && looksIncomplete(items, clipSec, truncated)) {
+                console.warn(`[Transcribe] Low-thinking reply looks incomplete (${items.length} line(s) for ${Math.round(clipSec)}s${truncated ? `, ended with ${result.finishReason}` : ''}) - asking again with normal thinking`);
+                lowAnswer = answer;
+                continue;
+            }
+            if (lowAnswer && items.length < lowAnswer.items.length && !(lowAnswer.truncated && !truncated)) return lowAnswer;
             if (truncated) console.warn(`[Transcribe] Reply ended with ${result.finishReason}; kept complete lines only.`);
-            return { ok: true, items, raw: lastRaw, modelUsed: result.modelUsed, fellBack: !!result.fellBack, truncated };
+            return answer;
         }
         console.error('[Transcribe] Unparseable Gemini output:', lastRaw.slice(0, 500));
     }
+    if (lowAnswer) return { ...lowAnswer, truncated: true };
     return { ok: false, result: { status: 502, error: 'Gemini returned an unreadable transcript. Please try again.', message: `Gemini returned an unreadable transcript. Please try again. Reply began: ${lastRaw.slice(0, 160)}` }, raw: lastRaw };
+}
+
+// A drama clip has dialogue nearly all the time: under one line a minute for a clip over 90 s,
+// or a reply that was cut off, is worth asking again with full thinking. (A real music or fight
+// scene costs one extra request, and keeps its answer when the second one finds no more lines.)
+function looksIncomplete(items, clipSec, truncated) {
+    if (truncated) return true;
+    return clipSec > 90 && items.length < clipSec / 60;
 }
 
 function normalizeClipCues(items, offsetSec, clipSec, glossary) {
@@ -1956,9 +2154,13 @@ function geminiKeyStatus(key) {
 const geminiKeyInFlight = new Map(); // key -> requests currently running on it
 
 function pickNextGeminiKey(keys, tried) {
-    const candidates = usableGeminiKeys(keys).filter(k => !tried.has(k));
-    if (!candidates.length) return null;
-    if (candidates[0] === keys[0]) return keys[0];
+    const usable = usableGeminiKeys(keys).filter(k => !tried.has(k));
+    if (!usable.length) return null;
+    if (usable[0] === keys[0]) return keys[0];
+    // A text job that starts on CodeCraft keys stays on them while one is left (least busy first);
+    // the Gemini keys after them are only the last resort.
+    const sameKind = usable.filter(k => isCodeCraftKey(k) === isCodeCraftKey(keys[0]));
+    const candidates = sameKind.length ? sameKind : usable;
     let best = candidates[0];
     for (const k of candidates) {
         if ((geminiKeyInFlight.get(k) || 0) < (geminiKeyInFlight.get(best) || 0)) best = k;
@@ -1982,7 +2184,9 @@ async function tryKeysOnce(keys, call) {
         }
         if (out.ok) return out;
         lastOut = out;
-        if (out.result && out.result.error === 'INVALID_API_KEY') {
+        // PROVIDER_KEY: a CodeCraft key that was rejected or is out of credit - the same as a bad
+        // Gemini key here: skipped for a while, and the keys after it take over.
+        if (out.result && (out.result.error === 'INVALID_API_KEY' || out.result.code === 'PROVIDER_KEY')) {
             invalidGeminiKeys.set(key, Date.now());
             console.warn(`[Gemini] key …${String(key).slice(-4)} rejected (${out.result.message || 'invalid'}); skipping it`);
             continue;
@@ -2051,11 +2255,15 @@ async function retranslateCues(targets, allCues, { keys, model, promptOpts, glos
             return { i: index, text: cue.originalText, ...(cue.gender && { gender: cue.gender }), context: [...around(index - 2, index), '>>> THIS LINE <<<', ...around(index + 1, index + 3)].join(' | ') };
         });
         const payload = {
-            contents: [{ role: 'user', parts: [{ text: buildTranslatePrompt({ lines, glossaryHint: promptOpts.glossaryHint, genreGuidance: promptOpts.genreGuidance, previousLines: [] }) + '\n\nEach line has a "context" field with the neighbouring dialogue - use it only to understand the meaning; translate only "text".' }] }],
+            systemInstruction: { parts: [{ text: buildTranslateSystemPrompt({ genreGuidance: promptOpts.genreGuidance }) }] },
+            contents: [{ role: 'user', parts: [{ text: buildTranslateUserPrompt({
+                lines, glossaryHint: promptOpts.glossaryHint, sheetHint: promptOpts.sheetHint, previousLines: [],
+                note: 'Each line has a "context" field with the neighbouring dialogue - use it only to understand the meaning; translate only "text".'
+            }) }] }],
             generationConfig: { responseMimeType: 'application/json', responseSchema: TRANSLATE_RESPONSE_SCHEMA, maxOutputTokens: 16384 }
         };
         const out = await geminiWithKeys(keys, async (key) => {
-            const r = await executeGeminiGenerate(key, model, payload, signal, { timeoutMs: GEMINI_TEXT_TIMEOUT_MS });
+            const r = await generateText(key, model, payload, signal, { timeoutMs: GEMINI_TEXT_TIMEOUT_MS, thinking: 'low' });
             return r.success ? { ok: true, items: parseJsonArrayLoose(r.text) || [] } : { ok: false, result: r };
         }, signal, { busyBudgetMs: REPAIR_BUSY_BUDGET_MS });
         if (!out.ok) return { fixed, error: out.result };
@@ -2078,7 +2286,9 @@ async function retranslateCues(targets, allCues, { keys, model, promptOpts, glos
 }
 
 // cues: [{ _start, _end, text, originalText, speaker, ... }] (mutated in place + new ones appended)
-async function repairTranscript({ cues, sourceFile, totalSec, keys, model, promptOpts, glossary, workDir, signal, progress, checkGaps = true, stayOnModel = false, maxLanes = TRANSCRIBE_MAX_LANES }) {
+// useTextAi: the re-translation may go to CodeCraft (Fix Missing). The gap checks send audio, so
+// they always use the Gemini keys.
+async function repairTranscript({ cues, sourceFile, totalSec, keys, model, promptOpts, glossary, workDir, signal, progress, checkGaps = true, stayOnModel = false, maxLanes = TRANSCRIBE_MAX_LANES, useTextAi = false }) {
     const report = { gapsFound: 0, gapsChecked: 0, linesAdded: 0, retranslated: 0, stillUntranslated: 0 };
 
     if (checkGaps && sourceFile && totalSec > 0) {
@@ -2157,7 +2367,7 @@ async function repairTranscript({ cues, sourceFile, totalSec, keys, model, promp
     const targets = cues.map((cue, index) => ({ cue, index })).filter(({ cue }) => cueNeedsTranslation(cue));
     if (targets.length && !report.quotaError) {
         if (progress) progress.note = `Translating ${targets.length} line(s) that came back without Khmer…`;
-        const r = await retranslateCues(targets, cues, { keys, model, promptOpts, glossary, signal });
+        const r = await retranslateCues(targets, cues, { keys: textKeys(keys, useTextAi), model, promptOpts, glossary, signal });
         report.retranslated = r.fixed;
         if (r.error) report.translateError = r.error.message || r.error.error;
         if (r.error && r.error.isDailyQuota) report.quotaError = r.error.message;
@@ -2195,6 +2405,9 @@ app.post('/api/transcribe', async (req, res) => {
         sourceFilePath,
         apiSaver = true,
         stayOnModel = false,
+        // false: the caller fits lines to their time later, on the final timing (Dub Whole Series
+        // matches every line to the video, then fits the voices) - no early re-wording here.
+        fitToTime = true,
         // Requests this file may run at once. With 1, the extra keys are only backups: a
         // rate-limited key hands the next chunk to the least busy other key (Dub Whole Series
         // runs one file per key, so this keeps every key at about one request).
@@ -2234,9 +2447,14 @@ app.post('/api/transcribe', async (req, res) => {
     try {
         const genreRegister = genre || dramaRegister || 'historical';
         console.log(`[Transcribe] register: ${genreRegister}${videoName ? ` (${videoName})` : ''}`); // shows in server.log which register a dub used
+        const userGlossaryHint = glossary ? `\n\nCUSTOM CHARACTER / GLOSSARY DICTIONARY (STRICTLY USE THESE TRANSLATIONS):\n${typeof glossary === 'string' ? glossary : JSON.stringify(glossary, null, 2)}` : '';
+        // The series' character sheet from earlier episodes (names, forms of address), if any.
+        const savedSheet = loadSeriesSheet(CHARACTER_SHEETS_DIR, sourceFilePath);
+        const seriesSheet = savedSheet && applyGlossaryToSheet(savedSheet, glossary);
         const promptOpts = {
             genreGuidance: getKhmerDramaRegisterGuidance(genreRegister),
-            glossaryHint: glossary ? `\n\nCUSTOM CHARACTER / GLOSSARY DICTIONARY (STRICTLY USE THESE TRANSLATIONS):\n${typeof glossary === 'string' ? glossary : JSON.stringify(glossary, null, 2)}` : ''
+            glossaryHint: userGlossaryHint + formatSheetForPrompt(seriesSheet),
+            usage: createTokenUsage() // every Gemini answer for this file, the missed-dialogue pass included
         };
 
         fs.mkdirSync(workDir, { recursive: true });
@@ -2383,9 +2601,30 @@ app.post('/api/transcribe', async (req, res) => {
             return res.status(422).json({ success: false, error: 'No spoken dialogue was detected in this audio.' });
         }
 
+        // The same timeline fit as Translate, on the lines heard from the audio.
+        const fitted = fitToTime === false ? 0 : await fitOverlongLines({
+            lines: allCues.map(c => ({ text: c.originalText || '', start: c._start, seconds: c._end - c._start })),
+            texts: allCues.map(c => c.text),
+            apply: (i, text) => { allCues[i].text = text; },
+            genre: genreRegister, glossary, keyPool: textKeys(keyPool), model, signal: abortCtrl.signal,
+            sheetHint: formatSheetForPrompt(seriesSheet), tag: 'Transcribe', usage: promptOpts.usage
+        });
+        console.log(`[Transcribe] ${allCues.length} lines${videoName ? ` (${videoName})` : ''}: ${formatTokenUsage(promptOpts.usage)}`);
+
+        // Learn this episode's names and forms of address for the next episodes in the folder,
+        // copying the Khmer spellings this episode used. In the background: the result doesn't wait.
+        if (sourceFilePath && allCues.length >= CHARACTER_SHEET_MIN_LINES) {
+            prepareCharacterSheet({
+                lines: allCues.map(c => ({ text: c.originalText, gender: c.gender, khmer: c.text })),
+                sourceFilePath, glossary, glossaryHint: userGlossaryHint, keys: textKeys(keyPool), model, usage: createTokenUsage()
+            }).catch(e => console.warn('[Sheet] Series sheet update failed:', e.message));
+        }
+
         res.json({
             success: true,
             data: finalizeCues(allCues),
+            fitted,
+            usage: promptOpts.usage,
             repair,
             modelsUsed: [...modelsUsed],
             fallbackModels,
@@ -2416,7 +2655,8 @@ app.post('/api/repair-subtitles', async (req, res) => {
     if (!Array.isArray(subtitles)) return res.status(400).json({ success: false, error: 'No subtitles provided.' });
     const laneCap = Math.max(1, Math.min(TRANSCRIBE_MAX_LANES, parseInt(maxLanes, 10) || TRANSCRIBE_MAX_LANES));
     const keyPool = [apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])].map(k => String(k || '').trim()).filter((k, i, a) => k && a.indexOf(k) === i);
-    if (!keyPool.length) return res.status(400).json({ success: false, error: 'INVALID_API_KEY', message: 'Gemini API key is required.' });
+    // With CodeCraft the re-translation needs no Gemini key; only the gap check (audio) does.
+    if (!keyPool.length && !codecraftActive()) return res.status(400).json({ success: false, error: 'INVALID_API_KEY', message: 'Gemini API key is required.' });
 
     const abortCtrl = new AbortController();
     const progress = { done: 0, total: 0 };
@@ -2443,9 +2683,11 @@ app.post('/api/repair-subtitles', async (req, res) => {
 
         const report = await repairTranscript({
             cues, sourceFile: hasSource ? sourceFile : null, totalSec, keys: keyPool, model, promptOpts, glossary, workDir,
-            signal: abortCtrl.signal, progress, checkGaps: checkGaps !== false && hasSource, maxLanes: laneCap
+            signal: abortCtrl.signal, progress, checkGaps: checkGaps !== false && hasSource && keyPool.length > 0, maxLanes: laneCap,
+            useTextAi: true
         });
         if (!hasSource && checkGaps !== false) report.gapsSkipped = 'Video file not available on disk - only re-translated lines.';
+        else if (!keyPool.length && checkGaps !== false) report.gapsSkipped = 'Checking for missed dialogue listens to the audio, which needs a Gemini API key - only re-translated lines.';
 
         const updated = cues.filter(c => c.id !== undefined && c._repaired === 'translated' && before.get(c.id) !== c.text)
             .map(c => ({ id: c.id, text: c.text, speaker: c.speaker, gender: c.gender, emotion: c.emotion }));
@@ -2465,8 +2707,83 @@ app.post('/api/repair-subtitles', async (req, res) => {
 // 4b. Translate SRT / Text directly with Ultra-Concise Dubbing Rules & Drama Register
 //
 // Lines are sent in numbered batches and matched back by number, so a dropped or
-// merged line can never shift every following translation onto the wrong cue.
-const TRANSLATE_BATCH_SIZE = 75;
+// merged line can never shift every following translation onto the wrong cue. Bigger batches
+// send the rules fewer times; a line a batch leaves out is asked for again.
+const TRANSLATE_BATCH_SIZE = 120;
+
+// ── Character sheet (lib/character-sheet.js) ──
+const CHARACTER_SHEETS_DIR = path.join(STORAGE_BASE, 'character_sheets');
+const CHARACTER_SHEET_MIN_LINES = 20; // a short clip has too little to learn the cast from
+
+// lines: [{ text, gender?, khmer? }]. Starts from the series' saved sheet (sourceFilePath's
+// folder), asks for this episode's names and forms of address in one request, merges and saves.
+// A failed request doesn't fail the job: it goes on with the saved sheet, or none. -> sheet | null
+// glossary: the Character Glossary - its spellings win over the sheet's (applyGlossaryToSheet).
+async function prepareCharacterSheet({ lines, sourceFilePath, glossary, glossaryHint = '', keys, model, signal, usage }) {
+    return withSeriesLock(CHARACTER_SHEETS_DIR, sourceFilePath, async () => {
+        const saved = loadSeriesSheet(CHARACTER_SHEETS_DIR, sourceFilePath);
+        const known = saved && applyGlossaryToSheet(saved, glossary);
+        if (lines.filter(l => l && l.text).length < CHARACTER_SHEET_MIN_LINES) return known;
+        const payload = {
+            contents: [{ role: 'user', parts: [{ text: buildCharacterSheetPrompt({ lines, known, glossaryHint }) }] }],
+            generationConfig: { responseMimeType: 'application/json', responseSchema: CHARACTER_SHEET_SCHEMA, maxOutputTokens: 8192 }
+        };
+        let out;
+        try {
+            out = await tryKeysOnce(keys, async (key) => {
+                const r = await generateText(key, model, payload, signal, { timeoutMs: GEMINI_TEXT_TIMEOUT_MS, thinking: 'low' });
+                return r.success ? { ok: true, r } : { ok: false, result: r };
+            });
+        } catch (e) {
+            if (e.name === 'AbortError') throw e;
+            out = { ok: false, result: { message: e.message } };
+        }
+        if (!out.ok) {
+            console.warn(`[Sheet] Character sheet skipped: ${(out.result && (out.result.message || out.result.error)) || 'no answer'}`);
+            return known;
+        }
+        addTokenUsage(usage, out.r);
+        const merged = applyGlossaryToSheet(mergeSheets(known, normalizeSheet(extractJsonValue(out.r.text))), glossary);
+        if (!sheetSize(merged)) return known;
+        try {
+            if (sourceFilePath) saveSeriesSheet(CHARACTER_SHEETS_DIR, sourceFilePath, merged);
+        } catch (e) {
+            console.warn('[Sheet] Could not save the series sheet:', e.message);
+        }
+        console.log(`[Sheet] ${merged.characters.length} name(s), ${merged.address.length} form(s) of address, ${merged.terms.length} term(s)${known ? ` (series sheet had ${sheetSize(known)} entries)` : ''}`);
+        return merged;
+    });
+}
+
+// Timeline fit, after Translate and after Direct transcription: a line whose Khmer would still
+// need more than 1.3x after using the free time before the next line is re-worded once - the
+// same meaning in fewer words, names and forms of address kept. Every other line stays exactly as
+// translated, and a rewrite is only used when it is shorter. A failed request keeps the
+// translation (only Stop throws).
+// lines: [{ text (original), start, seconds }], texts[i]: line i's Khmer, apply(i, newText).
+async function fitOverlongLines({ lines, texts, apply, genre, glossary, keyPool, model, signal, usage, sheetHint = '', tag }) {
+    const overlong = findOverlongLines(lines, texts);
+    if (!overlong.length) return 0;
+    let fitted = 0;
+    try {
+        const out = await shortenLines({
+            items: overlong.map(({ i, room, speed }) => ({ id: String(i), text: texts[i], seconds: room, speed, originalText: lines[i].text })),
+            genre, glossary, keyPool, model, signal, strength: 'fit', usage, sheetHint
+        });
+        for (const { id, text } of out.results) {
+            const i = Number(id);
+            if (!texts[i] || !KHMER_CHAR_RE.test(text) || text.length >= texts[i].length) continue;
+            apply(i, text);
+            fitted++;
+        }
+        if (!out.ok) console.warn(`[${tag}] Timeline fit stopped early: ${(out.result && (out.result.message || out.result.error)) || 'no answer'}`);
+    } catch (e) {
+        if (e.name === 'AbortError' || (signal && signal.aborted)) throw e;
+        console.warn(`[${tag}] Timeline fit skipped:`, e.message);
+    }
+    console.log(`[${tag}] ${overlong.length} line(s) too long for their time, ${fitted} re-worded to fit`);
+    return fitted;
+}
 
 const TRANSLATE_RESPONSE_SCHEMA = {
     type: 'ARRAY',
@@ -2493,7 +2810,9 @@ app.post('/api/translate-srt', async (req, res) => {
         apiKey,
         apiKeys,
         model = 'gemini-2.0-flash',
-        requestId
+        requestId,
+        // The video the subtitles belong to: its folder keeps the series' character sheet.
+        sourceFilePath
     } = req.body;
 
     let content = srtText;
@@ -2509,12 +2828,15 @@ app.post('/api/translate-srt', async (req, res) => {
         return res.status(400).json({ success: false, error: 'No subtitle content provided to translate.' });
     }
 
-    if (!apiKey || !apiKey.trim()) {
+    // CodeCraft (if chosen in Settings) first, the Gemini keys after it as backups.
+    const keyPool = textKeys([apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])]);
+    if (!keyPool.length) {
         return res.status(400).json({ success: false, error: 'INVALID_API_KEY', message: 'API key is required.' });
     }
 
     const abortCtrl = new AbortController();
     if (requestId) activeTranscribeRequests.set(requestId, abortCtrl);
+    const jobStartedAt = Date.now();
 
     try {
         const genreRegister = genre || dramaRegister || 'historical';
@@ -2528,14 +2850,25 @@ app.post('/api/translate-srt', async (req, res) => {
 
         const results = new Array(sourceLines.length).fill(null);
         const rawParts = [];
+        const usage = createTokenUsage();
 
-        const translateBatch = async (key, indexes, previousLines) => {
+        // One sheet of names and forms of address for every batch (and every episode in the folder).
+        const sheet = await prepareCharacterSheet({
+            lines: sourceLines, sourceFilePath, glossary, glossaryHint, keys: keyPool, model, signal: abortCtrl.signal, usage
+        });
+        if (abortCtrl.signal.aborted) return res.json({ success: false, error: 'CANCELLED' });
+        const sheetHint = formatSheetForPrompt(sheet);
+        const systemInstruction = { parts: [{ text: buildTranslateSystemPrompt({ genreGuidance }) }] };
+
+        // preferBackup: lines the main model left out go to the backup model (CodeCraft only).
+        const translateBatch = async (key, indexes, previousLines, preferBackup = false) => {
             const payload = {
+                systemInstruction,
                 contents: [{
                     role: 'user',
-                    parts: [{ text: buildTranslatePrompt({
+                    parts: [{ text: buildTranslateUserPrompt({
                         lines: indexes.map(i => translatePromptLine(i, sourceLines[i])),
-                        glossaryHint, genreGuidance, previousLines
+                        glossaryHint, sheetHint, previousLines
                     }) }]
                 }],
                 generationConfig: {
@@ -2544,8 +2877,9 @@ app.post('/api/translate-srt', async (req, res) => {
                     maxOutputTokens: 32768
                 }
             };
-            const result = await executeGeminiGenerate(key, model, payload, abortCtrl.signal);
+            const result = await generateText(key, model, payload, abortCtrl.signal, { preferBackup, thinking: 'low' });
             if (!result.success) return result;
+            addTokenUsage(usage, result);
             rawParts.push(result.text || '');
             const wanted = new Set(indexes);
             for (const item of parseJsonArrayLoose(result.text) || []) {
@@ -2560,17 +2894,15 @@ app.post('/api/translate-srt', async (req, res) => {
             return result;
         };
 
-        // Same lane model as /api/transcribe: one contiguous run of batches per key.
-        const keyPool = [apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])]
-            .map(k => String(k || '').trim())
-            .filter((k, i, a) => k && a.indexOf(k) === i);
+        // Same lane model as /api/transcribe: one contiguous run of batches per key (with
+        // CodeCraft: a few lanes, all on the CodeCraft key).
         const batchStarts = [];
         for (let start = 0; start < sourceLines.length; start += TRANSLATE_BATCH_SIZE) batchStarts.push(start);
-        const laneCount = Math.max(1, Math.min(keyPool.length, TRANSCRIBE_MAX_LANES, batchStarts.length));
+        const laneCount = Math.max(1, Math.min(textLaneCount(keyPool), TRANSCRIBE_MAX_LANES, batchStarts.length));
         let failure = null;
 
         const runLane = async (lane) => {
-            const keys = [...keyPool.slice(lane), ...keyPool.slice(0, lane)];
+            const keys = textLaneKeys(keyPool, lane);
             const from = Math.floor(lane * batchStarts.length / laneCount);
             const to = Math.floor((lane + 1) * batchStarts.length / laneCount);
             for (let b = from; b < to; b++) {
@@ -2578,18 +2910,21 @@ app.post('/api/translate-srt', async (req, res) => {
                 const start = batchStarts[b];
                 const indexes = [];
                 for (let i = start; i < Math.min(start + TRANSLATE_BATCH_SIZE, sourceLines.length); i++) indexes.push(i);
+                // The first batch of each lane runs before the batch ahead of it is done: it still
+                // gets those lines' originals, so it starts in the middle of the scene, not cold.
                 const previousLines = [];
                 for (let i = Math.max(0, start - 4); i < start; i++) {
                     if (results[i]) previousLines.push({ source: sourceLines[i].text, text: results[i].text, gender: results[i].gender });
+                    else if (sourceLines[i].text) previousLines.push({ source: sourceLines[i].text, gender: sourceLines[i].gender });
                 }
 
-                const attempt = async (idx) => {
+                const attempt = async (idx, preferBackup = false) => {
                     let r = null;
                     let otherRetries = 0;
                     const startedAt = Date.now();
                     for (let retry = 0; ; retry++) {
                         const out = await tryKeysOnce(keys, async (key) => {
-                            const res = await translateBatch(key, idx, previousLines);
+                            const res = await translateBatch(key, idx, previousLines, preferBackup);
                             return res.success ? { ok: true, res } : { ok: false, result: res };
                         });
                         r = out.ok ? out.res : out.result;
@@ -2604,11 +2939,11 @@ app.post('/api/translate-srt', async (req, res) => {
                 const result = await attempt(indexes);
                 if (!result.success) { failure = failure || result; return; }
 
-                // One follow-up pass for any lines the model skipped.
+                // One follow-up pass for any lines the model skipped (on CodeCraft's backup model, if set).
                 const missing = indexes.filter(i => !results[i] && sourceLines[i].text);
                 if (missing.length) {
                     console.warn(`[Translate] Retrying ${missing.length} skipped line(s)`);
-                    const retry = await attempt(missing);
+                    const retry = await attempt(missing, true);
                     if (!retry.success) { failure = failure || retry; return; }
                 }
             }
@@ -2622,11 +2957,29 @@ app.post('/api/translate-srt', async (req, res) => {
         if (abortCtrl.signal.aborted) return res.json({ success: false, error: 'CANCELLED' });
         if (failure) return geminiFailureResponse(res, failure);
 
+        // Timeline: the few lines too long for their time are re-worded (fitOverlongLines).
+        let fitted = 0;
+        try {
+            fitted = await fitOverlongLines({
+                lines: sourceLines, texts: results.map(r => r && r.text),
+                apply: (i, text) => { results[i] = { ...results[i], text, fitted: true }; },
+                genre: genreRegister, glossary, keyPool, model, signal: abortCtrl.signal, usage, sheetHint, tag: 'Translate'
+            });
+        } catch (e) {
+            if (e.name === 'AbortError' || abortCtrl.signal.aborted) return res.json({ success: false, error: 'CANCELLED' });
+            throw e;
+        }
+        console.log(`[Translate] ${sourceLines.length} lines: ${formatTokenUsage(usage)}`);
+
         // Frontend maps by position; a null entry keeps that line's original text.
         res.json({
             success: true,
             data: results,
-            rawText: rawParts.join('\n')
+            rawText: rawParts.join('\n'),
+            notice: textAiNotice(jobStartedAt),
+            usage,
+            fitted,
+            sheet: sheet ? { names: sheet.characters.length, address: sheet.address.length, terms: sheet.terms.length } : null
         });
     } catch (e) {
         if (e.name === 'AbortError') return res.json({ success: false, error: 'CANCELLED' });
@@ -2687,6 +3040,7 @@ app.post('/api/rewrite-dialogue', async (req, res) => {
         genre = 'historical',
         glossary,
         apiKey,
+        apiKeys,
         model = 'gemini-3.8-flash',
         requestId
     } = req.body;
@@ -2695,20 +3049,34 @@ app.post('/api/rewrite-dialogue', async (req, res) => {
         return res.status(400).json({ success: false, error: 'No dialogue text provided.' });
     }
 
-    if (!apiKey || !apiKey.trim()) {
+    if ((!apiKey || !apiKey.trim()) && !codecraftActive()) {
         return res.status(400).json({ success: false, error: 'INVALID_API_KEY', message: 'API key is required.' });
     }
 
-    let modeInstruction = '';
+    // Shorten: the shared shortening engine, sized to the line's own slot when the caller sends
+    // its timing (slotDuration or textStart/textEnd); otherwise just clearly shorter.
     if (mode === 'shorten') {
-        // Sized to the line's own slot when the caller sends its timing (slotDuration or
-        // start/end), at the same pace the translate prompts use; otherwise just "shorter".
-        const slotSec = lineSeconds(req.body);
-        const budget = slotSec
-            ? `at most ${khmerMaxSyllables(slotSec)} spoken syllables (about ${KHMER_SYLLABLES_PER_SEC} per second of its ${slotSec.toFixed(1)}s slot)`
-            : 'clearly fewer spoken syllables than the input';
-        modeInstruction = `Make the Khmer dialogue SHORTER and punchier: ${budget}. Cut filler particles and padding first; keep forms of address and pronouns (បង, អូន, លោក, ព្រះអង្គ ...), names and the core emotional meaning.`;
-    } else if (mode === 'dramatic') {
+        const abortCtrl = new AbortController();
+        if (requestId) activeTranscribeRequests.set(requestId, abortCtrl);
+        try {
+            const out = await shortenLines({
+                items: [{ id: '0', text, seconds: lineSeconds(req.body), originalText }],
+                genre, glossary, keyPool: textKeys([apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])]), model,
+                signal: abortCtrl.signal, strength: 'shorter'
+            });
+            if (!out.ok) return res.status(out.result.status || 500).json({ success: false, error: out.result.message || out.result.error || 'REWRITE_FAILED' });
+            if (!out.results.length) return res.status(502).json({ success: false, error: 'The AI did not return a shorter line. Please try again.' });
+            return res.json({ success: true, rewrittenText: out.results[0].text, mode });
+        } catch (e) {
+            if (e.name === 'AbortError') return res.json({ success: false, error: 'CANCELLED' });
+            return res.status(500).json({ success: false, error: e.message });
+        } finally {
+            if (requestId) activeTranscribeRequests.delete(requestId);
+        }
+    }
+
+    let modeInstruction = '';
+    if (mode === 'dramatic') {
         modeInstruction = 'Make the Khmer dialogue HIGHLY DRAMATIC, emotionally charged, intense, and cinematic. Use strong spoken drama vocabulary (កាច កម្សត់ ឬតានតឹង) suitable for professional voice dubbing.';
     } else if (mode === 'royal') {
         modeInstruction = 'Convert the Khmer dialogue into classical royal court / imperial palace language (រាជស័ព្ទ/រាជវាំង/បុរាណ) using terms like ព្រះអង្គ, ក្រាបទូល, ទូលបង្គំ, ខ្ញុំម្ចាស់, ម្ចាស់បង, ព្រះរាជបញ្ជា, etc. Keep it compact and speakable.';
@@ -2746,7 +3114,7 @@ RULES:
     if (requestId) activeTranscribeRequests.set(requestId, abortCtrl);
 
     try {
-        const geminiResult = await executeGeminiGenerate(apiKey, model, payload, abortCtrl.signal);
+        const geminiResult = await generateTextForKey(apiKey, model, payload, abortCtrl.signal);
 
         if (!geminiResult.success) {
             return res.status(geminiResult.status || 500).json({
@@ -2785,6 +3153,7 @@ app.post('/api/refactor-subtitles-batch', async (req, res) => {
         dramaRegister,
         glossary,
         apiKey,
+        apiKeys,
         model = 'gemini-3.8-flash',
         requestId
     } = req.body;
@@ -2794,14 +3163,36 @@ app.post('/api/refactor-subtitles-batch', async (req, res) => {
         return res.status(400).json({ success: false, error: 'No subtitles provided for refactoring.' });
     }
 
-    if (!apiKey || !apiKey.trim()) {
+    if ((!apiKey || !apiKey.trim()) && !codecraftActive()) {
         return res.status(400).json({ success: false, error: 'INVALID_API_KEY', message: 'Gemini API key is required in Settings.' });
     }
 
-    let modeInstruction = '';
+    // ✂️ Ultra-Short: the shared shortening engine ("shorter": every line, sized to its own slot).
     if (mode === 'shorten') {
-        modeInstruction = 'Make all Khmer dialogue SHORTER and punchier: each line shorter than its input, and within its "maxSyllables" when it has one. Cut filler particles, padding and extra clauses first; keep forms of address and pronouns (បង, អូន, លោក, ព្រះអង្គ ...), names and the core meaning.';
-    } else if (mode === 'dramatic') {
+        const abortCtrl = new AbortController();
+        if (requestId) activeTranscribeRequests.set(requestId, abortCtrl);
+        try {
+            const items = subtitles
+                .map((s, i) => ({ id: String(s.id ?? i), text: s.text || '', seconds: lineSeconds(s), originalText: s.originalText || '' }))
+                .filter(s => s.text.trim());
+            const out = await shortenLines({
+                items, genre: genre || dramaRegister || 'historical', glossary,
+                keyPool: textKeys([apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])]), model, signal: abortCtrl.signal, strength: 'shorter'
+            });
+            if (!out.ok) return geminiFailureResponse(res, out.result);
+            const byId = new Map(out.results.map(r => [r.id, r.text]));
+            const refactoredSubtitles = subtitles.map((s, i) => ({ id: s.id, text: byId.get(String(s.id ?? i)) || s.text }));
+            return res.json({ success: true, refactoredSubtitles, count: refactoredSubtitles.length, mode });
+        } catch (e) {
+            if (e.name === 'AbortError') return res.json({ success: false, error: 'CANCELLED' });
+            return res.status(500).json({ success: false, error: e.message });
+        } finally {
+            if (requestId) activeTranscribeRequests.delete(requestId);
+        }
+    }
+
+    let modeInstruction = '';
+    if (mode === 'dramatic') {
         modeInstruction = 'Refactor all Khmer dialogue into HIGHLY DRAMATIC, intense, emotional, and cinematic spoken lines. Use expressive spoken vocabulary (កាច កម្សត់ តានតឹង) suitable for professional drama voice dubbing.';
     } else if (mode === 'royal') {
         modeInstruction = 'Convert all Khmer dialogue into classical royal court / imperial palace language (រាជស័ព្ទ / បុរាណ / រាជវាំង) using authentic royal terms (ព្រះអង្គ, ក្រាបទូល, ទូលបង្គំ, ខ្ញុំម្ចាស់, ម្ចាស់បង, ព្រះរាជបញ្ជា, etc.) while keeping lines short and speakable.';
@@ -2892,7 +3283,7 @@ ${JSON.stringify(inputLines, null, 2)}`;
                 }
             };
 
-            const geminiResult = await executeGeminiGenerate(apiKey, model, payload, abortCtrl.signal);
+            const geminiResult = await generateTextForKey(apiKey, model, payload, abortCtrl.signal);
             if (!geminiResult.success) {
                 if (requestId) activeTranscribeRequests.delete(requestId);
                 return res.status(geminiResult.status || 500).json({
@@ -2945,6 +3336,111 @@ ${JSON.stringify(inputLines, null, 2)}`;
     }
 });
 
+// ── Shortening: one engine for every "make it shorter" tool ─────────────────────
+// "fit"     : AI Shorten All / Refactor Fast Audio / Dub Whole Series' rushed lines - only as
+//             short as the line's slot needs at a natural 1.0x pace.
+// "shorter" : AI Refactor ✂️ Ultra-Short (a whole tab) and a row's AI rewrite in that style -
+//             every line clearly shorter than it is, and still within its slot.
+// Same prompt, same key rotation (CodeCraft or Gemini) and the same patient retries for all.
+// items: [{ id, text, seconds?, speed?, originalText? }] -> { ok, results: [{ id, text }] }
+const SHORTEN_CHUNK = 80;
+
+function buildShortenPrompt({ lines, targetLanguage, registerGuidance, glossaryHint, strength }) {
+    const task = strength === 'shorter'
+        ? `Rewrite each line ("text") SHORTER and punchier: clearly fewer spoken syllables than the input, as natural spoken dialogue. When a line has "slotSeconds", it must also fit that slot at a relaxed, natural 1.0x speaking pace.`
+        : `These lines are too long for their time slot, so the voice has to be sped up (currentSpeed) and sounds rushed.
+Rewrite each line ("text") into SHORT, NATURAL spoken dialogue that fits within its "slotSeconds" at a relaxed, natural 1.0x speaking pace.`;
+    return `You are a master film/TV dubbing script adapter and dialogue doctor.
+
+YOUR TASK:
+${task}
+
+STRICT DUBBING CONSTRAINTS:
+1. Stay within each line's "maxSyllables" spoken syllables when it has one. Shorter is fine; never exceed it.
+2. Keep the exact emotional tone, dramatic intent, speaker register and key plot facts. It must sound like authentic, natural film/TV dialogue.
+3. Keep forms of address and pronouns (បង, អូន, លោក, ព្រះអង្គ ...) and names unchanged - they carry who is talking to whom. Cut other words first: filler particles, formal padding and verbose structures.
+4. Write in ${targetLanguage} (the same language as "text"). "sourceText", when present, is the original-language line for meaning reference only.${registerGuidance}${glossaryHint}
+
+LINES TO SHORTEN:
+${JSON.stringify(lines)}
+
+OUTPUT FORMAT:
+Return ONLY a JSON array with one object per input line: [{ "id": "<same id>", "condensedText": "<shortened line>" }]`;
+}
+
+const SHORTEN_RESPONSE_SCHEMA = {
+    type: 'ARRAY',
+    items: {
+        type: 'OBJECT',
+        properties: {
+            id: { type: 'STRING' },
+            condensedText: { type: 'STRING' }
+        },
+        required: ['id', 'condensedText']
+    }
+};
+
+// usage: a job's token total (createTokenUsage) to add to; sheetHint: the character sheet, so a
+// re-worded line keeps the series' names and forms of address.
+async function shortenLines({ items, targetLanguage = 'Khmer', genre = 'historical', glossary, keyPool, model, signal, strength = 'fit', usage = null, sheetHint = '' }) {
+    const isKhmer = /khmer|^km/i.test(String(targetLanguage));
+    const registerGuidance = isKhmer ? getKhmerDramaRegisterGuidance(genre || 'historical') : '';
+    const glossaryHint = (glossary
+        ? `\n\nGLOSSARY (keep these names/terms exactly as given):\n${typeof glossary === 'string' ? glossary : JSON.stringify(glossary, null, 2)}`
+        : '') + (sheetHint || '');
+    // Same pace as the translate prompts, so a shortened line isn't held to a tighter budget
+    // than the one it was translated to (Edge voices speak ~5-6 syllables/s).
+    const linesData = items.map((s) => {
+        const seconds = Number(s.seconds) > 0 ? Number(s.seconds) : null;
+        const speed = parseFloat(s.speed);
+        return {
+            id: String(s.id),
+            text: String(s.text).trim(),
+            ...(seconds ? { slotSeconds: Number(seconds.toFixed(2)), maxSyllables: khmerMaxSyllables(seconds) } : {}),
+            ...(speed > 0 ? { currentSpeed: `${speed.toFixed(2)}x` } : {}),
+            ...(s.originalText ? { sourceText: String(s.originalText) } : {})
+        };
+    });
+
+    const results = [];
+    const seen = new Set();
+    for (let start = 0; start < linesData.length; start += SHORTEN_CHUNK) {
+        const chunk = linesData.slice(start, start + SHORTEN_CHUNK);
+        const payload = {
+            contents: [{ role: 'user', parts: [{ text: buildShortenPrompt({ lines: chunk, targetLanguage, registerGuidance, glossaryHint, strength }) }] }],
+            generationConfig: { responseMimeType: 'application/json', responseSchema: SHORTEN_RESPONSE_SCHEMA }
+        };
+        // The first key is the caller's own (Dub Whole Series gives every tab its own); a bad,
+        // rate-limited or used-up key hands over to the least busy other key. "High demand" is
+        // waited out on the same key with the main pass's backoff: asking every key and every
+        // model at once got the same answer from each and used up their daily quota.
+        const out = await geminiWithKeys(keyPool, async (key) => {
+            const r = await generateText(key, model, payload, signal, { timeoutMs: GEMINI_TEXT_TIMEOUT_MS, thinking: 'low' });
+            if (!r.success) return { ok: false, result: r };
+            addTokenUsage(usage, r);
+            // Loose: a model without JSON mode may wrap the array in a ```json fence.
+            const parsed = parseJsonArrayLoose(r.text);
+            if (!Array.isArray(parsed)) return { ok: false, result: { status: 502, error: 'JSON_PARSE_ERROR', message: 'The AI did not return a list of lines.' } };
+            return { ok: true, parsed };
+        }, signal, { retries: GEMINI_RETRY_DELAYS_MS.length });
+        if (!out.ok) return { ok: false, result: out.result, results };
+
+        // Keep only well-formed items for ids we actually asked about (first answer per id wins).
+        const requestedIds = new Set(chunk.map(l => l.id));
+        for (const item of out.parsed) {
+            const id = item && String(item.id);
+            let text = item && typeof item.condensedText === 'string' ? item.condensedText.trim() : '';
+            if (!id || !text || !requestedIds.has(id) || seen.has(id)) continue;
+            if (isKhmer) text = sanitizeKhmerDialogue(text);
+            if (glossary) text = applyGlossary(text, glossary);
+            if (!text) continue;
+            seen.add(id);
+            results.push({ id, text });
+        }
+    }
+    return { ok: true, results };
+}
+
 // 4e. Smart AI Subtitle Condenser (Refactor long dialogue lines to fit slot duration at 1.0x speed)
 app.post('/api/condense-fast-subtitles', async (req, res) => {
     const {
@@ -2964,9 +3460,7 @@ app.post('/api/condense-fast-subtitles', async (req, res) => {
         return res.status(400).json({ success: false, error: 'No subtitles provided to condense.' });
     }
 
-    const keyPool = [apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])]
-        .map(k => String(k || '').trim())
-        .filter((k, i, a) => k && a.indexOf(k) === i);
+    const keyPool = textKeys([apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])]);
 
     if (keyPool.length === 0) {
         return res.status(400).json({ success: false, error: 'INVALID_API_KEY', message: 'Gemini API key is required in Settings.' });
@@ -2976,93 +3470,12 @@ app.post('/api/condense-fast-subtitles', async (req, res) => {
     if (requestId) activeTranscribeRequests.set(requestId, abortCtrl);
 
     try {
-        // Same pace as the translate prompts, so a condensed line isn't held to a tighter
-        // budget than the one it was translated to (Edge voices speak ~5-6 syllables/s).
-        const linesData = subtitles.map((s) => {
-            const slot = Math.max(0.3, parseFloat(s.slotDuration) || 1.5);
-            const speed = parseFloat(s.speed) || 1.0;
-            return {
-                id: String(s.id),
-                text: String(s.text).trim(),
-                slotSeconds: Number(slot.toFixed(2)),
-                currentSpeed: `${speed.toFixed(2)}x`,
-                maxSyllables: khmerMaxSyllables(slot),
-                ...(s.originalText ? { sourceText: String(s.originalText) } : {})
-            };
+        const out = await shortenLines({
+            items: subtitles.map(s => ({ id: s.id, text: s.text, seconds: Math.max(0.3, parseFloat(s.slotDuration) || 1.5), speed: parseFloat(s.speed) || 1.0, originalText: s.originalText })),
+            targetLanguage, genre, glossary, keyPool, model, signal: abortCtrl.signal, strength: 'fit'
         });
-
-        const isKhmer = /khmer|^km/i.test(String(targetLanguage));
-        const registerGuidance = isKhmer ? getKhmerDramaRegisterGuidance(genre || 'historical') : '';
-        const glossaryHint = glossary
-            ? `\n\nGLOSSARY (keep these names/terms exactly as given):\n${typeof glossary === 'string' ? glossary : JSON.stringify(glossary, null, 2)}`
-            : '';
-
-        const prompt = `You are a master film/TV dubbing script adapter and dialogue doctor.
-The following ${targetLanguage} dubbing lines are too long for their time slot, so the voice has to be sped up (currentSpeed) and sounds rushed.
-
-YOUR TASK:
-Rewrite each line ("text") into SHORT, NATURAL spoken dialogue that fits within its "slotSeconds" at a relaxed, natural 1.0x speaking pace.
-
-STRICT DUBBING CONSTRAINTS:
-1. Stay within each line's "maxSyllables" spoken syllables. Shorter is fine; never exceed it.
-2. Keep the exact emotional tone, dramatic intent, speaker register and key plot facts. It must sound like authentic, natural film/TV dialogue.
-3. Keep forms of address and pronouns (បង, អូន, លោក, ព្រះអង្គ ...) and names unchanged - they carry who is talking to whom. Cut other words first: filler particles, formal padding and verbose structures.
-4. Write in ${targetLanguage} (the same language as "text"). "sourceText", when present, is the original-language line for meaning reference only.${registerGuidance}${glossaryHint}
-
-LINES TO CONDENSE:
-${JSON.stringify(linesData, null, 2)}
-
-OUTPUT FORMAT:
-Return ONLY a JSON array with one object per input line: [{ "id": "<same id>", "condensedText": "<shortened line>" }]`;
-
-        const payload = {
-            contents: [{ role: 'user', parts: [{ text: prompt }] }],
-            generationConfig: {
-                responseMimeType: 'application/json',
-                responseSchema: {
-                    type: 'ARRAY',
-                    items: {
-                        type: 'OBJECT',
-                        properties: {
-                            id: { type: 'STRING' },
-                            condensedText: { type: 'STRING' }
-                        },
-                        required: ['id', 'condensedText']
-                    }
-                }
-            }
-        };
-
-        // The first key is the caller's own (Dub Whole Series gives every tab its own); a bad,
-        // rate-limited or used-up key hands over to the least busy other key. "High demand" is
-        // waited out on the same key with the main pass's backoff: asking every key and every
-        // model at once got the same answer from each and used up their daily quota.
-        const out = await geminiWithKeys(keyPool, async (key) => {
-            const r = await executeGeminiGenerate(key, model, payload, abortCtrl.signal, { timeoutMs: GEMINI_TEXT_TIMEOUT_MS });
-            if (!r.success) return { ok: false, result: r };
-            // Loose: a model without JSON mode may wrap the array in a ```json fence.
-            const parsed = parseJsonArrayLoose(r.text);
-            if (!Array.isArray(parsed)) return { ok: false, result: { status: 502, error: 'JSON_PARSE_ERROR', message: 'Gemini did not return a list of lines.' } };
-            return { ok: true, parsed };
-        }, abortCtrl.signal, { retries: GEMINI_RETRY_DELAYS_MS.length });
         if (!out.ok) return geminiFailureResponse(res, out.result);
-        const parsed = out.parsed;
-
-        // Keep only well-formed items for ids we actually asked about (first answer per id wins).
-        const requestedIds = new Set(linesData.map(l => l.id));
-        const seen = new Set();
-        const results = [];
-        for (const item of parsed) {
-            const id = item && String(item.id);
-            let text = item && typeof item.condensedText === 'string' ? item.condensedText.trim() : '';
-            if (!id || !text || !requestedIds.has(id) || seen.has(id)) continue;
-            if (isKhmer) text = sanitizeKhmerDialogue(text);
-            if (glossary) text = applyGlossary(text, glossary);
-            if (!text) continue;
-            seen.add(id);
-            results.push({ id, condensedText: text });
-        }
-
+        const results = out.results.map(r => ({ id: r.id, condensedText: r.text }));
         res.json({ success: true, results, count: results.length });
     } catch (e) {
         if (e.name === 'AbortError') return res.json({ success: false, error: 'CANCELLED' });
@@ -3082,6 +3495,52 @@ app.get('/api/transcribe-progress', (req, res) => {
 app.post('/api/gemini-key-status', (req, res) => {
     const keys = (Array.isArray(req.body?.keys) ? req.body.keys : []).map(k => String(k || '').trim()).filter(Boolean);
     res.json({ success: true, keys: keys.map(k => ({ suffix: k.slice(-4), ...geminiKeyStatus(k) })) });
+});
+
+// Settings → "Translate subtitles with": the app sends its choice at start and on every change.
+app.post('/api/text-ai', (req, res) => {
+    const b = req.body || {};
+    const provider = b.provider === 'codecraft' ? 'codecraft' : 'gemini';
+    const keys = (Array.isArray(b.keys) ? b.keys : [b.key]).map(k => String(k || '').trim()).filter((k, i, a) => k && a.indexOf(k) === i);
+    const model = String(b.model || '').trim();
+    const backupModel = String(b.backupModel || '').trim();
+    // A removed key forgets its problems; a newly added one starts fresh.
+    for (const k of textAi.keys) if (!keys.includes(k)) { textAi.issues.delete(k); textAi.okAt.delete(k); }
+    for (const k of keys) if (!textAi.keys.includes(k)) { invalidGeminiKeys.delete(k); rateLimitedGeminiKeys.delete(k); }
+    Object.assign(textAi, { provider, keys, model, backupModel: backupModel === model ? '' : backupModel });
+    res.json({ success: true, active: codecraftActive() });
+});
+
+// The CodeCraft key list in Settings. probe: ask CodeCraft with each key (checks it, gives a fresh
+// start to a key that was skipped - e.g. after topping up - and returns the model list);
+// otherwise only what this app has seen. Keys go in the body, never in the URL; only the last
+// 4 characters come back.
+app.post('/api/codecraft/keys', async (req, res) => {
+    const b = req.body || {};
+    const keys = (Array.isArray(b.keys) ? b.keys : []).map(k => String(k || '').trim()).filter(Boolean).slice(0, 20);
+    if (!keys.length) return res.status(400).json({ success: false, error: 'Enter your CodeCraft API key.' });
+    const abortCtrl = new AbortController();
+    res.on('close', () => { if (!res.writableFinished) abortCtrl.abort(); });
+    try {
+        let models = null;
+        const statuses = await Promise.all(keys.map(async (key) => {
+            let probe = null;
+            if (b.probe) {
+                probe = await codecraft.listModels(key, abortCtrl.signal);
+                if (probe.success) {
+                    invalidGeminiKeys.delete(key);
+                    rateLimitedGeminiKeys.delete(key);
+                    textAi.issues.delete(key);
+                    if (!models) models = probe.models;
+                }
+            }
+            return { suffix: key.slice(-4), ...codecraftKeyStatus(key, probe) };
+        }));
+        res.json({ success: true, keys: statuses, models });
+    } catch (e) {
+        if (e.name === 'AbortError') return res.json({ success: false, error: 'CANCELLED' });
+        res.status(500).json({ success: false, error: e.message });
+    }
 });
 
 app.post('/api/cancel-transcribe', (req, res) => {
@@ -3254,6 +3713,28 @@ function queueTtsTask(task) {
     processNextTts();
 }
 
+// One Python process serving every voice line, 6 at a time (the same as batch mode). The
+// regulator above is only for the one-process-per-line fallback.
+let ttsTrimNotesShown = 0;
+const ttsWorker = createTtsWorker({
+    maxInFlight: 6,
+    spawnWorker: () => {
+        if (!PYTHON_CMD) throw new Error('No Python');
+        const child = spawn(PYTHON_CMD, [getPythonScriptPath('tts_generator.py'), '--serve', '--concurrency', '6'], {
+            env: { ...PYTHON_ENV, DR_FFMPEG_PATH: getFFmpegBinary() }, // FFmpeg trims each clip's silence
+            windowsHide: true,
+        });
+        trackProcess(child);
+        return child;
+    },
+    // Same notes as logTtsTrimNotes, capped over the worker's life instead of per process.
+    onLog: (line) => {
+        if (!line.startsWith('[TTS trim]')) return;
+        if (++ttsTrimNotesShown <= 50) console.warn(line);
+        else if (ttsTrimNotesShown === 51) console.warn('[TTS trim] ...more clips kept their original padding (not logged)');
+    },
+});
+
 // 5. Neural Speech Generation with Emotional Acting & High-Speed Cache (Edge-TTS + Khmer)
 app.post('/api/generate-audio', (req, res) => {
     const {
@@ -3335,6 +3816,20 @@ app.post('/api/generate-audio', (req, res) => {
 
     const outFile = resolveAudioOutputFile(tempPath, index);
     const pyScript = getPythonScriptPath('tts_generator.py');
+
+    // The long-running generator (lib/tts-worker.js); one process per line only if it can't run.
+    if (ttsWorker.usable()) {
+        const job = ttsWorker.request({ text, voice, rate: prosody.rate, pitch: prosody.pitch, volume: prosody.volume, output: outFile });
+        res.on('close', () => { if (!res.writableEnded) job.cancel(); });
+        job.promise.then((data) => {
+            if (res.headersSent || data.cancelled) return;
+            if (!data.success) return res.status(500).json({ success: false, error: data.error || 'TTS error' });
+            const freshUrl = `/api/audio?path=${encodeURIComponent(outFile)}`;
+            setTtsCache(cacheKey, { file: outFile, duration: data.duration || 0, size: data.size || 0, url: freshUrl });
+            res.json({ success: true, file: outFile, duration: data.duration || 0, url: freshUrl });
+        });
+        return;
+    }
 
     let isAborted = false;
     let child = null;
@@ -3743,6 +4238,7 @@ const videoSplitter = createVideoSplitter({ getFFmpegBinary, getFFprobeBinary, t
 
 app.use('/api', require('./routes/system')({ detectAvailableEncoders }));
 app.use('/api', require('./routes/preview')({ previewService }));
+app.use('/api', require('./routes/waveform')({ getFFmpegBinary }));
 app.use('/api/episodes', require('./routes/episodes')({ episodeJoiner }));
 app.use('/api/split', require('./routes/split')({ videoSplitter }));
 app.use('/api', require('./routes/render')({ upload, renderVideo, cancelRender, getRenderProgress, audioRepair }));
@@ -3817,7 +4313,7 @@ function sampleDialogue(lines, budget) {
 
 app.post('/api/suggest-movie-title', async (req, res) => {
     const { originalTitle = '', subtitlesContent = '', projectSubtitles, genre = 'historical', glossary, apiKey, apiKeys, model = 'gemini-2.5-flash', count = 8, notes = '' } = req.body || {};
-    const keyPool = [apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])].map(k => String(k || '').trim()).filter((k, i, a) => k && a.indexOf(k) === i);
+    const keyPool = textKeys([apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])]);
     if (!keyPool.length) return res.status(400).json({ success: false, error: 'INVALID_API_KEY', message: 'Gemini API key is required.' });
 
     // Prefer the original-language line (it carries the real plot) with the Khmer next to it.
@@ -3863,7 +4359,7 @@ ${dialogue.join('\n') || '(no dialogue provided - work from the original title)'
     res.on('close', () => { if (!res.writableFinished) abortCtrl.abort(); });
     try {
         const out = await geminiWithKeys(keyPool, async (key) => {
-            const r = await executeGeminiGenerate(key, model, payload, abortCtrl.signal);
+            const r = await generateText(key, model, payload, abortCtrl.signal);
             if (!r.success) return { ok: false, result: r };
             let parsed = null;
             try { parsed = JSON.parse(String(r.text || '').replace(/^\s*```(?:json)?/i, '').replace(/```\s*$/, '')); } catch (e) { }
@@ -3930,7 +4426,7 @@ ${lines.map(l => `${l.originalText} => ${l.text}`).join('\n')}`;
 
 app.post('/api/unify-names', async (req, res) => {
     const { tabs, glossary, apiKey, apiKeys, model = 'gemini-2.5-flash', requestId } = req.body || {};
-    const keyPool = [apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])].map(k => String(k || '').trim()).filter((k, i, a) => k && a.indexOf(k) === i);
+    const keyPool = textKeys([apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])]);
     if (!keyPool.length) return res.status(400).json({ success: false, error: 'INVALID_API_KEY', message: 'Gemini API key is required.' });
     if (!Array.isArray(tabs) || !tabs.length) return res.status(400).json({ success: false, error: 'NO_TABS', message: 'No tabs were sent.' });
 
@@ -3956,7 +4452,7 @@ app.post('/api/unify-names', async (req, res) => {
         let next = 0;
         const worker = async (w) => {
             // Each worker starts on a different key, like the transcribe lanes.
-            const workerKeys = [...keyPool.slice(w % keyPool.length), ...keyPool.slice(0, w % keyPool.length)];
+            const workerKeys = textLaneKeys(keyPool, w);
             while (!failure && !abortCtrl.signal.aborted) {
                 const idx = next++;
                 if (idx >= chunks.length) return;
@@ -3965,7 +4461,7 @@ app.post('/api/unify-names', async (req, res) => {
                     generationConfig: { responseMimeType: 'application/json', responseSchema: NAMES_RESPONSE_SCHEMA, temperature: 0, maxOutputTokens: 16384 }
                 };
                 const out = await geminiWithKeys(workerKeys, async (key) => {
-                    const r = await executeGeminiGenerate(key, model, payload, abortCtrl.signal, { timeoutMs: GEMINI_TEXT_TIMEOUT_MS });
+                    const r = await generateText(key, model, payload, abortCtrl.signal, { timeoutMs: GEMINI_TEXT_TIMEOUT_MS });
                     if (!r.success) return { ok: false, result: r };
                     const parsed = extractJsonValue(r.text);
                     if (!Array.isArray(parsed)) return { ok: false, result: { status: 502, error: 'Gemini returned an unreadable name list. Please try again.' } };
