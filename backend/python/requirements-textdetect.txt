@@ -11,7 +11,11 @@ packaging
 pillow
 six
 # New for the detector:
-onnxruntime==1.30.0
+# The DirectML build on Windows (same "onnxruntime" module, CPU included): Isolate BGM's
+# MDX-Net runs on the GPU with it, ~18x faster than on the CPU. Only one of the two may be
+# installed - setup_python_env.bat removes the plain one first.
+onnxruntime==1.30.0; sys_platform != "win32"
+onnxruntime-directml==1.24.4; sys_platform == "win32"
 opencv-python-headless==4.11.0.86
 pyclipper==1.4.0
 shapely==2.1.2

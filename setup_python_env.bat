@@ -100,6 +100,10 @@ REM requirements file: pip's own choices (numpy 2, protobuf 7) would break Splee
 :textdetect
 echo.
 echo Installing the subtitle text detector (Blur Subtitles)...
+REM The plain onnxruntime of an older env gives way to onnxruntime-directml (both are the
+REM same "onnxruntime" module; Isolate BGM runs on the GPU with the DirectML one).
+"%PYDIR%\python.exe" -m pip show onnxruntime >nul 2>nul
+if !ERRORLEVEL! equ 0 "%PYDIR%\python.exe" -m pip uninstall -y onnxruntime -q --disable-pip-version-check
 "%PYDIR%\python.exe" -m pip install --no-deps -r backend\python\requirements-textdetect.txt --no-warn-script-location -q --disable-pip-version-check
 "%PYDIR%\python.exe" -c "import rapidocr_onnxruntime, cv2, onnxruntime" >nul 2>nul
 if !ERRORLEVEL! equ 0 (
