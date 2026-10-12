@@ -3633,7 +3633,7 @@
         <button id="ds-close" class="text-[var(--text-secondary)] hover:text-[var(--text-bright)] transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
       </div>
       <div class="p-5 flex flex-col gap-4 overflow-y-auto custom-scrollbar">
-        <p class="text-xs text-[var(--text-secondary)] leading-relaxed">Choose the folder with the episodes and press <b>Start</b>. The app joins the episodes into parts, then works on one part at a time: splits it into pieces, opens them as tabs, transcribes, matches the subtitles to the video's own lines, makes the Khmer voices, isolates the BGM and blurs the old burned-in subtitles. When a part is finished, export it, then press <b>Next part</b>. You can close this window while it works.</p>
+        <p class="text-xs text-[var(--text-secondary)] leading-relaxed">Choose the folder with the episodes and press <b>Start</b>. The app joins the episodes into parts (videos you merged already are used as they are), then works on one part at a time: splits it into pieces, opens them as tabs, transcribes, matches the subtitles to the video's own lines, makes the Khmer voices, isolates the BGM and blurs the old burned-in subtitles. When a part is finished, export it, then press <b>Next part</b>. You can close this window while it works.</p>
         <div class="flex items-center gap-2">
           <button id="ds-pick" class="shrink-0 whitespace-nowrap px-3 py-2 rounded-lg text-xs font-semibold bg-violet-600 text-white hover:brightness-110 active:scale-[0.97] transition-all flex items-center gap-1.5"><i data-lucide="folder-open" class="w-4 h-4"></i> Choose Folder</button>
           <span id="ds-folder" class="text-xs text-[var(--text-muted)] truncate font-mono">No folder selected</span>
@@ -3649,6 +3649,10 @@
             <label class="flex flex-col gap-1"><span class="text-[var(--text-secondary)]">File name</span>
               <input id="ds-name" type="text" class="bg-[var(--bg-base)] border border-[var(--border-light)] rounded-md px-2 py-1.5 outline-none focus:border-violet-500 font-khmer"></label>
           </div>
+          <label id="ds-merged-row" class="hidden items-start gap-1.5 cursor-pointer text-xs" title="Each video in the folder is dubbed as one part, as it is: it is only split into tabs. Switched on by itself when every video is 20 minutes or longer.">
+            <input id="ds-merged" type="checkbox" class="accent-violet-500 mt-0.5">
+            <span><span class="text-[var(--text-primary)]">Videos are already merged:</span> <span class="text-[var(--text-secondary)]">each video is one part - skip joining, only split</span></span>
+          </label>
           <div class="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
             <span class="text-[var(--text-secondary)]">For each part:</span>
             <label class="flex items-center gap-1.5 cursor-pointer"><input id="ds-step-transcribe" type="checkbox" class="accent-violet-500" checked> Transcribe</label>

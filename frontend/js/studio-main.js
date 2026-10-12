@@ -17050,6 +17050,11 @@
       const OPTIONAL_STEPS = ["transcribe", "match", "generate", "isolate", "blurtext"];
 
       let scan = null; // /api/episodes/scan result for a newly chosen folder
+      // Parts that need no joining: a "DR Dubber Joined" folder, or videos the user merged
+      // already (each video is one part, only split). null: the episodes are joined into parts.
+      const readyParts = () => scan?.joinedParts || (scan && $("ds-merged").checked
+        ? scan.files.filter((f) => !f.error).map((f) => ({ path: f.path, label: f.name, episodes: 0, duration: f.duration }))
+        : null);
       let plan = null; // persisted: { folder, seriesName, outDir, joinMinutes, parts, current, stepState, pieces, lastDone }
       try {
         const saved = JSON.parse(localStorage.getItem(SERIES_KEY) || "null");
@@ -17163,15 +17168,20 @@
         $("ds-summary").classList.toggle("hidden", !show);
         $("ds-summary").classList.toggle("flex", show);
 
+        const ready = readyParts();
         const parts = plan
           ? plan.parts
-          : scan?.joinedParts ? scan.joinedParts.map((jp) => ({ label: jp.label, episodes: jp.episodes, duration: jp.duration, status: "preview" }))
+          : ready ? ready.map((jp) => ({ label: jp.label, episodes: jp.episodes, duration: jp.duration, status: "preview" }))
           : scan ? planEpisodeParts(scan.files, joinMinutes()).map((g) => ({ label: `${epLabel(g[0])} – ${epLabel(g[g.length - 1])}`, episodes: g.length, duration: g.reduce((s, f) => s + f.duration, 0), status: "preview" })) : [];
-        const totalEpisodes = parts.reduce((s, p) => s + p.episodes, 0);
+        const totalEpisodes = parts.reduce((s, p) => s + (p.episodes || 0), 0);
         const totalDur = parts.reduce((s, p) => s + p.duration, 0);
-        $("ds-stats").textContent = parts.length ? `${totalEpisodes} episodes · ${fmtDur(totalDur)} · ${parts.length} part${parts.length === 1 ? "" : "s"}` : (scan ? "No video files found in this folder." : "");
+        const counted = totalEpisodes ? `${totalEpisodes} episodes` : `${parts.length} video${parts.length === 1 ? "" : "s"}`; // merged videos: episodes unknown
+        $("ds-stats").textContent = parts.length ? `${counted} · ${fmtDur(totalDur)} · ${parts.length} part${parts.length === 1 ? "" : "s"}` : (scan ? "No video files found in this folder." : "");
         if (plan) $("ds-name").value = plan.seriesName || "";
-        $("ds-join-minutes").disabled = !!plan || running || !!scan?.joinedParts; // joined parts are already cut
+        $("ds-join-minutes").disabled = !!plan || running || !!ready; // these parts are already cut
+        const showMerged = !plan && !!scan && !scan.joinedParts && scan.files.some((f) => !f.error);
+        $("ds-merged-row").classList.toggle("hidden", !showMerged);
+        $("ds-merged-row").classList.toggle("flex", showMerged);
         $("ds-name").disabled = !!plan || running;
         $("ds-split-minutes").disabled = running;
 
@@ -17204,7 +17214,7 @@
           const row = document.createElement("div");
           row.className = `flex items-center gap-3 px-3 py-2 rounded-lg bg-[var(--bg-base)] border text-xs ${i === u ? "border-violet-500/50" : "border-[var(--border-color)]"}`;
           row.innerHTML = `<span class="font-semibold w-14 shrink-0">Part ${i + 1}</span>
-            <span class="truncate flex-1">${esc(p.label)} · ${p.episodes} episodes · ≈${tabs} tab${tabs === 1 ? "" : "s"}</span>
+            <span class="truncate flex-1">${esc(p.label)}${p.episodes ? ` · ${p.episodes} episodes` : ""} · ≈${tabs} tab${tabs === 1 ? "" : "s"}</span>
             <span class="font-mono text-[var(--text-secondary)] shrink-0">${fmtDur(p.duration)}</span>
             <span class="w-36 text-right shrink-0">${state}</span>`;
           box.appendChild(row);
@@ -17255,7 +17265,7 @@
           btnNext.classList.add("hidden");
         } else if (!plan) {
           btnStart.classList.remove("hidden");
-          btnStart.textContent = !parts.length ? "Start" : scan?.joinedParts ? `Start: dub part 1 of ${parts.length} (already joined)` : `Start: join ${parts.length} part${parts.length === 1 ? "" : "s"} and dub part 1`;
+          btnStart.textContent = !parts.length ? "Start" : ready ? `Start: dub part 1 of ${parts.length} (already ${scan.joinedParts ? "joined" : "merged"})` : `Start: join ${parts.length} part${parts.length === 1 ? "" : "s"} and dub part 1`;
           btnStart.disabled = !parts.length;
           btnNext.classList.add("hidden");
         } else if (joining.length) {
@@ -18078,18 +18088,19 @@
       async function startSeries() {
         if (!scan || seriesRun || !preflight()) return;
         cancelAutoResume();
-        const groups = scan.joinedParts ? [] : planEpisodeParts(scan.files, joinMinutes());
-        if (!groups.length && !scan.joinedParts?.length) return;
+        const ready = readyParts();
+        const groups = ready ? [] : planEpisodeParts(scan.files, joinMinutes());
+        if (!groups.length && !ready?.length) return;
         if (!(await closeOpenTabs("Dub Whole Series opens each part as new tabs."))) return;
         savePrefs();
         plan = {
           id: Date.now(), // this series run (its exports' tag)
           folder: scan.folder,
           seriesName: $("ds-name").value.trim() || scan.seriesName,
-          outDir: scan.joinedParts ? scan.folder : pathJoin(scan.folder, "DR Dubber Joined"),
+          outDir: ready ? scan.folder : pathJoin(scan.folder, "DR Dubber Joined"),
           joinMinutes: joinMinutes(),
-          // A "DR Dubber Joined" folder was chosen: its parts are ready, nothing to join.
-          parts: scan.joinedParts ? scan.joinedParts.map((jp) => ({
+          // A "DR Dubber Joined" folder or already merged videos: the parts are ready, nothing to join.
+          parts: ready ? ready.map((jp) => ({
             label: jp.label,
             episodes: jp.episodes,
             duration: jp.duration,
@@ -18209,6 +18220,9 @@
           const r = await postJson(`${API}/episodes/scan`, { folder: res.path });
           if (!r.success) throw new Error(r.error);
           scan = { ...r, folder: r.folder || res.path };
+          // Every video 20 minutes or longer: merged already, not episodes (switchable).
+          const readable = r.files.filter((f) => !f.error);
+          $("ds-merged").checked = readable.length > 0 && readable.every((f) => f.duration >= 20 * 60);
           $("ds-name").value = r.seriesName || "";
           const warn = $("ds-warnings");
           warn.innerHTML = (r.warnings || []).map((w) => `⚠ ${esc(w)}`).join("<br>");
@@ -18262,6 +18276,7 @@
         });
       });
       OPTIONAL_STEPS.forEach((k) => $(`ds-step-${k}`).addEventListener("change", () => { savePrefs(); render(); }));
+      $("ds-merged").addEventListener("change", render);
       render();
     })();
 
