@@ -114,8 +114,9 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
             for (let n = min; n <= max && missing.length < 50; n++) if (!seen.has(n)) missing.push(n);
             if (missing.length) warnings.push(`Missing episode${missing.length > 1 ? 's' : ''}: ${missing.slice(0, 15).join(', ')}${missing.length > 15 ? '…' : ''}`);
         }
+        // Order only matters with two or more videos (one merged video has nothing to sort).
         const unnumbered = files.filter(f => f.episode === null).length;
-        if (unnumbered) warnings.push(`${unnumbered} file(s) have no episode number and were sorted by name.`);
+        if (unnumbered && files.filter(f => !f.error).length > 1) warnings.push(`${unnumbered} file(s) have no episode number and were sorted by name.`);
         const broken = files.filter(f => f.error);
         if (broken.length) warnings.push(`${broken.length} file(s) can't be read and will be skipped: ${broken.slice(0, 5).map(f => f.name).join(', ')}${broken.length > 5 ? '…' : ''}`);
 

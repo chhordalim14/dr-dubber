@@ -3388,6 +3388,27 @@
       if (document.getElementById("autosave-srt-toggle")) autoSaveSrtRenderUI();
     });
 
+    // Overwrites the SRT that Transcribe saved for this tab (same folder and name) with the
+    // tab's subtitles as they are now. Never throws: a failed save only leaves the old file.
+    function resaveTranscribeSrt(proj) {
+      const subs = liveSubtitlesOf(proj)
+        .filter((s) => String(s.text || "").trim())
+        .sort((a, b) => parseFloat(a.textStart) - parseFloat(b.textStart));
+      if (!subs.length) return;
+      const content = subs.map((s, i) => `${i + 1}\n${formatSrtTime(parseFloat(s.textStart))} --> ${formatSrtTime(parseFloat(s.textEnd))}\n${String(s.text).trim()}\n`).join("\n");
+      const name = (proj.file && proj.file.name) || proj.videoFilePath?.split(/[\\/]/).pop() || "subtitles";
+      fetch("http://localhost:3001/api/save-srt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content,
+          fileName: name.replace(/\.[^/.]+$/, ""),
+          sourceFilePath: proj.videoFilePath || (proj.file && proj.file.path) || null,
+          customFolder: localStorage.getItem("aiDubberAutoSaveSrtCustomPath") || "",
+        }),
+      }).catch(() => { });
+    }
+
     // ── Auto Save Subtitle: core save routine, called after transcription or cancel ──
     async function maybeAutoSaveSubtitles(targetProject, subsArray, forceSave = false) {
       try {
@@ -17158,6 +17179,30 @@
       const partsToJoin = () => (plan ? plan.parts.map((p, k) => k).filter((k) => (plan.parts[k].status === "planned" || plan.parts[k].status === "failed") && !joiningIndices().includes(k)) : []);
       const piecesOpen = () => !!(plan && plan.pieces && plan.pieces.length && projects.length === plan.pieces.length && plan.pieces.every((p, k) => projects[k] && projects[k].videoFilePath === p));
 
+      // How far a part's export is: tabs rendered, and the whole part in percent (the tab that is
+      // rendering counts part-way).
+      function exportProgress(job) {
+        const total = job.items.length;
+        const done = job.items.filter((it) => it.status === "done").length;
+        const running = job.items.find((it) => it.status === "running");
+        const percent = total ? Math.floor(((done + (running ? (running.progress || 0) / 100 : 0)) / total) * 100) : 0;
+        return { total, done, percent };
+      }
+
+      // The finished part's export, under its steps (hands-free only: otherwise the user exports).
+      function exportStepLine(shown) {
+        const job = plan && shown && shown === plan.lastDone && seriesExports.get(plan.parts[shown.index]);
+        if (!job) return "";
+        const part = plan.parts[shown.index];
+        const ex = exportProgress(job);
+        const r = job.result;
+        const [icon, cls, note] = job.rendering ? ["●", "text-violet-300 animate-pulse", `${ex.done} of ${ex.total} tab(s) · ${ex.percent}%`]
+          : part.exported ? ["✓", "text-emerald-400", `${ex.total} tab(s) exported`]
+            : r && !exportComplete(r) ? ["✗", "text-red-400", `${r.done} of ${r.total} tab(s) exported${r.failed ? ` (${r.failed} failed)` : ""}`]
+              : ["○", "text-[var(--text-muted)]", `${ex.total} tab(s) waiting in the render queue`];
+        return `<div class="flex items-start gap-2 text-xs"><span class="w-4 shrink-0 text-center ${cls}">${icon}</span><span class="shrink-0">Export</span><span class="text-[var(--text-muted)] truncate flex-1 min-w-0">· ${esc(note)}</span></div>`;
+      }
+
       // ── Rendering ────────────────────────────────────────────────────────
       function render() {
         const running = !!seriesRun;
@@ -17203,7 +17248,10 @@
             const tip = report ? ` title="${esc(report)}"` : "";
             const job = plan && seriesExports.get(p);
             const r = job?.result;
-            if (job?.rendering) state = `<span class="text-sky-400"${tip}>✓ dubbed · exporting</span>`;
+            if (job?.rendering) {
+              const ex = exportProgress(job);
+              state = `<span class="text-sky-400" title="${esc(`${ex.done} of ${ex.total} tab(s) exported${report ? `\n${report}` : ""}`)}">✓ dubbed · exporting ${ex.percent}%</span>`;
+            }
             else if (p.exported) state = `<span class="text-emerald-400"${tip}>✓ dubbed & exported</span>`;
             else if (r && !exportComplete(r)) state = `<span class="text-amber-400" title="${esc(`${r.done} of ${r.total} tab(s) exported${report ? `\n${report}` : ""}`)}">✓ dubbed · export failed</span>`;
             else state = `<span class="text-emerald-400"${tip}>✓ dubbed</span>`;
@@ -17216,7 +17264,7 @@
           row.innerHTML = `<span class="font-semibold w-14 shrink-0">Part ${i + 1}</span>
             <span class="truncate flex-1">${esc(p.label)}${p.episodes ? ` · ${p.episodes} episodes` : ""} · ≈${tabs} tab${tabs === 1 ? "" : "s"}</span>
             <span class="font-mono text-[var(--text-secondary)] shrink-0">${fmtDur(p.duration)}</span>
-            <span class="w-36 text-right shrink-0">${state}</span>`;
+            <span class="w-40 text-right shrink-0">${state}</span>`;
           box.appendChild(row);
         });
 
@@ -17236,7 +17284,7 @@
                     : st.state === "stopped" ? ["■", "text-amber-400"] : ["✗", "text-red-400"];
             const label = off ? `${STEP_NAMES[name]} (off)` : STEP_NAMES[name];
             return `<div class="flex items-start gap-2 text-xs"><span class="w-4 shrink-0 text-center ${cls}">${icon}</span><span class="shrink-0">${label}</span><span class="text-[var(--text-muted)] truncate flex-1 min-w-0" title="${esc(st?.note)}">${st?.note ? "· " + esc(st.note) : ""}</span><span class="font-mono text-[var(--text-muted)] shrink-0">${tookText(st)}</span></div>`;
-          }).join("");
+          }).join("") + exportStepLine(shown);
         }
 
         const nextIdx = nextPartIndex();
@@ -17865,6 +17913,11 @@
           if (plan.stepState[name]?.state === "done") continue;
           await runStep(name, fn);
         }
+        // The SRTs saved after Transcribe are out of date by now: Match moved the lines onto the
+        // video's own, and Generate shortened the rushed ones (the voice says the shorter line).
+        // Written again, as dubbed, over the same files (Transcribe's folder and names).
+        saveCurrentProjectState();
+        projects.filter((p) => plan.pieces?.includes(p.videoFilePath)).forEach(resaveTranscribeSrt);
         const autoExport = handsFree();
         plan.parts[i].status = "done";
         if (autoExport) plan.parts[i].autoExport = true; // see lostExportsNote
@@ -17943,6 +17996,15 @@
         if (job.run) return job.run;
         job.rendering = true;
         render();
+        // The export's percent in the window: redrawn only when it changes, so a tooltip being
+        // read isn't redrawn away every second.
+        let shownPercent = -1;
+        const tick = setInterval(() => {
+          const pct = exportProgress(job).percent;
+          if (pct === shownPercent || modal.classList.contains("hidden")) return;
+          shownPercent = pct;
+          render();
+        }, 2000);
         job.run = window.seriesRenderApi.renderItems(job.items)
           .then((r) => {
             job.result = r;
@@ -17953,6 +18015,7 @@
             return r;
           })
           .finally(() => {
+            clearInterval(tick);
             job.rendering = false;
             job.run = null;
             render();

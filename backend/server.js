@@ -71,7 +71,7 @@ const security = require('./lib/security');
 const { isNetworkPath, isServableMedia, isAudioFile } = security;
 // Everything the server prints also goes to <storage>/logs/server.log (see lib/server-log.js).
 require('./lib/server-log').installServerLog(LOGS_DIR);
-const { FOREIGN_SCRIPT_RE, stripForeignScript, collapseRepeatedPartSuffix, buildTtsArgv } = require('./lib/text-rules');
+const { hasForeignText, stripForeignScript, collapseRepeatedPartSuffix, buildTtsArgv } = require('./lib/text-rules');
 const { trackProcess } = require('./lib/process-tracker');
 const { createTtsWorker } = require('./lib/tts-worker');
 const { secureFetch, fetchBackend } = require('./lib/secure-fetch');
@@ -2033,7 +2033,7 @@ function cueNeedsTranslation(cue) {
     const text = String(cue.text || '').trim();
     const original = String(cue.originalText || '').trim();
     if (!original) return false;
-    return !text || !KHMER_CHAR_RE.test(text) || text === original || FOREIGN_SCRIPT_RE.test(text);
+    return !text || !KHMER_CHAR_RE.test(text) || text === original || hasForeignText(text);
 }
 
 function findDialogueGaps(cues, totalSec) {
@@ -2378,7 +2378,7 @@ async function repairTranscript({ cues, sourceFile, totalSec, keys, model, promp
     // the voice never reads it out (the rest of the line stays).
     for (const cue of cues) {
         const text = String(cue.text || '');
-        if (KHMER_CHAR_RE.test(text) && FOREIGN_SCRIPT_RE.test(text)) {
+        if (KHMER_CHAR_RE.test(text) && hasForeignText(text)) {
             cue.text = stripForeignScript(text);
             if (cue._repaired !== 'added') cue._repaired = 'translated'; // Fix Missing sends it back as updated
         }

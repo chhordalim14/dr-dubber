@@ -36,6 +36,28 @@
   // Shortest spelling (in code points) that is ever rewritten automatically.
   const MIN_SPELLING_LENGTH = 2;
 
+  // Gemini can give a name an everyday word as one of its "spellings" (赵 -> ["ចាវ", "ជា"]).
+  // "ជា" ("is / a") is in most lines, so it always looks like it sits next to the name, and
+  // making the name consistent rewrote "ជាគ្រូពេទ្យ" ("a doctor") into "ចាវគ្រូពេទ្យ". Such a
+  // spelling is never suggested or rewritten:
+  //   - the most common short Khmer words, as a list (also right for a few lines), and
+  //   - any spelling about as frequent in lines without the name as in lines with it (a
+  //     real variant of a name sits next to that name, a word is everywhere).
+  const COMMON_WORDS = new Set([
+    'ជា', 'នៅ', 'និង', 'ហើយ', 'នេះ', 'នោះ', 'ពី', 'ទៅ', 'មក', 'ថា', 'ដែល', 'មាន', 'គឺ', 'ក៏',
+    'ដែរ', 'ទេ', 'បាន', 'ឲ្យ', 'អោយ', 'ឱ្យ', 'ពេល', 'ចុះ', 'ណា', 'អី', 'អ្វី', 'នឹង', 'ទៀត',
+    'ដល់', 'តែ', 'ធ្វើ', 'ចេះ', 'ចង់', 'ត្រូវ', 'ហ្នឹង', 'នែ', 'ហ្អែង', 'ឯង', 'គាត់', 'គេ', 'វា',
+    'ខ្ញុំ', 'អ្នក', 'បង', 'អូន', 'ប្អូន', 'ម៉ែ', 'ពុក', 'ប៉ា', 'ម៉ាក់', 'លោក', 'នាង', 'យើង', 'ពួក',
+  ]);
+  const COMMON_MIN_OTHER_LINES = 3; // seen in at least this many lines without the name...
+  const COMMON_RATE_SHARE = 0.5; // ...at half (or more) of its rate in the name's own lines
+
+  function isCommonWord(khmer, hitsWithName, linesWithName, hitsElsewhere, linesElsewhere) {
+    if (COMMON_WORDS.has(khmer)) return true;
+    if (hitsElsewhere < COMMON_MIN_OTHER_LINES || !linesElsewhere || !linesWithName) return false;
+    return hitsElsewhere / linesElsewhere >= (hitsWithName / linesWithName) * COMMON_RATE_SHARE;
+  }
+
   const clean = (s) => String(s == null ? '' : s).normalize('NFC').replace(/\s+/g, ' ').trim();
   const fold = (s) => clean(s).toLowerCase();
   const contains = (haystack, needle) => {
@@ -120,7 +142,10 @@
       for (const khmer of name.spellings || []) {
         const hits = anchorLines.filter((l) => l.text.includes(khmer));
         // Only spellings that really occur next to this name count (drops invented ones).
-        if (hits.length) spellings.push({ khmer, lines: hits.length, firstOrder: hits[0].order });
+        if (!hits.length) continue;
+        const elsewhere = lines.filter((l) => l.text.includes(khmer) && !contains(l.originalText, name.original)).length;
+        if (isCommonWord(khmer, hits.length, anchorLines.length, elsewhere, lines.length - anchorLines.length)) continue;
+        spellings.push({ khmer, lines: hits.length, firstOrder: hits[0].order });
       }
       const glossaryKhmer = lookupGlossary(glossary, name.original);
       if (!spellings.length && !glossaryKhmer) continue;
@@ -182,7 +207,7 @@
       .map((d) => {
         const use = clean(d && d.use);
         const replace = [...new Set(((d && d.replace) || []).map(clean))]
-          .filter((s) => s && s !== use && !related(s, use) && codePoints(s) >= MIN_SPELLING_LENGTH);
+          .filter((s) => s && s !== use && !related(s, use) && codePoints(s) >= MIN_SPELLING_LENGTH && !COMMON_WORDS.has(s));
         return { original: clean(d && d.original), use, replace };
       })
       .filter((d) => d.original && d.use && d.replace.length);

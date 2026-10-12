@@ -135,6 +135,51 @@ describe('planChanges', () => {
   });
 });
 
+// Dub Whole Series, 2026-10: Gemini gave 赵 (Zhao) the spellings "ចាវ" and "ជា" ("is / a"),
+// and "ខ្ញុំឈ្មោះចាវជាមីង ជាគ្រូពេទ្យ..." ("...Zhao Jiaming, a doctor...") became
+// "ខ្ញុំឈ្មោះចាវជាមីង ចាវគ្រូពេទ្យ...".
+describe('everyday words are not name spellings', () => {
+  const zhao = [{
+    id: 'part1',
+    lines: [
+      { id: 'z1', originalText: '我叫赵家明，镇卫生院的妇产科医生。', text: 'ខ្ញុំឈ្មោះចាវជាមីង ជាគ្រូពេទ្យសម្ភពនៅមណ្ឌលសុខភាពឃុំ។' },
+      { id: 'z2', originalText: '赵医生来了', text: 'គ្រូពេទ្យចាវមកហើយ' },
+      { id: 'z3', originalText: '这是赵家', text: 'នេះជាផ្ទះចាវ' },
+    ],
+  }];
+  const extracted = NC.mergeExtracted([[
+    { original: '赵', type: 'person', khmer: ['ចាវ', 'ជា'] },
+    { original: '赵家明', type: 'person', khmer: ['ចាវជាមីង'] },
+  ]]);
+
+  test('a common Khmer word is never suggested or rewritten', () => {
+    const names = NC.analyzeNames(zhao, extracted, { 赵家明: 'ចាវជាមីង' });
+    const zhaoName = names.find((n) => n.original === '赵');
+    assert.equal(zhaoName.suggested, 'ចាវ');
+    assert.deepEqual(zhaoName.conflicting, []);
+    const decisions = names.map((n) => ({ original: n.original, use: n.suggested, replace: n.conflicting }));
+    assert.deepEqual(NC.planChanges(zhao, decisions), []);
+  });
+
+  test('planChanges skips a common word even when asked to replace it', () => {
+    assert.deepEqual(NC.planChanges(zhao, [{ original: '赵', use: 'ចាវ', replace: ['ជា'] }]), []);
+  });
+
+  test('a spelling as frequent without the name as with it is a word, not a variant', () => {
+    // "សុខ" in every line, the name 林峰 in half of them.
+    const lines = [];
+    for (let i = 0; i < 10; i++) {
+      lines.push({ id: `n${i}`, originalText: '林峰好', text: 'លីនហ្វេង សុខសប្បាយ' });
+      lines.push({ id: `o${i}`, originalText: '你好', text: 'សុខសប្បាយទេ' });
+    }
+    lines.push({ id: 'v', originalText: '林峰来了', text: 'លីនហ្វុង មកហើយ' });
+    const extractedLin = NC.mergeExtracted([[{ original: '林峰', khmer: ['លីនហ្វេង', 'សុខ', 'លីនហ្វុង'] }]]);
+    const names = NC.analyzeNames([{ id: 't', lines }], extractedLin, null);
+    assert.equal(names[0].suggested, 'លីនហ្វេង');
+    assert.deepEqual(names[0].conflicting, ['លីនហ្វុង']);
+  });
+});
+
 describe('replaceSpellings', () => {
   test('does not edit inside a protected spelling', () => {
     // "លីន" is a wrong spelling for one name but also part of "លីនហ្វេង".

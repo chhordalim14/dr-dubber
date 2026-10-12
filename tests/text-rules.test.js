@@ -1,7 +1,7 @@
 // Text rules from backend/lib/text-rules.js. Each case is a bug that reached a real series.
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
-const { FOREIGN_SCRIPT_RE, KHMER_CHAR_RE, stripForeignScript, collapseRepeatedPartSuffix, buildTtsArgv } = require('../backend/lib/text-rules');
+const { FOREIGN_SCRIPT_RE, KHMER_CHAR_RE, hasForeignText, stripForeignScript, collapseRepeatedPartSuffix, buildTtsArgv } = require('../backend/lib/text-rules');
 
 describe('foreign script in Khmer lines', () => {
     test('flags an Arabic word Gemini slipped into a Khmer line, and strips only that word', () => {
@@ -13,7 +13,18 @@ describe('foreign script in Khmer lines', () => {
         assert.ok(FOREIGN_SCRIPT_RE.test('យ៉ាងម៉េចដែរ? 你好'));
         assert.equal(stripForeignScript('យ៉ាងម៉េចដែរ? 你好'), 'យ៉ាងម៉េចដែរ?');
     });
+    test('flags a Vietnamese word and a leaked chat role, and strips only those', () => {
+        // Dub Whole Series, 2026-10: 老婆嫌我没出息，丈母娘骂我没钱。
+        const line = 'អ្នកក្នុងមន្ទីរពេទ្យថាខ្ញុំស្លូតបូត ស្មោះត្រង់។ ប្រពន្ធ chê ខ្ញុំអត់បានការ ម៉ែuser ជេរថាខ្ញុំអត់លុយ។';
+        assert.ok(hasForeignText(line));
+        assert.equal(stripForeignScript(line), 'អ្នកក្នុងមន្ទីរពេទ្យថាខ្ញុំស្លូតបូត ស្មោះត្រង់។ ប្រពន្ធ ខ្ញុំអត់បានការ ម៉ែ ជេរថាខ្ញុំអត់លុយ។');
+        assert.ok(hasForeignText('គាត់ថា người ល្អ'));
+        assert.ok(hasForeignText('ម៉ែmodel ទៅណា'));
+    });
     test('leaves normal Khmer, Khmer digits and Latin (names, "OK") alone', () => {
+        for (const ok of ['លីនកុងសឺ ពួកយើងសម្រេចតាមហ្នឹងចុះ។', 'OK! ទៅចុះ។', 'ឆ្នាំ១៩៩២', 'CEO លី', 'ទិញ iPhone ថ្មី', 'ok ចុះ', 'វា 2×3']) {
+            assert.equal(hasForeignText(ok), false, ok);
+        }
         for (const ok of ['លីនកុងសឺ ពួកយើងសម្រេចតាមហ្នឹងចុះ។', 'OK! ទៅចុះ។', 'ឆ្នាំ១៩៩២', 'CEO លី']) {
             assert.equal(FOREIGN_SCRIPT_RE.test(ok), false, ok);
             assert.ok(KHMER_CHAR_RE.test(ok));
