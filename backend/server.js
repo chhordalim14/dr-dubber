@@ -320,6 +320,47 @@ const bgmJobs = new Map();
 const activeTranscribeRequests = new Map();
 let transcribePartCounter = 1;
 
+// Long requests (transcribe, Fix Missing) can run as background jobs: sent with an
+// X-Background-Job: <id> header, the route answers at once and keeps its result for
+// GET /api/job-result. A request held open for minutes takes one of the only 6 connections
+// Chromium opens to this server; Dub Whole Series transcribing 6 tabs at once took all of them,
+// and progress, audio and every other request queued until the browser failed them
+// (net::ERR_INSUFFICIENT_RESOURCES).
+const backgroundJobs = new Map(); // id -> { done, status, body, endedAt }
+const BACKGROUND_JOB_KEEP_MS = 30 * 60 * 1000;
+function backgroundable(handler) {
+    return (req, res, next) => {
+        const id = String(req.get('X-Background-Job') || '').slice(0, 100);
+        if (!id) return handler(req, res, next);
+        const now = Date.now();
+        for (const [k, j] of backgroundJobs) if (j.done && now - j.endedAt > BACKGROUND_JOB_KEEP_MS) backgroundJobs.delete(k);
+        const job = { done: false };
+        backgroundJobs.set(id, job);
+        // Stands in for res: the handlers only call res.status() and res.json().
+        const result = {
+            statusCode: 200,
+            headersSent: false,
+            status(code) { this.statusCode = code; return this; },
+            json(body) {
+                if (!job.done) Object.assign(job, { done: true, status: this.statusCode, body, endedAt: Date.now() });
+                this.headersSent = true;
+                return this;
+            }
+        };
+        res.json({ success: true, background: true, jobId: id });
+        Promise.resolve()
+            .then(() => handler(req, result, next))
+            .catch((e) => result.status(500).json({ success: false, error: e.message }))
+            .finally(() => result.status(500).json({ success: false, error: 'The job ended without a result.' }));
+    };
+}
+app.get('/api/job-result', (req, res) => {
+    const job = backgroundJobs.get(String(req.query.id || ''));
+    if (!job) return res.json({ success: false, unknown: true });
+    if (!job.done) return res.json({ success: true, done: false });
+    res.json({ success: true, done: true, status: job.status, body: job.body });
+});
+
 // Periodic memory cleanup for completed in-memory jobs (every 15 min)
 setInterval(() => {
     const now = Date.now();
@@ -2388,7 +2429,7 @@ async function repairTranscript({ cues, sourceFile, totalSec, keys, model, promp
     return report;
 }
 
-app.post('/api/transcribe', async (req, res) => {
+app.post('/api/transcribe', backgroundable(async (req, res) => {
     const {
         audioBase64,
         audioPath,
@@ -2646,11 +2687,11 @@ app.post('/api/transcribe', async (req, res) => {
         }
         fs.rm(workDir, { recursive: true, force: true }, () => { });
     }
-});
+}));
 
 // 4a. Fix Missing: repair an existing subtitle list (any project, any engine) in place -
 // re-transcribe only stretches with no subtitles, re-translate only lines without Khmer.
-app.post('/api/repair-subtitles', async (req, res) => {
+app.post('/api/repair-subtitles', backgroundable(async (req, res) => {
     // maxLanes: requests this tab may run at once. Dub Whole Series checks every tab at the same
     // time, each with as many lanes as keys of its own (listed first; the rest are only backups).
     const { subtitles, videoPath, duration, genre = 'historical', dramaRegister, glossary, apiKey, apiKeys, model = 'gemini-3.8-flash', requestId, checkGaps = true, maxLanes = TRANSCRIBE_MAX_LANES } = req.body || {};
@@ -2704,7 +2745,7 @@ app.post('/api/repair-subtitles', async (req, res) => {
         if (requestId) { activeTranscribeRequests.delete(requestId); transcribeProgress.delete(requestId); }
         fs.rm(workDir, { recursive: true, force: true }, () => { });
     }
-});
+}));
 
 // 4b. Translate SRT / Text directly with Ultra-Concise Dubbing Rules & Drama Register
 //

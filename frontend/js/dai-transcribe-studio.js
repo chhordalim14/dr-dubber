@@ -1255,29 +1255,26 @@
       renderQueueTable();
 
       // Start progress polling
-      const pollInterval = setInterval(async () => {
-        try {
-          const pRes = await fetch(`${backendBase}/api/transcribe-progress?requestId=${encodeURIComponent(item.requestId)}`);
-          const pData = await pRes.json();
-          if (pData.success && pData.total > 0) {
-            // Only store what the server said; updateProgressDom() turns it into % every second.
-            item.chunkDone = pData.done;
-            item.chunkTotal = pData.total;
-            // After the last chunk the server double-checks gaps / fills missing Khmer, and says so in
-            // `note` with "(x/y)" (also "Google is busy - retrying..." while waiting).
-            item.progressNote = pData.note || '';
-            if (pData.done >= pData.total && !item.repairStartedAt) item.repairStartedAt = Date.now();
-            const m = item.repairStartedAt && /\((\d+)\/(\d+)\)/.exec(item.progressNote);
-            item.repairDone = m ? +m[1] : 0;
-            item.repairTotal = m ? +m[2] : 0;
-          }
-        } catch (e) {}
-      }, 1500);
+      const pollInterval = window.backendJobs.pollEvery(1500, async (pollSignal) => {
+        const pRes = await fetch(`${backendBase}/api/transcribe-progress?requestId=${encodeURIComponent(item.requestId)}`, { signal: pollSignal });
+        const pData = await pRes.json();
+        if (pData.success && pData.total > 0) {
+          // Only store what the server said; updateProgressDom() turns it into % every second.
+          item.chunkDone = pData.done;
+          item.chunkTotal = pData.total;
+          // After the last chunk the server double-checks gaps / fills missing Khmer, and says so in
+          // `note` with "(x/y)" (also "Google is busy - retrying..." while waiting).
+          item.progressNote = pData.note || '';
+          if (pData.done >= pData.total && !item.repairStartedAt) item.repairStartedAt = Date.now();
+          const m = item.repairStartedAt && /\((\d+)\/(\d+)\)/.exec(item.progressNote);
+          item.repairDone = m ? +m[1] : 0;
+          item.repairTotal = m ? +m[2] : 0;
+        }
+      });
 
       try {
-        const transcribeRes = await fetch(`${backendBase}/api/transcribe`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+        // A background job: 6 files transcribing at once must not hold every connection to the backend.
+        const transcribeRes = await window.backendJobs.postJob(`${backendBase}/api/transcribe`, {
           body: JSON.stringify({
             audioPath,
             videoName: item.fileName,

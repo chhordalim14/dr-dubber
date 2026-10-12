@@ -4268,21 +4268,18 @@
 
               // Long videos are split into chunks on the server; show "Stop (3/20)" on the button.
               let lastProgressNote = null; // toast each "Google is busy" note once
-              const progressTimer = setInterval(async () => {
-                try {
-                  const p = await (await fetch(`http://localhost:3001/api/transcribe-progress?requestId=${encodeURIComponent(targetProject.geminiRequestId || "")}`)).json();
-                  const label = document.getElementById("text-transcribe");
-                  if (p.success && p.total > 1 && label && projects[activeProjectIndex] === targetProject) label.textContent = `Stop (${p.done}/${p.total})`;
-                  if (p.success && p.note && p.note !== lastProgressNote && projects[activeProjectIndex] === targetProject) {
-                    lastProgressNote = p.note;
-                    showToast(p.note, "warning");
-                  }
-                } catch (e) { }
-              }, 2000);
+              const progressTimer = window.backendJobs.pollEvery(2000, async (pollSignal) => {
+                const p = await (await fetch(`http://localhost:3001/api/transcribe-progress?requestId=${encodeURIComponent(targetProject.geminiRequestId || "")}`, { signal: pollSignal })).json();
+                const label = document.getElementById("text-transcribe");
+                if (p.success && p.total > 1 && label && projects[activeProjectIndex] === targetProject) label.textContent = `Stop (${p.done}/${p.total})`;
+                if (p.success && p.note && p.note !== lastProgressNote && projects[activeProjectIndex] === targetProject) {
+                  lastProgressNote = p.note;
+                  showToast(p.note, "warning");
+                }
+              });
 
-              const transcribeRes = await fetch("http://localhost:3001/api/transcribe", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
+              // A background job: tabs transcribing at once must not hold every connection to the backend.
+              const transcribeRes = await window.backendJobs.postJob("http://localhost:3001/api/transcribe", {
                 body: JSON.stringify({
                   audioBase64: audioBase64,
                   audioPath: audioPathOnServer,
@@ -4445,21 +4442,18 @@
       if (!source.length) return { ok: true, changed: 0, skipped: "no subtitles" };
 
       let lastNote = null;
-      const noteTimer = setInterval(async () => {
-        try {
-          const p = await (await fetch(`http://localhost:3001/api/transcribe-progress?requestId=${requestId}`)).json();
-          if (p.success && p.note && p.note !== lastNote) {
-            lastNote = p.note;
-            if (onNote) onNote(p.note);
-          }
-        } catch (e) { }
-      }, 1500);
+      const noteTimer = window.backendJobs.pollEvery(1500, async (pollSignal) => {
+        const p = await (await fetch(`http://localhost:3001/api/transcribe-progress?requestId=${requestId}`, { signal: pollSignal })).json();
+        if (p.success && p.note && p.note !== lastNote) {
+          lastNote = p.note;
+          if (onNote) onNote(p.note);
+        }
+      });
       targetProject.isFixingMissing = true;
       renderProjectTabs();
       try {
-        const res = await fetch("http://localhost:3001/api/repair-subtitles", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+        // A background job: Dub Whole Series checks every tab at once.
+        const res = await window.backendJobs.postJob("http://localhost:3001/api/repair-subtitles", {
           body: JSON.stringify({
             subtitles: source.map((s) => ({ id: s.id, start: parseFloat(s.textStart), end: parseFloat(s.textEnd), text: s.text, originalText: s.originalText || "", speaker: s.speaker, gender: s.gender, emotion: s.emotion })),
             videoPath: targetProject.videoFilePath || null,
@@ -4772,15 +4766,13 @@
       allTabsJobLabel = "Stop · Reading names";
       updateTranscribeAllButtonState();
       showToast(`Reading the names in ${tabs.length} tab(s)…`, "info");
-      const progressTimer = setInterval(async () => {
-        try {
-          const p = await (await fetch(`http://localhost:3001/api/transcribe-progress?requestId=${requestId}`)).json();
-          if (p.success && p.total > 1 && unifyNamesRun) {
-            allTabsJobLabel = `Stop · Reading names ${p.done}/${p.total}`;
-            updateTranscribeAllButtonState();
-          }
-        } catch (e) { }
-      }, 1500);
+      const progressTimer = window.backendJobs.pollEvery(1500, async (pollSignal) => {
+        const p = await (await fetch(`http://localhost:3001/api/transcribe-progress?requestId=${requestId}`, { signal: pollSignal })).json();
+        if (p.success && p.total > 1 && unifyNamesRun) {
+          allTabsJobLabel = `Stop · Reading names ${p.done}/${p.total}`;
+          updateTranscribeAllButtonState();
+        }
+      });
 
       let data;
       try {
@@ -23212,11 +23204,14 @@
 
         // Poll for result
         const data = await new Promise((resolve, reject) => {
+          let polling = false; // a slow answer must not let status requests pile up
           const poll = setInterval(async () => {
             if (!targetProject.isIsolatingBgm) {
               clearInterval(poll);
               return reject(Object.assign(new Error("Cancelled"), { name: "AbortError" }));
             }
+            if (polling) return;
+            polling = true;
             try {
               const statusRes = await fetch(`http://localhost:3001/api/bgm-job-status?jobId=${encodeURIComponent(uniqueJobId)}`, { signal: targetProject.isolateAbortController.signal });
               if (!statusRes.ok) {
@@ -23243,6 +23238,8 @@
             } catch (e) {
               clearInterval(poll);
               reject(e);
+            } finally {
+              polling = false;
             }
           }, 2500);
         });
@@ -24416,23 +24413,21 @@
             showToast("Render started. This may take a few minutes...", "info");
 
             // Progress polling — always reads from server, updates UI only if still on this project
-            let renderProgressInterval = setInterval(async () => {
-              try {
-                const progRes = await fetch("http://localhost:3001/api/render-progress");
-                const progData = await progRes.json();
-                if (progData.status === "processing") {
-                  // Always save to the project object (source of truth)
-                  targetProject.renderProgress = progData.percent;
-                  // Only update the DOM if the user is currently viewing this project's tab
-                  if (projects[activeProjectIndex] === targetProject) {
-                    const circle = document.getElementById("render-progress-circle");
-                    const text = document.getElementById("render-btn-text");
-                    if (circle) circle.style.strokeDashoffset = 63 - (progData.percent / 100) * 63;
-                    if (text) text.textContent = `Cancel Render (${Math.round(progData.percent)}%)`;
-                  }
+            let renderProgressInterval = window.backendJobs.pollEvery(500, async (pollSignal) => {
+              const progRes = await fetch("http://localhost:3001/api/render-progress", { signal: pollSignal });
+              const progData = await progRes.json();
+              if (progData.status === "processing") {
+                // Always save to the project object (source of truth)
+                targetProject.renderProgress = progData.percent;
+                // Only update the DOM if the user is currently viewing this project's tab
+                if (projects[activeProjectIndex] === targetProject) {
+                  const circle = document.getElementById("render-progress-circle");
+                  const text = document.getElementById("render-btn-text");
+                  if (circle) circle.style.strokeDashoffset = 63 - (progData.percent / 100) * 63;
+                  if (text) text.textContent = `Cancel Render (${Math.round(progData.percent)}%)`;
                 }
-              } catch (e) { }
-            }, 500);
+              }
+            });
             (targetProject._pollers = targetProject._pollers || []).push(renderProgressInterval);
 
             try {
@@ -25758,24 +25753,22 @@
               item._abortCtrl = abortCtrl;
 
               // Poll progress every 1.2s
-              pollInterval = setInterval(async () => {
-                try {
-                  const progRes = await fetch("http://localhost:3001/api/render-progress");
-                  const progData = await progRes.json();
-                  if (progData.status === "processing") {
-                    item.progress = progData.percent;
-                    // Smooth targeted DOM update — no full re-render needed
-                    const el = document.querySelector(`[data-queue-key="${item._key}"]`);
-                    if (el) {
-                      const bar = el.querySelector(".queue-item-progress-bar");
-                      const pct = el.querySelector(".queue-item-progress-pct");
-                      if (bar) bar.style.width = `${progData.percent}%`;
-                      if (pct) pct.textContent = `${Math.round(progData.percent)}%`;
-                    }
-                    updateQueueCard(progData.percent);
+              pollInterval = window.backendJobs.pollEvery(500, async (pollSignal) => {
+                const progRes = await fetch("http://localhost:3001/api/render-progress", { signal: pollSignal });
+                const progData = await progRes.json();
+                if (progData.status === "processing") {
+                  item.progress = progData.percent;
+                  // Smooth targeted DOM update — no full re-render needed
+                  const el = document.querySelector(`[data-queue-key="${item._key}"]`);
+                  if (el) {
+                    const bar = el.querySelector(".queue-item-progress-bar");
+                    const pct = el.querySelector(".queue-item-progress-pct");
+                    if (bar) bar.style.width = `${progData.percent}%`;
+                    if (pct) pct.textContent = `${Math.round(progData.percent)}%`;
                   }
-                } catch { }
-              }, 500);
+                  updateQueueCard(progData.percent);
+                }
+              });
 
               const res = await fetch("http://localhost:3001/api/render", {
                 method: "POST",
