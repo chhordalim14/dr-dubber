@@ -1013,20 +1013,21 @@ function resolveGeminiModel(modelName) {
     if (!modelName || modelName === 'latest') return 'gemini-3.8-flash';
     const m = String(modelName).toLowerCase().trim();
     if (m === 'gemini-3.8-flash' || m.includes('3.8-flash') || m.includes('3.8')) return 'gemini-3.8-flash';
-    if (m.includes('3.5-transcribe') || m.includes('audio-specialist')) return 'gemini-3.5-transcribe';
+    // Audio-only (no prompt or JSON): it can't do the app's jobs, so an older saved setting gets 3.8 Flash.
+    if (m.includes('3.5-transcribe') || m.includes('audio-specialist')) return 'gemini-3.8-flash';
     if (m === 'gemini-3.7-flash' || m.includes('3.7-flash') || m.includes('3.7')) return 'gemini-3.7-flash';
     if (m === 'gemini-3.6-flash' || m.includes('3.6-flash') || m.includes('3.6')) return 'gemini-3.6-flash';
     if (m === 'gemini-3.5-flash-lite' || m.includes('3.5-flash-lite') || m.includes('3.5-lite')) return 'gemini-3.5-flash-lite';
     if (m === 'gemini-3.5-flash' || m.includes('3.5-flash') || m.includes('3.5')) return 'gemini-3.5-flash';
     if (m === 'gemini-3.1-pro-preview' || m === 'gemini-3.1-pro' || m.includes('3.1-pro')) return 'gemini-3.1-pro-preview';
     if (m === 'gemini-3.1-flash-lite' || m.includes('3.1-flash-lite') || m.includes('3.1-lite')) return 'gemini-3.1-flash-lite';
-    if (m === 'gemini-3.1-flash' || m.includes('3.1-flash') || m.includes('3.1')) return 'gemini-3.1-flash';
+    // Shut down (or never a Gemini API model): an older saved setting gets Google's replacement.
+    if (m === 'gemini-3.1-flash' || m.includes('3.1-flash') || m.includes('3.1')) return 'gemini-3.8-flash';
     if (m === 'gemini-2.5-pro' || m.includes('2.5-pro')) return 'gemini-2.5-pro';
     if (m.includes('2.5-flash') || m === 'gemini-2.5-flash') return 'gemini-2.5-flash';
-    if (m.includes('2.0-flash-lite') || m.includes('2.0-lite')) return 'gemini-2.0-flash-lite';
-    if (m === 'gemini-2.0-flash' || m.includes('2.0-flash') || m.includes('2.0')) return 'gemini-2.0-flash';
-    if (m === 'gemini-1.5-pro' || m.includes('1.5-pro')) return 'gemini-1.5-pro';
-    if (m === 'gemini-1.5-flash' || m.includes('1.5-flash')) return 'gemini-1.5-flash';
+    if (m.includes('2.0-flash-lite') || m.includes('2.0-lite')) return 'gemini-3.1-flash-lite';
+    if (m === 'gemini-2.0-flash' || m.includes('2.0-flash') || m.includes('2.0')) return 'gemini-3.6-flash';
+    if (m.includes('1.5-pro') || m.includes('1.5-flash')) return 'gemini-3.8-flash';
     return m;
 }
 
@@ -1064,13 +1065,14 @@ async function listGeminiModels(apiKey, signal) {
 function rankGeminiFallbacks(available) {
     const parsed = [];
     for (const name of available) {
-        // Dated previews only ("-preview-09-2025"); skips -tts, -image, -live variants.
-        const m = name.match(/^gemini-(\d+(?:\.\d+)?)-(flash|pro|transcribe)(?:-(latest|preview(?:-\d[\d-]*)?))?$/);
+        // Dated previews only ("-preview-09-2025"); skips -tts, -image, -live variants and
+        // -transcribe (audio only: it refuses a prompt and JSON, so every request to it failed).
+        const m = name.match(/^gemini-(\d+(?:\.\d+)?)-(flash|pro)(?:-(latest|preview(?:-\d[\d-]*)?))?$/);
         if (!m) continue;
         parsed.push({ name, version: parseFloat(m[1]), tier: m[2], tag: m[3] || '' });
     }
     parsed.sort((a, b) =>
-        (a.tier === 'flash' || a.tier === 'transcribe' ? 0 : 1) - (b.tier === 'flash' || b.tier === 'transcribe' ? 0 : 1) ||
+        (a.tier === 'flash' ? 0 : 1) - (b.tier === 'flash' ? 0 : 1) ||
         (a.tag ? 1 : 0) - (b.tag ? 1 : 0) ||
         b.version - a.version);
     return parsed.map(p => p.name);
@@ -1080,7 +1082,7 @@ async function getCandidateModels(apiKey, requestedModel, signal) {
     const primary = resolveGeminiModel(requestedModel);
     const available = await listGeminiModels(apiKey, signal);
     if (!available) {
-        return [primary, 'gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.5-pro']
+        return [primary, 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-2.5-pro']
             .filter((v, i, a) => a.indexOf(v) === i);
     }
     const ranked = rankGeminiFallbacks(available);
@@ -2397,7 +2399,7 @@ app.post('/api/transcribe', async (req, res) => {
         glossary,
         apiKey,
         apiKeys,
-        model = 'gemini-2.0-flash',
+        model = 'gemini-3.8-flash',
         requestId,
         videoName,
         partIndex,
@@ -2651,7 +2653,7 @@ app.post('/api/transcribe', async (req, res) => {
 app.post('/api/repair-subtitles', async (req, res) => {
     // maxLanes: requests this tab may run at once. Dub Whole Series checks every tab at the same
     // time, each with as many lanes as keys of its own (listed first; the rest are only backups).
-    const { subtitles, videoPath, duration, genre = 'historical', dramaRegister, glossary, apiKey, apiKeys, model = 'gemini-2.0-flash', requestId, checkGaps = true, maxLanes = TRANSCRIBE_MAX_LANES } = req.body || {};
+    const { subtitles, videoPath, duration, genre = 'historical', dramaRegister, glossary, apiKey, apiKeys, model = 'gemini-3.8-flash', requestId, checkGaps = true, maxLanes = TRANSCRIBE_MAX_LANES } = req.body || {};
     if (!Array.isArray(subtitles)) return res.status(400).json({ success: false, error: 'No subtitles provided.' });
     const laneCap = Math.max(1, Math.min(TRANSCRIBE_MAX_LANES, parseInt(maxLanes, 10) || TRANSCRIBE_MAX_LANES));
     const keyPool = [apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])].map(k => String(k || '').trim()).filter((k, i, a) => k && a.indexOf(k) === i);
@@ -2809,7 +2811,7 @@ app.post('/api/translate-srt', async (req, res) => {
         glossary,
         apiKey,
         apiKeys,
-        model = 'gemini-2.0-flash',
+        model = 'gemini-3.8-flash',
         requestId,
         // The video the subtitles belong to: its folder keeps the series' character sheet.
         sourceFilePath

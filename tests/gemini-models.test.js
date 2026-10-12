@@ -24,7 +24,7 @@ function run() {
 test('every select gets the same full list, 3.8 Flash first', () => {
   const { window, els } = run();
   const ids = Array.from(window.GEMINI_MODELS, (m) => m.id);
-  assert.equal(ids.length, 14);
+  assert.equal(ids.length, 9);
   for (const id of ['setting-ai-model', 'dai-model-select', 'dai-trans-model-select']) {
     assert.deepEqual(els[id].options.map((o) => o.value), ids);
     assert.equal(els[id].value, 'gemini-3.8-flash');
