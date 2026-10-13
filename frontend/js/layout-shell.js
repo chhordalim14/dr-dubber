@@ -431,7 +431,7 @@
         if (el && text) el.textContent = text;
       };
       const ua = navigator.userAgent;
-      const version = () => (document.getElementById("about-app-version")?.textContent || "").replace(/^Version\s*/, "").trim();
+      const version = () => (document.getElementById("about-app-version")?.textContent || "").replace(/^\D*/, "").trim(); // "Version 1.6.0", or its Khmer
 
       const system = () => {
         const platform = window.electronAPI?.platform || "";
@@ -476,6 +476,7 @@
           head.append(tag);
 
           const list = document.createElement("ul");
+          list.dataset.i18nSkip = ""; // release notes stay as written (js/i18n.js)
           items.forEach((text, i) => {
             const li = document.createElement("li");
             li.textContent = text;

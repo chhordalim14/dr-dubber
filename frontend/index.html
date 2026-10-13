@@ -1292,6 +1292,11 @@
           </button>
         </div>
       </div>
+      <!-- Interface language: English / Khmer (js/i18n.js) -->
+      <div class="hdr-theme hdr-lang" role="group" aria-label="Interface language" data-i18n-skip>
+        <button type="button" class="hdr-theme__opt" data-lang-opt="en" title="English">EN</button>
+        <button type="button" class="hdr-theme__opt" data-lang-opt="km" title="ភាសាខ្មែរ">ខ្មែរ</button>
+      </div>
       <!-- Light / dark: #theme-toggle toggles (studio-main.js); the half that is
            already active swallows its click (layout-shell.js) -->
       <div id="theme-toggle" class="hdr-theme" role="group" aria-label="Light / dark mode">
@@ -4355,6 +4360,16 @@
               <p class="text-xs text-[var(--text-secondary)]">Models, Hardware, and File Paths.</p>
             </div>
 
+            <!-- ── Interface Language (js/i18n.js) ── -->
+            <div class="flex flex-col gap-2">
+              <label class="text-sm text-[var(--text-bright)] font-medium">Interface Language</label>
+              <div class="lang-switch" role="group" aria-label="Interface language" data-i18n-skip>
+                <button type="button" data-lang-opt="en">English</button>
+                <button type="button" data-lang-opt="km">ខ្មែរ</button>
+              </div>
+              <p class="text-[11px] text-[var(--text-muted)] mt-1">Language of menus, buttons and messages. Subtitles and dubbing are not affected.</p>
+            </div>
+
             <div class="flex flex-col gap-2">
               <label class="text-sm text-[var(--text-bright)] font-medium">Gemini AI Model</label>
 
@@ -6644,6 +6659,9 @@
     </div>
   </div>
   <script src="js/dai-transcribe-studio.js"></script>
+  <!-- Last: translates the UI once the app has built it -->
+  <script src="js/i18n-km.js"></script>
+  <script src="js/i18n.js"></script>
 </body>
 
 </html>

@@ -9424,7 +9424,7 @@
         });
 
         // Update multi-select text specifically
-        const multiSelectRow = Array.from(document.querySelectorAll("#settings-shortcuts span.text-\\[var\\(--text-secondary\\)\\]")).find((span) => span.textContent.trim() === "Multi-Select");
+        const multiSelectRow = Array.from(document.querySelectorAll("#settings-shortcuts span.text-\\[var\\(--text-secondary\\)\\]")).find((span) => (window.I18N ? window.I18N.sourceText(span) : span.textContent).trim() === "Multi-Select");
 
         if (multiSelectRow && multiSelectRow.nextElementSibling) {
           multiSelectRow.nextElementSibling.textContent = `${modifierKeyText} + Click`;
@@ -10429,8 +10429,10 @@
       const label = document.getElementById("voxcpm2-server-btn-label");
       if (!btn) return;
 
-      // Check if it says "Stop" (this covers both Running and Booting states)
-      const isRunningOrStarting = label && label.textContent.toLowerCase().includes("stop");
+      // Check if it says "Stop" (this covers both Running and Booting states);
+      // read the English label, as the UI may be showing Khmer (js/i18n.js)
+      const labelText = window.I18N ? window.I18N.sourceText(label) : label?.textContent;
+      const isRunningOrStarting = label && labelText.toLowerCase().includes("stop");
 
       // Lock temporarily
       btn.disabled = true;
