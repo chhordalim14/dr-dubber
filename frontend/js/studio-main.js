@@ -1676,6 +1676,25 @@
       }
     }
 
+    // A saved image overlay (base64 dataUrl, no File) made ready for a tab: the image as an
+    // in-memory Blob so it loads on screen at once.
+    function hydrateImageOverlay(i) {
+      const { file, ...rest } = i;
+      if (rest.dataUrl && rest.dataUrl.startsWith("data:")) {
+        try {
+          const byteString = atob(rest.dataUrl.split(",")[1]);
+          const mimeMatch = rest.dataUrl.match(/data:([^;]+);/);
+          const mime = mimeMatch ? mimeMatch[1] : "image/png";
+          const ab = new ArrayBuffer(byteString.length);
+          const ia = new Uint8Array(ab);
+          for (let j = 0; j < byteString.length; j++) ia[j] = byteString.charCodeAt(j);
+          const blob = new Blob([ab], { type: mime });
+          rest.blobUrl = URL.createObjectURL(blob);
+        } catch { }
+      }
+      return { ...rest };
+    }
+
     function vpLoad() {
       try {
         return JSON.parse(localStorage.getItem(VP_KEY)) || [];
@@ -17090,6 +17109,134 @@
         } catch (e) { }
       };
 
+      // Color filter: a Color Studio preset (Drama LUT or saved Custom) every tab of each part
+      // opens with. "" leaves the tabs' colors as they open (the auto-apply video preset's, if any).
+      const colorSel = $("ds-color");
+      const CA_CATEGORY_NAMES = { romance: "Romance", historical: "Historical", cinematic: "Cinematic", emotional: "Melodrama", custom: "Custom" };
+      const fillColorOptions = (want = colorSel.value) => {
+        const list = caLoadPresets();
+        const groups = new Map();
+        list.forEach((p) => {
+          const cat = p.isDefault ? p.category : "custom";
+          if (!groups.has(cat)) groups.set(cat, []);
+          groups.get(cat).push(p);
+        });
+        colorSel.innerHTML = `<option value="">No change</option>` + [...groups].map(([cat, ps]) => {
+          const opts = ps.map((p) => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join("");
+          return CA_CATEGORY_NAMES[cat] ? `<optgroup label="${CA_CATEGORY_NAMES[cat]}">${opts}</optgroup>` : opts;
+        }).join("");
+        colorSel.value = list.some((p) => p.name === want) ? want : "";
+      };
+      const colorPreset = () => (colorSel.value ? caLoadPresets().find((p) => p.name === colorSel.value) || null : null);
+      fillColorOptions("");
+
+      // Image overlay: the image overlays of a tab (as placed there with the Image tool, the images
+      // kept as dataUrl) that every tab of each part opens with. None: tabs open as they are.
+      const SERIES_IMAGES_KEY = "aiDubberSeriesImages";
+      let seriesImages = null;
+      try { seriesImages = JSON.parse(localStorage.getItem(SERIES_IMAGES_KEY) || "null"); } catch (e) { }
+      const showSeriesImages = () => {
+        const n = seriesImages?.length || 0;
+        $("ds-images-info").innerHTML = n
+          ? seriesImages.slice(0, 4).map((i) => `<img src="${esc(i.dataUrl)}" class="h-5 max-w-[40px] rounded object-contain bg-black/30">`).join("") + `<span>${n} image${n !== 1 ? "s" : ""}</span>`
+          : "None";
+        $("ds-images-clear").classList.toggle("hidden", !n);
+      };
+      showSeriesImages();
+      $("ds-images-use").addEventListener("click", async () => {
+        if (!projects.length) return showToast("Open a video and add the images with the Image tool first.", "error");
+        // The geometry dragged on screen, into window.imageOverlays.
+        document.querySelectorAll(".image-overlay-item").forEach((w) => { if (w.dataset.id) updateImageState(w.dataset.id, w); });
+        if (!window.imageOverlays?.length) return showToast("This tab has no image overlay. Add one with the Image tool first.", "error");
+        const imgs = await Promise.all(window.imageOverlays.map(async (i) => {
+          const { file, _file, blobUrl, dataUrl, ...rest } = i;
+          const encoded = await imageOverlayToDataUrl(i);
+          return encoded ? { ...rest, dataUrl: encoded } : null;
+        }));
+        if (imgs.some((i) => !i)) return showToast("Could not read an image of this tab. Add it again and retry.", "error");
+        try {
+          localStorage.setItem(SERIES_IMAGES_KEY, JSON.stringify(imgs));
+        } catch (e) {
+          return showToast("The images are too large to keep. Use a smaller image (a PNG logo of a few hundred KB).", "error");
+        }
+        seriesImages = imgs;
+        showSeriesImages();
+        if (piecesOpen()) applyImageOverlaysToAllProjects();
+        else showToast(`${imgs.length} image overlay${imgs.length !== 1 ? "s" : ""} will be added to every tab of each part.`, "success");
+      });
+      $("ds-images-clear").addEventListener("click", () => {
+        seriesImages = null;
+        try { localStorage.removeItem(SERIES_IMAGES_KEY); } catch (e) { }
+        showSeriesImages();
+      });
+
+      // Clips between episodes: video files put into the joined video of a part ("Join into one
+      // video"), each at its own place: pos k = after the series' k-th episode (0 = before the
+      // first). Kept for the folder they were chosen for.
+      const SERIES_CLIPS_KEY = "aiDubberSeriesClips";
+      let clipsState = { folder: "", clips: [] };
+      try { clipsState = JSON.parse(localStorage.getItem(SERIES_CLIPS_KEY) || "null") || clipsState; } catch (e) { }
+      const seriesFolder = () => plan?.folder || scan?.folder || "";
+      const currentClips = () => (clipsState.folder && clipsState.folder === seriesFolder() ? clipsState.clips : []);
+      const saveClips = () => { try { localStorage.setItem(SERIES_CLIPS_KEY, JSON.stringify(clipsState)); } catch (e) { } };
+      // The series' episode labels in order (null: unknown - a plan from before clips).
+      const seriesEpisodeLabels = () => {
+        if (plan) return plan.parts.every((p) => p.eps) ? plan.parts.flatMap((p) => p.eps.map((e) => e.label)) : null;
+        if (!scan) return null;
+        const ready = readyParts();
+        return ready ? ready.map((jp) => jp.label) : planEpisodeParts(scan.files, joinMinutes()).flat().map(epLabel);
+      };
+      let clipsShown = "";
+      function renderClips() {
+        const labels = seriesEpisodeLabels();
+        const clips = currentClips();
+        const box = $("ds-clips-box");
+        const show = !!seriesFolder();
+        box.classList.toggle("hidden", !show);
+        box.classList.toggle("flex", show);
+        box.classList.toggle("opacity-50", !mergeWanted());
+        $("ds-clip-add").disabled = !labels;
+        $("ds-clips-note").textContent = !labels ? "Start the series again to add clips." : clips.length ? "" : "None";
+        const sig = JSON.stringify([labels, clips]);
+        if (sig === clipsShown) return;
+        clipsShown = sig;
+        const opts = labels ? [`Before ${labels[0]}`, ...labels.map((l) => `After ${l}`)] : [];
+        $("ds-clips").innerHTML = clips.map((c, k) => `<div class="flex items-center gap-2 min-w-0">
+            <select data-k="${k}" class="bg-[var(--bg-base)] border border-[var(--border-light)] rounded-md px-1.5 py-0.5 outline-none focus:border-violet-500 cursor-pointer">${opts.map((o, pos) => `<option value="${pos}"${pos === c.pos ? " selected" : ""}>${esc(o)}</option>`).join("")}</select>
+            <span class="truncate font-mono text-[var(--text-secondary)]" title="${esc(c.path)}">${esc(c.name)}</span>
+            <button data-del="${k}" class="shrink-0 text-[var(--text-muted)] hover:text-rose-400" title="Remove this clip">✕</button>
+          </div>`).join("");
+      }
+      $("ds-clip-add").addEventListener("click", async () => {
+        const labels = seriesEpisodeLabels();
+        if (!labels || !seriesFolder()) return;
+        if (!window.electronAPI?.openMultiFile) return showToast("Choosing a clip needs the desktop app.", "error");
+        const r = await window.electronAPI.openMultiFile({
+          defaultPath: localStorage.getItem("lastClipDir") || "",
+          filters: [{ name: "Video Files", extensions: ["mp4", "mov", "mkv", "webm", "avi", "m4v", "ts"] }],
+        });
+        if (!r || r.canceled || !r.files?.length) return;
+        localStorage.setItem("lastClipDir", r.dirPath);
+        if (clipsState.folder !== seriesFolder()) clipsState = { folder: seriesFolder(), clips: [] };
+        r.files.forEach((f) => clipsState.clips.push({ pos: Math.min(1, labels.length), path: f.filePath, name: f.fileName }));
+        saveClips();
+        renderClips();
+      });
+      $("ds-clips").addEventListener("change", (e) => {
+        const k = e.target.dataset.k;
+        if (k === undefined) return;
+        clipsState.clips[k].pos = parseInt(e.target.value, 10);
+        saveClips();
+        clipsShown = JSON.stringify([seriesEpisodeLabels(), currentClips()]); // the select shows it already
+      });
+      $("ds-clips").addEventListener("click", (e) => {
+        const k = e.target.closest("[data-del]")?.dataset.del;
+        if (k === undefined) return;
+        clipsState.clips.splice(k, 1);
+        saveClips();
+        renderClips();
+      });
+
       // Hands-free exports of this session: part (its plan object) -> { items, run, rendering, result }.
       // A part's queue items (and so its export) only live in this session's render queue.
       const seriesExports = new Map();
@@ -17119,20 +17266,27 @@
       try {
         const prefs = JSON.parse(localStorage.getItem("aiDubberSeriesPrefs") || "null");
         if (prefs) {
+          if (typeof prefs.colorFilter === "string") fillColorOptions(prefs.colorFilter);
           if (prefs.joinMinutes) $("ds-join-minutes").value = prefs.joinMinutes;
           if (prefs.splitMinutes) $("ds-split-minutes").value = prefs.splitMinutes;
           OPTIONAL_STEPS.forEach((k) => { if (typeof prefs[k] === "boolean") $(`ds-step-${k}`).checked = prefs[k]; });
           if (typeof prefs.handsFree === "boolean" && $("ds-handsfree")) $("ds-handsfree").checked = prefs.handsFree;
+          if (typeof prefs.merge === "boolean") $("ds-merge").checked = prefs.merge;
         }
       } catch (e) { }
       const savePrefs = () => {
         const prefs = { joinMinutes: joinMinutes(), splitMinutes: splitMinutes() };
         OPTIONAL_STEPS.forEach((k) => { prefs[k] = $(`ds-step-${k}`).checked; });
         prefs.handsFree = handsFree();
+        prefs.merge = $("ds-merge").checked;
+        prefs.colorFilter = colorSel.value;
         try { localStorage.setItem("aiDubberSeriesPrefs", JSON.stringify(prefs)); } catch (e) { }
       };
       // Hands-free: each finished part is exported and the next part starts by itself.
       const handsFree = () => !!$("ds-handsfree")?.checked;
+      // Hands-free: each exported part's tab videos are joined into one video.
+      const mergeWanted = () => handsFree() && $("ds-merge").checked;
+      $("ds-merge").addEventListener("change", () => { savePrefs(); render(); });
       // A finished part whose hands-free export didn't complete, with its tabs still open (tabs
       // open after its own were closed belong to something else).
       // The finished part's own tabs are open (a plan saved before parts kept their pieces: any tab).
@@ -17167,6 +17321,19 @@
       });
       window.addEventListener("dr-drama-genre-change", showGenre);
       showGenre();
+      // Changed while a part is open: its tabs change too (tabs already exported keep theirs).
+      colorSel.addEventListener("change", () => {
+        savePrefs();
+        const preset = colorPreset();
+        if (!preset || !piecesOpen()) return;
+        projects.forEach((p) => { p.videoColorAdj = { ...colorDefaults, ...preset.adj }; });
+        videoColorAdj = { ...projects[activeProjectIndex].videoColorAdj };
+        window.activeColorPresetName = preset.name;
+        syncColorSliderUI();
+        applyVideoColorFilter();
+        caUpdateActiveCards();
+        showToast(`Color filter "${preset.name}" applied to the ${projects.length} tab${projects.length !== 1 ? "s" : ""} of this part.`, "success");
+      });
       // Read when each step starts, so a step can be switched off while the series runs.
       const wanted = (step) => !OPTIONAL_STEPS.includes(step) || $(`ds-step-${step}`).checked;
 
@@ -17202,12 +17369,20 @@
           : part.exported ? ["✓", "text-emerald-400", `${ex.total} tab(s) exported`]
             : r && !exportComplete(r) ? ["✗", "text-red-400", `${r.done} of ${r.total} tab(s) exported${r.failed ? ` (${r.failed} failed)` : ""}`]
               : ["○", "text-[var(--text-muted)]", `${ex.total} tab(s) waiting in the render queue`];
-        return `<div class="flex items-start gap-2 text-xs"><span class="w-4 shrink-0 text-center ${cls}">${icon}</span><span class="shrink-0">Export</span><span class="text-[var(--text-muted)] truncate flex-1 min-w-0">· ${esc(note)}</span></div>`;
+        const line = (icon, cls, name, note) => `<div class="flex items-start gap-2 text-xs"><span class="w-4 shrink-0 text-center ${cls}">${icon}</span><span class="shrink-0">${name}</span><span class="text-[var(--text-muted)] truncate flex-1 min-w-0">· ${esc(note)}</span></div>`;
+        const join = job.merging ? ["●", "text-violet-300 animate-pulse", `${job.mergePercent || 0}%`]
+          : part.merged ? ["✓", "text-emerald-400", part.merged.split(/[\\/]/).pop()]
+            : part.mergeError ? ["✗", "text-red-400", part.mergeError]
+              : part.exported || !mergeWanted() ? null : ["○", "text-[var(--text-muted)]", "after the export"];
+        return line(icon, cls, "Export", note) + (join ? line(...join.slice(0, 2), "Join into one video", join[2]) : "");
       }
 
       // ── Rendering ────────────────────────────────────────────────────────
       function render() {
         const running = !!seriesRun;
+        $("ds-merge").disabled = !handsFree();
+        $("ds-merge-row").classList.toggle("opacity-50", !handsFree());
+        renderClips();
         const folder = plan?.folder || scan?.folder || "";
         $("ds-folder").textContent = folder || "No folder selected";
         $("ds-folder").title = folder;
@@ -17609,7 +17784,13 @@
         if (projects.length && !(await closeOpenTabs(`Part ${plan.current + 1} opens as new tabs.`))) {
           throw new Error("The open tabs were not closed.");
         }
-        await loadVideoFiles(plan.pieces.map((p) => ({ name: p.split(/[\\/]/).pop(), path: p, url: `${API}/audio?path=${encodeURIComponent(p)}` })));
+        const preset = colorPreset();
+        await loadVideoFiles(plan.pieces.map((p) => ({ name: p.split(/[\\/]/).pop(), path: p, url: `${API}/audio?path=${encodeURIComponent(p)}` })),
+          { videoColorAdj: preset?.adj, imageOverlays: seriesImages });
+        if (preset) {
+          window.activeColorPresetName = preset.name;
+          caUpdateActiveCards();
+        }
         if (!piecesOpen()) throw new Error("Could not open the pieces as tabs.");
         return `${plan.pieces.length} tab(s)`;
       }
@@ -17948,6 +18129,8 @@
       // fails, the series pauses before the next export with the newest part's tabs open, and
       // Continue tries the rest again.
       async function exportAndContinue() {
+        // Parts exported this session whose join was stopped or failed: joined again.
+        if (plan) plan.parts.forEach((p, k) => { if (p.exported) mergePartExport(k, seriesExports.get(p)?.result?.outputs); });
         while (handsFree() && plan?.lastDone && !plan.parts[plan.lastDone.index].exported) {
           const i = plan.lastDone.index;
           if (!window.seriesRenderApi) throw new Error("The render queue is not ready.");
@@ -17955,7 +18138,13 @@
           queuePartExport(i);
           if (![nextPartIndex(), ...joiningIndices(), ...partsToJoin()].some((k) => k >= 0)) {
             await finishPartExport(i);
-            showToast(`All ${plan.parts.length} parts are dubbed and exported ✓`, "success");
+            const merging = plan.parts.map((p) => seriesExports.get(p)?.merging).filter(Boolean);
+            if (merging.length) {
+              setLabel("Joining the last part's tabs into one video");
+              await Promise.all(merging);
+            }
+            const merged = plan.parts.filter((p) => p.merged).length;
+            showToast(`All ${plan.parts.length} parts are dubbed and exported${merged ? ` (${merged} joined into one video each)` : ""} ✓`, "success");
             modal.classList.remove("hidden");
             return;
           }
@@ -17991,7 +18180,8 @@
       }
 
       // Renders part i's queue items (or joins the render already going). Resolves with the
-      // render queue's result; a part whose every tab rendered is marked exported.
+      // render queue's result; a part whose every tab rendered is marked exported (and its tabs'
+      // videos joined into one, when that is wanted).
       function renderPartExport(i) {
         const part = plan.parts[i];
         const job = seriesExports.get(part);
@@ -18013,6 +18203,7 @@
             if (exportComplete(r)) {
               part.exported = true;
               if (plan?.parts.includes(part)) savePlan();
+              mergePartExport(i, r.outputs);
             }
             return r;
           })
@@ -18045,8 +18236,70 @@
           : `Part ${i + 1}: ${r.done} of ${r.total} tab(s) exported${r.failed ? ` (${r.failed} failed)` : ""}. The render queue shows why - fix it, then press Continue to try them again.`);
       }
 
+      // Joins exported part i's tab videos into one video (the Join Episodes code: the video is
+      // copied as it is - encoded when clips go in - the sound joined without a gap), next to them. In the background; a
+      // failure only warns - the tabs' own videos are there.
+      // Part i's clips as join inserts: { at: seconds into the part, path }.
+      function clipInserts(i) {
+        if (!plan.parts.every((p) => p.eps)) return [];
+        const first = plan.parts.slice(0, i).reduce((n, p) => n + p.eps.length, 0);
+        const eps = plan.parts[i].eps;
+        return currentClips()
+          .filter((c) => (i === 0 && c.pos === 0) || (c.pos > first && c.pos <= first + eps.length))
+          .map((c) => ({ at: eps.slice(0, c.pos - first).reduce((s, e) => s + e.duration, 0), path: c.path }));
+      }
+
+      function mergePartExport(i, outputs) {
+        const part = plan.parts[i];
+        const job = seriesExports.get(part);
+        if (!job || job.merging || part.merged || !mergeWanted() || !outputs?.length || outputs.some((o) => !o)) return;
+        job.mergePercent = 0;
+        delete part.mergeError;
+        job.merging = (async () => {
+          const inserts = clipInserts(i);
+          const r = await postJson(`${API}/episodes/join`, { parts: [inserts.length ? { files: outputs, inserts } : outputs], partNumbers: [i + 1], outDir: dirOf(outputs[0]), seriesName: `${plan.seriesName}_Dubbed` });
+          if (!r.success) throw new Error(r.error);
+          job.mergeJobId = r.jobId;
+          for (;;) {
+            await sleep(1000);
+            const st = await getJson(`${API}/episodes/status?jobId=${encodeURIComponent(r.jobId)}`).catch(() => null);
+            if (!st?.success) throw new Error("lost track of the joining job");
+            const sp = st.parts[0];
+            if (st.status === "running") {
+              if (sp && sp.percent !== job.mergePercent) {
+                job.mergePercent = sp.percent;
+                if (!modal.classList.contains("hidden")) render();
+              }
+              continue;
+            }
+            if (st.status === "cancelled") {
+              part.mergeError = "stopped - Continue joins it"; // the series' Stop
+              return;
+            }
+            if (sp?.status !== "done") throw new Error(sp?.error || "it failed");
+            part.merged = sp.outPath;
+            delete part.mergeError;
+            if (plan?.parts.includes(part)) savePlan();
+            return;
+          }
+        })()
+          .catch((e) => {
+            part.mergeError = e.message;
+            showToast(`Part ${i + 1}: its tabs could not be joined into one video (${e.message}). Each tab's own video is in the export folder.`, "warning");
+          })
+          .finally(() => {
+            job.merging = null;
+            job.mergeJobId = null;
+            render();
+          });
+        render();
+      }
+
       stopSeriesBackgroundExport = () => {
-        for (const job of seriesExports.values()) if (job.rendering) window.seriesRenderApi?.stopItems(job.items);
+        for (const job of seriesExports.values()) {
+          if (job.rendering) window.seriesRenderApi?.stopItems(job.items);
+          if (job.mergeJobId) postJson(`${API}/episodes/cancel`, { jobId: job.mergeJobId }).catch(() => { });
+        }
       };
 
       async function startBackgroundJoin(indices) {
@@ -18173,12 +18426,14 @@
             outPath: jp.path,
             prejoined: true,
             status: "joined",
+            eps: [{ label: jp.label, duration: jp.duration }],
           })) : groups.map((g) => ({
             label: `${epLabel(g[0])} – ${epLabel(g[g.length - 1])}`,
             episodes: g.length,
             duration: g.reduce((s, f) => s + f.duration, 0),
             files: g.map((f) => f.path),
             status: "planned",
+            eps: g.map((f) => ({ label: epLabel(f), duration: f.duration })), // where clips go
           })),
           current: null,
           stepState: null,
@@ -18251,6 +18506,7 @@
       }
 
       $("btn-dub-series")?.addEventListener("click", () => {
+        fillColorOptions(); // Custom presets saved since
         render();
         modal.classList.remove("hidden");
       });
@@ -18345,7 +18601,9 @@
       render();
     })();
 
-    async function loadVideoFiles(files) {
+    // opts (Dub Whole Series), over the auto-apply preset's: videoColorAdj, the new tabs' color
+    // filter; imageOverlays, their image overlays (saved ones, with dataUrl).
+    async function loadVideoFiles(files, opts = {}) {
       const remaining = MAX_PROJECT_TABS - projects.length;
       if (remaining <= 0) {
         showToast(`Maximum ${MAX_PROJECT_TABS} videos per session. Close a tab first.`, "error");
@@ -18364,6 +18622,7 @@
       const autoPresetName = localStorage.getItem("aiDubber_autoPreset");
       const allPresets = vpLoad();
       const autoPreset = allPresets.find((p) => p.name === autoPresetName);
+      const optImages = opts.imageOverlays ? opts.imageOverlays.map(hydrateImageOverlay) : null;
 
       for (const f of files) {
         const isElectronFile = !(f instanceof File);
@@ -18413,23 +18672,8 @@
           };
           proj.blurBoxes = JSON.parse(JSON.stringify(s.blurBoxes || []));
           proj.freeTexts = JSON.parse(JSON.stringify(s.freeTexts || []));
-          proj.imageOverlays = (s.imageOverlays || []).map((i) => {
-            const { file, ...rest } = i;
-            // Pre-hydrate Base64 images into memory Blobs so they instantly load on screen!
-            if (rest.dataUrl && rest.dataUrl.startsWith("data:")) {
-              try {
-                const byteString = atob(rest.dataUrl.split(",")[1]);
-                const mimeMatch = rest.dataUrl.match(/data:([^;]+);/);
-                const mime = mimeMatch ? mimeMatch[1] : "image/png";
-                const ab = new ArrayBuffer(byteString.length);
-                const ia = new Uint8Array(ab);
-                for (let j = 0; j < byteString.length; j++) ia[j] = byteString.charCodeAt(j);
-                const blob = new Blob([ab], { type: mime });
-                rest.blobUrl = URL.createObjectURL(blob);
-              } catch { }
-            }
-            return { ...rest };
-          });
+          // Pre-hydrate Base64 images into memory Blobs so they instantly load on screen!
+          proj.imageOverlays = (s.imageOverlays || []).map(hydrateImageOverlay);
 
           // 🟢 THE FIX: Inject Video Overlays from the Auto-Preset into the new video tab memory
           proj.videoOverlays = JSON.parse(JSON.stringify(s.videoOverlays || []));
@@ -18452,6 +18696,8 @@
             proj.subtitleUnderline = s.subtitleStyle.subtitleUnderline ?? proj.subtitleUnderline;
           }
         }
+        if (opts.videoColorAdj) proj.videoColorAdj = { ...colorDefaults, ...opts.videoColorAdj };
+        if (optImages) proj.imageOverlays = optImages.map((i) => ({ ...i, id: crypto.randomUUID() }));
 
         projects.push(proj);
       }
@@ -25796,6 +26042,7 @@
               const result = await res.json();
               if (!result.success) throw new Error(result.error || "Render failed");
 
+              item.outputPath = result.outputPath || null;
               item.status = "done";
               item.progress = 100;
               updateQueueCard(100); // overall bar auto-advances since this item is now "done"
@@ -25891,6 +26138,7 @@
             failed: items.filter((i) => i.status === "error").length,
             cancelled: items.filter((i) => i.status === "cancelled" || i.status === "pending").length,
             stopped: queueStops !== stopsBefore,
+            outputs: items.map((i) => (i.status === "done" && i.outputPath) || null), // in tab order
           };
         };
         // Dub Whole Series' Stop: only the series' own exports stop. The user's own queue items keep
