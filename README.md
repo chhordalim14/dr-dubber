@@ -6,6 +6,8 @@ It is an Electron app with a local Node.js/Express backend. FFmpeg and a few Pyt
 
 ![DR Dubber Pro](assets/logo.png)
 
+Full guide (using the app, settings, architecture, releases, troubleshooting): [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md).
+
 ## Features
 
 - **Transcribe**: Gemini direct transcription, or an on-device engine ([whisper_engine/](whisper_engine/), faster-whisper) followed by translation.
