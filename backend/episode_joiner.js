@@ -202,7 +202,7 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
                 const d = ep.duration.toFixed(6);
                 // aresample=async pads a delayed audio start so each episode stays aligned to its video.
                 const args = ['-hide_banner', '-nostdin', '-max_error_rate', '1'];
-                if (map) args.push('-i', src.path, '-map', map, '-af', `aresample=${AUDIO_RATE}:async=1:first_pts=0,aformat=sample_fmts=s16:channel_layouts=stereo,apad,atrim=end=${d}`);
+                if (map) args.push(...(ep.start ? ['-ss', ep.start.toFixed(6)] : []), '-i', src.path, '-map', map, '-af', `aresample=${AUDIO_RATE}:async=1:first_pts=0,aformat=sample_fmts=s16:channel_layouts=stereo,apad,atrim=end=${d}`);
                 else args.push('-f', 'lavfi', '-i', `anullsrc=r=${AUDIO_RATE}:cl=stereo`, '-af', `atrim=end=${d}`);
                 args.push('-f', 's16le', '-ar', String(AUDIO_RATE), '-ac', '2', 'pipe:1');
                 const dec = track(job, spawn(getFFmpegBinary(), args, { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }));
@@ -229,7 +229,7 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
         // frames, which means every episode is converted to the same settings.
         const withVideo = eps.filter(e => e.video);
         const sameVideo = withVideo.length === eps.length && eps.every(e => e.video.signature === eps[0].video.signature);
-        const copyable = sameVideo && ['h264', 'hevc'].includes(eps[0].video.codec);
+        const copyable = !part.convert && sameVideo && ['h264', 'hevc'].includes(eps[0].video.codec);
         let sources = eps.map(e => e.path);
         if (!copyable) {
             // Encode every episode with identical settings (size/fps of the first episode),
@@ -256,7 +256,7 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
             const encodeEpisode = async (i) => {
                 let done = 0;
                 const input = eps[i].video
-                    ? ['-i', eps[i].path, '-map', '0:v:0', '-an', '-sn', '-dn',
+                    ? [...(eps[i].start ? ['-ss', eps[i].start.toFixed(6)] : []), '-i', eps[i].path, '-map', '0:v:0', '-an', '-sn', '-dn',
                         '-vf', `scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${fps},format=yuv420p`]
                     : ['-f', 'lavfi', '-i', `color=c=black:s=${W}x${H}:r=${fps}`, '-vf', 'setsar=1,format=yuv420p'];
                 const r = await runFFmpeg(job, ['-hide_banner', '-nostdin', '-y', ...input,
@@ -307,11 +307,14 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
     // Reads the episodes of every part (4 files at a time). Done inside the job, so the
     // request returns at once and the job can be stopped while its files are read.
     async function probeParts(job) {
-        const all = job.parts.flatMap(part => part.files.map((file, i) => ({ part, file, i })));
+        const all = job.parts.flatMap(part => [
+            ...part.files.map((file, i) => ({ part, file, i })),
+            ...part.inserts.map((ins, j) => ({ part, file: ins.path, clip: j })),
+        ]);
         let next = 0;
         await Promise.all(Array.from({ length: Math.min(4, all.length) }, async () => {
             while (next < all.length && !job.cancelled) {
-                const { part, file, i } = all[next++];
+                const { part, file, i, clip } = all[next++];
                 // Every file was readable when the folder was scanned: a read that fails now
                 // (timed out beside other jobs, locked by a sync app) gets one more try.
                 let info = await probe(file);
@@ -324,7 +327,8 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
                     (part.unreadable = part.unreadable || []).push(`${path.basename(file)} (${info.error || 'no audio or video'})`);
                     continue;
                 }
-                part.found[i] = { path: file, name: path.basename(file), episode: episodeNumber(path.basename(file)), ...d };
+                if (clip !== undefined) part.clips[clip] = { path: file, name: path.basename(file), episode: null, ...d };
+                else part.found[i] = { path: file, name: path.basename(file), episode: episodeNumber(path.basename(file)), ...d };
             }
         }));
         for (const part of job.parts) {
@@ -334,10 +338,41 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
             // Joined without it, the part would be missing an episode and still say "done".
             else if (part.unreadable && !job.cancelled) Object.assign(part, { status: 'error', error: `${part.unreadable.length} episode(s) could not be read: ${part.unreadable.slice(0, 3).join(', ')}` });
             delete part.unreadable;
+            if (part.inserts.length && part.status !== 'error') {
+                part.episodes = withInserts(part.episodes, part.inserts, part.clips);
+                part.convert = true; // cut inside a file: only exact when encoded
+            }
+            delete part.clips;
             // No episode has video: the part is audio only, saved as .m4a.
             part.audioOnly = part.episodes.length > 0 && part.episodes.every(e => !e.video);
             if (part.audioOnly) part.outPath = part.outPath.replace(/\.mp4$/i, '.m4a');
         }
+    }
+
+    // Clips put into a part's timeline: inserts [{ at: seconds into the part, path }] (several at
+    // one time play in the order given). A file an insert falls inside is cut there into two
+    // pieces ({ start, duration } into the file); one within 0.1s of a file's end goes between
+    // the files.
+    function withInserts(eps, inserts, clips) {
+        const order = inserts.map((ins, j) => ({ at: ins.at, clip: clips[j] })).sort((a, b) => a.at - b.at);
+        const out = [];
+        let t = 0, k = 0;
+        for (const ep of eps) {
+            const end = t + ep.duration;
+            let start = 0; // into the file
+            while (k < order.length && order[k].at < end - 0.1) {
+                const cut = order[k].at - t;
+                if (cut > start + 0.1) {
+                    out.push({ ...ep, start, duration: cut - start });
+                    start = cut;
+                }
+                out.push(order[k++].clip);
+            }
+            out.push(start ? { ...ep, start, duration: ep.duration - start } : ep);
+            t = end;
+        }
+        while (k < order.length) out.push(order[k++].clip);
+        return out;
     }
 
     async function runJob(job) {
@@ -416,7 +451,8 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
         }
     }
 
-    // parts: [[filePath, ...], ...] in order (from the scan + the user's grouping)
+    // parts: [[filePath, ...], ...] in order (from the scan + the user's grouping), or a part as
+    // { files: [filePath, ...], inserts: [{ at, path }] }: clips put in at those seconds.
     // partNumbers: each part's number in the series (1-based), for its file name. A job can
     // join any subset (e.g. parts 2 and 3 while part 1 is dubbed), so its own order isn't it.
     async function start({ parts, outDir, seriesName, partNumbers }) {
@@ -426,10 +462,13 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
         const safeName = String(seriesName || 'Drama').replace(/[<>:"/\\|?*]+/g, '').trim() || 'Drama';
         const job = { id: crypto.randomUUID(), status: 'running', current: 0, cancelled: false, partFailed: null, procs: new Set(), outDir, repairedEpisodes: [], parts: [] };
         for (let p = 0; p < parts.length; p++) {
-            if (parts[p].length > MAX_EPISODES_PER_PART) throw new Error(`Part ${p + 1} has ${parts[p].length} episodes; the maximum is ${MAX_EPISODES_PER_PART}.`);
+            const files = Array.isArray(parts[p]) ? parts[p] : (parts[p] && Array.isArray(parts[p].files) ? parts[p].files : []);
+            const inserts = (Array.isArray(parts[p]?.inserts) ? parts[p].inserts : [])
+                .filter(x => x && typeof x.path === 'string' && x.path && Number.isFinite(x.at) && x.at >= 0);
+            if (files.length + 2 * inserts.length > MAX_EPISODES_PER_PART) throw new Error(`Part ${p + 1} has ${files.length} episodes and ${inserts.length} clips; the maximum is ${MAX_EPISODES_PER_PART} pieces.`);
             const number = Array.isArray(partNumbers) && partNumbers[p] > 0 ? partNumbers[p] : p + 1;
             // One entry per requested part, always: the caller matches status parts by position.
-            job.parts.push({ files: parts[p], found: [], episodes: [], status: 'queued', percent: 0, error: null,
+            job.parts.push({ files, inserts, found: [], clips: [], episodes: [], status: 'queued', percent: 0, error: null,
                 outPath: path.join(outDir, `${safeName}_part${String(number).padStart(2, '0')}.mp4`) });
         }
         jobs.set(job.id, job);

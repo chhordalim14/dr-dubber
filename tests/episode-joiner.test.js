@@ -88,6 +88,21 @@ describe('episode joiner', { skip }, () => {
         assert.ok(Math.abs(duration(st.parts[0].outPath) - 8) < 0.5);
     });
 
+    test('clips are put in at the given times: between files, inside a file, at the end', async () => {
+        const clip = path.join(root, 'clip.mp4');
+        ff(['-f', 'lavfi', '-i', 'testsrc2=s=640x360:r=30:d=1', '-f', 'lavfi', '-i', 'sine=f=880:d=1', '-shortest', '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', clip]);
+        const files = [path.join(vdir, 'E01.mp4'), path.join(vdir, 'E02.mp4')]; // 2s each, copyable on their own
+        const inserts = [{ at: 0, path: clip }, { at: 3, path: clip }, { at: 4, path: clip }];
+        const st = await join([{ files, inserts }], [7], 'Clips');
+        assert.equal(st.parts[0].status, 'done', st.parts[0].error);
+        assert.equal(st.parts[0].videoMode, 'converted', 'cut inside a file: encoded, not copied');
+        const d = duration(st.parts[0].outPath);
+        assert.ok(Math.abs(d - 7) < 0.25, `4s of episodes + 3 one-second clips, got ${d}`);
+        // clip | E01 | E02 0-1s | clip | E02 1-2s | clip
+        assert.deepEqual(fs.readFileSync(path.join(out, 'Clips_part07_episodes.txt'), 'utf8').trim().split('\n').map((l) => l.split(' ')[1]),
+            ['clip.mp4', 'EP1', 'EP2', 'clip.mp4', 'EP2', 'clip.mp4']);
+    });
+
     test('an audio-only episode in a video part gets black frames', async () => {
         const st = await join([[path.join(vdir, 'E01.mp4'), path.join(adir, 'E01.mp3')]], [5]);
         assert.equal(st.parts[0].status, 'done', st.parts[0].error);

@@ -536,6 +536,60 @@ body {
   box-shadow: inset 0 0 0 1px var(--border-light);
 }
 
+/* English / Khmer: same two halves as light / dark, with words for icons
+   (js/i18n.js sets .is-active on every [data-lang-opt]). */
+.hdr-lang .hdr-theme__opt {
+  width: auto;
+  min-width: 34px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.lang-switch {
+  display: inline-flex;
+  align-self: flex-start;
+  justify-self: start;
+  width: max-content;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--bg-base);
+  border: 1px solid var(--border-light);
+}
+
+.lang-switch button {
+  min-width: 96px;
+  padding: 6px 14px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: background-color var(--duration-fast) ease, color var(--duration-fast) ease;
+}
+
+.lang-switch button:hover {
+  color: var(--text-bright);
+}
+
+.lang-switch button.is-active {
+  color: var(--text-bright);
+  background: var(--bg-hover);
+  box-shadow: inset 0 0 0 1px var(--border-light);
+}
+
+/* Khmer UI: letter-spacing pulls Khmer clusters apart, and stacked vowels and
+   subscripts need taller lines than Latin text. */
+:root[lang="km"] body * {
+  letter-spacing: normal !important;
+}
+
+:root[lang="km"] .leading-none,
+:root[lang="km"] .leading-tight,
+:root[lang="km"] .leading-snug {
+  line-height: 1.5 !important;
+}
+
 /* ── Main grid ──────────────────────────────────────────────────────────── */
 .app-shell {
   position: relative;
