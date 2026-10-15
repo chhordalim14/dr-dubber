@@ -3793,14 +3793,17 @@ function queueTtsTask(task) {
     processNextTts();
 }
 
-// One Python process serving every voice line, 6 at a time (the same as batch mode). The
-// regulator above is only for the one-process-per-line fallback.
+// One Python process serving every voice line, TTS_LINES_AT_ONCE at a time (the same as batch
+// mode). The regulator above is only for the one-process-per-line fallback.
+// 12: Microsoft answered 48 lines at 12 at once in 4.6s against 8.1s at 6, with nothing refused
+// (16 was faster still; kept lower so a busy night doesn't look like abuse to it).
+const TTS_LINES_AT_ONCE = 12;
 let ttsTrimNotesShown = 0;
 const ttsWorker = createTtsWorker({
-    maxInFlight: 6,
+    maxInFlight: TTS_LINES_AT_ONCE,
     spawnWorker: () => {
         if (!PYTHON_CMD) throw new Error('No Python');
-        const child = spawn(PYTHON_CMD, [getPythonScriptPath('tts_generator.py'), '--serve', '--concurrency', '6'], {
+        const child = spawn(PYTHON_CMD, [getPythonScriptPath('tts_generator.py'), '--serve', '--concurrency', String(TTS_LINES_AT_ONCE)], {
             env: { ...PYTHON_ENV, DR_FFMPEG_PATH: getFFmpegBinary() }, // FFmpeg trims each clip's silence
             windowsHide: true,
         });
@@ -4068,7 +4071,7 @@ app.post('/api/generate-batch-audio', async (req, res) => {
     fs.writeFileSync(batchJsonPath, JSON.stringify(uncachedTasks), 'utf8');
 
     const pyScript = getPythonScriptPath('tts_generator.py');
-    const child = spawn(PYTHON_CMD, [pyScript, '--batch', batchJsonPath, '--concurrency', '6'], { env: { ...PYTHON_ENV, DR_FFMPEG_PATH: getFFmpegBinary() } }); // FFmpeg trims each clip's silence
+    const child = spawn(PYTHON_CMD, [pyScript, '--batch', batchJsonPath, '--concurrency', String(TTS_LINES_AT_ONCE)], { env: { ...PYTHON_ENV, DR_FFMPEG_PATH: getFFmpegBinary() } }); // FFmpeg trims each clip's silence
     trackProcess(child);
 
     let output = '';

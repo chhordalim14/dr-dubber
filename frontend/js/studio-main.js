@@ -21177,8 +21177,10 @@
       });
       if (typeof renderProjectTabs === "function") renderProjectTabs();
 
-      // 🚀 Concurrency Worker Pool: 2 tabs processed in parallel (with global backend TTS queue safety)
-      const poolSize = 2;
+      // 🚀 Concurrency Worker Pool: 4 tabs processed in parallel (with global backend TTS queue safety).
+      // Each tab sends its lines a few at a time (Settings), so 4 tabs keep the server's 12 voice
+      // lines at once busy; with 2 tabs only 6 were ever asked for.
+      const poolSize = 4;
       let activeIdx = 0;
       let succeededCount = 0;
       let totalTabsProcessed = 0;

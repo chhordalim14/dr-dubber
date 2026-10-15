@@ -9,7 +9,7 @@ Two passes, so a long video stays fast on a CPU:
 Text is detected and then read (RapidOCR, PP-OCR models on onnxruntime); a box only
 counts when it reads as real text, so faces, hats and leaves don't.
 
-usage: python text_detector.py <video> [--fps 4]
+usage: python text_detector.py <video> [--fps 4] [--threads 2]
 FFmpeg comes from DR_FFMPEG_PATH (ffprobe next to it), like the TTS script.
 stdout: "PROGRESS <done> <total>" lines, then one JSON line:
   {"success": true, "width", "height", "duration",
@@ -112,11 +112,14 @@ def read_frame(video, t, width, height):
     return out.stdout
 
 
-def make_engine():
+def make_engine(threads):
     from rapidocr_onnxruntime import RapidOCR
     # 'max': never blow a small picture up (the default scales the short side up to 736 px,
     # which turns a thin strip into a huge one). Its detector and reader are used directly.
-    return RapidOCR(det_limit_type='max', det_limit_side_len=960)
+    # threads: onnxruntime's own default (every core) spent most of each call on the small
+    # strip keeping its threads in step - 2 read the same lines 3x faster (measured).
+    opts = {'intra_op_num_threads': threads} if threads > 0 else {}
+    return RapidOCR(det_limit_type='max', det_limit_side_len=960, **opts)
 
 
 def is_text(text, score):
@@ -278,6 +281,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('video')
     ap.add_argument('--fps', type=float, default=4.0)
+    ap.add_argument('--threads', type=int, default=2, help='threads the text reader uses (0: every core)')
     args = ap.parse_args()
     video, fps = args.video, max(1.0, min(10.0, args.fps))
     t_start = time.time()
@@ -287,7 +291,7 @@ def main():
         emit({'success': False, 'error': 'Could not read the video (size or length unknown).'})
         return 1
 
-    engine = make_engine()
+    engine = make_engine(args.threads)
     n_row = int(max(12, min(ROW_SAMPLES_MAX, duration / 4)))
     strip_frames = int(duration * fps)
     total = n_row + strip_frames

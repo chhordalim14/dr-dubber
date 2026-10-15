@@ -1,11 +1,14 @@
 // On-screen subtitle detection jobs: runs backend/python/text_detector.py for a video and
 // keeps the result (when burned-in subtitles show, and where), for the render to blur.
 //
-// One detection runs at a time - it already uses every CPU core - and the others wait their
-// turn. A video asked for again while it is queued or running joins that job, and a finished
+// Up to maxRunning detections run at once (the others wait their turn), each reading with
+// DETECTOR_THREADS threads. The reader on every core made each call on the small subtitle strip
+// spend its time keeping 12+ threads in step: 2 threads read the same lines 3x faster, and four
+// such jobs at once finish ~10x sooner than one job on every core did. A video asked for again while it is queued or running joins that job, and a finished
 // result is cached on disk per file (path, size, modification time), so asking again later
 // (Continue, another export) is instant.
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn: realSpawn, execFile: realExecFile } = require('child_process');
@@ -13,16 +16,21 @@ const { StringDecoder } = require('string_decoder');
 
 const DETECTOR_VERSION = 4; // bump when text_detector.py's results change: old cached results are ignored
 const JOB_KEEP_MS = 30 * 60 * 1000;
+const DETECTOR_THREADS = 2;
+// Detections at once: about one per 4 CPU threads (each keeps ~2.6 busy), leaving room for the
+// steps that run beside it (Transcribe, Isolate BGM, an export).
+const defaultMaxRunning = (cpus) => Math.max(1, Math.min(4, Math.floor((cpus || 1) / 4)));
 
 function createTextDetectService({
     pythonCmd, pythonEnv, scriptPath, requirementsPath, ffmpegPath, cacheDir,
     trackProcess = () => { }, killProcessTree = (c) => { try { c.kill(); } catch (e) { } },
     spawn = realSpawn, execFile = realExecFile, log = console,
+    maxRunning = defaultMaxRunning(os.cpus().length),
 }) {
     const jobs = new Map();      // id -> job
     const byVideo = new Map();   // cache key -> id of the job queued/running for it
     const queue = [];
-    let running = null;
+    const running = new Set();
     let depsReady = null;        // Promise<true | error message>
 
     try { fs.mkdirSync(cacheDir, { recursive: true }); } catch (e) { }
@@ -67,19 +75,19 @@ function createTextDetectService({
     function finish(job, fields) {
         Object.assign(job, fields, { finishedAt: Date.now() });
         if (byVideo.get(job.key) === job.id) byVideo.delete(job.key);
-        if (running === job) running = null;
+        running.delete(job);
         setTimeout(() => jobs.delete(job.id), JOB_KEEP_MS).unref?.();
         pump();
     }
 
     async function runJob(job) {
-        running = job;
+        running.add(job);
         job.status = 'running';
         const deps = await ensureDeps();
-        if (job.status === 'cancelled') { if (running === job) running = null; pump(); return; }
+        if (job.status === 'cancelled') { running.delete(job); pump(); return; }
         if (deps !== true) return finish(job, { status: 'error', error: deps });
 
-        const child = spawn(pythonCmd, [scriptPath, job.videoPath, '--fps', '4'], {
+        const child = spawn(pythonCmd, [scriptPath, job.videoPath, '--fps', '4', '--threads', String(DETECTOR_THREADS)], {
             env: { ...pythonEnv, DR_FFMPEG_PATH: ffmpegPath }, windowsHide: true,
         });
         job.child = child;
@@ -118,9 +126,7 @@ function createTextDetectService({
     }
 
     function pump() {
-        if (running) return;
-        const next = queue.shift();
-        if (next) runJob(next);
+        while (running.size < maxRunning && queue.length) runJob(queue.shift());
     }
 
     // Starts (or joins) detection for a video. Returns the job as the status call does.
@@ -164,4 +170,4 @@ function createTextDetectService({
     return { start, status, cancel, ensureDeps, _jobs: jobs, _queue: queue };
 }
 
-module.exports = { createTextDetectService, DETECTOR_VERSION };
+module.exports = { createTextDetectService, DETECTOR_VERSION, defaultMaxRunning };

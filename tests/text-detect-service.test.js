@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
-const { createTextDetectService } = require('../backend/text_detect_service');
+const { createTextDetectService, defaultMaxRunning } = require('../backend/text_detect_service');
 
 const tick = (ms = 5) => new Promise((r) => setTimeout(r, ms));
 
@@ -22,7 +22,7 @@ function fakeChild() {
     return c;
 }
 
-function makeService({ depsOk = true, installFixes = true } = {}) {
+function makeService({ depsOk = true, installFixes = true, maxRunning = 1 } = {}) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'textdetect-'));
     const videos = ['a', 'b', 'c'].map((n) => {
         const f = path.join(dir, `${n}.mp4`);
@@ -44,6 +44,7 @@ function makeService({ depsOk = true, installFixes = true } = {}) {
         },
         killProcessTree: (c) => killed.push(c),
         log: { log: () => { }, warn: () => { } },
+        maxRunning,
     });
     return { svc, videos, children, killed, calls, dir };
 }
@@ -57,7 +58,7 @@ describe('subtitle text detection jobs', () => {
         assert.equal(j.success, true);
         await tick();
         assert.equal(children.length, 1);
-        assert.deepEqual(children[0].args.slice(1), [videos[0], '--fps', '4']);
+        assert.deepEqual(children[0].args.slice(1), [videos[0], '--fps', '4', '--threads', '2']);
         assert.equal(svc.status(j.jobId).status, 'running');
         children[0].say('PROGRESS 25 100');
         assert.equal(svc.status(j.jobId).progress, 25);
@@ -82,6 +83,27 @@ describe('subtitle text detection jobs', () => {
         await tick();
         assert.equal(children.length, 2, 'b starts when a is done');
         assert.equal(svc.status(b.jobId).status, 'running');
+    });
+
+    test('several videos at once (maxRunning); the next starts as soon as one is done', async () => {
+        const { svc, videos, children } = makeService({ maxRunning: 2 });
+        const [a, b, c] = videos.map((v) => svc.start(v));
+        await tick();
+        assert.equal(children.length, 2, 'a and b run together');
+        assert.equal(svc.status(a.jobId).status, 'running');
+        assert.equal(svc.status(b.jobId).status, 'running');
+        assert.equal(svc.status(c.jobId).status, 'queued');
+        children[1].done(result); // b first
+        await tick();
+        assert.equal(children.length, 3);
+        assert.equal(children[2].args[1], videos[2]);
+        assert.equal(svc.status(a.jobId).status, 'running', 'a is not disturbed');
+        svc.cancel(a.jobId);
+        assert.equal(svc.status(c.jobId).status, 'running');
+    });
+
+    test('detections at once follow the CPU: one per 4 threads, 1 to 4', () => {
+        assert.deepEqual([1, 2, 4, 8, 12, 16, 32, 64].map(defaultMaxRunning), [1, 1, 1, 2, 3, 4, 4, 4]);
     });
 
     test('a finished video is answered from the cache, without running again', async () => {
