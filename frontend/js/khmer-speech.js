@@ -8,7 +8,8 @@
 //   punctuation  ... and dashes are pauses, quotes and brackets are not read, a closing ? or !
 //                is kept (it carries the question / the shout), anything else closes with ។
 //   tags         [Female:female-default] and the like are dropped
-//   pronunciation  words the voice misreads as written, respelled: លំហ -> លំហា (see SAY_AS)
+//   pronunciation  words the voice misreads as written, respelled: លំហ -> លំហា, ម្ចាស់ -> ម៉ាចាស់, ម្នាក់ -> ម៉ានាក់
+//                (see SAY_AS, RESPELL)
 //
 // Loaded by the browser as a classic script (window.KhmerSpeech) and by Node (tests).
 (function (root, factory) {
@@ -102,11 +103,31 @@
     // 'written': 'said'  (whole words; add one here when a voice misreads a word)
   ]);
   const NIKAHIT_HA_RE = /([ក-អ]ំហ)(?![឴-៓៝])/g; // …ំហ not followed by its vowel / a subscript
+  // Parts of words respelled wherever they appear, also inside a compound the segmenter splits
+  // differently (ព្រះអង្គម្ចាស់, លោកម្ចាស់, ខ្ញុំម្ចាស់).
+  //
+  // A leading ម្ before another consonant: both Khmer voices say the ម so short that the word is
+  // heard without it - ព្រះអង្គម្ចាស់ came out ព្រះអង្គចាស់ ("old"). Measured inside a sentence,
+  // both voices, +0% and +20%: of the length ម៉ា adds, the written ម gets only 20-75%. Respelled
+  // here only where the word without its ម is another word, so the line says something else:
+  // ម្ចាស់/ចាស់ (old), ម្នាង/នាង (អ្នកម្នាង -> អ្នកនាង), ម្ហូប/ហូប (eat), ម្ដង/ដង (times),
+  // ម្ខាង/ខាង (side), ម្នាក់/នាក់ (ម្នាក់ឯង -> នាក់ឯង). The others (ម្ដាយ, ម្សិលមិញ, ម្ភៃ ...) are
+  // still understood, and a short ម is how people say them.
+  const RESPELL = [
+    // [written, said]  (not after a subscript sign, so it never cuts into another cluster)
+    ['ម្ចាស់', 'ម៉ាចាស់'],
+    ['ម្នាង', 'ម៉ានាង'],
+    ['ម្ហូប', 'ម៉ាហូប'],
+    ['ម្[ដត]ង', 'ម៉ាដង'], // ម្ដង and the look-alike spelling ម្តង
+    ['ម្ខាង', 'ម៉ាខាង'],
+    ['ម្នាក់', 'ម៉ានាក់'],
+  ].map(([from, to]) => [new RegExp(`(?<!្)${from}`, 'g'), to]);
   function fixPronunciation(text) {
     let s = text;
     if (SAY_AS.size && words) {
       s = Array.from(words.segment(s), (seg) => (seg.isWordLike && SAY_AS.has(seg.segment) ? SAY_AS.get(seg.segment) : seg.segment)).join('');
     }
+    for (const [re, to] of RESPELL) s = s.replace(re, to);
     return s.replace(NIKAHIT_HA_RE, '$1ា');
   }
 

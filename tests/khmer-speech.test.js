@@ -56,6 +56,25 @@ describe('Khmer text for the voice', () => {
         for (const w of ['លំហែកាយ', 'កំហឹង', 'កំហុស', 'ស្នេហា', 'លំហា']) assert.equal(say(w), w + '។', w);
     });
 
+    test('ម្ចាស់ is said ម៉ាចាស់ (the voice\'s short ម made ព្រះអង្គម្ចាស់ sound like ព្រះអង្គចាស់)', () => {
+        assert.equal(say('សូមអភ័យទោស ព្រះអង្គម្ចាស់'), 'សូមអភ័យទោស ព្រះអង្គម៉ាចាស់។');
+        assert.equal(say('លោកម្ចាស់ ខ្ញុំម្ចាស់មកហើយ!'), 'លោកម៉ាចាស់ ខ្ញុំម៉ាចាស់មកហើយ!');
+        assert.equal(say('ម្ចាស់គ្រូ'), 'ម៉ាចាស់គ្រូ។');
+        assert.equal(say('ចាស់ហើយ'), 'ចាស់ហើយ។', 'plain ចាស់ is left alone');
+    });
+
+    test('other ម្ words that turn into another word without their ម are respelled too', () => {
+        assert.equal(say('អ្នកម្នាង'), 'អ្នកម៉ានាង។');
+        assert.equal(say('ម្ហូបឆ្ងាញ់'), 'ម៉ាហូបឆ្ងាញ់។');
+        assert.equal(say('ម្ដងទៀត'), 'ម៉ាដងទៀត។');
+        assert.equal(say('ម្តងទៀត'), 'ម៉ាដងទៀត។', 'the look-alike spelling with ត');
+        assert.equal(say('ម្ដងៗ'), 'ម៉ាដងម៉ាដង។', 'after ៗ is expanded');
+        assert.equal(say('ម្ខាងទៀត'), 'ម៉ាខាងទៀត។');
+        assert.equal(say('នៅម្នាក់ឯង'), 'នៅម៉ានាក់ឯង។');
+        // still understood without a full ម, and a short ម is how they are said: left alone
+        for (const w of ['ម្ដាយ', 'ម្សិលមិញ', 'ម្ភៃ', 'នាង', 'ហូប', 'ពីរនាក់']) assert.equal(say(w), w + '។', w);
+    });
+
     test('text without Khmer is only tidied', () => {
         assert.equal(say('  Hello   world 2  '), 'Hello world 2');
         assert.equal(say(''), '');

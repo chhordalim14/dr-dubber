@@ -43,6 +43,21 @@ describe('forms of address', () => {
         assert.match(KHMER_DUBBING_RULES, /for the whole scene/);
     });
 
+    // Every example used to turn "you" into "បង", so a father talking to his son came out "បង".
+    test('a parent calls the child កូន, and បង is not a default "you"', () => {
+        assert.match(KHMER_DUBBING_RULES, /Parent -> child: calls them "កូន" \/ calls self "ប៉ា" \/ "ម៉ាក់"/);
+        assert.match(KHMER_DUBBING_RULES, /Child -> parent:[^\n]*calls self "កូន"/);
+        for (const pair of ['Grandparent -> grandchild', 'Uncle / aunt -> niece / nephew', 'Older sibling -> younger',
+            'Parent-in-law ->', 'Pupil -> teacher', 'Disciple -> master', 'Servant / guard -> master', 'Same-age friends']) {
+            assert.ok(KHMER_DUBBING_RULES.includes(pair), pair);
+        }
+        assert.match(KHMER_DUBBING_RULES, /"វា" ONLY for a child, an animal, a thing or in contempt/);
+        assert.match(KHMER_DUBBING_RULES, /"បង" is NOT a default/);
+        assert.match(KHMER_DUBBING_RULES, /"បងទៅណា\?" \/ parent to child: "កូនទៅណា\?"/);
+        assert.match(getKhmerDramaRegisterGuidance('modern'), /parent to child "កូនធ្វើអីហ្នឹង\?"/);
+        assert.ok(!serverSource.includes('-> ✅ "បងធ្វើអីនៅនេះ?"\n'), 'refactor example still maps អ្នក to បង');
+    });
+
     test('lovers never say ឯង to each other in the examples', () => {
         const modern = getKhmerDramaRegisterGuidance('modern');
         assert.ok(!modern.includes('ឯង'), 'modern register offers ឯង');

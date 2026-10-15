@@ -35,15 +35,32 @@ function lineSeconds(sub) {
 }
 
 // The pronoun carries the relationship in Khmer: a random pick between ឯង and បង makes a
-// love scene sound like a quarrel, so the choice is spelled out by relationship.
-const KHMER_FORMS_OF_ADDRESS = `2. FORMS OF ADDRESS (របៀបហៅគ្នា) - choose by the relationship, never at random:
+// love scene sound like a quarrel, and a father calling his son "បង" sounds absurd, so the
+// choice is spelled out by relationship, both directions, and "បង" is not a default "you".
+const KHMER_FORMS_OF_ADDRESS = `2. FORMS OF ADDRESS (របៀបហៅគ្នា) - choose by WHO IS SPEAKING TO WHOM, never at random:
+   - First work out the speaker and the listener of each line from the neighbouring lines, the character sheet and the words in the line (爸/妈/爹/娘/儿子/女儿/孩子/爷爷/奶奶/孙子/哥/姐/弟/妹/老公/老婆/师父/老师/老板/少爷/小姐/陛下 ... say how they are related).
+   - Khmer has no neutral "you" or "I": 你 / 您 / 我 / "អ្នក" are translated by the relationship. "បង" is NOT a default - use it only where a rule below says so. When the relationship really can't be told, leave the pronoun out (Khmer drops it naturally) rather than guess.
+   Each rule is speaker -> listener: calls them "..." / calls self "...".
+   FAMILY (គ្រួសារ):
+   - Parent -> child: calls them "កូន" / calls self "ប៉ា" / "ម៉ាក់" (or "ពុក" / "ម្ដាយ"). Never "បង", "អូន", "ប្អូន" or "ឯង" for one's own child (father to son "你去哪?" -> "កូនទៅណា?", "我不怪你" -> "ប៉ាមិនបន្ទោសកូនទេ").
+   - Child -> parent: calls them "ប៉ា" / "ម៉ាក់" (or "ពុក" / "ម្ដាយ") / calls self "កូន" ("爸，我错了" -> "ប៉ា កូនខុសហើយ").
+   - Grandparent -> grandchild: "ចៅ" / self "យាយ" / "តា". Grandchild -> grandparent: "យាយ" / "តា" / self "ចៅ".
+   - Uncle / aunt -> niece / nephew: "ក្មួយ" / self "ពូ" / "មីង" (or "អ៊ំ" when older than the parent). Niece / nephew -> uncle / aunt: "ពូ" / "មីង" / "អ៊ំ" / self "ក្មួយ".
+   - Older sibling -> younger: "ប្អូន" / self "បង". Younger sibling -> older: "បង" (or "បងប្រុស" / "បងស្រី") / self "ប្អូន" or "ខ្ញុំ".
+   - Parent-in-law -> son / daughter-in-law: "កូន" / self "ម៉ាក់" / "ប៉ា". Son / daughter-in-law -> parent-in-law: "ម៉ាក់" / "ប៉ា" / self "កូន".
    - Lovers / husband & wife (គូស្នេហ៍ ប្ដីប្រពន្ធ): he calls himself "បង" and her "អូន"; she calls herself "អូន" and him "បង".
-   - Younger to older (ប្អូនទៅបង): calls them "បង", self "ខ្ញុំ" (or "ប្អូន"). Older to younger: "ប្អូន", self "បង".
-   - To a boss, elder, stranger or superior (ថ្នាក់លើ អ្នកចាស់ទុំ អ្នកមិនស្គាល់): "លោក" (man), "លោកស្រី" / "អ្នកនាង" (woman); self "ខ្ញុំ" (polite: "ខ្ញុំបាទ" / "នាងខ្ញុំ").
-   - Servant to master (អ្នកបម្រើទៅម្ចាស់): "លោកម្ចាស់" / "លោកប្រុស" / "អ្នកនាង".
-   - Parents & children: "ម៉ាក់" / "ប៉ា" (modern) or "ម្ដាយ" / "ឪពុក", and "កូន". Grandparents "យាយ" / "តា", and "ចៅ".
+   SOCIAL (សង្គម):
+   - To a boss, elder, stranger or superior (ថ្នាក់លើ អ្នកចាស់ទុំ អ្នកមិនស្គាល់): "លោក" (man), "លោកស្រី" / "អ្នកនាង" (woman); self "ខ្ញុំ" (polite: "ខ្ញុំបាទ" / "នាងខ្ញុំ"). Boss / superior -> junior: by name or title / self "ខ្ញុំ"; "ឯង" only when harsh.
+   - Everyday people by apparent age (the Khmer way): an older man "ពូ" / "អ៊ំ", an older woman "មីង" / "អ៊ំ", an old person "តា" / "យាយ", someone a bit older "បង", someone younger "ប្អូន", a child "ក្មួយ"; the speaker calls self to match ("ក្មួយ" or "ខ្ញុំ" to ពូ / មីង).
+   - Pupil -> teacher: "លោកគ្រូ" / "អ្នកគ្រូ" / self "ខ្ញុំ" (a young pupil "កូន"). Teacher -> pupil: by name, or "កូន" to a young pupil / self "គ្រូ".
+   - Disciple -> master (sects, martial arts): "លោកគ្រូ" / "ម្ចាស់គ្រូ" / self "សិស្ស" or "ខ្ញុំ". Master -> disciple: by name or "សិស្ស" / self "គ្រូ". Fellow disciples: "សិស្សច្បង" / "សិស្សប្អូន" / self "ខ្ញុំ".
+   - Servant / guard -> master (អ្នកបម្រើទៅម្ចាស់): "លោកម្ចាស់" / "លោកប្រុស" / "អ្នកនាង" / self "ខ្ញុំ" ("ខ្ញុំបាទ" / "នាងខ្ញុំ"). Master -> servant: by name or "ឯង" / self "ខ្ញុំ" (a noble "យើង").
+   - Same-age friends: by name, or "ឯង" / "គ្នា" / "យើង" when close and casual. Polite colleagues: "បង" / "ប្អូន" by age, or by name.
    - Royal forms ("ព្រះអង្គ", "ទូលបង្គំ", "ក្រាបទូល") ONLY in a historical / palace register (or for gods and a heavenly court in fantasy).
-   - "ឯង" / "អញ" / "ហ្អែង" ONLY for anger, fights, villains or very close same-age friends - never between lovers in a normal scene.
+   - "ឯង" / "អញ" / "ហ្អែង" ONLY for anger, fights, villains or very close same-age friends - never between lovers or from a parent to a child in a normal scene.
+   TALKING ABOUT SOMEONE (he / she / they):
+   - "គាត់" for a parent, an elder or anyone respected; "គេ" for other people; "នាង" for a young woman; "វា" ONLY for a child, an animal, a thing or in contempt - never for one's own parent or an elder.
+   - The examples below write "បង" / "អូន" as a lover would say them: change the pronoun to fit the real speaker and listener.
    - Keep each pair's choice for the whole scene unless their relationship changes.`;
 
 const KHMER_DUBBING_RULES = `💎 NATURAL & READABLE KHMER DUBBING RULES (ខ្លឹម ងាយអាន ឥតទាក់ ដូចរឿងភាគទូរទស្សន៍):
@@ -64,7 +81,7 @@ ${KHMER_FORMS_OF_ADDRESS}
    - 🚫 BAN word-for-word translation ("ចំពោះរឿងនេះ", "គឺជារឿងដែល", "ដើម្បីធ្វើការ", "មានការ...").
 
 4. GOLDEN DUBBING REPLACEMENTS (គំរូពាក្យសន្ទនាភាពយន្ត):
-   - ❌ "តើអ្នកកំពុងតែធ្វើអ្វីនៅទីនេះ?" -> ✅ "បងធ្វើអីនៅនេះ?" / angry: "ឯងធ្វើអីនៅនេះ?!"
+   - ❌ "តើអ្នកកំពុងតែធ្វើអ្វីនៅទីនេះ?" -> ✅ "បងធ្វើអីនៅនេះ?" / parent to child: "កូនធ្វើអីនៅនេះ?" / angry: "ឯងធ្វើអីនៅនេះ?!"
    - ❌ "តើមានរឿងអ្វីបានកើតឡើងចំពោះអ្នក?" -> ✅ "មានរឿងអីកើតឡើង?"
    - ❌ "តើនេះជាការពិតមែនទេ?" -> ✅ "ពិតមែនហ្អេស?!" / "មែនអត់?"
    - ❌ "ខ្ញុំសូមអភ័យទោសដែលបានមកយឺត" -> ✅ "សុំទោស ខ្ញុំមកយឺត" / to a lover: "សុំទោស បងមកយឺត"
@@ -79,8 +96,8 @@ ${KHMER_FORMS_OF_ADDRESS}
    - ❌ "តើពួកយើងគួរតែធ្វើបែបណាទៅ?" -> ✅ "យើងគួរធ្វើម៉េចទៅ?"
    - ❌ "សូមបិទមាត់របស់អ្នកភ្លាមទៅ" -> ✅ "បិទមាត់ទៅ!"
    - ❌ "ខ្ញុំមិនដែលគិតថាអ្នកជាមនុស្សបែបនេះសោះ" -> ✅ angry: "ស្មានមិនដល់ថាឯងជាមនុស្សចឹងសោះ!"
-   - ❌ "តើអ្នកទៅណា?" -> ✅ "បងទៅណា?"
-   - ❌ "ខ្ញុំស្រឡាញ់អ្នកខ្លាំងណាស់" -> ✅ "បងស្រឡាញ់អូនខ្លាំងណាស់" / "អូនស្រឡាញ់បងខ្លាំងណាស់"
+   - ❌ "តើអ្នកទៅណា?" -> ✅ "បងទៅណា?" / parent to child: "កូនទៅណា?" / child to father: "ប៉ាទៅណា?"
+   - ❌ "ខ្ញុំស្រឡាញ់អ្នកខ្លាំងណាស់" -> ✅ lovers: "បងស្រឡាញ់អូនខ្លាំងណាស់" / "អូនស្រឡាញ់បងខ្លាំងណាស់" / mother to child: "ម៉ាក់ស្រឡាញ់កូនណាស់"
    - ❌ "ហេតុអ្វីបានជាអ្នកធ្វើបែបនេះ?" -> ✅ "ហេតុអីធ្វើចឹង?"
    - ❌ "តើអ្នកសុខសប្បាយជាទេ?" -> ✅ "សុខសប្បាយទេ?" / "មិនអីទេហី?"
    - ❌ "ឆាប់ចេញពីទីនេះភ្លាម" -> ✅ "ចេញពីនេះភ្លាម!"
@@ -158,7 +175,7 @@ REGISTER - Modern Romance, CEO & Urban (រឿងសម័យ/ស្នេហា
    - Use natural, fluid, modern conversational Khmer, with pronouns chosen by FORMS OF ADDRESS:
      * Lovers "បង" / "អូន"; boss "លោកប្រធាន" / "អ្នកនាង" with self "ខ្ញុំ"; parents "ម៉ាក់" / "ប៉ា".
      * Real conversational dialogue:
-       - "你在干什么？" -> to a lover or older person "បងធ្វើអីហ្នឹង?" / to a younger one "ប្អូនធ្វើអីហ្នឹង?"
+       - "你在干什么？" -> to a lover or older person "បងធ្វើអីហ្នឹង?" / to a younger one "ប្អូនធ្វើអីហ្នឹង?" / parent to child "កូនធ្វើអីហ្នឹង?"
        - "你没事吧？" -> "អូនមិនអីទេ?" / to a boss "លោកប្រធានមិនអីទេ?"
        - "别管我！" -> "កុំរវល់នឹងខ្ញុំ!"
        - "对不起，我来晚了" -> to a lover "សុំទោស បងមកយឺត"
@@ -221,7 +238,7 @@ ${KHMER_DUBBING_RULES}
 LINE MATCHING & EMOTION RULES:
 1. Exact 1-to-1 Line Match:
    - Output exactly one item for every input line, using the same "i" number. Never merge, split, skip, or reorder lines.
-   - Use the neighbouring lines as context, but translate each line on its own.
+   - Use the neighbouring lines and PREVIOUS DIALOGUE as context - above all to tell who is talking to whom (a father to his son, a wife to her husband, a servant to a master) before choosing pronouns - but translate each line on its own.
    - "seconds" is how long the line lasts and "maxSyllables" its Khmer syllable budget: stay within it, but don't pad a short line up to it. A line without them matches the original's length.
 
 2. Speaker Gender & Emotional Acting Detection:
