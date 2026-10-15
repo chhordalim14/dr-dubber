@@ -72,6 +72,20 @@ describe('episode joiner', { skip }, () => {
         assert.equal(st.parts[0].reused, false);
     });
 
+    test('a file written after the part was joined (a part dubbed again) rebuilds it', async () => {
+        const src = path.join(root, 'redub.mp4');
+        fs.copyFileSync(path.join(vdir, 'E01.mp4'), src);
+        let st = await join([[src]], [7]);
+        assert.equal(st.parts[0].status, 'done');
+        st = await join([[src]], [7]);
+        assert.equal(st.parts[0].reused, true);
+        const later = new Date(Date.now() + 5000);
+        fs.utimesSync(src, later, later); // rendered again: same name, same length
+        st = await join([[src]], [7]);
+        assert.equal(st.parts[0].status, 'done');
+        assert.equal(st.parts[0].reused, false);
+    });
+
     test('an episode that can no longer be read fails its part instead of being left out', async () => {
         const broken = path.join(root, 'E05.mp4');
         fs.writeFileSync(broken, 'not a video'); // scanned fine, then damaged or locked

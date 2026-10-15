@@ -17371,6 +17371,8 @@
 
       // ── Rendering ────────────────────────────────────────────────────────
       function render() {
+        // Progress comes in every second for hours; a closed window is drawn when it opens.
+        if (modal.classList.contains("hidden")) return;
         const running = !!seriesRun;
         $("ds-merge").disabled = !handsFree();
         $("ds-merge-row").classList.toggle("opacity-50", !handsFree());
@@ -17494,7 +17496,8 @@
           btnNext.textContent = exportPending() ? `Export part ${exportPendingPart()} again` : u >= 0 ? `Continue part ${u + 1}` : `Next part: ${(nextIdx >= 0 ? nextIdx : joining[0]) + 1} of ${plan.parts.length}`;
         } else {
           btnStart.classList.add("hidden");
-          const label = exportPending() ? `Export part ${exportPendingPart()} again` : u >= 0 ? `Continue part ${u + 1}` : nextIdx >= 0 ? `Next part: ${nextIdx + 1} of ${plan.parts.length}` : joining.length ? `Next part: ${joining[0] + 1} of ${plan.parts.length}` : toJoin.length ? "Continue joining" : "";
+          const label = exportPending() ? `Export part ${exportPendingPart()} again` : u >= 0 ? `Continue part ${u + 1}` : nextIdx >= 0 ? `Next part: ${nextIdx + 1} of ${plan.parts.length}` : joining.length ? `Next part: ${joining[0] + 1} of ${plan.parts.length}` : toJoin.length ? "Continue joining"
+            : mergesToRetry().length ? "Join into one video again" : "";
           btnNext.textContent = label;
           btnNext.classList.toggle("hidden", !label);
         }
@@ -18287,6 +18290,26 @@
         render();
       }
 
+      // Parts exported this session whose "Join into one video" was stopped or failed. Continue
+      // joins them again (exportAndContinue does) - after the last part that is all it does.
+      function mergesToRetry() {
+        if (!plan || !mergeWanted()) return [];
+        return plan.parts.map((p, k) => k).filter((k) => {
+          const p = plan.parts[k], job = seriesExports.get(p);
+          return p.exported && !p.merged && job && !job.merging && job.result?.outputs?.length;
+        });
+      }
+      // Continue with every part exported: the joins left, waited for (Stop stops them).
+      async function retryMerges() {
+        const indices = mergesToRetry();
+        await exportAndContinue(); // starts them
+        setLabel("Joining into one video");
+        await Promise.all(indices.map((k) => seriesExports.get(plan.parts[k])?.merging).filter(Boolean));
+        checkStop();
+        const merged = indices.filter((k) => plan.parts[k].merged);
+        if (merged.length) showToast(`Part ${merged.map((k) => k + 1).join(", ")} joined into one video ✓`, "success");
+      }
+
       stopSeriesBackgroundExport = () => {
         for (const job of seriesExports.values()) {
           if (job.rendering) window.seriesRenderApi?.stopItems(job.items);
@@ -18480,7 +18503,10 @@
           return;
         }
         const target = u >= 0 ? u : nextPartIndex() >= 0 ? nextPartIndex() : joiningIndices()[0] ?? partsToJoin()[0];
-        if (target === undefined) return;
+        if (target === undefined) {
+          if (mergesToRetry().length) await withRun(retryMerges);
+          return;
+        }
         savePrefs();
         // Continuing a part whose tabs are still open keeps them; anything else opens new tabs.
         const keepTabs = u >= 0 && piecesOpen();
@@ -18499,8 +18525,8 @@
 
       $("btn-dub-series")?.addEventListener("click", () => {
         fillColorOptions(); // Custom presets saved since
-        render();
         modal.classList.remove("hidden");
+        render();
       });
       const close = () => {
         if (seriesRun) showToast("Dub Whole Series keeps working in the background. The All Tabs button shows its progress and can stop it.", "info");

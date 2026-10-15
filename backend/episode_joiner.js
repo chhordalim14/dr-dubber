@@ -294,10 +294,14 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
 
     // Joined before (same folder chosen again, or Continue after a restart): the finished file
     // is only ever renamed into place when complete, so it is reused when it holds the same
-    // episodes and has their total length.
+    // episodes and has their total length - and no file was written after it. (Dubbing a part
+    // again renders its tabs over the same names and lengths; Join into one video must not keep
+    // the old dub.)
     async function alreadyJoined(part, partDur) {
         try {
             if (!fs.existsSync(part.outPath) || fs.readFileSync(episodesListPath(part), 'utf8').replace(/\r/g, '') !== episodesListText(part)) return false;
+            const joinedAt = fs.statSync(part.outPath).mtimeMs;
+            if (part.episodes.some(e => fs.statSync(e.path).mtimeMs > joinedAt)) return false;
         } catch (e) { return false; }
         const info = await probe(part.outPath);
         const d = parseFloat(info.format && info.format.duration) || 0;
@@ -486,7 +490,9 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
         let names = [];
         try { names = fs.readdirSync(outDir); } catch (e) { return; }
         for (const name of names) {
-            if (!/^\.join_tmp_/.test(name) && !/\.part\.mp4$/i.test(name)) continue;
+            // Only names partialPath makes (".<job id>.part.mp4"): Join into one video runs in the
+            // user's export folder, where another app's ".part.mp4" may be.
+            if (!/^\.join_tmp_/.test(name) && !/\.[0-9a-f]{8}\.part\.mp4$/i.test(name)) continue;
             const p = path.join(outDir, name);
             try {
                 if (Date.now() - fs.statSync(p).mtimeMs > STALE_JOIN_MS) fs.rm(p, { recursive: true, force: true, maxRetries: 5, retryDelay: 1000 }, () => { });

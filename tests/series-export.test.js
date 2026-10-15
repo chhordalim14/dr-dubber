@@ -61,8 +61,9 @@ function makeSeries({ parts = 3, outcome = () => 'done', renderMs = 10, dubMs = 
     const getJson = async (url) => {
       await sleep(renderMs);
       const body = env.joins[Number(decodeURIComponent(url.split('jobId=')[1]))];
-      return joinError
-        ? { success: true, status: 'finished_with_errors', parts: [{ status: 'error', error: joinError }] }
+      const err = env.joinError !== undefined ? env.joinError : joinError; // env.joinError: changed mid-test
+      return err
+        ? { success: true, status: 'finished_with_errors', parts: [{ status: 'error', error: err }] }
         : { success: true, status: 'done', parts: [{ status: 'done', percent: 100, outPath: body.outDir + '/' + body.seriesName + '_part0' + body.partNumbers[0] + '.mp4' }] };
     };
     const closeProjectTab = (k) => { env.log.push('close ' + projects[k].name); projects.splice(k, 1); };
@@ -125,7 +126,7 @@ function makeSeries({ parts = 3, outcome = () => 'done', renderMs = 10, dubMs = 
     ${loadBlock}
     ${exportBlock}
     return {
-      exportAndContinue, runPart, lostNote: () => lostExportsNote,
+      exportAndContinue, runPart, retryMerges, mergesToRetry, lostNote: () => lostExportsNote,
       stop: () => { seriesRun.stopped = true; stopSeriesBackgroundExport(); }, // the series' Stop
       stopQueue: () => stopRenderQueue(), // the render queue's own Stop button
       newRun: () => { seriesRun = { stopped: false }; },
@@ -201,6 +202,19 @@ describe('Dub Whole Series hands-free export', () => {
     assert.ok(plan.parts.every((p) => p.exported && !p.merged && p.mergeError === 'disk full'));
     assert.ok(env.toasts.some((t) => t.type === 'warning' && /Part 1: its tabs could not be joined into one video \(disk full\)/.test(t.m)));
     assert.ok(env.toasts.some((t) => /All 2 parts are dubbed and exported ✓/.test(t.m)));
+  });
+
+  test('a join that failed after the last part: Continue joins it again (nothing else is left to do)', async () => {
+    const { env, plan, api } = makeSeries({ parts: 2, merge: true, joinError: 'disk full' });
+    await api.exportAndContinue();
+    assert.deepEqual(api.mergesToRetry(), [0, 1]);
+    env.joinError = null; // space freed
+    await api.retryMerges();
+    assert.deepEqual(plan.parts.map((p) => p.merged), ['D:/out/Show_Dubbed_part01.mp4', 'D:/out/Show_Dubbed_part02.mp4']);
+    assert.ok(plan.parts.every((p) => !p.mergeError));
+    assert.deepEqual(api.mergesToRetry(), []);
+    assert.ok(env.toasts.some((t) => /Part 1, 2 joined into one video ✓/.test(t.m)));
+    assert.equal(env.log.filter((l) => /^render /.test(l)).length, 6, 'the tabs are not rendered again');
   });
 
   test('a tab that fails twice in the background is rendered again before the next export', async () => {
