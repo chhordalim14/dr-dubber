@@ -4481,7 +4481,7 @@
             glossary: typeof getDramaGlossaryDict === "function" ? getDramaGlossaryDict() : null,
             apiKey: apiKeys[0],
             apiKeys,
-            model: localStorage.getItem("aiDubberModel") || "gemini-2.5-flash",
+            model: localStorage.getItem("aiDubberModel") || "gemini-3.8-flash",
             requestId,
             ...(maxLanes ? { maxLanes } : {}),
           }),
@@ -4803,7 +4803,7 @@
             glossary: typeof getDramaGlossaryDict === "function" ? getDramaGlossaryDict() : null,
             apiKey: apiKeys[0],
             apiKeys,
-            model: localStorage.getItem("aiDubberModel") || "gemini-2.5-flash",
+            model: localStorage.getItem("aiDubberModel") || "gemini-3.8-flash",
             requestId,
           }),
         });
@@ -4860,7 +4860,7 @@
             glossary: typeof getDramaGlossaryDict === "function" ? getDramaGlossaryDict() : null,
             apiKey: apiKeys[0],
             apiKeys,
-            model: localStorage.getItem("aiDubberModel") || "gemini-2.5-flash",
+            model: localStorage.getItem("aiDubberModel") || "gemini-3.8-flash",
             requestId,
           }),
         });
@@ -9255,6 +9255,9 @@
       if (savedModel === "gemini-2.0-flash") {
         savedModel = "gemini-3.8-flash";
       }
+      // Retired Oct 8, 2026: Google answers them with these models anyway.
+      if (savedModel === "gemini-3.7-flash") savedModel = "gemini-3.8-flash";
+      if (savedModel === "gemini-3.5-flash") savedModel = "gemini-3.6-flash";
 
       const modelSelect = document.getElementById("setting-ai-model");
       if (modelSelect) {
@@ -19581,7 +19584,7 @@
       let keys = [];
       try { keys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]"); } catch (_) { keys = []; }
       keys = (Array.isArray(keys) ? keys : []).map((k) => String(k || "").trim()).filter(Boolean);
-      return { keys, model: localStorage.getItem("aiDubberModel") || "gemini-2.5-flash" };
+      return { keys, model: localStorage.getItem("aiDubberModel") || "gemini-3.8-flash" };
     }
 
     // Returns [{ id, condensedText }] or null (error already toasted unless quiet, or cancelled).
@@ -25483,7 +25486,7 @@
         // One /api/suggest-movie-title call. The server rotates through every key itself (and
         // waits/retries if Google is busy); with CodeCraft chosen it goes there.
         async function requestTitleIdeas({ originalTitle = "", subtitlesContent = "", projectSubtitles = [] }) {
-          const activeModel = localStorage.getItem("aiDubberModel") || "gemini-2.5-flash";
+          const activeModel = localStorage.getItem("aiDubberModel") || "gemini-3.8-flash";
           const keys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]").filter(Boolean);
           if (!keys.length && !window.textAi?.ready()) throw new Error("Please enter your Gemini API Key in Settings ➔ General.");
           const res = await fetch("http://localhost:3001/api/suggest-movie-title", {

@@ -18,17 +18,19 @@
   // longer description. paid: listed under "Billing / Paid Tier" (no free-tier quota).
   const MODELS = [
     { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', note: 'Latest', label: 'Gemini 3.8 Flash (Latest & Tunable Thinking)', badge: 'Latest', icon: 'zap', tone: 'amber' },
-    { id: 'gemini-3.7-flash', name: 'Gemini 3.7 Flash', label: 'Gemini 3.7 Flash (Hybrid Reasoning & Ultra Fast)', icon: 'zap', tone: 'yellow' },
     { id: 'gemini-3.6-flash', name: 'Gemini 3.6 Flash', icon: 'zap', tone: 'yellow' },
-    { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', icon: 'zap', tone: 'yellow' },
     { id: 'gemini-3.5-flash-lite', name: 'Gemini 3.5 Flash Lite', icon: 'feather', tone: 'emerald' },
     { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', label: 'Gemini 3.1 Pro (Most Intelligent - Paid)', badge: 'Paid / Pro', icon: 'brain-circuit', tone: 'violet', paid: true },
+    // Shut down by Google on May 7, 2027 (3.5 Flash Lite replaces it).
     { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash Lite', icon: 'feather', tone: 'emerald' },
-    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', label: 'Gemini 2.5 Pro (Advanced Reasoning - Paid)', badge: 'Paid / Pro', icon: 'atom', tone: 'purple', paid: true },
-    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', label: 'Gemini 2.5 Flash (Free Tier & Ultra Fast)', badge: 'Free & Fast', icon: 'zap', tone: 'yellow' }
-    // Shut down by Google, so not offered: 2.0 Flash / Flash Lite (June 2026), 1.5 Pro / Flash
-    // (2025). "gemini-3.1-flash" was never a Gemini API model. A setting saved with one of them
-    // falls back to the first model here.
+    // Since Sep 18, 2026 Google gives the 2.5 models only to keys that used them before; a newer
+    // key gets "no longer available to new users" (the server then uses the best model it has).
+    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', label: 'Gemini 2.5 Pro (Older keys only - Paid)', badge: 'Paid / Pro', icon: 'atom', tone: 'purple', paid: true },
+    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', note: 'older keys only', label: 'Gemini 2.5 Flash (Only for keys that used it before)', badge: 'Older keys', icon: 'zap', tone: 'yellow' }
+    // Not offered: 3.7 Flash and 3.5 Flash were retired on Oct 8, 2026 (Google answers them with
+    // 3.8 Flash and 3.6 Flash). Shut down by Google: 2.0 Flash / Flash Lite (June 2026), 1.5 Pro /
+    // Flash (2025). "gemini-3.1-flash" was never a Gemini API model. A setting saved with one of
+    // them gets its replacement (Settings) or the first model here.
     // Gemini 3.5 Transcribe is not offered either: it takes audio only and returns the words as
     // spoken - no prompt, no JSON, no translation - so it can't make the app's Khmer subtitles.
   ];

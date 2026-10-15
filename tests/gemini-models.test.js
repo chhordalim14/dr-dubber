@@ -24,18 +24,19 @@ function run() {
 test('every select gets the same full list, 3.8 Flash first', () => {
   const { window, els } = run();
   const ids = Array.from(window.GEMINI_MODELS, (m) => m.id);
-  assert.equal(ids.length, 9);
+  assert.equal(ids.length, 7);
   for (const id of ['setting-ai-model', 'dai-model-select', 'dai-trans-model-select']) {
     assert.deepEqual(els[id].options.map((o) => o.value), ids);
     assert.equal(els[id].value, 'gemini-3.8-flash');
   }
 });
 
-test('the Settings dropdown shows every model, including 3.5 / 3.6 Flash', () => {
+test('the Settings dropdown shows every model, and not the retired 3.7 / 3.5 Flash', () => {
   const { window, els } = run();
   const shown = [...els['gemini-model-list'].innerHTML.matchAll(/data-model="([^"]+)"/g)].map((m) => m[1]);
   assert.deepEqual([...shown].sort(), Array.from(window.GEMINI_MODELS, (m) => m.id).sort());
-  assert.ok(shown.includes('gemini-3.5-flash') && shown.includes('gemini-3.6-flash'));
+  assert.ok(shown.includes('gemini-3.5-flash-lite') && shown.includes('gemini-3.6-flash'));
+  assert.ok(!shown.includes('gemini-3.7-flash') && !shown.includes('gemini-3.5-flash'));
 });
 
 test('paid models are listed under the paid header', () => {
@@ -43,7 +44,7 @@ test('paid models are listed under the paid header', () => {
   const list = els['gemini-model-list'].innerHTML;
   const paidAt = list.indexOf('Billing / Paid Tier');
   assert.ok(list.indexOf('data-model="gemini-3.1-pro-preview"') > paidAt);
-  assert.ok(list.indexOf('data-model="gemini-3.5-flash"') < paidAt);
+  assert.ok(list.indexOf('data-model="gemini-3.6-flash"') < paidAt);
 });
 
 test('index.html keeps no copy of the list and loads the file before the pickers are wired', () => {

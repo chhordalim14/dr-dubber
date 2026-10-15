@@ -1050,16 +1050,22 @@ app.post('/api/cancel-remove-vocals', (req, res) => {
 });
 
 // --- GEMINI MODEL RESOLUTION & FALLBACK ENGINE ---
+// Retired by Google on Oct 8, 2026: the names still answer, but Google routes them to another
+// model. Asking one is asking its replacement - as a fallback after the replacement hit its limit
+// it only asked the same model again - so the fallbacks leave them out.
+const GEMINI_ROUTED_MODELS = { 'gemini-3.7-flash': 'gemini-3.8-flash', 'gemini-3.5-flash': 'gemini-3.6-flash' };
 function resolveGeminiModel(modelName) {
     if (!modelName || modelName === 'latest') return 'gemini-3.8-flash';
     const m = String(modelName).toLowerCase().trim();
     if (m === 'gemini-3.8-flash' || m.includes('3.8-flash') || m.includes('3.8')) return 'gemini-3.8-flash';
     // Audio-only (no prompt or JSON): it can't do the app's jobs, so an older saved setting gets 3.8 Flash.
     if (m.includes('3.5-transcribe') || m.includes('audio-specialist')) return 'gemini-3.8-flash';
-    if (m === 'gemini-3.7-flash' || m.includes('3.7-flash') || m.includes('3.7')) return 'gemini-3.7-flash';
+    // Retired 3.7 / 3.5 Flash (see GEMINI_ROUTED_MODELS): an older saved setting gets the model
+    // Google answers it with anyway.
+    if (m === 'gemini-3.7-flash' || m.includes('3.7-flash') || m.includes('3.7')) return 'gemini-3.8-flash';
     if (m === 'gemini-3.6-flash' || m.includes('3.6-flash') || m.includes('3.6')) return 'gemini-3.6-flash';
     if (m === 'gemini-3.5-flash-lite' || m.includes('3.5-flash-lite') || m.includes('3.5-lite')) return 'gemini-3.5-flash-lite';
-    if (m === 'gemini-3.5-flash' || m.includes('3.5-flash') || m.includes('3.5')) return 'gemini-3.5-flash';
+    if (m === 'gemini-3.5-flash' || m.includes('3.5-flash') || m.includes('3.5')) return 'gemini-3.6-flash';
     if (m === 'gemini-3.1-pro-preview' || m === 'gemini-3.1-pro' || m.includes('3.1-pro')) return 'gemini-3.1-pro-preview';
     if (m === 'gemini-3.1-flash-lite' || m.includes('3.1-flash-lite') || m.includes('3.1-lite')) return 'gemini-3.1-flash-lite';
     // Shut down (or never a Gemini API model): an older saved setting gets Google's replacement.
@@ -1106,6 +1112,7 @@ async function listGeminiModels(apiKey, signal) {
 function rankGeminiFallbacks(available) {
     const parsed = [];
     for (const name of available) {
+        if (GEMINI_ROUTED_MODELS[name]) continue;
         // Dated previews only ("-preview-09-2025"); skips -tts, -image, -live variants and
         // -transcribe (audio only: it refuses a prompt and JSON, so every request to it failed).
         const m = name.match(/^gemini-(\d+(?:\.\d+)?)-(flash|pro)(?:-(latest|preview(?:-\d[\d-]*)?))?$/);
@@ -1123,7 +1130,8 @@ async function getCandidateModels(apiKey, requestedModel, signal) {
     const primary = resolveGeminiModel(requestedModel);
     const available = await listGeminiModels(apiKey, signal);
     if (!available) {
-        return [primary, 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-2.5-pro']
+        // (2.5 Flash / Pro answer only keys that used them before, so they aren't guessed here.)
+        return [primary, 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-pro-preview']
             .filter((v, i, a) => a.indexOf(v) === i);
     }
     const ranked = rankGeminiFallbacks(available);
@@ -1178,6 +1186,16 @@ const geminiNoJsonModeModels = new Set();
 // ...and of those, the ones whose plain reply had no JSON at all (e.g. an audio "transcribe" model
 // answering with a bare transcript). They are skipped for JSON requests from then on.
 const geminiNoJsonOutputModels = new Set();
+// apiKey|model -> when it answered 404 (gone, renamed, or not open to this key). Asked again
+// after a while, in case Google opens it.
+const geminiGoneModels = new Map();
+const GEMINI_GONE_MS = 6 * 60 * 60 * 1000;
+function isGeminiModelGone(apiKey, m) {
+    const at = geminiGoneModels.get(`${apiKey}|${m}`);
+    if (at && Date.now() - at < GEMINI_GONE_MS) return true;
+    if (at) geminiGoneModels.delete(`${apiKey}|${m}`);
+    return false;
+}
 const isJsonModeUnsupported = (msg) => /JSON mode is not enabled|response_?mime_?type|response_?schema/i.test(String(msg || ''));
 
 // Thinking tokens are billed as output. Text jobs that follow clear rules (translate, shorten, the
@@ -1351,7 +1369,10 @@ function formatWait(ms) {
 // thinking: 'low' asks for little thinking (geminiThinkingConfig) - text jobs only.
 async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { stayOnModel = false, timeoutMs = GEMINI_ATTEMPT_TIMEOUT_MS, thinking = null } = {}) {
     apiKey = String(apiKey || '').trim();
-    const allModels = await getCandidateModels(apiKey, requestedModel, signal);
+    const listed = await getCandidateModels(apiKey, requestedModel, signal);
+    // A model that answered 404 for this key is left out (unless nothing else is left).
+    const reachable = listed.filter(m => !isGeminiModelGone(apiKey, m));
+    const allModels = reachable.length ? reachable : listed;
     const body = JSON.stringify(payload);
     const gen = payload && payload.generationConfig;
     const plainBody = gen && (gen.responseMimeType || gen.responseSchema)
@@ -1379,7 +1400,7 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { 
     // has its own daily allowance, so use the next one instead of stopping the whole job.
     const dailyOut = (m) => { const c = geminiModelCooldowns.get(`${apiKey}|${m}`); return !!(c && c.daily && c.until > Date.now()); };
     const stayPool = usableModels.filter(m => !dailyOut(m));
-    const firstChoice = stayOnModel ? (stayPool.length ? stayPool : usableModels)[0] : allModels[0];
+    let firstChoice = stayOnModel ? (stayPool.length ? stayPool : usableModels)[0] : allModels[0];
     // Models Google just said are busy go last (still tried if every model is busy).
     const candidateModels = stayOnModel ? [firstChoice].filter(Boolean)
         : [...allModels.filter(m => !isGeminiModelBusy(m)), ...allModels.filter(isGeminiModelBusy)];
@@ -1497,7 +1518,23 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { 
             if (res.status === 400 && /payload size|exceeds the limit|too large/i.test(errMsg)) {
                 return { success: false, status: 413, code: 'AUDIO_TOO_LARGE', error: `Audio is too large for Gemini: ${errMsg}`, message: errMsg };
             }
-            if (res.status === 404) break; // model gone/renamed: next model, not worth reporting
+            if (res.status === 404) {
+                // Model gone/renamed, or closed to this key (Google gives the 2.5 models only to
+                // keys that used them before: "no longer available to new users"). Remembered,
+                // so the next requests don't ask it first. stayOnModel offered only this model:
+                // the best one the key has takes its place (and counts as the chosen one, so its
+                // results aren't redone as a fallback's).
+                geminiGoneModels.set(`${apiKey}|${m}`, Date.now());
+                console.warn(`[Gemini] ${m} is not available to key …${apiKey.slice(-4)} - not asking it again for this key`);
+                if (stayOnModel) {
+                    const next = usableModels.find(x => !candidateModels.includes(x) && !isGeminiModelGone(apiKey, x) && !dailyOut(x));
+                    if (next) {
+                        candidateModels.push(next);
+                        if (m === firstChoice) firstChoice = next;
+                    }
+                }
+                break;
+            }
             if (res.status === 400 && thinking && /thinking/i.test(errMsg) && !geminiNoThinkingConfigModels.has(m) && geminiThinkingConfig(m, thinking)) {
                 geminiNoThinkingConfigModels.add(m);
                 console.warn(`[Gemini] ${m} refused the thinking setting - asking it again without one`);
@@ -3493,7 +3530,7 @@ app.post('/api/condense-fast-subtitles', async (req, res) => {
         glossary,
         apiKey,
         apiKeys,
-        model = 'gemini-2.5-flash',
+        model = 'gemini-3.8-flash',
         requestId
     } = req.body || {};
 
@@ -4355,7 +4392,7 @@ function sampleDialogue(lines, budget) {
 }
 
 app.post('/api/suggest-movie-title', async (req, res) => {
-    const { originalTitle = '', subtitlesContent = '', projectSubtitles, genre = 'historical', glossary, apiKey, apiKeys, model = 'gemini-2.5-flash', count = 8, notes = '' } = req.body || {};
+    const { originalTitle = '', subtitlesContent = '', projectSubtitles, genre = 'historical', glossary, apiKey, apiKeys, model = 'gemini-3.8-flash', count = 8, notes = '' } = req.body || {};
     const keyPool = textKeys([apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])]);
     if (!keyPool.length) return res.status(400).json({ success: false, error: 'INVALID_API_KEY', message: 'Gemini API key is required.' });
 
@@ -4468,7 +4505,7 @@ ${lines.map(l => `${l.originalText} => ${l.text}`).join('\n')}`;
 }
 
 app.post('/api/unify-names', async (req, res) => {
-    const { tabs, glossary, apiKey, apiKeys, model = 'gemini-2.5-flash', requestId } = req.body || {};
+    const { tabs, glossary, apiKey, apiKeys, model = 'gemini-3.8-flash', requestId } = req.body || {};
     const keyPool = textKeys([apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])]);
     if (!keyPool.length) return res.status(400).json({ success: false, error: 'INVALID_API_KEY', message: 'Gemini API key is required.' });
     if (!Array.isArray(tabs) || !tabs.length) return res.status(400).json({ success: false, error: 'NO_TABS', message: 'No tabs were sent.' });
