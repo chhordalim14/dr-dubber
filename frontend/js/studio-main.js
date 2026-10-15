@@ -17238,6 +17238,7 @@
       // Hands-free exports of this session: part (its plan object) -> { items, run, rendering, result }.
       // A part's queue items (and so its export) only live in this session's render queue.
       const seriesExports = new Map();
+      let wholeJoin = null; // { jobId, percent } while the whole series is joined into one video
       const exportComplete = (r) => !!(r && r.total && r.done === r.total);
       // Parts whose hands-free export started this session and isn't complete yet, in part order.
       const unfinishedExports = () => (plan ? plan.parts.map((p, k) => k).filter((k) => !plan.parts[k].exported && seriesExports.has(plan.parts[k])) : []);
@@ -17270,6 +17271,7 @@
           OPTIONAL_STEPS.forEach((k) => { if (typeof prefs[k] === "boolean") $(`ds-step-${k}`).checked = prefs[k]; });
           if (typeof prefs.handsFree === "boolean" && $("ds-handsfree")) $("ds-handsfree").checked = prefs.handsFree;
           if (typeof prefs.merge === "boolean") $("ds-merge").checked = prefs.merge;
+          if (prefs.mergeScope === "series" || prefs.mergeScope === "part") $("ds-merge-scope").value = prefs.mergeScope;
         }
       } catch (e) { }
       const savePrefs = () => {
@@ -17277,6 +17279,7 @@
         OPTIONAL_STEPS.forEach((k) => { prefs[k] = $(`ds-step-${k}`).checked; });
         prefs.handsFree = handsFree();
         prefs.merge = $("ds-merge").checked;
+        prefs.mergeScope = mergeScope();
         prefs.colorFilter = colorSel.value;
         try { localStorage.setItem("aiDubberSeriesPrefs", JSON.stringify(prefs)); } catch (e) { }
       };
@@ -17284,7 +17287,11 @@
       const handsFree = () => !!$("ds-handsfree")?.checked;
       // Hands-free: each exported part's tab videos are joined into one video.
       const mergeWanted = () => handsFree() && $("ds-merge").checked;
+      // "part": one video per part, joined as each part is exported. "series": the whole series in
+      // one video - every part's tabs joined once, after the last part.
+      const mergeScope = () => ($("ds-merge-scope")?.value === "series" ? "series" : "part");
       $("ds-merge").addEventListener("change", () => { savePrefs(); render(); });
+      $("ds-merge-scope")?.addEventListener("change", () => { savePrefs(); render(); });
       // A finished part whose hands-free export didn't complete, with its tabs still open (tabs
       // open after its own were closed belong to something else).
       // The finished part's own tabs are open (a plan saved before parts kept their pieces: any tab).
@@ -17368,6 +17375,13 @@
             : r && !exportComplete(r) ? ["✗", "text-red-400", `${r.done} of ${r.total} tab(s) exported${r.failed ? ` (${r.failed} failed)` : ""}`]
               : ["○", "text-[var(--text-muted)]", `${ex.total} tab(s) waiting in the render queue`];
         const line = (icon, cls, name, note) => `<div class="flex items-start gap-2 text-xs"><span class="w-4 shrink-0 text-center ${cls}">${icon}</span><span class="shrink-0">${name}</span><span class="text-[var(--text-muted)] truncate flex-1 min-w-0">· ${esc(note)}</span></div>`;
+        if (mergeScope() === "series") {
+          const whole = wholeJoin ? ["●", "text-violet-300 animate-pulse", `${wholeJoin.percent || 0}%`]
+            : plan.fullMerged ? ["✓", "text-emerald-400", plan.fullMerged.split(/[\\/]/).pop()]
+              : plan.fullMergeError ? ["✗", "text-red-400", plan.fullMergeError]
+                : mergeWanted() ? ["○", "text-[var(--text-muted)]", "after the last part"] : null;
+          return line(icon, cls, "Export", note) + (whole ? line(...whole.slice(0, 2), "Join the whole series", whole[2]) : "");
+        }
         const join = job.merging ? ["●", "text-violet-300 animate-pulse", `${job.mergePercent || 0}%`]
           : part.merged ? ["✓", "text-emerald-400", part.merged.split(/[\\/]/).pop()]
             : part.mergeError ? ["✗", "text-red-400", part.mergeError]
@@ -17381,6 +17395,7 @@
         if (modal.classList.contains("hidden")) return;
         const running = !!seriesRun;
         $("ds-merge").disabled = !handsFree();
+        $("ds-merge-scope").disabled = !mergeWanted();
         $("ds-merge-row").classList.toggle("opacity-50", !handsFree());
         renderClips();
         const folder = plan?.folder || scan?.folder || "";
@@ -17503,7 +17518,7 @@
         } else {
           btnStart.classList.add("hidden");
           const label = exportPending() ? `Export part ${exportPendingPart()} again` : u >= 0 ? `Continue part ${u + 1}` : nextIdx >= 0 ? `Next part: ${nextIdx + 1} of ${plan.parts.length}` : joining.length ? `Next part: ${joining[0] + 1} of ${plan.parts.length}` : toJoin.length ? "Continue joining"
-            : mergesToRetry().length ? "Join into one video again" : "";
+            : mergesToRetry().length || wholeToRetry() ? "Join into one video again" : "";
           btnNext.textContent = label;
           btnNext.classList.toggle("hidden", !label);
         }
@@ -18148,8 +18163,13 @@
               setLabel("Joining the last part's tabs into one video");
               await Promise.all(merging);
             }
+            await joinWholeSeries();
+            checkStop();
             const merged = plan.parts.filter((p) => p.merged).length;
-            showToast(`All ${plan.parts.length} parts are dubbed and exported${merged ? ` (${merged} joined into one video each)` : ""} ✓`, "success");
+            const joined = mergeScope() === "series"
+              ? (plan.fullMerged ? `, joined into one video: ${plan.fullMerged.split(/[\\/]/).pop()}` : "")
+              : (merged ? ` (${merged} joined into one video each)` : "");
+            showToast(`All ${plan.parts.length} parts are dubbed and exported${joined} ✓`, "success");
             modal.classList.remove("hidden");
             return;
           }
@@ -18207,7 +18227,11 @@
             job.result = r;
             if (exportComplete(r)) {
               part.exported = true;
-              if (plan?.parts.includes(part)) savePlan();
+              part.outputs = r.outputs; // kept for the whole-series join (after an app restart too)
+              if (plan?.parts.includes(part)) {
+                delete plan.fullMerged; // a part exported again: the whole-series video is out of date
+                savePlan();
+              }
               mergePartExport(i, r.outputs);
             }
             return r;
@@ -18257,7 +18281,7 @@
       function mergePartExport(i, outputs) {
         const part = plan.parts[i];
         const job = seriesExports.get(part);
-        if (!job || job.merging || part.merged || !mergeWanted() || !outputs?.length || outputs.some((o) => !o)) return;
+        if (!job || job.merging || part.merged || !mergeWanted() || mergeScope() !== "part" || !outputs?.length || outputs.some((o) => !o)) return;
         job.mergePercent = 0;
         delete part.mergeError;
         job.merging = (async () => {
@@ -18303,7 +18327,7 @@
       // Parts exported this session whose "Join into one video" was stopped or failed. Continue
       // joins them again (exportAndContinue does) - after the last part that is all it does.
       function mergesToRetry() {
-        if (!plan || !mergeWanted()) return [];
+        if (!plan || !mergeWanted() || mergeScope() !== "part") return [];
         return plan.parts.map((p, k) => k).filter((k) => {
           const p = plan.parts[k], job = seriesExports.get(p);
           return p.exported && !p.merged && job && !job.merging && job.result?.outputs?.length;
@@ -18318,6 +18342,79 @@
         checkStop();
         const merged = indices.filter((k) => plan.parts[k].merged);
         if (merged.length) showToast(`Part ${merged.map((k) => k + 1).join(", ")} joined into one video ✓`, "success");
+        if (wholeToRetry()) {
+          await joinWholeSeries();
+          checkStop();
+          if (plan.fullMerged) showToast(`The whole series is joined into one video: ${plan.fullMerged.split(/[\\/]/).pop()} ✓`, "success");
+        }
+      }
+
+      // "One video for the whole series": every part's exported tabs in order, joined once after
+      // the last part (the clips at their episodes) into Name_Dubbed_full.mp4 next to them. Joined
+      // from the tabs, not from per-part videos: a part with clips is encoded and one without is
+      // copied, and joining those two would encode the whole series again. Copied as it is when
+      // no clip goes in. A failure only warns - each tab's own video is there.
+      function wholeSeriesFiles() {
+        if (!plan?.parts.length || !plan.parts.every((p) => p.exported && p.outputs?.length && p.outputs.every(Boolean))) return null;
+        return plan.parts.flatMap((p) => p.outputs);
+      }
+      function wholeSeriesInserts() {
+        if (!plan.parts.every((p) => p.eps)) return [];
+        const eps = plan.parts.flatMap((p) => p.eps);
+        return currentClips().map((c) => ({ at: eps.slice(0, c.pos).reduce((s, e) => s + e.duration, 0), path: c.path }));
+      }
+      // Every part exported, but the whole-series video not made (stopped, failed, or chosen after).
+      // Not for a series exported before each part's videos were kept: nothing to join them from.
+      function wholeToRetry() {
+        return !!(plan && mergeWanted() && mergeScope() === "series" && !plan.fullMerged && !wholeJoin &&
+          plan.parts.every((p) => p.status === "done") && wholeSeriesFiles());
+      }
+      async function joinWholeSeries() {
+        if (!plan || !mergeWanted() || mergeScope() !== "series" || wholeJoin) return;
+        const files = wholeSeriesFiles();
+        if (!files) {
+          const k = plan.parts.findIndex((p) => !p.outputs?.length);
+          plan.fullMergeError = `part ${k + 1} was exported before its videos were kept - join them with Join Episodes`;
+          savePlan();
+          return;
+        }
+        delete plan.fullMergeError;
+        wholeJoin = { jobId: null, percent: 0 };
+        setLabel("Joining the whole series into one video");
+        try {
+          const inserts = wholeSeriesInserts();
+          const r = await postJson(`${API}/episodes/join`, { parts: [inserts.length ? { files, inserts } : files], partNumbers: [1], outDir: dirOf(files[0]), seriesName: `${plan.seriesName}_Dubbed`, fileName: `${plan.seriesName}_Dubbed_full` });
+          if (!r.success) throw new Error(r.error);
+          wholeJoin.jobId = r.jobId;
+          if (seriesRun?.stopped) postJson(`${API}/episodes/cancel`, { jobId: r.jobId }).catch(() => { }); // Stop came while it started
+          for (;;) {
+            await sleep(1000);
+            const st = await getJson(`${API}/episodes/status?jobId=${encodeURIComponent(r.jobId)}`).catch(() => null);
+            if (!st?.success) throw new Error("lost track of the joining job");
+            const sp = st.parts[0];
+            if (st.status === "running") {
+              if (sp && sp.percent !== wholeJoin.percent) {
+                wholeJoin.percent = sp.percent;
+                setLabel(`Joining the whole series into one video ${sp.percent || 0}%`);
+              }
+              continue;
+            }
+            if (st.status === "cancelled") {
+              plan.fullMergeError = "stopped - Continue joins it"; // the series' Stop
+              return;
+            }
+            if (sp?.status !== "done") throw new Error(sp?.error || "it failed");
+            plan.fullMerged = sp.outPath;
+            return;
+          }
+        } catch (e) {
+          plan.fullMergeError = e.message;
+          showToast(`The whole series could not be joined into one video (${e.message}). Each tab's own video is in the export folder.`, "warning");
+        } finally {
+          wholeJoin = null;
+          savePlan();
+          render();
+        }
       }
 
       stopSeriesBackgroundExport = () => {
@@ -18325,6 +18422,7 @@
           if (job.rendering) window.seriesRenderApi?.stopItems(job.items);
           if (job.mergeJobId) postJson(`${API}/episodes/cancel`, { jobId: job.mergeJobId }).catch(() => { });
         }
+        if (wholeJoin?.jobId) postJson(`${API}/episodes/cancel`, { jobId: wholeJoin.jobId }).catch(() => { });
       };
 
       async function startBackgroundJoin(indices) {
@@ -18514,7 +18612,7 @@
         }
         const target = u >= 0 ? u : nextPartIndex() >= 0 ? nextPartIndex() : joiningIndices()[0] ?? partsToJoin()[0];
         if (target === undefined) {
-          if (mergesToRetry().length) await withRun(retryMerges);
+          if (mergesToRetry().length || wholeToRetry()) await withRun(retryMerges);
           return;
         }
         savePrefs();

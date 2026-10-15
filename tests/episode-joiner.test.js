@@ -72,6 +72,16 @@ describe('episode joiner', { skip }, () => {
         assert.equal(st.parts[0].reused, false);
     });
 
+    test('fileName: the whole series in one video under its own name, every piece in order', async () => {
+        const files = [path.join(vdir, 'E01.mp4'), path.join(vdir, 'E02.mp4'), path.join(vdir, 'E01.mp4')];
+        const id = await joiner.start({ parts: [files], partNumbers: [1], outDir: out, seriesName: 'S_Dubbed', fileName: 'S_Dubbed_full' });
+        const st = await waitJob(() => joiner.status(id));
+        assert.equal(st.parts[0].status, 'done', st.parts[0].error);
+        assert.equal(path.basename(st.parts[0].outPath), 'S_Dubbed_full.mp4');
+        assert.ok(Math.abs(duration(st.parts[0].outPath) - 6) < 0.3);
+        assert.ok(fs.existsSync(path.join(out, 'S_Dubbed_full_episodes.txt')));
+    });
+
     test('a file written after the part was joined (a part dubbed again) rebuilds it', async () => {
         const src = path.join(root, 'redub.mp4');
         fs.copyFileSync(path.join(vdir, 'E01.mp4'), src);

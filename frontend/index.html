@@ -3697,10 +3697,16 @@
             <input id="ds-handsfree" type="checkbox" class="accent-violet-500 mt-0.5">
             <span><span class="text-[var(--text-primary)]">Hands-free:</span> <span class="text-[var(--text-secondary)]">export each finished part (render queue) and go on to the next part by itself - a whole series overnight</span></span>
           </label>
-          <label id="ds-merge-row" class="flex items-start gap-1.5 cursor-pointer text-xs ml-5" title="With Hands-free: when every tab of a part is exported, the tabs' videos are joined into one video (Name_Dubbed_part01.mp4) in the same folder. The tabs' own videos are kept.">
-            <input id="ds-merge" type="checkbox" class="accent-violet-500 mt-0.5">
-            <span><span class="text-[var(--text-primary)]">Join into one video:</span> <span class="text-[var(--text-secondary)]">after a part is exported, join its tabs' videos into one video per part</span></span>
-          </label>
+          <div id="ds-merge-row" class="flex flex-wrap items-center gap-1.5 text-xs ml-5" title="With Hands-free: the exported tabs' videos are joined into one video in the same folder - one per part as each part is exported (Name_Dubbed_part01.mp4), or the whole series once after the last part (Name_Dubbed_full.mp4). The tabs' own videos are kept.">
+            <label class="flex items-center gap-1.5 cursor-pointer">
+              <input id="ds-merge" type="checkbox" class="accent-violet-500">
+              <span class="text-[var(--text-primary)]">Join into one video:</span>
+            </label>
+            <select id="ds-merge-scope" class="bg-[var(--bg-base)] border border-[var(--border-light)] rounded-md px-1.5 py-0.5 outline-none focus:border-violet-500 cursor-pointer">
+              <option value="part">one video per part</option>
+              <option value="series">one video for the whole series</option>
+            </select>
+          </div>
           <div id="ds-clips-box" class="hidden flex-col gap-1.5 text-xs ml-10" title="Video clips put into the joined video, each at the place you pick. A clip after a part's last episode ends that part. Joining with clips encodes the part's video again, so it takes a few minutes.">
             <div class="flex items-center gap-2">
               <span class="text-[var(--text-secondary)]">Clips between episodes:</span>

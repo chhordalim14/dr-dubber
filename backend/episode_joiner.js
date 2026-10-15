@@ -23,7 +23,10 @@ const AUDIO_EXTS = new Set(['.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.o
 // Audio the app saves next to a video while transcribing - never an episode.
 const isAppAudioFile = (name) => /^transcribe_/i.test(name);
 const AUDIO_RATE = 48000;
-const MAX_EPISODES_PER_PART = 80; // keeps FFmpeg command lines well under Windows' 32KB limit
+// Pieces one join takes. No FFmpeg command line holds them all (the video is joined from a list
+// file, the audio decoded one piece at a time), so this only keeps a mistake from running for
+// hours: a whole series' dubbed tabs (Join into one video, whole series) fit.
+const MAX_EPISODES_PER_PART = 400;
 
 // Episode number from a filename: "EP12", "E12", "第12集", "Episode 12", "_part35", else
 // the last number once tags like [1080p], (2024), x264 and 4K are removed.
@@ -459,11 +462,15 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
     // { files: [filePath, ...], inserts: [{ at, path }] }: clips put in at those seconds.
     // partNumbers: each part's number in the series (1-based), for its file name. A job can
     // join any subset (e.g. parts 2 and 3 while part 1 is dubbed), so its own order isn't it.
-    async function start({ parts, outDir, seriesName, partNumbers }) {
+    // fileName: the output's own name instead (one part only), e.g. a whole series in one video.
+    async function start({ parts, outDir, seriesName, partNumbers, fileName }) {
         if (!Array.isArray(parts) || !parts.length) throw new Error('No parts to join.');
         fs.mkdirSync(outDir, { recursive: true });
         sweepStaleJoinFiles(outDir);
         const safeName = String(seriesName || 'Drama').replace(/[<>:"/\\|?*]+/g, '').trim() || 'Drama';
+        // A bare name (no folder), always .mp4 (.m4a when the result has no video).
+        const ownName = parts.length === 1 && typeof fileName === 'string'
+            ? fileName.replace(/[<>:"/\\|?*]+/g, '').replace(/\.[^.]*$/, '').trim() : '';
         const job = { id: crypto.randomUUID(), status: 'running', current: 0, cancelled: false, partFailed: null, procs: new Set(), outDir, repairedEpisodes: [], parts: [] };
         for (let p = 0; p < parts.length; p++) {
             const files = Array.isArray(parts[p]) ? parts[p] : (parts[p] && Array.isArray(parts[p].files) ? parts[p].files : []);
@@ -473,7 +480,7 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
             const number = Array.isArray(partNumbers) && partNumbers[p] > 0 ? partNumbers[p] : p + 1;
             // One entry per requested part, always: the caller matches status parts by position.
             job.parts.push({ files, inserts, found: [], clips: [], episodes: [], status: 'queued', percent: 0, error: null,
-                outPath: path.join(outDir, `${safeName}_part${String(number).padStart(2, '0')}.mp4`) });
+                outPath: path.join(outDir, ownName ? `${ownName}.mp4` : `${safeName}_part${String(number).padStart(2, '0')}.mp4`) });
         }
         jobs.set(job.id, job);
         runJob(job);
