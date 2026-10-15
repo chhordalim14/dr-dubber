@@ -33,6 +33,11 @@ if exist "%PYDIR%\python.exe" (
     "%PYDIR%\python.exe" -c "import edge_tts" >nul 2>nul
     if !ERRORLEVEL! equ 0 (
         echo   [OK] %PYDIR% already exists and edge-tts is installed.
+        REM Microsoft refuses older edge-tts handshakes (403 "Invalid response status" since
+        REM Oct 15, 2026; 7.3.1 works): an older install is brought up to date. Nothing is
+        REM downloaded when it already is.
+        "%PYDIR%\python.exe" -m pip install "edge-tts>=7.3.1" --no-deps --no-warn-script-location -q --disable-pip-version-check
+        if !ERRORLEVEL! neq 0 echo   [!] Warning: edge-tts could not be updated to 7.3.1 or newer.
         call :textdetect
         call :bgmmodel
         echo   Delete the folder first if you want to rebuild it from scratch.
@@ -76,7 +81,7 @@ echo   [OK] pip installed.
 
 echo.
 echo [4/4] Installing edge-tts...
-"%PYDIR%\python.exe" -m pip install edge-tts --no-warn-script-location -q --disable-pip-version-check
+"%PYDIR%\python.exe" -m pip install "edge-tts>=7.3.1" --no-warn-script-location -q --disable-pip-version-check
 if %ERRORLEVEL% neq 0 (
     echo   [!] Warning: edge-tts installation reported an issue.
 ) else (

@@ -4452,6 +4452,9 @@
     const liveSubtitlesOf = (p) => (projects[activeProjectIndex] === p ? subtitles : p.subtitles || []);
     // A line with no letters or digits (empty, "♪", "...") has nothing for the TTS to voice.
     const isSpeakableText = (text) => /[\p{L}\p{N}]/u.test(text || "");
+    // Microsoft's voice service (Edge TTS) refused the connection: 403 at the WebSocket handshake.
+    // Not a busy server - it answers every try the same way until edge-tts or the network changes.
+    const isEdgeTtsRefusal = (msg) => /WSServerHandshakeError|\b403\b[^\n]*Invalid response status/i.test(String(msg || ""));
 
     // Repairs one tab's subtitles. Returns { ok, changed, report, error, isDailyQuota, cancelled }.
     // onNote gets the backend's progress notes ("Double-checking 3 stretch(es)…").
@@ -17918,6 +17921,10 @@
             g = await runGenerate();
           }
           const missing = missingVoice();
+          // Every try refused by Microsoft: say so (and wait for a person - "Settings" - instead of
+          // hands-free asking again every 3 minutes).
+          const refused = projects.some((p) => liveSubtitlesOf(p).some((s) => s.audioStatus === "error" && isEdgeTtsRefusal(s.audioError)));
+          if (missing && refused) throw new Error(`${missing} line(s) have no voice: Microsoft's voice service (Edge TTS) refused the connection (403). Update DR Dubber Pro, or pick another voice engine in Settings, then press Continue.`);
           if (missing) throw new Error(`${missing} line(s) still have no voice after ${RETRY_PASSES + 1} tries. Press Continue to try them again.`);
         };
         await voiceMissingLines();
@@ -20757,6 +20764,7 @@
                 spinOffOrphanAudioIfNeeded(targetProject.subtitles[safeIndex]);
                 const startTime = parseFloat(targetProject.subtitles[safeIndex].textStart || 0);
                 targetProject.subtitles[safeIndex].audioStatus = "ready";
+                delete targetProject.subtitles[safeIndex].audioError;
                 targetProject.subtitles[safeIndex].audioUrl = freshUrl;
                 targetProject.subtitles[safeIndex].file = data.file;
                 targetProject.subtitles[safeIndex].audioStart = startTime.toFixed(2);
@@ -20872,10 +20880,17 @@
 
             const isNetworkError = error.message === "Failed to fetch" || error.message?.includes("NetworkError") || error.message?.includes("net::ERR");
             console.warn(`[Retry ${attempt}/${maxRetries}] Audio gen retry for subtitle ${subId}:`, error.message);
+            // Microsoft's voice service refusing the connection (403 at the handshake: an edge-tts
+            // it no longer accepts, or a blocked network) answers every try the same way. Eight
+            // tries with waits of up to 30s held a whole part for half an hour: one more, then stop.
+            if (isEdgeTtsRefusal(error.message)) attempt = Math.max(attempt, maxRetries - 1);
 
             if (attempt >= maxRetries) {
               const safeIndex = targetProject.subtitles.findIndex((s) => s.id === subId);
-              if (safeIndex > -1) targetProject.subtitles[safeIndex].audioStatus = "error";
+              if (safeIndex > -1) {
+                targetProject.subtitles[safeIndex].audioStatus = "error";
+                targetProject.subtitles[safeIndex].audioError = String(error.message || "").slice(0, 300);
+              }
               if (projects[activeProjectIndex] === targetProject) {
                 const liveIdx = subtitles.findIndex((s) => s.id === subId);
                 if (liveIdx > -1) subtitles[liveIdx].audioStatus = "error";
