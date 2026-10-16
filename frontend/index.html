@@ -3763,7 +3763,35 @@
             <div class="ds-fieldbox">
               <span id="ds-images-info" class="ds-images-info"></span>
               <button id="ds-images-clear" class="hidden ds-icon-btn ds-icon-btn--sm" title="No image overlay: tabs open as they are"><i data-lucide="x"></i></button>
-              <button id="ds-images-use" class="ds-btn ds-btn--ghost ds-btn--sm ml-auto" title="Add the images to a tab with the Image tool (place, size, opacity, motion), then press this: every tab of each part gets the same images in the same place. Pressed while a part is open, that part's tabs get them too."><i data-lucide="image-plus"></i> Use this tab's images</button>
+              <button id="ds-images-add" class="ds-btn ds-btn--ghost ds-btn--sm ml-auto" title="Pick a logo or watermark (PNG / JPG) and place it on a frame of the series — no video needs to be open"><i data-lucide="image-plus"></i> <span id="ds-images-add-label">Add image…</span></button>
+              <button id="ds-images-use" class="ds-btn ds-btn--ghost ds-btn--sm" title="Add the images to a tab with the Image tool (place, size, opacity, motion), then press this: every tab of each part gets the same images in the same place. Pressed while a part is open, that part's tabs get them too."><i data-lucide="copy"></i> Use this tab's images</button>
+            </div>
+          </div>
+          <!-- Place images without opening a video: a frame of the series' first episode,
+               the images on it (drag to move), a corner grid, size and opacity. -->
+          <div id="ds-img-editor" class="ds-img-editor hidden">
+            <div id="ds-img-stage" class="ds-img-stage">
+              <canvas id="ds-img-frame"></canvas>
+              <span id="ds-img-frame-note" class="ds-img-frame-note">Loading a frame of the series…</span>
+            </div>
+            <div class="ds-img-side">
+              <div id="ds-img-list" class="ds-img-list"></div>
+              <div class="ds-img-row">
+                <span class="ds-img-lbl">Place</span>
+                <div id="ds-img-pos" class="ds-img-pos" role="group" aria-label="Place the image">
+                  <button type="button" data-pos="tl" title="Top left"></button><button type="button" data-pos="tc" title="Top"></button><button type="button" data-pos="tr" title="Top right"></button>
+                  <button type="button" data-pos="ml" title="Left"></button><button type="button" data-pos="mc" title="Centre"></button><button type="button" data-pos="mr" title="Right"></button>
+                  <button type="button" data-pos="bl" title="Bottom left"></button><button type="button" data-pos="bc" title="Bottom"></button><button type="button" data-pos="br" title="Bottom right"></button>
+                </div>
+              </div>
+              <label class="ds-img-row"><span class="ds-img-lbl">Size</span><input id="ds-img-size" type="range" min="4" max="80" step="1" /><span id="ds-img-size-v" class="ds-img-val"></span></label>
+              <label class="ds-img-row"><span class="ds-img-lbl">Opacity</span><input id="ds-img-op" type="range" min="10" max="100" step="5" /><span id="ds-img-op-v" class="ds-img-val"></span></label>
+              <div class="ds-img-actions">
+                <button type="button" id="ds-img-remove" class="ds-btn ds-btn--ghost ds-btn--sm"><i data-lucide="trash-2"></i> Remove</button>
+                <span class="flex-1"></span>
+                <button type="button" id="ds-img-cancel" class="ds-btn ds-btn--ghost ds-btn--sm">Cancel</button>
+                <button type="button" id="ds-img-done" class="ds-btn ds-btn--primary ds-btn--sm"><i data-lucide="check"></i> Use for every tab</button>
+              </div>
             </div>
           </div>
 

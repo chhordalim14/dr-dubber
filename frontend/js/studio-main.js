@@ -17118,6 +17118,7 @@
           ? seriesImages.slice(0, 4).map((i) => `<img src="${esc(i.dataUrl)}" class="h-5 max-w-[40px] rounded object-contain bg-black/30">`).join("") + `<span>${n} image${n !== 1 ? "s" : ""}</span>`
           : "None";
         $("ds-images-clear").classList.toggle("hidden", !n);
+        $("ds-images-add-label").textContent = n ? "Edit images…" : "Add image…";
       };
       showSeriesImages();
       $("ds-images-use").addEventListener("click", async () => {
@@ -17145,6 +17146,234 @@
         seriesImages = null;
         try { localStorage.removeItem(SERIES_IMAGES_KEY); } catch (e) { }
         showSeriesImages();
+        closeImageEditor();
+      });
+
+      // ── Add image… : place a logo / watermark without opening a video ──
+      // Shown on a frame of the series' first episode, sized for the series' frame shape, so
+      // the box keeps the image's own proportions (the export fills the box and crops).
+      const IMG_MARGIN = 3; // % from the frame edge for the corner places
+      const imgEd = { list: [], sel: 0, frameAR: 16 / 9 };
+      const seriesVideo = () => (scan?.files || []).find((f) => !f.error && f.video && f.video.width && f.video.height) || null;
+      const frameAspect = () => {
+        const v = seriesVideo();
+        return v ? v.video.width / v.video.height : 16 / 9;
+      };
+      const clampImg = (im) => {
+        im.w = Math.min(100, Math.max(1, im.w));
+        im.h = Math.min(100, Math.max(1, im.h));
+        im.x = Math.min(100 - im.w, Math.max(0, im.x));
+        im.y = Math.min(100 - im.h, Math.max(0, im.y));
+      };
+      // Width in % of the frame width; the height follows the image's own shape.
+      const sizeImg = (im, w) => {
+        const ar = im.ar || 1;
+        let h = (w * imgEd.frameAR) / ar;
+        if (h > 100) { w = (100 * ar) / imgEd.frameAR; h = 100; }
+        const cx = im.x + im.w / 2;
+        const cy = im.y + im.h / 2;
+        im.w = w;
+        im.h = h;
+        im.x = cx - w / 2;
+        im.y = cy - h / 2;
+        clampImg(im);
+      };
+      const placeImg = (im, pos) => {
+        const [v, hpos] = pos.split("");
+        im.x = hpos === "l" ? IMG_MARGIN : hpos === "r" ? 100 - im.w - IMG_MARGIN : (100 - im.w) / 2;
+        im.y = v === "t" ? IMG_MARGIN * imgEd.frameAR : v === "b" ? 100 - im.h - IMG_MARGIN * imgEd.frameAR : (100 - im.h) / 2;
+        clampImg(im);
+        im._pos = pos;
+      };
+      const imgNatural = (src) => new Promise((resolve) => {
+        const el = new Image();
+        el.onload = () => resolve(el.naturalWidth && el.naturalHeight ? el.naturalWidth / el.naturalHeight : 1);
+        el.onerror = () => resolve(1);
+        el.src = src;
+      });
+
+      function renderImageEditor() {
+        const stage = $("ds-img-stage");
+        stage.style.aspectRatio = String(imgEd.frameAR);
+        stage.classList.toggle("is-portrait", imgEd.frameAR < 1);
+        stage.querySelectorAll(".ds-img-item").forEach((n) => n.remove());
+        imgEd.list.forEach((im, k) => {
+          const el = document.createElement("img");
+          el.className = `ds-img-item${k === imgEd.sel ? " is-sel" : ""}`;
+          el.src = im.dataUrl;
+          el.dataset.k = String(k);
+          el.draggable = false;
+          Object.assign(el.style, { left: `${im.x}%`, top: `${im.y}%`, width: `${im.w}%`, height: `${im.h}%`, opacity: String((im.opacity ?? 100) / 100) });
+          stage.appendChild(el);
+        });
+        $("ds-img-list").innerHTML =
+          imgEd.list.map((im, k) => `<button type="button" class="ds-img-thumb${k === imgEd.sel ? " is-sel" : ""}" data-k="${k}" title="Image ${k + 1}"><img src="${esc(im.dataUrl)}"></button>`).join("") +
+          `<button type="button" class="ds-img-thumb ds-img-thumb--add" data-add="1" title="Add another image"><i data-lucide="plus"></i></button>`;
+        const im = imgEd.list[imgEd.sel];
+        const has = !!im;
+        ["ds-img-size", "ds-img-op", "ds-img-remove"].forEach((id) => ($(id).disabled = !has));
+        $("ds-img-done").disabled = !imgEd.list.length;
+        if (has) {
+          $("ds-img-size").value = String(Math.round(im.w));
+          $("ds-img-size-v").textContent = `${Math.round(im.w)}%`;
+          $("ds-img-op").value = String(im.opacity ?? 100);
+          $("ds-img-op-v").textContent = `${im.opacity ?? 100}%`;
+        }
+        $("ds-img-pos").querySelectorAll("[data-pos]").forEach((b) => b.classList.toggle("is-on", !!has && im._pos === b.dataset.pos));
+        if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: $("ds-img-editor") });
+      }
+
+      // A frame from 10% into the first episode (if Chromium can decode it; else a plain frame).
+      async function loadEditorFrame() {
+        const canvas = $("ds-img-frame");
+        const note = $("ds-img-frame-note");
+        const v = seriesVideo();
+        const ctx = canvas.getContext("2d");
+        canvas.width = 640;
+        canvas.height = Math.round(640 / imgEd.frameAR);
+        ctx.fillStyle = "#111";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        if (!v) {
+          note.textContent = "Choose the series folder to see one of its frames here.";
+          note.classList.remove("hidden");
+          return;
+        }
+        note.textContent = "Loading a frame of the series…";
+        note.classList.remove("hidden");
+        const vid = document.createElement("video");
+        vid.muted = true;
+        vid.preload = "auto";
+        vid.src = `http://localhost:3001/api/audio?path=${encodeURIComponent(v.path)}`;
+        const done = () => { vid.removeAttribute("src"); vid.load(); };
+        vid.addEventListener("loadedmetadata", () => { vid.currentTime = Math.min(Math.max(1, (vid.duration || 10) * 0.1), 60); }, { once: true });
+        vid.addEventListener("seeked", () => {
+          try {
+            ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
+            note.classList.add("hidden");
+          } catch (e) { }
+          done();
+        }, { once: true });
+        vid.addEventListener("error", () => { note.textContent = "This video's picture can't be previewed here — the image still goes where you place it."; done(); }, { once: true });
+      }
+
+      async function addEditorImages() {
+        const api = window.electronAPI;
+        if (!api?.openMultiFile) return showToast("Picking an image only works in the desktop app.", "error");
+        const r = await api.openMultiFile({ title: "Choose a logo or image", defaultPath: localStorage.getItem("lastImageDir") || "", filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }] });
+        if (!r || r.canceled || !r.files?.length) return;
+        if (r.dirPath) localStorage.setItem("lastImageDir", r.dirPath);
+        for (const f of r.files) {
+          const blob = await (await fetch(f.fileUrl)).blob();
+          if (blob.size > 2.5 * 1024 * 1024) {
+            showToast(`"${f.fileName}" is ${(blob.size / 1048576).toFixed(1)} MB — use a smaller image (a PNG logo of a few hundred KB).`, "error");
+            continue;
+          }
+          const dataUrl = await new Promise((res) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(blob); });
+          const ar = await imgNatural(dataUrl);
+          const im = { id: crypto.randomUUID(), dataUrl, filePath: f.filePath || null, ar, x: 0, y: 0, w: 1, h: 1, opacity: 100, radius: 0, motion: "none", speed: 2, idleStyle: "none", idleStrength: 5 };
+          sizeImg(im, 15);
+          placeImg(im, "tr"); // a logo's usual place
+          imgEd.list.push(im);
+          imgEd.sel = imgEd.list.length - 1;
+        }
+        renderImageEditor();
+      }
+
+      async function openImageEditor() {
+        imgEd.frameAR = frameAspect();
+        imgEd.list = (seriesImages || []).map((i) => ({ ...i }));
+        for (const im of imgEd.list) if (!im.ar) im.ar = await imgNatural(im.dataUrl);
+        imgEd.sel = 0;
+        $("ds-img-editor").classList.remove("hidden");
+        renderImageEditor();
+        loadEditorFrame();
+        if (!imgEd.list.length) await addEditorImages();
+        $("ds-img-editor").scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }
+
+      function closeImageEditor() {
+        $("ds-img-editor")?.classList.add("hidden");
+      }
+
+      $("ds-images-add").addEventListener("click", () => ($("ds-img-editor").classList.contains("hidden") ? openImageEditor() : closeImageEditor()));
+      $("ds-img-cancel").addEventListener("click", closeImageEditor);
+      $("ds-img-list").addEventListener("click", (e) => {
+        const b = e.target.closest("button");
+        if (!b) return;
+        if (b.dataset.add) return addEditorImages();
+        imgEd.sel = Number(b.dataset.k);
+        renderImageEditor();
+      });
+      $("ds-img-pos").addEventListener("click", (e) => {
+        const b = e.target.closest("[data-pos]");
+        const im = imgEd.list[imgEd.sel];
+        if (!b || !im) return;
+        placeImg(im, b.dataset.pos);
+        renderImageEditor();
+      });
+      $("ds-img-size").addEventListener("input", (e) => {
+        const im = imgEd.list[imgEd.sel];
+        if (!im) return;
+        sizeImg(im, Number(e.target.value));
+        if (im._pos) placeImg(im, im._pos); // a corner image stays in its corner
+        renderImageEditor();
+      });
+      $("ds-img-op").addEventListener("input", (e) => {
+        const im = imgEd.list[imgEd.sel];
+        if (!im) return;
+        im.opacity = Number(e.target.value);
+        renderImageEditor();
+      });
+      $("ds-img-remove").addEventListener("click", () => {
+        imgEd.list.splice(imgEd.sel, 1);
+        imgEd.sel = Math.max(0, imgEd.sel - 1);
+        renderImageEditor();
+      });
+      // Drag an image on the frame.
+      $("ds-img-stage").addEventListener("mousedown", (e) => {
+        const el = e.target.closest(".ds-img-item");
+        if (!el) return;
+        e.preventDefault();
+        imgEd.sel = Number(el.dataset.k);
+        const im = imgEd.list[imgEd.sel];
+        const rect = $("ds-img-stage").getBoundingClientRect();
+        const sx = e.clientX, sy = e.clientY, x0 = im.x, y0 = im.y;
+        renderImageEditor();
+        const move = (ev) => {
+          im.x = x0 + ((ev.clientX - sx) / rect.width) * 100;
+          im.y = y0 + ((ev.clientY - sy) / rect.height) * 100;
+          im._pos = null;
+          clampImg(im);
+          const node = $("ds-img-stage").querySelector(`.ds-img-item[data-k="${imgEd.sel}"]`);
+          if (node) Object.assign(node.style, { left: `${im.x}%`, top: `${im.y}%` });
+        };
+        const up = () => {
+          window.removeEventListener("mousemove", move);
+          window.removeEventListener("mouseup", up);
+          renderImageEditor();
+        };
+        window.addEventListener("mousemove", move);
+        window.addEventListener("mouseup", up);
+      });
+      $("ds-img-done").addEventListener("click", () => {
+        const imgs = imgEd.list.map(({ _pos, ...rest }) => ({ ...rest, x: +rest.x.toFixed(2), y: +rest.y.toFixed(2), w: +rest.w.toFixed(2), h: +rest.h.toFixed(2) }));
+        try {
+          if (imgs.length) localStorage.setItem(SERIES_IMAGES_KEY, JSON.stringify(imgs));
+          else localStorage.removeItem(SERIES_IMAGES_KEY);
+        } catch (e) {
+          return showToast("The images are too large to keep. Use a smaller image (a PNG logo of a few hundred KB).", "error");
+        }
+        seriesImages = imgs.length ? imgs : null;
+        showSeriesImages();
+        closeImageEditor();
+        if (seriesImages && piecesOpen()) {
+          // A part is open: its tabs get the images now too.
+          window.imageOverlays = seriesImages.map((i) => ({ ...hydrateImageOverlay(i), id: crypto.randomUUID() }));
+          renderImageOverlaysFromState();
+          applyImageOverlaysToAllProjects();
+        } else if (seriesImages) {
+          showToast(`${imgs.length} image overlay${imgs.length !== 1 ? "s" : ""} will be added to every tab of each part.`, "success");
+        }
       });
 
       // Clips between episodes: video files put into the joined video of a part ("Join into one

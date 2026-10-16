@@ -4223,6 +4223,8 @@ body.kbd-nav .app-header button:focus-visible {
 
 #modal-dub-series .ds-part {
   position: relative;
+  /* The list scrolls; rows never squash to fit it (overflow:hidden lets them shrink). */
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -4743,6 +4745,179 @@ body.kbd-nav .app-header button:focus-visible {
   border: 1px solid var(--border-light);
   border-radius: 9px;
   background: var(--bg-base);
+}
+
+/* Add image… : place images on a frame of the series without a video open. */
+#modal-dub-series .ds-img-editor:not(.hidden) {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  gap: 12px;
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--border-light);
+  border-radius: 11px;
+  background: var(--ds-card);
+}
+
+@media (max-width: 640px) {
+  #modal-dub-series .ds-img-editor:not(.hidden) { grid-template-columns: 1fr; }
+}
+
+#modal-dub-series .ds-img-stage {
+  position: relative;
+  width: 100%;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #111;
+  user-select: none;
+}
+
+/* A portrait series: the frame takes only the width it needs. */
+#modal-dub-series .ds-img-editor:not(.hidden):has(.ds-img-stage.is-portrait) {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+#modal-dub-series .ds-img-stage.is-portrait {
+  width: auto;
+  height: 300px;
+  margin: 0 auto;
+}
+
+#modal-dub-series .ds-img-stage canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+#modal-dub-series .ds-img-frame-note {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  font-size: 11.5px;
+  text-align: center;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+#modal-dub-series .ds-img-frame-note.hidden {
+  display: none;
+}
+
+#modal-dub-series .ds-img-item {
+  position: absolute;
+  object-fit: cover;
+  cursor: grab;
+  outline: 1px dashed rgb(255 255 255 / 0.35);
+}
+
+#modal-dub-series .ds-img-item.is-sel {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 1px;
+}
+
+#modal-dub-series .ds-img-side {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+#modal-dub-series .ds-img-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+#modal-dub-series .ds-img-thumb {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-base);
+  overflow: hidden;
+}
+
+#modal-dub-series .ds-img-thumb img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+#modal-dub-series .ds-img-thumb.is-sel {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+#modal-dub-series .ds-img-thumb--add {
+  border-style: dashed;
+  color: var(--text-muted);
+}
+
+#modal-dub-series .ds-img-thumb--add svg {
+  width: 16px;
+  height: 16px;
+}
+
+#modal-dub-series .ds-img-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+#modal-dub-series .ds-img-row input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent-primary);
+}
+
+#modal-dub-series .ds-img-lbl {
+  width: 52px;
+  flex-shrink: 0;
+}
+
+#modal-dub-series .ds-img-val {
+  width: 38px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+#modal-dub-series .ds-img-pos {
+  display: grid;
+  grid-template-columns: repeat(3, 22px);
+  gap: 3px;
+}
+
+#modal-dub-series .ds-img-pos button {
+  width: 22px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-base);
+}
+
+#modal-dub-series .ds-img-pos button:hover {
+  border-color: var(--accent-primary);
+}
+
+#modal-dub-series .ds-img-pos button.is-on {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+
+#modal-dub-series .ds-img-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: auto;
 }
 
 #modal-dub-series .ds-row-label {
