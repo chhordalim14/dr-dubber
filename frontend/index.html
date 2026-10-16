@@ -3628,47 +3628,99 @@
     </div>
   </div>
 
-  <!-- ═══════════ DUB WHOLE SERIES (join → split → transcribe → voices → BGM) ═══════════ -->
+  <!-- ═══════════ DUB WHOLE SERIES (join → split → transcribe → voices → BGM) ═══════════
+       Styles: shell.css › "Dub Whole Series". studio-main.js finds everything by its ds-* id. -->
   <div id="modal-dub-series"
     class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[998] hidden modal-bg-enter">
-    <div class="bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-2xl w-[720px] max-w-[94vw] max-h-[90vh] shadow-2xl flex flex-col overflow-hidden text-[var(--text-primary)] animate-modal-center"
+    <div class="ds-window border border-[var(--border-light)] max-w-[94vw] max-h-[90vh] flex flex-col overflow-hidden text-[var(--text-primary)] animate-modal-center"
       onclick="event.stopPropagation()">
-      <div class="flex justify-between items-center p-4 border-b border-[var(--border-color)] bg-violet-500/10">
-        <h2 class="text-violet-300 font-bold flex items-center gap-2"><i data-lucide="wand-sparkles" class="w-5 h-5"></i> Dub Whole Series</h2>
-        <button id="ds-close" class="text-[var(--text-secondary)] hover:text-[var(--text-bright)] transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
-      </div>
-      <div class="p-5 flex flex-col gap-4 overflow-y-auto custom-scrollbar">
-        <p class="text-xs text-[var(--text-secondary)] leading-relaxed">Choose the folder with the episodes and press <b>Start</b>. The app joins the episodes into parts (videos you merged already are used as they are), then works on one part at a time: splits it into pieces, opens them as tabs, transcribes, matches the subtitles to the video's own lines, makes the Khmer voices, isolates the BGM and blurs the old burned-in subtitles. When a part is finished, export it, then press <b>Next part</b>. You can close this window while it works.</p>
-        <div class="flex items-center gap-2">
-          <button id="ds-pick" class="shrink-0 whitespace-nowrap px-3 py-2 rounded-lg text-xs font-semibold bg-violet-600 text-white hover:brightness-110 active:scale-[0.97] transition-all flex items-center gap-1.5"><i data-lucide="folder-open" class="w-4 h-4"></i> Choose Folder</button>
-          <span id="ds-folder" class="text-xs text-[var(--text-muted)] truncate font-mono">No folder selected</span>
+      <div class="ds-head">
+        <span class="ds-head-icon"><i data-lucide="wand-sparkles"></i></span>
+        <div class="min-w-0 flex-1">
+          <h2 class="ds-head-title">Dub Whole Series</h2>
+          <p class="ds-head-sub">A folder of episodes in, a Khmer-dubbed series out</p>
         </div>
-        <div id="ds-summary" class="hidden flex-col gap-3">
-          <div id="ds-stats" class="text-sm font-semibold"></div>
-          <div id="ds-warnings" class="hidden text-xs text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded-lg p-2.5 leading-relaxed"></div>
-          <div class="grid grid-cols-3 gap-3 text-xs">
-            <label class="flex flex-col gap-1"><span class="text-[var(--text-secondary)]">Join: minutes per part</span>
-              <input id="ds-join-minutes" type="number" min="5" max="180" step="5" value="50" class="bg-[var(--bg-base)] border border-[var(--border-light)] rounded-md px-2 py-1.5 outline-none focus:border-violet-500"></label>
-            <label class="flex flex-col gap-1"><span class="text-[var(--text-secondary)]">Split: minutes per tab</span>
-              <input id="ds-split-minutes" type="number" min="3" max="60" step="1" value="7" class="bg-[var(--bg-base)] border border-[var(--border-light)] rounded-md px-2 py-1.5 outline-none focus:border-violet-500"></label>
-            <label class="flex flex-col gap-1"><span class="text-[var(--text-secondary)]">File name</span>
-              <input id="ds-name" type="text" class="bg-[var(--bg-base)] border border-[var(--border-light)] rounded-md px-2 py-1.5 outline-none focus:border-violet-500 font-khmer"></label>
+        <button id="ds-close" class="ds-icon-btn" title="Close"><i data-lucide="x"></i></button>
+      </div>
+
+      <div class="ds-body custom-scrollbar">
+        <!-- While a series runs: what it is doing, before the settings -->
+        <div id="ds-note" class="hidden ds-callout ds-callout--info"></div>
+        <div id="ds-steps" class="hidden ds-progress"></div>
+
+        <!-- ① Episodes -->
+        <div class="ds-sec-head">
+          <span class="ds-sec-num">1</span>
+          <div class="ds-sec-text"><div class="ds-sec-title">Episodes</div><div class="ds-sec-hint">The folder with the episodes - they are joined into parts</div></div>
+        </div>
+        <!-- Folder: click to browse, or drop the folder (or one of its videos) here -->
+        <div id="ds-drop" class="ds-drop">
+          <button id="ds-pick" class="ds-drop-btn" type="button">
+            <span class="ds-drop-icon"><i data-lucide="folder-open"></i></span>
+            <span class="ds-drop-text">
+              <span class="ds-drop-title ds-when-empty">Choose the episodes folder</span>
+              <span class="ds-drop-title ds-when-set">Episodes folder</span>
+              <span id="ds-folder" class="ds-drop-path">No folder selected</span>
+            </span>
+            <span class="ds-drop-cta"><span class="ds-when-empty">Browse</span><span class="ds-when-set">Change</span></span>
+          </button>
+          <div class="ds-drop-hint ds-when-empty">or drop the folder here</div>
+        </div>
+
+        <!-- How it works (until a folder is chosen) -->
+        <div id="ds-intro" class="ds-intro">
+          <div class="ds-flow">
+            <div class="ds-flow-step"><span><i data-lucide="combine"></i></span><b>Join</b><small>episodes into parts</small></div>
+            <div class="ds-flow-step"><span><i data-lucide="scissors"></i></span><b>Split</b><small>each part into tabs</small></div>
+            <div class="ds-flow-step"><span><i data-lucide="captions"></i></span><b>Transcribe</b><small>and match subtitles</small></div>
+            <div class="ds-flow-step"><span><i data-lucide="audio-lines"></i></span><b>Khmer voices</b><small>plus BGM and blur</small></div>
+            <div class="ds-flow-step"><span><i data-lucide="film"></i></span><b>Export</b><small>then the next part</small></div>
           </div>
-          <label id="ds-merged-row" class="hidden items-start gap-1.5 cursor-pointer text-xs" title="Each video in the folder is dubbed as one part, as it is: it is only split into tabs. Switched on by itself when every video is 20 minutes or longer.">
-            <input id="ds-merged" type="checkbox" class="accent-violet-500 mt-0.5">
-            <span><span class="text-[var(--text-primary)]">Videos are already merged:</span> <span class="text-[var(--text-secondary)]">each video is one part - skip joining, only split</span></span>
-          </label>
-          <div class="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
-            <span class="text-[var(--text-secondary)]">For each part:</span>
-            <label class="flex items-center gap-1.5 cursor-pointer"><input id="ds-step-transcribe" type="checkbox" class="accent-violet-500" checked> Transcribe</label>
-            <label class="flex items-center gap-1.5 cursor-pointer" title="Right after Transcribe: each subtitle shows exactly while the video's own (Chinese) line does, drawn where it was, and its voice starts with it."><input id="ds-step-match" type="checkbox" class="accent-violet-500" checked> Match subtitles to video</label>
-            <label class="flex items-center gap-1.5 cursor-pointer"><input id="ds-step-generate" type="checkbox" class="accent-violet-500" checked> Generate voices</label>
-            <label class="flex items-center gap-1.5 cursor-pointer"><input id="ds-step-isolate" type="checkbox" class="accent-violet-500" checked> Isolate BGM</label>
-            <label class="flex items-center gap-1.5 cursor-pointer" title="Find the burned-in (Chinese) subtitles and blur each one only while it shows. Runs while the part is transcribed and voiced."><input id="ds-step-blurtext" type="checkbox" class="accent-violet-500" checked> Blur subtitles</label>
-            <label class="flex items-center gap-1.5 ml-auto" title="The Khmer register Transcribe uses. Same setting as the genre button and the DAI window.">
-              <span class="text-[var(--text-secondary)]">Drama Style:</span>
-              <select id="ds-genre"
-                class="bg-[var(--bg-base)] border border-[var(--border-light)] rounded-md px-2 py-1 outline-none focus:border-violet-500 font-khmer cursor-pointer">
+          <p class="ds-intro-note">One part at a time. You can close this window while it works.</p>
+        </div>
+
+        <div id="ds-summary" class="hidden flex-col ds-gap">
+          <div id="ds-stats" class="ds-stats"></div>
+          <div id="ds-warnings" class="hidden ds-callout ds-callout--warn"></div>
+          <div class="ds-grid3">
+            <label class="ds-field" title="Episodes are joined into parts of about this length. A part is dubbed as one batch of tabs."><span>Minutes per part</span>
+              <input id="ds-join-minutes" type="number" min="5" max="180" step="5" value="50"></label>
+            <label class="ds-field" title="Each part is split into tabs of about this length."><span>Minutes per tab</span>
+              <input id="ds-split-minutes" type="number" min="3" max="60" step="1" value="7"></label>
+            <label class="ds-field"><span>File name</span>
+              <input id="ds-name" type="text" class="font-khmer"></label>
+          </div>
+          <div class="ds-sub-head">
+            <span>Parts</span>
+            <label id="ds-merged-row" class="hidden ds-inline-switch" title="Each video in the folder is dubbed as one part, as it is: it is only split into tabs. Switched on by itself when every video is 20 minutes or longer.">
+              <input id="ds-merged" type="checkbox" class="ds-switch ds-switch--sm">
+              <span>Videos are already merged</span>
+            </label>
+          </div>
+          <div id="ds-parts" class="ds-parts custom-scrollbar"></div>
+
+          <!-- ② What to do -->
+          <div class="ds-sec-head">
+            <span class="ds-sec-num">2</span>
+            <div class="ds-sec-text"><div class="ds-sec-title">What to do</div><div class="ds-sec-hint">Done for every part, in this order - click one to switch it off</div></div>
+          </div>
+          <div class="ds-tiles">
+            <label class="ds-tile"><input id="ds-step-transcribe" type="checkbox" checked><i data-lucide="captions"></i><span>Transcribe</span></label>
+            <label class="ds-tile" title="Right after Transcribe: each subtitle shows exactly while the video's own (Chinese) line does, drawn where it was, and its voice starts with it."><input id="ds-step-match" type="checkbox" checked><i data-lucide="align-center-horizontal"></i><span>Match subtitles to video</span></label>
+            <label class="ds-tile"><input id="ds-step-generate" type="checkbox" checked><i data-lucide="audio-lines"></i><span>Generate voices</span></label>
+            <label class="ds-tile"><input id="ds-step-isolate" type="checkbox" checked><i data-lucide="music"></i><span>Isolate BGM</span></label>
+            <label class="ds-tile" title="Find the burned-in (Chinese) subtitles and blur each one only while it shows. Runs while the part is transcribed and voiced."><input id="ds-step-blurtext" type="checkbox" checked><i data-lucide="eye-off"></i><span>Blur subtitles</span></label>
+          </div>
+
+          <!-- ③ Look -->
+          <div class="ds-sec-head">
+            <span class="ds-sec-num">3</span>
+            <div class="ds-sec-text"><div class="ds-sec-title">Look</div><div class="ds-sec-hint">Voice style, colors and images for every tab</div></div>
+          </div>
+          <div class="ds-grid2">
+            <label class="ds-field" title="The Khmer register Transcribe uses. Same setting as the genre button and the DAI window.">
+              <span>Drama Style</span>
+              <select id="ds-genre" class="font-khmer">
                 <option value="historical">👑 រឿងបុរាណ / រាជវាំង (Ancient/Royal)</option>
                 <option value="modern">🏙️ សម័យ / ស្នេហា / CEO (Modern Drama)</option>
                 <option value="action">💥 សកម្មភាព / កងទ័ព (Action)</option>
@@ -3680,51 +3732,63 @@
                 <option value="youth">🎒 សិស្សសាលា / យុវវ័យ (Youth/School)</option>
               </select>
             </label>
-          </div>
-          <label class="flex items-center gap-1.5 text-xs" title="The Color Studio filter every tab of each part opens with (and is exported with). Changing it while a part is open changes that part's tabs too.">
-            <span class="text-[var(--text-secondary)]">Color filter:</span>
-            <select id="ds-color"
-              class="bg-[var(--bg-base)] border border-[var(--border-light)] rounded-md px-2 py-1 outline-none focus:border-violet-500 cursor-pointer"></select>
-          </label>
-          <div class="flex items-center gap-2 text-xs">
-            <span class="text-[var(--text-secondary)]">Image overlay:</span>
-            <button id="ds-images-use" title="Add the images to a tab with the Image tool (place, size, opacity, motion), then press this: every tab of each part gets the same images in the same place. Pressed while a part is open, that part's tabs get them too."
-              class="px-2 py-1 rounded-md border border-[var(--border-light)] hover:bg-[var(--bg-hover)] flex items-center gap-1"><i data-lucide="image-plus" class="w-3.5 h-3.5"></i> Use this tab's images</button>
-            <span id="ds-images-info" class="flex items-center gap-1.5 text-[var(--text-muted)] min-w-0"></span>
-            <button id="ds-images-clear" class="hidden text-[var(--text-muted)] hover:text-rose-400" title="No image overlay: tabs open as they are"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>
-          </div>
-          <label class="flex items-start gap-1.5 cursor-pointer text-xs" title="Uses your export settings and Save Path. A finished part renders while the next part is dubbed. A tab that fails to render is tried again; if it still fails, the series pauses before the next export and Continue tries it again.">
-            <input id="ds-handsfree" type="checkbox" class="accent-violet-500 mt-0.5">
-            <span><span class="text-[var(--text-primary)]">Hands-free:</span> <span class="text-[var(--text-secondary)]">export each finished part (render queue) and go on to the next part by itself - a whole series overnight</span></span>
-          </label>
-          <div id="ds-merge-row" class="flex flex-wrap items-center gap-1.5 text-xs ml-5" title="With Hands-free: the exported tabs' videos are joined into one video in the same folder - one per part as each part is exported (Name_Dubbed_part01.mp4), or the whole series once after the last part (Name_Dubbed_full.mp4). The tabs' own videos are kept.">
-            <label class="flex items-center gap-1.5 cursor-pointer">
-              <input id="ds-merge" type="checkbox" class="accent-violet-500">
-              <span class="text-[var(--text-primary)]">Join into one video:</span>
+            <label class="ds-field" title="The Color Studio filter every tab of each part opens with (and is exported with). Changing it while a part is open changes that part's tabs too.">
+              <span>Color filter</span>
+              <select id="ds-color"></select>
             </label>
-            <select id="ds-merge-scope" class="bg-[var(--bg-base)] border border-[var(--border-light)] rounded-md px-1.5 py-0.5 outline-none focus:border-violet-500 cursor-pointer">
-              <option value="part">one video per part</option>
-              <option value="series">one video for the whole series</option>
-            </select>
           </div>
-          <div id="ds-clips-box" class="hidden flex-col gap-1.5 text-xs ml-10" title="Video clips put into the joined video, each at the place you pick. A clip after a part's last episode ends that part. Joining with clips encodes the part's video again, so it takes a few minutes.">
-            <div class="flex items-center gap-2">
-              <span class="text-[var(--text-secondary)]">Clips between episodes:</span>
-              <button id="ds-clip-add" class="px-2 py-0.5 rounded-md border border-[var(--border-light)] hover:bg-[var(--bg-hover)] disabled:opacity-40 flex items-center gap-1"><i data-lucide="plus" class="w-3 h-3"></i> Add clip</button>
-              <span id="ds-clips-note" class="text-[var(--text-muted)]"></span>
+          <div class="ds-field">
+            <span>Image overlay</span>
+            <div class="ds-fieldbox">
+              <span id="ds-images-info" class="ds-images-info"></span>
+              <button id="ds-images-clear" class="hidden ds-icon-btn ds-icon-btn--sm" title="No image overlay: tabs open as they are"><i data-lucide="x"></i></button>
+              <button id="ds-images-use" class="ds-btn ds-btn--ghost ds-btn--sm ml-auto" title="Add the images to a tab with the Image tool (place, size, opacity, motion), then press this: every tab of each part gets the same images in the same place. Pressed while a part is open, that part's tabs get them too."><i data-lucide="image-plus"></i> Use this tab's images</button>
             </div>
-            <div id="ds-clips" class="flex flex-col gap-1 max-h-[140px] overflow-y-auto custom-scrollbar pr-1"></div>
           </div>
-          <div id="ds-note" class="hidden text-xs text-sky-300 bg-sky-500/10 border border-sky-500/30 rounded-lg p-2.5 leading-relaxed"></div>
-          <div id="ds-parts" class="flex flex-col gap-1.5 max-h-[220px] overflow-y-auto custom-scrollbar pr-1"></div>
-          <div id="ds-steps" class="hidden flex-col gap-1 rounded-lg border border-[var(--border-color)] bg-[var(--bg-base)] p-3"></div>
+
+          <!-- ④ Export -->
+          <div class="ds-sec-head">
+            <span class="ds-sec-num">4</span>
+            <div class="ds-sec-text"><div class="ds-sec-title">Export</div><div class="ds-sec-hint">What happens when a part is dubbed</div></div>
+          </div>
+          <section class="ds-hf">
+            <label class="ds-hf-main" title="Uses your export settings and Save Path. A finished part renders while the next part is dubbed. A tab that fails to render is tried again; if it still fails, the series pauses before the next export and Continue tries it again.">
+              <span class="ds-hf-icon"><i data-lucide="moon-star"></i></span>
+              <span class="ds-hf-text">
+                <span class="ds-hf-title">Hands-free</span>
+                <span class="ds-hf-desc">Export each finished part and go on to the next by itself - a whole series overnight</span>
+              </span>
+              <input id="ds-handsfree" type="checkbox" class="ds-switch">
+            </label>
+            <div id="ds-merge-row" class="ds-hf-sub" title="With Hands-free: the exported tabs' videos are joined into one video in the same folder - one per part as each part is exported (Name_Dubbed_part01.mp4), or the whole series once after the last part (Name_Dubbed_full.mp4). The tabs' own videos are kept.">
+              <label class="ds-inline-switch">
+                <input id="ds-merge" type="checkbox" class="ds-switch ds-switch--sm">
+                <span>Join into one video</span>
+              </label>
+              <select id="ds-merge-scope" class="ds-select-sm ml-auto">
+                <option value="part">one video per part</option>
+                <option value="series">one video for the whole series</option>
+              </select>
+            </div>
+            <div id="ds-clips-box" class="hidden ds-hf-sub flex-col" title="Video clips put into the joined video, each at the place you pick. A clip after a part's last episode ends that part. Joining with clips encodes the part's video again, so it takes a few minutes.">
+              <div class="flex items-center gap-2">
+                <span class="ds-row-label">Clips between episodes</span>
+                <span id="ds-clips-note" class="text-[var(--text-muted)]"></span>
+                <button id="ds-clip-add" class="ds-btn ds-btn--ghost ds-btn--sm ml-auto"><i data-lucide="plus"></i> Add clip</button>
+              </div>
+              <div id="ds-clips" class="flex flex-col gap-1.5 max-h-[140px] overflow-y-auto custom-scrollbar pr-1"></div>
+            </div>
+          </section>
+
         </div>
       </div>
-      <div class="p-4 border-t border-[var(--border-color)] bg-[var(--bg-base)] flex items-center gap-3 shrink-0">
-        <button id="ds-reset" class="hidden px-3 py-2 rounded-lg text-xs font-medium text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-hover)]">Start over</button>
-        <button id="ds-open" class="hidden ml-auto px-4 py-2 rounded-lg text-sm font-medium border border-[var(--border-light)] hover:bg-[var(--bg-hover)]">Open Folder</button>
-        <button id="ds-next" class="hidden px-4 py-2 rounded-lg text-sm font-semibold border border-violet-500/50 text-violet-300 hover:bg-violet-500/10">Next part</button>
-        <button id="ds-start" disabled class="ml-auto bg-violet-600 text-white px-6 py-2 rounded-lg text-sm font-semibold shadow-md hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed transition-all active:scale-[0.95]">Start</button>
+
+      <div class="ds-foot">
+        <button id="ds-reset" class="hidden ds-btn ds-btn--ghost">Start over</button>
+        <span class="flex-1"></span>
+        <button id="ds-open" class="hidden ds-btn ds-btn--ghost">Open Folder</button>
+        <button id="ds-next" class="hidden ds-btn ds-btn--soft">Next part</button>
+        <button id="ds-start" disabled class="ds-btn ds-btn--primary">Start</button>
       </div>
     </div>
   </div>
@@ -4444,6 +4508,24 @@
                 <span class="text-[11px] text-[var(--text-muted)] leading-relaxed">Uses fewer Gemini requests so your free daily quota lasts for more episodes: one request per episode up to 10 minutes (instead of one per 3 minutes), and no extra "missed dialogue" check. Rarely, a line Gemini skips is not recovered. Applies to Transcribe and DAI-Transcribe Studio.</span>
               </span>
             </label>
+
+            <!-- ── Khmer review pass (server.js reviewKhmerLines) ── -->
+            <label for="setting-review-pass" class="flex items-start gap-3 pt-4 border-t border-[var(--border-color)] cursor-pointer">
+              <input id="setting-review-pass" type="checkbox" class="mt-1 w-4 h-4 accent-emerald-500 shrink-0 cursor-pointer" />
+              <span class="flex flex-col gap-1">
+                <span class="text-sm text-[var(--text-bright)] font-medium">Khmer review pass</span>
+                <span class="text-[11px] text-[var(--text-muted)] leading-relaxed">After Transcribe or Translate, Gemini reads the Khmer again next to the original and fixes wrong meanings, pronouns that don't fit who is talking to whom, and names. Uses about one extra request per 100 lines.</span>
+              </span>
+            </label>
+
+            <!-- ── Pronunciation (js/khmer-speech.js) ── -->
+            <div class="flex flex-col gap-2 pt-4 border-t border-[var(--border-color)]">
+              <label for="setting-pronunciations" class="text-sm text-[var(--text-bright)] font-medium">Pronunciation</label>
+              <textarea id="setting-pronunciations" rows="4" spellcheck="false" data-i18n-skip
+                placeholder="លំហ = លំហា&#10;ស៊ូហ៊ាង = ស៊ូ ហ៊ាង"
+                class="w-full px-3 py-2 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)] text-sm text-[var(--text-primary)] font-khmer focus:border-[var(--accent-primary)] outline-none"></textarea>
+              <p class="text-[11px] text-[var(--text-muted)]">A word the voice says wrong: one per line, written = said. Applies to the next lines you voice; subtitles are not changed.</p>
+            </div>
 
             <!-- ── Transcription Engine ── -->
             <div class="flex flex-col gap-3 pt-4 border-t border-[var(--border-color)]">

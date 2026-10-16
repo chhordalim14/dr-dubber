@@ -56,8 +56,37 @@
     return out;
   }
 
+  const MONTHS = ['មករា', 'កុម្ភៈ', 'មីនា', 'មេសា', 'ឧសភា', 'មិថុនា', 'កក្កដា', 'សីហា', 'កញ្ញា', 'តុលា', 'វិច្ឆិកា', 'ធ្នូ'];
+  const digitByDigit = (s) => Array.from(s.replace(/\D/g, ''), (d) => ONES[+d]).join(' ');
+  // Units read after a number: 5km -> ប្រាំគីឡូម៉ែត្រ. Not followed by a letter, so 3 min stays.
+  const UNIT_WORDS = {
+    'km/h': 'គីឡូម៉ែត្រក្នុងមួយម៉ោង', km: 'គីឡូម៉ែត្រ', cm: 'សង់ទីម៉ែត្រ', mm: 'មីលីម៉ែត្រ', m: 'ម៉ែត្រ',
+    kg: 'គីឡូក្រាម', g: 'ក្រាម', ml: 'មីលីលីត្រ', '°C': 'អង្សាសេ',
+  };
+  const NUM = '\\d[\\d,]*(?:\\.\\d+)?';
+  const UNIT_RE = new RegExp(`(${NUM})\\s?(km\\/h|km|cm|mm|kg|ml|°C|m|g)(?![A-Za-z])`, 'g');
+
   function sayNumbers(text) {
     return toAsciiDigits(text)
+      // A phone number in groups (012 345 678, 012-345-678): digit by digit, not 3 numbers.
+      .replace(/(?<![\d.,])0\d{1,3}(?:[ -]\d{2,4}){1,3}(?![\d.,])/g, digitByDigit)
+      // A date d/m/yyyy: ថ្ងៃទីដប់ប្រាំ ខែឧសភា ឆ្នាំ...
+      .replace(/(ថ្ងៃទី\s?)?\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/g, (all, pre, d, m, y) => (+m >= 1 && +m <= 12 && +d >= 1 && +d <= 31
+        ? `ថ្ងៃទី${numberToWords(+d)} ខែ${MONTHS[+m - 1]} ឆ្នាំ${numberToWords(+y)}`
+        : all))
+      // A time of day: ម៉ោង 10:30 -> ម៉ោងដប់កន្លះ, 7:15 -> ម៉ោងប្រាំពីរ ដប់ប្រាំនាទី.
+      .replace(/(ម៉ោង\s?)?\b(\d{1,2}):(\d{2})\b/g, (all, pre, h, m) => {
+        if (+h > 24 || +m > 59) return all;
+        const mins = +m === 0 ? '' : +m === 30 ? 'កន្លះ' : ` ${numberToWords(+m)}នាទី`;
+        return `ម៉ោង${numberToWords(+h)}${mins}`;
+      })
+      // Any other n:n is a score: 3:2 -> បី ទល់ ពីរ.
+      .replace(/(\d)\s?:\s?(?=\d)/g, '$1 ទល់ ')
+      // A fraction: 1/2 -> មួយភាគពីរ.
+      .replace(/\b(\d{1,3})\/(\d{1,3})\b/g, (_, a, b) => `${numberToWords(+a)}ភាគ${numberToWords(+b)}`)
+      // A range: 20-30 -> ម្ភៃ ទៅ សាមសិប (a dash elsewhere is a pause).
+      .replace(new RegExp(`(${NUM})\\s?[-–~]\\s?(?=\\d)`, 'g'), '$1 ទៅ ')
+      .replace(UNIT_RE, (_, n, u) => `${sayNumber(n)}${UNIT_WORDS[u]}`)
       .replace(/\$\s?(\d[\d,]*(?:\.\d+)?)/g, (_, n) => `${sayNumber(n)}ដុល្លារ`)
       .replace(/(\d[\d,]*(?:\.\d+)?)\s?%/g, (_, n) => `${sayNumber(n)}ភាគរយ`)
       .replace(/(\d[\d,]*(?:\.\d+)?)\s?([$៛])/g, (_, n, c) => `${sayNumber(n)}${c === '$' ? 'ដុល្លារ' : 'រៀល'}`)
@@ -131,6 +160,36 @@
     return s.replace(NIKAHIT_HA_RE, '$1ា');
   }
 
+  // English titles before a name, said the Khmer way (the name after them is kept).
+  const TITLES = [[/\bMrs\.?(?=\s)/g, 'លោកស្រី'], [/\bMr\.?(?=\s)/g, 'លោក'], [/\bMs\.?(?=\s)/g, 'កញ្ញា'], [/\bMiss(?=\s)/g, 'កញ្ញា'], [/\bDr\.?(?=\s)/g, 'វេជ្ជបណ្ឌិត']];
+  const sayTitles = (text) => TITLES.reduce((s, [re, to]) => s.replace(re, to), text);
+
+  // The user's own list (Settings > Pronunciation): [written, said] pairs, applied wherever the
+  // written form appears, longest first so a longer word wins over a part of it.
+  const PRONUNCIATION_KEY = 'aiDubberPronunciations';
+  let userWords = [];
+  function setPronunciations(list) {
+    userWords = (Array.isArray(list) ? list : [])
+      .map((p) => [String((p && p[0]) || '').trim(), String((p && p[1]) || '').trim()])
+      .filter(([from, to]) => from && to && from !== to)
+      .sort((a, b) => b[0].length - a[0].length);
+  }
+  // The Settings box: one word per line, "written = said" (=> and → work too); other lines are
+  // ignored, so a note can be left in it.
+  function parsePronunciations(text) {
+    return String(text || '').split(/\r?\n/)
+      .map((line) => line.split(/\s*(?:=>|→|=)\s*/))
+      .filter((parts) => parts.length === 2)
+      .map(([from, to]) => [from.trim(), to.trim()]);
+  }
+  function applyUserWords(text) {
+    if (!userWords.length) return text;
+    // One pass over all of them, so a "said" form is never respelled again by another pair.
+    const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const map = new Map(userWords);
+    return text.replace(new RegExp(userWords.map(([from]) => esc(from)).join('|'), 'g'), (w) => map.get(w));
+  }
+
   // Acronyms (2 to 5 capitals, maybe with a digit: VIP, BE, CEO) by their Khmer letter names.
   const spellAcronyms = (text) => text.replace(/\b[A-Z]{2,5}\b/g, (w) => Array.from(w, (c) => LETTERS[c] || c).join(''));
 
@@ -143,8 +202,10 @@
       .replace(/\r?\n/g, ' ');
     if (!KHMER_RE.test(s)) return s.replace(/\s+/g, ' ').trim();
     s = expandRepeat(s);
+    s = applyUserWords(s);
     s = fixPronunciation(s);
     s = sayNumbers(s);
+    s = sayTitles(s);
     s = spellAcronyms(s);
     s = s
       .replace(/[？]/g, '?').replace(/[！]/g, '!').replace(/[，、]/g, ',').replace(/[；]/g, ';').replace(/[：]/g, ':')
@@ -165,5 +226,10 @@
     return s + (end ? end[0].trim() : '។');
   }
 
-  return { normalizeForSpeech, numberToWords, sayNumbers, expandRepeat };
+  // In the app, start with the list saved in Settings (studio-main.js keeps it up to date).
+  try {
+    if (typeof localStorage !== 'undefined') setPronunciations(parsePronunciations(localStorage.getItem(PRONUNCIATION_KEY)));
+  } catch (e) { /* no storage: no user words */ }
+
+  return { normalizeForSpeech, numberToWords, sayNumbers, expandRepeat, setPronunciations, parsePronunciations, PRONUNCIATION_KEY };
 });

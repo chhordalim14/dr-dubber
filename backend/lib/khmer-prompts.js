@@ -276,6 +276,44 @@ function buildTranslatePrompt({ lines, glossaryHint, sheetHint, genreGuidance, p
     return `${buildTranslateSystemPrompt({ genreGuidance })}\n\n${buildTranslateUserPrompt({ lines, glossaryHint, sheetHint, previousLines, note })}`;
 }
 
+// The review pass: a finished Khmer dub read again, line against original, with the whole
+// batch in view. Translating looks at a line and its few neighbours with little thinking, so a
+// pronoun that doesn't fit who is talking to whom, or a misheard or mistranslated meaning, gets
+// through; reading many lines at once with normal thinking catches them. Only the lines that
+// are changed come back, so a good dub costs little output.
+function buildReviewSystemPrompt({ genreGuidance }) {
+    return `You are the senior Khmer dubbing editor checking a finished dub of an Asian drama before it is voiced. Each line has the original dialogue ("source") and its Khmer dub line ("khmer").
+
+TASK:
+Read the lines in order as one scene, the way a Khmer viewer will hear them, and correct ONLY the Khmer lines that are wrong:
+   a. WRONG MEANING: the Khmer says something the original does not (a mistranslation, a misheard word, a negation lost, the wrong person or thing).
+   b. WRONG FORM OF ADDRESS: a pronoun that does not fit who is speaking to whom (rules below), or that changes between the same two people within the scene for no reason.
+   c. WRONG NAME: a character, place or title spelled differently from the glossary / character sheet or from the rest of the lines.
+   d. NOT SPOKEN KHMER: a textbook or word-for-word line the rules below forbid, or a word left in another language or script.
+Do NOT rewrite a line that is already correct just to word it differently. Most lines should come back unchanged - leave them out.
+
+${KHMER_DUBBING_RULES}
+
+KEEPING TIME:
+   - A corrected line takes about as long to say as the line it replaces, and stays within its "maxSyllables" when given.
+
+OUTPUT:
+   - Return ONLY a valid JSON array of the corrected lines, using each line's "i": [{ "i": 12, "text": "corrected Khmer line" }]
+   - Return [] when every line is correct.${genreGuidance}`;
+}
+
+// lines: [{ i, source, khmer, gender?, seconds?, maxSyllables? }]; previousLines: the reviewed
+// lines just before this batch, for context only.
+function buildReviewUserPrompt({ lines, glossaryHint = '', sheetHint = '', previousLines }) {
+    const contextHint = previousLines && previousLines.length
+        ? `\n\nPREVIOUS DIALOGUE (context only, already checked; do NOT output these):\n${previousLines.map(l => `- [${l.gender || '?'}] ${l.source} => ${l.khmer}`).join('\n')}`
+        : '';
+    return `${`${glossaryHint}${sheetHint}${contextHint}`.trim()}
+
+LINES TO CHECK:
+${JSON.stringify(lines)}`.trim();
+}
+
 // The app's own estimate of how long a Khmer line takes to say before it is voiced (studio-main's
 // FAST_EST_CHARS_PER_SEC): letters per second, counting base characters only - vowel signs,
 // subscript marks and spaces don't add time.
@@ -318,6 +356,8 @@ module.exports = {
     buildTranslateSystemPrompt,
     buildTranslateUserPrompt,
     buildTranslatePrompt,
+    buildReviewSystemPrompt,
+    buildReviewUserPrompt,
     KHMER_EST_CHARS_PER_SEC,
     estimateSpeechSeconds,
     findOverlongLines

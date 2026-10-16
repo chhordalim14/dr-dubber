@@ -75,6 +75,42 @@ describe('Khmer text for the voice', () => {
         for (const w of ['ម្ដាយ', 'ម្សិលមិញ', 'ម្ភៃ', 'នាង', 'ហូប', 'ពីរនាក់']) assert.equal(say(w), w + '។', w);
     });
 
+    test('times, dates, scores, fractions and ranges as they are said', () => {
+        assert.equal(say('ម៉ោង 10:30 យើងជួបគ្នា'), 'ម៉ោងដប់កន្លះ យើងជួបគ្នា។');
+        assert.equal(say('ជួបគ្នា 7:15 ព្រឹក'), 'ជួបគ្នា ម៉ោងប្រាំពីរ ដប់ប្រាំនាទី ព្រឹក។');
+        assert.equal(say('ម៉ោង ៩:០០'), 'ម៉ោងប្រាំបួន។');
+        assert.equal(say('ថ្ងៃទី 15/5/2026'), 'ថ្ងៃទីដប់ប្រាំ ខែឧសភា ឆ្នាំពីរពាន់ម្ភៃប្រាំមួយ។');
+        assert.equal(say('ពិន្ទុ 3:2'), 'ពិន្ទុ បី ទល់ ពីរ។');
+        assert.equal(say('ពាក់កណ្តាល 1/2'), 'ពាក់កណ្តាល មួយភាគពីរ។');
+        assert.equal(say('អាយុ 20-30 ឆ្នាំ'), 'អាយុ ម្ភៃ ទៅ សាមសិប ឆ្នាំ។');
+    });
+
+    test('units after a number, phone numbers digit by digit, English titles', () => {
+        assert.equal(say('ឆ្ងាយ 5km'), 'ឆ្ងាយ ប្រាំគីឡូម៉ែត្រ។');
+        assert.equal(say('ទម្ងន់ 20 kg'), 'ទម្ងន់ ម្ភៃគីឡូក្រាម។');
+        assert.equal(say('បើក 80km/h'), 'បើក ប៉ែតសិបគីឡូម៉ែត្រក្នុងមួយម៉ោង។');
+        assert.equal(say('លេខ 012 345 678'), 'លេខ សូន្យ មួយ ពីរ បី បួន ប្រាំ ប្រាំមួយ ប្រាំពីរ ប្រាំបី។');
+        assert.equal(say('លេខ 012-345-678'), 'លេខ សូន្យ មួយ ពីរ បី បួន ប្រាំ ប្រាំមួយ ប្រាំពីរ ប្រាំបី។');
+        assert.equal(say('Mr. Wang មកហើយ'), 'លោក Wang មកហើយ។');
+        assert.equal(say('Mrs. Li ទៅណា'), 'លោកស្រី Li ទៅណា។');
+    });
+
+    test("the user's pronunciation list: longest written form first, a said form never respelled again", () => {
+        K.setPronunciations([['ស៊ូ', 'ស៊ូវ'], ['ស៊ូហ៊ាង', 'ស៊ូ ហ៊ាង'], ['', 'x'], ['ទៅ', 'ទៅ']]);
+        try {
+            assert.equal(say('ស៊ូហ៊ាង និង ស៊ូ ទៅ'), 'ស៊ូ ហ៊ាង និង ស៊ូវ ទៅ។');
+        } finally {
+            K.setPronunciations([]);
+        }
+        assert.equal(say('ស៊ូ'), 'ស៊ូ។', 'an empty list leaves the line alone');
+    });
+
+    test('the Settings box: "written = said" per line (=> and → too), other lines ignored', () => {
+        assert.deepEqual(K.parsePronunciations('លំហ = លំហា\na note\nស៊ូហ៊ាង => ស៊ូ ហ៊ាង\r\nក → ខ\n'),
+            [['លំហ', 'លំហា'], ['ស៊ូហ៊ាង', 'ស៊ូ ហ៊ាង'], ['ក', 'ខ']]);
+        assert.deepEqual(K.parsePronunciations(null), []);
+    });
+
     test('text without Khmer is only tidied', () => {
         assert.equal(say('  Hello   world 2  '), 'Hello world 2');
         assert.equal(say(''), '');

@@ -3554,3 +3554,1205 @@ body.kbd-nav .app-header button:focus-visible {
 #aspect-ratio-modal input[type="number"]:focus {
   border-color: var(--accent-primary);
 }
+
+/* ═════════════════════════════════════════════════════════════════════════
+   Dub Whole Series: folder card, part cards with progress, step timeline,
+   chip toggles and switches. Theme colours only, so every preset and the
+   light theme work. studio-main.js renders the parts / steps markup.
+   ═════════════════════════════════════════════════════════════════════════ */
+#modal-dub-series {
+  --ds-ok: #22c55e;
+  --ds-warn: #f59e0b;
+  --ds-bad: #ef4444;
+  --ds-info: #38bdf8;
+  --ds-card: color-mix(in srgb, var(--bg-hover) 55%, var(--bg-panel));
+  --ds-radius: 12px;
+}
+
+/* studio-main.js hides and shows parts with .hidden: it must beat the display set here. */
+#modal-dub-series .hidden {
+  display: none !important;
+}
+
+#modal-dub-series .ds-window {
+  width: 760px;
+  border-radius: 16px;
+  background: var(--panel-grad);
+  box-shadow: var(--float-shadow);
+}
+
+/* Header */
+#modal-dub-series .ds-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+#modal-dub-series .ds-head-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 12px;
+  color: #fff;
+  background: var(--accent-grad);
+  box-shadow: 0 6px 18px -6px var(--accent-glow);
+}
+
+#modal-dub-series .ds-head-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+#modal-dub-series .ds-head-title {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--text-bright);
+}
+
+#modal-dub-series .ds-head-sub {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+#modal-dub-series .ds-icon-btn {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 9px;
+  color: var(--text-secondary);
+  transition: background-color 0.15s, color 0.15s;
+}
+
+#modal-dub-series .ds-icon-btn:hover {
+  color: var(--text-bright);
+  background: var(--bg-hover);
+}
+
+#modal-dub-series .ds-icon-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+#modal-dub-series .ds-icon-btn--sm {
+  width: 24px;
+  height: 24px;
+}
+
+#modal-dub-series .ds-icon-btn--sm svg {
+  width: 14px;
+  height: 14px;
+}
+
+#modal-dub-series .ds-icon-btn--sm:hover {
+  color: var(--ds-bad);
+}
+
+#modal-dub-series .ds-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px;
+  overflow-y: auto;
+  font-size: 13px;
+}
+
+/* Folder card: big drop target until a folder is chosen, then one compact row. */
+#modal-dub-series .ds-drop {
+  position: relative;
+  border: 1.5px dashed color-mix(in srgb, var(--accent-primary) 45%, var(--border-light));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--accent-primary) 5%, transparent);
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+#modal-dub-series .ds-drop:hover,
+#modal-dub-series .ds-drop.is-over {
+  border-color: var(--accent-primary);
+  background: var(--accent-soft);
+}
+
+#modal-dub-series .ds-drop-btn {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 22px 20px 6px;
+  text-align: left;
+}
+
+#modal-dub-series .ds-drop-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  border-radius: 14px;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+
+#modal-dub-series .ds-drop-icon svg {
+  width: 24px;
+  height: 24px;
+}
+
+#modal-dub-series .ds-drop-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+#modal-dub-series .ds-drop-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+#modal-dub-series .ds-drop-path {
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#modal-dub-series .ds-drop-cta {
+  flex-shrink: 0;
+  padding: 8px 16px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent-primary);
+  transition: filter 0.15s, transform 0.1s;
+}
+
+#modal-dub-series .ds-drop-btn:hover .ds-drop-cta {
+  filter: brightness(1.1);
+}
+
+#modal-dub-series .ds-drop-btn:active .ds-drop-cta {
+  transform: scale(0.97);
+}
+
+#modal-dub-series .ds-drop-hint {
+  padding: 0 20px 16px 82px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+#modal-dub-series .ds-drop .ds-when-set {
+  display: none;
+}
+
+#modal-dub-series .ds-drop.has-folder {
+  border-style: solid;
+  border-color: var(--border-color);
+  background: var(--ds-card);
+}
+
+#modal-dub-series .ds-drop.has-folder .ds-when-set {
+  display: inline;
+}
+
+#modal-dub-series .ds-drop.has-folder .ds-when-empty {
+  display: none;
+}
+
+#modal-dub-series .ds-drop.has-folder .ds-drop-btn {
+  padding: 12px 14px;
+}
+
+#modal-dub-series .ds-drop.has-folder .ds-drop-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+}
+
+#modal-dub-series .ds-drop.has-folder .ds-drop-icon svg {
+  width: 19px;
+  height: 19px;
+}
+
+#modal-dub-series .ds-drop.has-folder .ds-drop-title {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+#modal-dub-series .ds-drop.has-folder .ds-drop-path {
+  font-size: 13px;
+  color: var(--text-bright);
+}
+
+#modal-dub-series .ds-drop.has-folder .ds-drop-cta {
+  color: var(--text-primary);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border-light);
+}
+
+#modal-dub-series .ds-drop.has-folder .ds-drop-btn:hover .ds-drop-cta {
+  background: var(--bg-hover);
+}
+
+/* How it works */
+#modal-dub-series .ds-intro.is-hidden {
+  display: none;
+}
+
+#modal-dub-series .ds-flow {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+}
+
+#modal-dub-series .ds-flow-step {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 14px 6px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--ds-radius);
+  text-align: center;
+  background: var(--ds-card);
+}
+
+#modal-dub-series .ds-flow-step:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: -7px;
+  width: 6px;
+  height: 6px;
+  border-top: 1.5px solid var(--text-muted);
+  border-right: 1.5px solid var(--text-muted);
+  transform: translateY(-50%) rotate(45deg);
+}
+
+#modal-dub-series .ds-flow-step > span {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  margin-bottom: 6px;
+  border-radius: 10px;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+
+#modal-dub-series .ds-flow-step svg {
+  width: 17px;
+  height: 17px;
+}
+
+#modal-dub-series .ds-flow-step b {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+#modal-dub-series .ds-flow-step small {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+#modal-dub-series .ds-intro-note {
+  margin-top: 10px;
+  font-size: 12px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+/* Stats */
+#modal-dub-series .ds-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+#modal-dub-series .ds-stats.is-text {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+#modal-dub-series .ds-stat {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--ds-radius);
+  background: var(--ds-card);
+}
+
+#modal-dub-series .ds-stat > span {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 9px;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+
+#modal-dub-series .ds-stat svg {
+  width: 16px;
+  height: 16px;
+}
+
+#modal-dub-series .ds-stat-v {
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--text-bright);
+  font-variant-numeric: tabular-nums;
+}
+
+#modal-dub-series .ds-stat-l {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Callouts */
+#modal-dub-series .ds-callout {
+  padding: 10px 12px 10px 36px;
+  border: 1px solid;
+  border-radius: 10px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  background-repeat: no-repeat;
+  background-position: 12px 11px;
+  background-size: 15px;
+}
+
+#modal-dub-series .ds-callout--warn {
+  color: color-mix(in srgb, var(--ds-warn) 80%, var(--text-bright));
+  border-color: color-mix(in srgb, var(--ds-warn) 35%, transparent);
+  background-color: color-mix(in srgb, var(--ds-warn) 9%, transparent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f59e0b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3'/%3E%3Cpath d='M12 9v4'/%3E%3Cpath d='M12 17h.01'/%3E%3C/svg%3E");
+}
+
+#modal-dub-series .ds-callout--info {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent-primary) 35%, transparent);
+  background-color: var(--accent-soft);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2338bdf8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='M12 16v-4'/%3E%3Cpath d='M12 8h.01'/%3E%3C/svg%3E");
+}
+
+/* Sections */
+
+
+/* Fields */
+#modal-dub-series .ds-grid2,
+#modal-dub-series .ds-grid3 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+#modal-dub-series .ds-grid3 {
+  grid-template-columns: 1fr 1fr 1.6fr;
+}
+
+#modal-dub-series .ds-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+#modal-dub-series .ds-field > span {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+#modal-dub-series .ds-field :is(select, input),
+#modal-dub-series .ds-select-sm {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border-light);
+  border-radius: 9px;
+  font-size: 13px;
+  color: var(--text-bright);
+  background: var(--bg-base);
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+#modal-dub-series .ds-field input {
+  cursor: text;
+}
+
+#modal-dub-series .ds-field :is(select, input):hover,
+#modal-dub-series .ds-select-sm:hover {
+  border-color: color-mix(in srgb, var(--accent-primary) 40%, var(--border-light));
+}
+
+#modal-dub-series .ds-field :is(select, input):disabled,
+#modal-dub-series .ds-select-sm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+#modal-dub-series .ds-select-sm {
+  width: auto;
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+
+
+#modal-dub-series .ds-images-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Chip toggles (the checkbox stays, hidden, so studio-main.js reads .checked). */
+
+
+
+
+
+
+
+
+/* Switch */
+#modal-dub-series .ds-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 40px;
+  height: 23px;
+  border-radius: 999px;
+  background: var(--border-light);
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+#modal-dub-series .ds-switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.3);
+  transition: transform 0.2s cubic-bezier(0.3, 1.4, 0.6, 1);
+}
+
+#modal-dub-series .ds-switch:checked {
+  background: var(--accent-primary);
+}
+
+#modal-dub-series .ds-switch:checked::after {
+  transform: translateX(17px);
+}
+
+#modal-dub-series .ds-switch:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+#modal-dub-series .ds-switch:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+#modal-dub-series .ds-switch--sm {
+  width: 32px;
+  height: 18px;
+}
+
+#modal-dub-series .ds-switch--sm::after {
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+}
+
+#modal-dub-series .ds-switch--sm:checked::after {
+  transform: translateX(14px);
+}
+
+#modal-dub-series .ds-inline-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+/* Hands-free card */
+#modal-dub-series .ds-hf {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 3px;
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  background: var(--ds-card);
+  transition: border-color 0.2s, background-color 0.2s;
+}
+
+#modal-dub-series .ds-hf:has(#ds-handsfree:checked) {
+  border-color: color-mix(in srgb, var(--accent-primary) 55%, transparent);
+  background: linear-gradient(135deg, var(--accent-soft), transparent 70%), var(--ds-card);
+}
+
+#modal-dub-series .ds-hf-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  cursor: pointer;
+}
+
+#modal-dub-series .ds-hf-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+  transition: all 0.2s;
+}
+
+#modal-dub-series .ds-hf:has(#ds-handsfree:checked) .ds-hf-icon {
+  color: #fff;
+  background: var(--accent-grad);
+}
+
+#modal-dub-series .ds-hf-icon svg {
+  width: 19px;
+  height: 19px;
+}
+
+#modal-dub-series .ds-hf-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+#modal-dub-series .ds-hf-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+#modal-dub-series .ds-hf-desc {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+#modal-dub-series .ds-hf-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 0 14px;
+  padding: 11px 0;
+  border-top: 1px dashed var(--border-color);
+  font-size: 12.5px;
+}
+
+#modal-dub-series #ds-clips-box {
+  align-items: stretch;
+}
+
+
+#modal-dub-series #ds-clips select {
+  padding: 4px 6px;
+  border: 1px solid var(--border-light);
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--text-bright);
+  background: var(--bg-base);
+}
+
+
+
+
+
+
+
+
+
+/* Parts list */
+#modal-dub-series .ds-parts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+#modal-dub-series .ds-part {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 11px;
+  overflow: hidden;
+  background: var(--ds-card);
+  transition: border-color 0.2s;
+}
+
+#modal-dub-series .ds-part.is-current {
+  border-color: color-mix(in srgb, var(--accent-primary) 65%, transparent);
+  background: linear-gradient(90deg, var(--accent-soft), transparent 60%), var(--ds-card);
+}
+
+#modal-dub-series .ds-part-num {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+  font-variant-numeric: tabular-nums;
+}
+
+#modal-dub-series .ds-part.is-current .ds-part-num {
+  color: #fff;
+  background: var(--accent-primary);
+}
+
+#modal-dub-series .ds-part.is-done .ds-part-num {
+  color: var(--ds-ok);
+  background: color-mix(in srgb, var(--ds-ok) 14%, transparent);
+}
+
+#modal-dub-series .ds-part-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+#modal-dub-series .ds-part-title {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-bright);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#modal-dub-series .ds-part-meta {
+  display: flex;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+#modal-dub-series .ds-part-meta > span + span::before {
+  content: "·";
+  margin-right: 6px;
+}
+
+#modal-dub-series .ds-part-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: color-mix(in srgb, var(--border-color) 60%, transparent);
+}
+
+#modal-dub-series .ds-part-bar > i {
+  display: block;
+  height: 100%;
+  background: var(--accent-primary);
+  transition: width 0.4s ease;
+}
+
+/* Status pills */
+#modal-dub-series .ds-pill {
+  --c: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  max-width: 220px;
+  padding: 3px 10px 3px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--c);
+  background: color-mix(in srgb, var(--c) 13%, transparent);
+}
+
+#modal-dub-series .ds-pill::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+#modal-dub-series .ds-pill--run { --c: var(--accent-text); }
+#modal-dub-series .ds-pill--info { --c: var(--ds-info); }
+#modal-dub-series .ds-pill--ok { --c: var(--ds-ok); }
+#modal-dub-series .ds-pill--warn { --c: var(--ds-warn); }
+#modal-dub-series .ds-pill--bad { --c: var(--ds-bad); }
+#modal-dub-series .ds-pill--wait { --c: var(--text-secondary); }
+
+#modal-dub-series .ds-pill--run::before,
+#modal-dub-series .ds-pill--info::before {
+  animation: ds-pulse 1.4s ease-in-out infinite;
+}
+
+#modal-dub-series .ds-pill:empty {
+  display: none;
+}
+
+@keyframes ds-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 60%, transparent); }
+  50% { box-shadow: 0 0 0 4px transparent; }
+}
+
+/* Progress card: the part being dubbed (or the last finished one). */
+#modal-dub-series .ds-progress {
+  flex-direction: column;
+  gap: 0;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 35%, var(--border-color));
+  border-radius: 14px;
+  background: linear-gradient(160deg, var(--accent-soft), transparent 55%), var(--ds-card);
+}
+
+#modal-dub-series .ds-progress-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+#modal-dub-series .ds-eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-text);
+}
+
+#modal-dub-series .ds-progress-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-bright);
+}
+
+#modal-dub-series .ds-progress-title small {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+#modal-dub-series .ds-progress-pct {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-bright);
+  font-variant-numeric: tabular-nums;
+}
+
+#modal-dub-series .ds-bar {
+  height: 6px;
+  margin: 10px 0 12px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--border-light) 70%, transparent);
+}
+
+#modal-dub-series .ds-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent-grad);
+  transition: width 0.5s ease;
+}
+
+#modal-dub-series .ds-timeline {
+  display: flex;
+  flex-direction: column;
+}
+
+#modal-dub-series .ds-step {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 28px;
+  font-size: 12.5px;
+}
+
+/* The line joining one step's dot to the next. */
+#modal-dub-series .ds-step:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 21px;
+  bottom: -7px;
+  left: 8px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--border-color);
+}
+
+#modal-dub-series .ds-step.is-done:not(:last-child)::after {
+  background: color-mix(in srgb, var(--ds-ok) 45%, transparent);
+}
+
+#modal-dub-series .ds-step-dot {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border: 2px solid var(--border-light);
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  color: #fff;
+  background: var(--bg-panel);
+}
+
+#modal-dub-series .ds-step.is-done .ds-step-dot { border-color: var(--ds-ok); background: var(--ds-ok); }
+#modal-dub-series .ds-step.is-done .ds-step-dot::before { content: "✓"; }
+#modal-dub-series .ds-step.is-failed .ds-step-dot { border-color: var(--ds-bad); background: var(--ds-bad); }
+#modal-dub-series .ds-step.is-failed .ds-step-dot::before { content: "✕"; }
+#modal-dub-series .ds-step.is-stopped .ds-step-dot { border-color: var(--ds-warn); background: var(--ds-warn); }
+#modal-dub-series .ds-step.is-stopped .ds-step-dot::before { content: "■"; font-size: 7px; }
+#modal-dub-series .ds-step.is-off .ds-step-dot { border-style: dashed; }
+#modal-dub-series .ds-step.is-off .ds-step-dot::before { content: "–"; color: var(--text-muted); }
+
+#modal-dub-series .ds-step.is-running .ds-step-dot {
+  border-color: color-mix(in srgb, var(--accent-primary) 30%, transparent);
+  border-top-color: var(--accent-primary);
+  animation: ds-spin 0.9s linear infinite;
+}
+
+@keyframes ds-spin {
+  to { transform: rotate(360deg); }
+}
+
+#modal-dub-series .ds-step-name {
+  flex-shrink: 0;
+  color: var(--text-primary);
+}
+
+#modal-dub-series .ds-step.is-running .ds-step-name {
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+#modal-dub-series .ds-step.is-off .ds-step-name,
+#modal-dub-series .ds-step.is-pending .ds-step-name {
+  color: var(--text-muted);
+}
+
+#modal-dub-series .ds-step-note {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#modal-dub-series .ds-step-time {
+  flex-shrink: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+/* Footer buttons */
+#modal-dub-series .ds-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  padding: 14px 18px;
+  border-top: 1px solid var(--border-color);
+  background: color-mix(in srgb, var(--bg-base) 60%, var(--bg-panel));
+}
+
+#modal-dub-series .ds-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 16px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: filter 0.15s, background-color 0.15s, color 0.15s, transform 0.1s;
+}
+
+#modal-dub-series .ds-btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+#modal-dub-series .ds-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+#modal-dub-series .ds-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+#modal-dub-series .ds-btn--sm {
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+#modal-dub-series .ds-btn--sm svg {
+  width: 14px;
+  height: 14px;
+}
+
+#modal-dub-series .ds-btn--ghost {
+  color: var(--text-secondary);
+  box-shadow: inset 0 0 0 1px var(--border-light);
+}
+
+#modal-dub-series .ds-btn--ghost:hover:not(:disabled) {
+  color: var(--text-bright);
+  background: var(--bg-hover);
+}
+
+#modal-dub-series .ds-btn--soft {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 45%, transparent);
+}
+
+#modal-dub-series .ds-btn--soft:hover {
+  filter: brightness(1.15);
+}
+
+#modal-dub-series .ds-btn--primary {
+  padding: 10px 22px;
+  color: #fff;
+  background: var(--accent-grad);
+  box-shadow: 0 6px 18px -8px var(--accent-glow);
+}
+
+#modal-dub-series .ds-btn--primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+#modal-dub-series .ds-btn--primary.is-stop {
+  background: var(--ds-bad);
+  box-shadow: 0 6px 18px -8px color-mix(in srgb, var(--ds-bad) 60%, transparent);
+}
+
+/* Numbered sections: ① Episodes ② What to do ③ Look ④ Export. Everything
+   under a header spans the full width, so the cards line up. */
+#modal-dub-series .ds-gap {
+  gap: 12px;
+}
+
+#modal-dub-series .ds-sec-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+
+#modal-dub-series #ds-summary > .ds-sec-head {
+  margin-top: 14px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border-color);
+}
+
+#modal-dub-series .ds-sec-num {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 45%, transparent);
+}
+
+#modal-dub-series .ds-sec-text {
+  min-width: 0;
+}
+
+#modal-dub-series .ds-sec-title {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--text-bright);
+}
+
+#modal-dub-series .ds-sec-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+#modal-dub-series .ds-sub-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 22px;
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* Step tiles: one even row (the checkbox stays, hidden, so studio-main.js reads .checked). */
+#modal-dub-series .ds-tiles {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+#modal-dub-series .ds-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 84px;
+  padding: 12px 8px;
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.3;
+  text-align: center;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.15s;
+}
+
+#modal-dub-series .ds-tile input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+#modal-dub-series .ds-tile svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* The tick in the corner of a tile that is on. */
+#modal-dub-series .ds-tile::after {
+  content: "";
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--border-light);
+  border-radius: 50%;
+}
+
+#modal-dub-series .ds-tile:hover {
+  color: var(--text-bright);
+  border-color: color-mix(in srgb, var(--accent-primary) 45%, var(--border-light));
+}
+
+#modal-dub-series .ds-tile:has(input:checked) {
+  color: var(--text-bright);
+  border-color: color-mix(in srgb, var(--accent-primary) 70%, transparent);
+  background: var(--accent-soft);
+}
+
+#modal-dub-series .ds-tile:has(input:checked) svg {
+  color: var(--accent-text);
+}
+
+#modal-dub-series .ds-tile:has(input:checked)::after {
+  border-color: var(--accent-primary);
+  background: var(--accent-primary) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / 9px no-repeat;
+}
+
+#modal-dub-series .ds-tile:has(input:focus-visible) {
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* Image overlay: a field box the size of the selects above it. */
+#modal-dub-series .ds-fieldbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 4px 4px 4px 10px;
+  border: 1px solid var(--border-light);
+  border-radius: 9px;
+  background: var(--bg-base);
+}
+
+#modal-dub-series .ds-row-label {
+  flex-shrink: 0;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 640px) {
+  #modal-dub-series .ds-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+/* Narrow window: the flow wraps, fields stack. */
+@media (max-width: 640px) {
+  #modal-dub-series .ds-flow { grid-template-columns: repeat(3, 1fr); }
+  #modal-dub-series .ds-flow-step::after { display: none; }
+  #modal-dub-series .ds-grid2,
+  #modal-dub-series .ds-grid3 { grid-template-columns: 1fr; }
+}

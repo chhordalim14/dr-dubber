@@ -136,3 +136,42 @@ describe('shared syllable budget', () => {
         assert.ok(!/0\.8 seconds/.test(serverSource));
     });
 });
+
+describe('Khmer review pass', () => {
+    const { buildReviewSystemPrompt, buildReviewUserPrompt } = require('../backend/lib/khmer-prompts');
+
+    test('checks meaning, forms of address and names with the dubbing rules, and returns only corrected lines', () => {
+        const p = buildReviewSystemPrompt({ genreGuidance: getKhmerDramaRegisterGuidance('family') });
+        assert.ok(p.includes(KHMER_DUBBING_RULES), 'same rules as translating, so a fix never breaks one');
+        assert.match(p, /WRONG MEANING/);
+        assert.match(p, /WRONG FORM OF ADDRESS/);
+        assert.match(p, /WRONG NAME/);
+        assert.match(p, /Do NOT rewrite a line that is already correct/);
+        assert.match(p, /Return \[\] when every line is correct/);
+        assert.match(p, /REGISTER - Family Drama/);
+    });
+
+    test('the batch carries the glossary, the character sheet and the lines before it', () => {
+        const u = buildReviewUserPrompt({
+            lines: [{ i: 4, source: '爸，我错了', khmer: 'បង ខ្ញុំខុសហើយ', gender: 'Male', seconds: 1.5, maxSyllables: 7 }],
+            glossaryHint: '\n\nGLOSSARY X', sheetHint: '\n\nSHEET Y',
+            previousLines: [{ source: '你去哪?', khmer: 'កូនទៅណា?', gender: 'Male' }]
+        });
+        assert.match(u, /GLOSSARY X/);
+        assert.match(u, /SHEET Y/);
+        assert.match(u, /PREVIOUS DIALOGUE[^\n]*do NOT output/);
+        assert.match(u, /- \[Male\] 你去哪\? => កូនទៅណា\?/);
+        assert.ok(u.includes('"i":4') && u.includes('"khmer":"បង ខ្ញុំខុសហើយ"'));
+    });
+
+    test('runs after Transcribe and Translate, before the timeline fit, and can be turned off', () => {
+        for (const tag of ['Transcribe', 'Translate']) {
+            const at = serverSource.indexOf(`usage: promptOpts.usage, tag: '${tag}'`) >= 0
+                ? serverSource.indexOf(`usage: promptOpts.usage, tag: '${tag}'`)
+                : serverSource.indexOf(`usage, tag: '${tag}'\n                });\n            }\n            fitted`);
+            assert.ok(at > 0, `${tag} reviews its lines`);
+        }
+        assert.equal((serverSource.match(/if \(review !== false\)/g) || []).length, 2);
+        assert.ok(serverSource.indexOf('reviewed = await reviewKhmerLines') < serverSource.indexOf("const fitted = fitToTime === false"));
+    });
+});

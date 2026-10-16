@@ -76,7 +76,7 @@ const { trackProcess } = require('./lib/process-tracker');
 const { createTtsWorker } = require('./lib/tts-worker');
 const { secureFetch, fetchBackend } = require('./lib/secure-fetch');
 const { createCodeCraftClient } = require('./lib/codecraft');
-const { KHMER_SYLLABLES_PER_SEC, KHMER_DUBBING_RULES, khmerMaxSyllables, lineSeconds, getKhmerDramaRegisterGuidance, parseSrtBlocksForTranslate, translatePromptLine, buildTranslateSystemPrompt, buildTranslateUserPrompt, findOverlongLines } = require('./lib/khmer-prompts');
+const { KHMER_SYLLABLES_PER_SEC, KHMER_DUBBING_RULES, khmerMaxSyllables, lineSeconds, getKhmerDramaRegisterGuidance, parseSrtBlocksForTranslate, translatePromptLine, buildTranslateSystemPrompt, buildTranslateUserPrompt, buildReviewSystemPrompt, buildReviewUserPrompt, estimateSpeechSeconds, findOverlongLines } = require('./lib/khmer-prompts');
 const { CHARACTER_SHEET_SCHEMA, normalizeSheet, mergeSheets, sheetSize, applyGlossaryToSheet, formatSheetForPrompt, buildCharacterSheetPrompt, loadSeriesSheet, saveSeriesSheet, withSeriesLock } = require('./lib/character-sheet');
 
 // Clean stale temporary cache files (> 7 days old) asynchronously to prevent disk bloat
@@ -226,10 +226,14 @@ function ensureTtsDependencies() {
         console.warn('[Python TTS] No working Python environment found. Edge-TTS local speech synthesis will not be available.');
         return;
     }
-    exec(`"${PYTHON_CMD}" -c "import edge_tts"`, { env: PYTHON_ENV }, (err) => {
+    // Missing, or older than 7.3.1: Microsoft's voice service answers edge-tts 7.2.8 with 403 at
+    // the WebSocket handshake (since Oct 15, 2026), so an old copy is as good as none.
+    // No quotes inside the script (chr(46) is "."), so it survives both cmd.exe and sh quoting.
+    const checkScript = 'import sys, edge_tts.version as v; sys.exit(tuple(map(int, v.__version__.split(chr(46))[:3])) < (7, 3, 1))';
+    exec(`"${PYTHON_CMD}" -c "${checkScript}"`, { env: PYTHON_ENV }, (err) => {
         if (err) {
-            console.warn('[Python TTS] edge-tts not found in python environment. Auto-installing...');
-            exec(`"${PYTHON_CMD}" -m pip install edge-tts`, { env: PYTHON_ENV }, (pipErr, stdout, stderr) => {
+            console.warn('[Python TTS] edge-tts missing or older than 7.3.1. Auto-installing...');
+            exec(`"${PYTHON_CMD}" -m pip install --upgrade "edge-tts>=7.3.1"`, { env: PYTHON_ENV }, (pipErr, stdout, stderr) => {
                 if (pipErr) {
                     console.error('[Python TTS] Failed to auto-install edge-tts:', stderr || pipErr.message);
                 } else {
@@ -2488,6 +2492,8 @@ app.post('/api/transcribe', backgroundable(async (req, res) => {
         // false: the caller fits lines to their time later, on the final timing (Dub Whole Series
         // matches every line to the video, then fits the voices) - no early re-wording here.
         fitToTime = true,
+        // false: skip the review pass (reviewKhmerLines) - Settings > Khmer review pass.
+        review = true,
         // Requests this file may run at once. With 1, the extra keys are only backups: a
         // rate-limited key hands the next chunk to the least busy other key (Dub Whole Series
         // runs one file per key, so this keeps every key at about one request).
@@ -2681,6 +2687,21 @@ app.post('/api/transcribe', backgroundable(async (req, res) => {
             return res.status(422).json({ success: false, error: 'No spoken dialogue was detected in this audio.' });
         }
 
+        // Review pass: the Khmer read again against the words heard, before it is fitted to time.
+        let reviewed = 0;
+        if (review !== false) {
+            const reviewTexts = allCues.map(c => c.text);
+            progress.note = 'Checking the Khmer lines against the original';
+            reviewed = await reviewKhmerLines({
+                lines: allCues.map(c => ({ source: c.originalText || '', gender: c.gender, seconds: c._end - c._start })),
+                texts: reviewTexts,
+                apply: (i, text) => { allCues[i].text = text; allCues[i]._reviewed = true; },
+                genre: genreRegister, glossary, glossaryHint: userGlossaryHint, sheetHint: formatSheetForPrompt(seriesSheet),
+                keyPool: textKeys(keyPool), model, signal: abortCtrl.signal, usage: promptOpts.usage, tag: 'Transcribe'
+            });
+            progress.note = null;
+        }
+
         // The same timeline fit as Translate, on the lines heard from the audio.
         const fitted = fitToTime === false ? 0 : await fitOverlongLines({
             lines: allCues.map(c => ({ text: c.originalText || '', start: c._start, seconds: c._end - c._start })),
@@ -2703,6 +2724,7 @@ app.post('/api/transcribe', backgroundable(async (req, res) => {
         res.json({
             success: true,
             data: finalizeCues(allCues),
+            reviewed,
             fitted,
             usage: promptOpts.usage,
             repair,
@@ -2841,6 +2863,92 @@ async function prepareCharacterSheet({ lines, sourceFilePath, glossary, glossary
 // translated, and a rewrite is only used when it is shorter. A failed request keeps the
 // translation (only Stop throws).
 // lines: [{ text (original), start, seconds }], texts[i]: line i's Khmer, apply(i, newText).
+// The review pass (buildReviewSystemPrompt): the finished Khmer read again against the original
+// with normal thinking, REVIEW_BATCH lines at a time, one lane per key like Translate. Only the
+// lines it corrects come back. A correction much longer than the line it replaces is not taken:
+// the timeline fit after this would only have to shorten it again. A failed batch keeps its lines
+// as they were - the dub is already complete without this pass.
+// lines: [{ source, gender?, seconds? }]; texts[i]: line i's Khmer; apply(i, text) stores a fix.
+const REVIEW_BATCH = 100;
+const REVIEW_RESPONSE_SCHEMA = {
+    type: 'ARRAY',
+    items: {
+        type: 'OBJECT',
+        properties: { i: { type: 'INTEGER' }, text: { type: 'STRING' } },
+        required: ['i', 'text'],
+        propertyOrdering: ['i', 'text']
+    }
+};
+async function reviewKhmerLines({ lines, texts, apply, genre, glossary, glossaryHint = '', sheetHint = '', keyPool, model, signal, usage, tag }) {
+    const todo = lines.map((_, i) => i).filter(i => texts[i] && KHMER_CHAR_RE.test(texts[i]) && lines[i].source);
+    if (!todo.length) return 0;
+    const systemInstruction = { parts: [{ text: buildReviewSystemPrompt({ genreGuidance: getKhmerDramaRegisterGuidance(genre || 'historical') }) }] };
+    const batches = [];
+    for (let b = 0; b < todo.length; b += REVIEW_BATCH) batches.push(todo.slice(b, b + REVIEW_BATCH));
+    const laneCount = Math.max(1, Math.min(textLaneCount(keyPool), TRANSCRIBE_MAX_LANES, batches.length));
+    let changed = 0;
+    let failed = 0;
+
+    const reviewBatch = async (keys, idx) => {
+        const items = idx.map(i => {
+            const seconds = Number(lines[i].seconds) > 0 ? Number(Number(lines[i].seconds).toFixed(2)) : null;
+            return {
+                i, source: lines[i].source, khmer: texts[i],
+                ...(lines[i].gender && { gender: lines[i].gender }),
+                ...(seconds && { seconds, maxSyllables: khmerMaxSyllables(seconds) })
+            };
+        });
+        const previousLines = todo.slice(Math.max(0, todo.indexOf(idx[0]) - 6), todo.indexOf(idx[0]))
+            .map(i => ({ source: lines[i].source, khmer: texts[i], gender: lines[i].gender }));
+        const payload = {
+            systemInstruction,
+            contents: [{ role: 'user', parts: [{ text: buildReviewUserPrompt({ lines: items, glossaryHint, sheetHint, previousLines }) }] }],
+            generationConfig: { responseMimeType: 'application/json', responseSchema: REVIEW_RESPONSE_SCHEMA, maxOutputTokens: 16384 }
+        };
+        // Normal thinking (no 'low'): working out who is talking to whom is the point of this pass.
+        // It thinks longer than the short text jobs, so it keeps the default (audio) timeout.
+        const out = await geminiWithKeys(keys, async (key) => {
+            const r = await generateText(key, model, payload, signal);
+            if (!r.success) return { ok: false, result: r };
+            addTokenUsage(usage, r);
+            const parsed = parseJsonArrayLoose(r.text);
+            return Array.isArray(parsed) ? { ok: true, parsed } : { ok: false, result: { status: 502, error: 'JSON_PARSE_ERROR' } };
+        }, signal, { retries: GEMINI_RETRY_DELAYS_MS.length });
+        if (!out.ok) {
+            failed += idx.length;
+            console.warn(`[${tag}] Review of lines ${idx[0] + 1}-${idx[idx.length - 1] + 1} skipped: ${out.result.message || out.result.error}`);
+            return;
+        }
+        const wanted = new Set(idx);
+        for (const item of out.parsed) {
+            const i = Number(item && item.i);
+            if (!wanted.has(i)) continue;
+            wanted.delete(i); // first answer per line wins
+            let text = sanitizeKhmerDialogue(String(item.text || ''));
+            if (glossary) text = applyGlossary(text, glossary);
+            if (!text || !KHMER_CHAR_RE.test(text) || text === texts[i] || hasForeignText(text)) continue;
+            const seconds = Number(lines[i].seconds) || 0;
+            if (estimateSpeechSeconds(text) > Math.max(estimateSpeechSeconds(texts[i]) * 1.25, seconds * 1.3)) continue;
+            apply(i, text);
+            texts[i] = text;
+            changed++;
+        }
+    };
+
+    await Promise.all(Array.from({ length: laneCount }, async (_, lane) => {
+        const keys = textLaneKeys(keyPool, lane);
+        const from = Math.floor(lane * batches.length / laneCount);
+        const to = Math.floor((lane + 1) * batches.length / laneCount);
+        for (let b = from; b < to; b++) {
+            if (signal && signal.aborted) return;
+            await reviewBatch(keys, batches[b]);
+        }
+    }));
+    if (signal && signal.aborted) throw Object.assign(new Error('Cancelled'), { name: 'AbortError' });
+    console.log(`[${tag}] Review: ${todo.length} line(s) checked, ${changed} corrected${failed ? `, ${failed} not checked (Gemini did not answer)` : ''}`);
+    return changed;
+}
+
 async function fitOverlongLines({ lines, texts, apply, genre, glossary, keyPool, model, signal, usage, sheetHint = '', tag }) {
     const overlong = findOverlongLines(lines, texts);
     if (!overlong.length) return 0;
@@ -2892,7 +3000,9 @@ app.post('/api/translate-srt', async (req, res) => {
         model = 'gemini-3.8-flash',
         requestId,
         // The video the subtitles belong to: its folder keeps the series' character sheet.
-        sourceFilePath
+        sourceFilePath,
+        // false: skip the review pass (reviewKhmerLines) - Settings > Khmer review pass.
+        review = true
     } = req.body;
 
     let content = srtText;
@@ -3037,9 +3147,18 @@ app.post('/api/translate-srt', async (req, res) => {
         if (abortCtrl.signal.aborted) return res.json({ success: false, error: 'CANCELLED' });
         if (failure) return geminiFailureResponse(res, failure);
 
-        // Timeline: the few lines too long for their time are re-worded (fitOverlongLines).
+        // Review pass, then the timeline: the few lines too long for their time are re-worded.
+        let reviewed = 0;
         let fitted = 0;
         try {
+            if (review !== false) {
+                reviewed = await reviewKhmerLines({
+                    lines: sourceLines.map(l => ({ source: l.text, gender: l.gender, seconds: l.seconds })),
+                    texts: results.map(r => r && r.text),
+                    apply: (i, text) => { results[i] = { ...results[i], text, reviewed: true }; },
+                    genre: genreRegister, glossary, glossaryHint, sheetHint, keyPool, model, signal: abortCtrl.signal, usage, tag: 'Translate'
+                });
+            }
             fitted = await fitOverlongLines({
                 lines: sourceLines, texts: results.map(r => r && r.text),
                 apply: (i, text) => { results[i] = { ...results[i], text, fitted: true }; },
@@ -3058,6 +3177,7 @@ app.post('/api/translate-srt', async (req, res) => {
             rawText: rawParts.join('\n'),
             notice: textAiNotice(jobStartedAt),
             usage,
+            reviewed,
             fitted,
             sheet: sheet ? { names: sheet.characters.length, address: sheet.address.length, terms: sheet.terms.length } : null
         });

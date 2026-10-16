@@ -183,6 +183,21 @@ async function confirmProgramRun(targetPath, what) {
 
 let mainWindow = null;
 
+// The UI is laid out in fixed pixels for a window of about 1440x860. On a
+// smaller window (laptop screens) zoom the whole page out so it fits the same
+// way instead of overflowing; larger windows stay at 100%.
+const DESIGN_WIDTH = 1440;
+const DESIGN_HEIGHT = 860;
+const MIN_ZOOM = 0.67;
+
+function fitZoomToWindow() {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    const [w, h] = mainWindow.getContentSize();
+    if (!w || !h) return;
+    const zoom = Math.max(MIN_ZOOM, Math.min(1, w / DESIGN_WIDTH, h / DESIGN_HEIGHT));
+    mainWindow.webContents.setZoomFactor(Math.round(zoom * 100) / 100);
+}
+
 function createWindow() {
     if (mainWindow) {
         if (mainWindow.isMinimized()) mainWindow.restore();
@@ -193,8 +208,8 @@ function createWindow() {
     mainWindow = new BrowserWindow({
         width: 1560,
         height: 960,
-        minWidth: 1200,
-        minHeight: 750,
+        minWidth: 960,
+        minHeight: 600,
         backgroundColor: '#0c0e14',
         icon: path.join(ROOT_DIR, 'assets', 'logo.png'),
         show: false,
@@ -217,9 +232,13 @@ function createWindow() {
         console.log(`[Renderer Log] ${event.message}`);
     });
 
+    mainWindow.webContents.on('did-finish-load', fitZoomToWindow);
+    mainWindow.on('resize', fitZoomToWindow);
+
     mainWindow.loadURL(APP_ORIGIN);
 
     mainWindow.once('ready-to-show', () => {
+        fitZoomToWindow();
         mainWindow.show();
     });
 

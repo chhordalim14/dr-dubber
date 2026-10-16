@@ -1289,6 +1289,7 @@
             customFolder,
             sourceFilePath: item.filePath,
             apiSaver: localStorage.getItem('aiDubberApiSaver') !== 'false',
+            review: localStorage.getItem('aiDubberReviewPass') !== 'false',
             stayOnModel,
             // Dub Whole Series matches the lines to the video and fits the voices afterwards.
             ...(forSeries ? { fitToTime: false } : {}),
@@ -1905,7 +1906,7 @@
           const res = await fetch(`${getBackendBase()}/api/translate-srt`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ srtText, genre, dramaRegister: genre, glossary: glossaryDict, apiKey: workerKeys[0], apiKeys: workerKeys, model, requestId, sourceFilePath: job.sourceFilePath || null }),
+            body: JSON.stringify({ srtText, genre, dramaRegister: genre, glossary: glossaryDict, apiKey: workerKeys[0], apiKeys: workerKeys, model, requestId, sourceFilePath: job.sourceFilePath || null, review: localStorage.getItem('aiDubberReviewPass') !== 'false' }),
             signal: state.translator.abortController.signal
           });
           const data = await res.json();
@@ -2037,7 +2038,8 @@
           apiKey: apiKeys[0],
           apiKeys,
           model,
-          requestId: (state.translator.requestId = `daitr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`)
+          requestId: (state.translator.requestId = `daitr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`),
+          review: localStorage.getItem('aiDubberReviewPass') !== 'false',
         }),
         signal: state.translator.abortController.signal
       });

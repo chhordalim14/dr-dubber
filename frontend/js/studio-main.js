@@ -4159,6 +4159,7 @@
                   requestId: targetProject.geminiRequestId,
                   // Its folder keeps the series' character sheet (names, forms of address).
                   sourceFilePath: targetProject.videoFilePath || (targetProject.file && targetProject.file.path) || null,
+                  review: localStorage.getItem("aiDubberReviewPass") !== "false",
                 }),
                 signal,
               });
@@ -4317,6 +4318,7 @@
                   customFolder: customFolderPath,
                   sourceFilePath: localVideoPath,
                   apiSaver: localStorage.getItem("aiDubberApiSaver") === "true",
+                  review: localStorage.getItem("aiDubberReviewPass") !== "false",
                 }),
                 signal,
               }).finally(() => clearInterval(progressTimer));
@@ -9652,6 +9654,26 @@
       apiSaverToggle.addEventListener("change", () => {
         localStorage.setItem("aiDubberApiSaver", apiSaverToggle.checked ? "true" : "false");
         showToast(apiSaverToggle.checked ? "API Saver ON: fewer Gemini requests per episode." : "API Saver OFF: full accuracy checks.", "info");
+      });
+    }
+
+    // Khmer review pass (on unless turned off; read on every transcribe / translate request)
+    const reviewToggle = document.getElementById("setting-review-pass");
+    if (reviewToggle) {
+      reviewToggle.checked = localStorage.getItem("aiDubberReviewPass") !== "false";
+      reviewToggle.addEventListener("change", () => {
+        localStorage.setItem("aiDubberReviewPass", reviewToggle.checked ? "true" : "false");
+      });
+    }
+
+    // Pronunciation list (khmer-speech.js): saved and applied as it is typed
+    const pronunciationBox = document.getElementById("setting-pronunciations");
+    if (pronunciationBox && window.KhmerSpeech) {
+      const key = window.KhmerSpeech.PRONUNCIATION_KEY;
+      pronunciationBox.value = localStorage.getItem(key) || "";
+      pronunciationBox.addEventListener("input", () => {
+        localStorage.setItem(key, pronunciationBox.value);
+        window.KhmerSpeech.setPronunciations(window.KhmerSpeech.parsePronunciations(pronunciationBox.value));
       });
     }
 
@@ -17189,10 +17211,9 @@
         const labels = seriesEpisodeLabels();
         const clips = currentClips();
         const box = $("ds-clips-box");
-        const show = !!seriesFolder();
+        const show = !!seriesFolder() && mergeWanted(); // clips only go into a joined video
         box.classList.toggle("hidden", !show);
         box.classList.toggle("flex", show);
-        box.classList.toggle("opacity-50", !mergeWanted());
         $("ds-clip-add").disabled = !labels;
         $("ds-clips-note").textContent = !labels ? "Start the series again to add clips." : clips.length ? "" : "None";
         const sig = JSON.stringify([labels, clips]);
@@ -17363,6 +17384,31 @@
         return { total, done, percent };
       }
 
+      // One line of the progress card's timeline. state: done / running / pending / off /
+      // stopped / failed (shell.css draws its dot).
+      const stepRow = (state, name, note = "", took = "") => `<div class="ds-step is-${state}"><span class="ds-step-dot"></span><span class="ds-step-name">${esc(name)}</span><span class="ds-step-note" title="${esc(note)}">${note ? esc(note) : ""}</span><span class="ds-step-time">${took}</span></div>`;
+      // How far a part's steps are, in percent (steps switched off don't count; a running one
+      // counts half).
+      const stepsPercent = (steps = {}) => {
+        const counted = STEP_ORDER.filter((k) => (steps[k] ? steps[k].state !== "skipped" : wanted(k)));
+        if (!counted.length) return 0;
+        const done = counted.reduce((n, k) => n + (steps[k]?.state === "done" ? 1 : steps[k]?.state === "running" ? 0.5 : 0), 0);
+        return Math.floor((done / counted.length) * 100);
+      };
+      // The stats tiles (html), or one line of text in their place.
+      let statsShown = "";
+      const setStats = (html, text = "") => {
+        const el = $("ds-stats");
+        el.classList.toggle("is-text", !html);
+        if (html) el.innerHTML = html;
+        else {
+          el.textContent = text;
+          statsShown = "";
+        }
+      };
+      // A status pill: tone run / info / ok / warn / bad / wait / idle.
+      const pill = (tone, text, tip = "") => `<span class="ds-pill ds-pill--${tone}"${tip ? ` title="${esc(tip)}"` : ""}>${esc(text)}</span>`;
+
       // The finished part's export, under its steps (hands-free only: otherwise the user exports).
       function exportStepLine(shown) {
         const job = plan && shown && shown === plan.lastDone && seriesExports.get(plan.parts[shown.index]);
@@ -17370,24 +17416,24 @@
         const part = plan.parts[shown.index];
         const ex = exportProgress(job);
         const r = job.result;
-        const [icon, cls, note] = job.rendering ? ["●", "text-violet-300 animate-pulse", `${ex.done} of ${ex.total} tab(s) · ${ex.percent}%`]
-          : part.exported ? ["✓", "text-emerald-400", `${ex.total} tab(s) exported`]
-            : r && !exportComplete(r) ? ["✗", "text-red-400", `${r.done} of ${r.total} tab(s) exported${r.failed ? ` (${r.failed} failed)` : ""}`]
-              : ["○", "text-[var(--text-muted)]", `${ex.total} tab(s) waiting in the render queue`];
-        const line = (icon, cls, name, note) => `<div class="flex items-start gap-2 text-xs"><span class="w-4 shrink-0 text-center ${cls}">${icon}</span><span class="shrink-0">${name}</span><span class="text-[var(--text-muted)] truncate flex-1 min-w-0">· ${esc(note)}</span></div>`;
+        const [state, note] = job.rendering ? ["running", `${ex.done} of ${ex.total} tab(s) · ${ex.percent}%`]
+          : part.exported ? ["done", `${ex.total} tab(s) exported`]
+            : r && !exportComplete(r) ? ["failed", `${r.done} of ${r.total} tab(s) exported${r.failed ? ` (${r.failed} failed)` : ""}`]
+              : ["pending", `${ex.total} tab(s) waiting in the render queue`];
         if (mergeScope() === "series") {
-          const whole = wholeJoin ? ["●", "text-violet-300 animate-pulse", `${wholeJoin.percent || 0}%`]
-            : plan.fullMerged ? ["✓", "text-emerald-400", plan.fullMerged.split(/[\\/]/).pop()]
-              : plan.fullMergeError ? ["✗", "text-red-400", plan.fullMergeError]
-                : mergeWanted() ? ["○", "text-[var(--text-muted)]", "after the last part"] : null;
-          return line(icon, cls, "Export", note) + (whole ? line(...whole.slice(0, 2), "Join the whole series", whole[2]) : "");
+          const whole = wholeJoin ? ["running", `${wholeJoin.percent || 0}%`]
+            : plan.fullMerged ? ["done", plan.fullMerged.split(/[\\/]/).pop()]
+              : plan.fullMergeError ? ["failed", plan.fullMergeError]
+                : mergeWanted() ? ["pending", "after the last part"] : null;
+          return stepRow(state, "Export", note) + (whole ? stepRow(whole[0], "Join the whole series", whole[1]) : "");
         }
-        const join = job.merging ? ["●", "text-violet-300 animate-pulse", `${job.mergePercent || 0}%`]
-          : part.merged ? ["✓", "text-emerald-400", part.merged.split(/[\\/]/).pop()]
-            : part.mergeError ? ["✗", "text-red-400", part.mergeError]
-              : part.exported || !mergeWanted() ? null : ["○", "text-[var(--text-muted)]", "after the export"];
-        return line(icon, cls, "Export", note) + (join ? line(...join.slice(0, 2), "Join into one video", join[2]) : "");
+        const join = job.merging ? ["running", `${job.mergePercent || 0}%`]
+          : part.merged ? ["done", part.merged.split(/[\\/]/).pop()]
+            : part.mergeError ? ["failed", part.mergeError]
+              : part.exported || !mergeWanted() ? null : ["pending", "after the export"];
+        return stepRow(state, "Export", note) + (join ? stepRow(join[0], "Join into one video", join[1]) : "");
       }
+
 
       // ── Rendering ────────────────────────────────────────────────────────
       function render() {
@@ -17396,12 +17442,14 @@
         const running = !!seriesRun;
         $("ds-merge").disabled = !handsFree();
         $("ds-merge-scope").disabled = !mergeWanted();
-        $("ds-merge-row").classList.toggle("opacity-50", !handsFree());
+        $("ds-merge-row").classList.toggle("hidden", !handsFree()); // joining needs hands-free
         renderClips();
         const folder = plan?.folder || scan?.folder || "";
         $("ds-folder").textContent = folder || "No folder selected";
         $("ds-folder").title = folder;
+        $("ds-drop").classList.toggle("has-folder", !!folder);
         const show = !!(plan || scan);
+        $("ds-intro").classList.toggle("is-hidden", show);
         $("ds-summary").classList.toggle("hidden", !show);
         $("ds-summary").classList.toggle("flex", show);
 
@@ -17412,8 +17460,18 @@
           : scan ? planEpisodeParts(scan.files, joinMinutes()).map((g) => ({ label: `${epLabel(g[0])} – ${epLabel(g[g.length - 1])}`, episodes: g.length, duration: g.reduce((s, f) => s + f.duration, 0), status: "preview" })) : [];
         const totalEpisodes = parts.reduce((s, p) => s + (p.episodes || 0), 0);
         const totalDur = parts.reduce((s, p) => s + p.duration, 0);
-        const counted = totalEpisodes ? `${totalEpisodes} episodes` : `${parts.length} video${parts.length === 1 ? "" : "s"}`; // merged videos: episodes unknown
-        $("ds-stats").textContent = parts.length ? `${counted} · ${fmtDur(totalDur)} · ${parts.length} part${parts.length === 1 ? "" : "s"}` : (scan ? "No video files found in this folder." : "");
+        if (parts.length) {
+          const stat = (icon, value, label) => `<div class="ds-stat"><span><i data-lucide="${icon}"></i></span><div><div class="ds-stat-v">${esc(value)}</div><div class="ds-stat-l">${label}</div></div></div>`;
+          const sig = JSON.stringify([totalEpisodes, parts.length, Math.round(totalDur)]);
+          if (statsShown !== sig) { // redrawn only when it changes (render runs every second)
+            statsShown = sig;
+            setStats((totalEpisodes // merged videos: episodes unknown
+              ? stat("clapperboard", totalEpisodes, "episodes")
+              : stat("clapperboard", parts.length, parts.length === 1 ? "video" : "videos"))
+              + stat("clock", fmtDur(totalDur), "in all")
+              + stat("layers", parts.length, parts.length === 1 ? "part" : "parts"));
+          }
+        } else setStats("", scan ? "No video files found in this folder." : "");
         if (plan) $("ds-name").value = plan.seriesName || "";
         $("ds-join-minutes").disabled = !!plan || running || !!ready; // these parts are already cut
         const showMerged = !plan && !!scan && !scan.joinedParts && scan.files.some((f) => !f.error);
@@ -17426,37 +17484,47 @@
         const box = $("ds-parts");
         box.innerHTML = "";
         parts.forEach((p, i) => {
-          let state = "";
+          let state = "", bar = null; // bar: percent for the thin progress line under the card
           const jp = plan?.joinProgress?.[i] || bgJoinProgress?.[i];
-          if (jp && jp.status === "running") state = `<span class="text-sky-400">joining ${jp.percent || 0}%</span>`;
-          else if (p.status === "planned" && joiningIndices().includes(i)) state = `<span class="text-sky-400">waiting to join</span>`;
-          else if (p.status === "preview" || p.status === "planned") state = `<span class="text-[var(--text-muted)]">${p.status === "planned" ? "not joined yet" : ""}</span>`;
-          else if (p.status === "failed") state = `<span class="text-red-400" title="${esc(p.error)}">join failed</span>`;
+          if (jp && jp.status === "running") {
+            state = pill("info", `joining ${jp.percent || 0}%`);
+            bar = jp.percent || 0;
+          }
+          else if (p.status === "planned" && joiningIndices().includes(i)) state = pill("info", "waiting to join");
+          else if (p.status === "planned") state = pill("idle", "not joined yet");
+          else if (p.status === "preview") state = "";
+          else if (p.status === "failed") state = pill("bad", "join failed", p.error);
           else if (p.status === "done") {
             const report = p.report ? [
               ...(stepsTotalMs(p.report.steps) >= 1000 ? [`Steps took ${fmtDur(stepsTotalMs(p.report.steps) / 1000)} in all`] : []),
               ...STEP_ORDER.filter((k) => p.report.steps[k]).map((k) => `${STEP_NAMES[k]}: ${p.report.steps[k].state}${tookText(p.report.steps[k]) ? ` in ${tookText(p.report.steps[k])}` : ""}${p.report.steps[k].note ? ` - ${p.report.steps[k].note}` : ""}`),
             ].join("\n") : "";
-            const tip = report ? ` title="${esc(report)}"` : "";
             const job = plan && seriesExports.get(p);
             const r = job?.result;
             if (job?.rendering) {
               const ex = exportProgress(job);
-              state = `<span class="text-sky-400" title="${esc(`${ex.done} of ${ex.total} tab(s) exported${report ? `\n${report}` : ""}`)}">✓ dubbed · exporting ${ex.percent}%</span>`;
+              state = pill("info", `✓ dubbed · exporting ${ex.percent}%`, `${ex.done} of ${ex.total} tab(s) exported${report ? `\n${report}` : ""}`);
+              bar = ex.percent;
             }
-            else if (p.exported) state = `<span class="text-emerald-400"${tip}>✓ dubbed & exported</span>`;
-            else if (r && !exportComplete(r)) state = `<span class="text-amber-400" title="${esc(`${r.done} of ${r.total} tab(s) exported${report ? `\n${report}` : ""}`)}">✓ dubbed · export failed</span>`;
-            else state = `<span class="text-emerald-400"${tip}>✓ dubbed</span>`;
+            else if (p.exported) state = pill("ok", "✓ dubbed & exported", report);
+            else if (r && !exportComplete(r)) state = pill("warn", "✓ dubbed · export failed", `${r.done} of ${r.total} tab(s) exported${report ? `\n${report}` : ""}`);
+            else state = pill("ok", "✓ dubbed", report);
           }
-          else if (i === u) state = running ? `<span class="text-violet-300">working…</span>` : `<span class="text-amber-400">stopped - Continue</span>`;
-          else state = `<span class="text-[var(--text-secondary)]">joined, waiting</span>`;
+          else if (i === u) {
+            state = running ? pill("run", "working…") : pill("warn", "stopped - Continue");
+            bar = stepsPercent(plan.stepState);
+          }
+          else state = pill("wait", "joined, waiting");
           const tabs = Math.max(1, Math.min(MAX_PROJECT_TABS, Math.round(p.duration / (splitMinutes() * 60))));
           const row = document.createElement("div");
-          row.className = `flex items-center gap-3 px-3 py-2 rounded-lg bg-[var(--bg-base)] border text-xs ${i === u ? "border-violet-500/50" : "border-[var(--border-color)]"}`;
-          row.innerHTML = `<span class="font-semibold w-14 shrink-0">Part ${i + 1}</span>
-            <span class="truncate flex-1">${esc(p.label)}${p.episodes ? ` · ${p.episodes} episodes` : ""} · ≈${tabs} tab${tabs === 1 ? "" : "s"}</span>
-            <span class="font-mono text-[var(--text-secondary)] shrink-0">${fmtDur(p.duration)}</span>
-            <span class="w-40 text-right shrink-0">${state}</span>`;
+          row.className = `ds-part${i === u ? " is-current" : ""}${p.status === "done" ? " is-done" : ""}`;
+          row.innerHTML = `<span class="ds-part-num">${p.status === "done" ? "✓" : i + 1}</span>
+            <div class="ds-part-main">
+              <div class="ds-part-title" title="${esc(p.label)}">${esc(p.label)}</div>
+              <div class="ds-part-meta">${p.episodes ? `<span>${p.episodes} episodes</span>` : ""}<span>≈${tabs} tab${tabs === 1 ? "" : "s"}</span><span>${fmtDur(p.duration)}</span></div>
+            </div>
+            ${state}
+            ${bar !== null ? `<div class="ds-part-bar"><i style="width:${Math.max(0, Math.min(100, bar))}%"></i></div>` : ""}`;
           box.appendChild(row);
         });
 
@@ -17466,17 +17534,21 @@
         stepsBox.classList.toggle("hidden", !shown);
         stepsBox.classList.toggle("flex", !!shown);
         if (shown) {
-          stepsBox.innerHTML = `<div class="text-[11px] font-semibold text-[var(--text-secondary)] mb-1">Part ${shown.index + 1}</div>` + STEP_ORDER.map((name) => {
+          const pct = u >= 0 ? stepsPercent(shown.steps) : 100;
+          const eyebrow = u < 0 ? "Last finished" : running ? "Now dubbing" : "Stopped";
+          stepsBox.innerHTML = `<div class="ds-progress-head">
+              <div><div class="ds-eyebrow">${eyebrow}</div><div class="ds-progress-title">Part ${shown.index + 1} of ${plan.parts.length}</div></div>
+              <div class="ds-progress-pct">${pct}%</div>
+            </div>
+            <div class="ds-bar"><i style="width:${pct}%"></i></div>
+            <div class="ds-timeline">` + STEP_ORDER.map((name) => {
             const st = (shown.steps || {})[name];
             const off = !st && !wanted(name);
-            const [icon, cls] = !st ? (off ? ["–", "text-[var(--text-muted)]"] : ["○", "text-[var(--text-muted)]"])
-              : st.state === "done" ? ["✓", "text-emerald-400"]
-                : st.state === "running" ? ["●", "text-violet-300 animate-pulse"]
-                  : st.state === "skipped" ? ["–", "text-[var(--text-muted)]"]
-                    : st.state === "stopped" ? ["■", "text-amber-400"] : ["✗", "text-red-400"];
-            const label = off ? `${STEP_NAMES[name]} (off)` : STEP_NAMES[name];
-            return `<div class="flex items-start gap-2 text-xs"><span class="w-4 shrink-0 text-center ${cls}">${icon}</span><span class="shrink-0">${label}</span><span class="text-[var(--text-muted)] truncate flex-1 min-w-0" title="${esc(st?.note)}">${st?.note ? "· " + esc(st.note) : ""}</span><span class="font-mono text-[var(--text-muted)] shrink-0">${tookText(st)}</span></div>`;
-          }).join("") + exportStepLine(shown);
+            const state = !st ? (off ? "off" : "pending")
+              : st.state === "skipped" ? "off"
+                : ["done", "running", "stopped"].includes(st.state) ? st.state : "failed";
+            return stepRow(state, off ? `${STEP_NAMES[name]} (off)` : STEP_NAMES[name], st?.note || "", tookText(st));
+          }).join("") + exportStepLine(shown) + `</div>`;
         }
 
         const nextIdx = nextPartIndex();
@@ -17522,6 +17594,11 @@
           btnNext.textContent = label;
           btnNext.classList.toggle("hidden", !label);
         }
+        btnStart.classList.toggle("is-stop", running || (!!plan && joining.length > 0));
+        // With Start hidden, Next part / Continue is the main button.
+        const nextIsMain = btnStart.classList.contains("hidden");
+        btnNext.classList.toggle("ds-btn--primary", nextIsMain);
+        btnNext.classList.toggle("ds-btn--soft", !nextIsMain);
         $("ds-reset").classList.toggle("hidden", !plan || running);
         $("ds-open").classList.toggle("hidden", !plan?.outDir);
         if (window.lucide) _lucideCreateIcons({ root: modal });
@@ -18643,46 +18720,85 @@
       $("ds-close").addEventListener("click", close);
       modal.addEventListener("click", close);
 
-      $("ds-pick").addEventListener("click", async () => {
+      // Another folder while a series is planned: only after the user says so (true: go on).
+      const confirmNewFolder = async () => {
+        if (seriesRun) return false;
+        if (!plan) return true;
+        const resume = holdAutoResume();
+        const ok = await customConfirm("Start over with another folder? The files already made stay where they are.", "Start over", "Yes, start over");
+        if (!ok) return resume();
         if (seriesRun) return;
-        if (plan) {
-          const resume = holdAutoResume();
-          const ok = await customConfirm("Start over with another folder? The files already made stay where they are.", "Start over", "Yes, start over");
-          if (!ok) return resume();
-          if (seriesRun) return;
-          cancelBackgroundJoin();
-          plan = null;
-          savePlan();
-        }
+        cancelBackgroundJoin();
+        plan = null;
+        savePlan();
+        return true;
+      };
+      $("ds-pick").addEventListener("click", async () => {
+        if (!(await confirmNewFolder())) return;
         const res = await window.electronAPI?.selectFolder?.({ title: "Choose the folder with the episodes", defaultPath: localStorage.getItem("lastPath:joinEpisodes") || "" });
         if (!res || res.canceled || !res.path) { render(); return; }
-        localStorage.setItem("lastPath:joinEpisodes", res.path);
+        scanFolder(res.path);
+      });
+
+      // Drop the episodes folder (or one of its videos: its folder is used) on the folder card.
+      const drop = $("ds-drop");
+      drop.addEventListener("dragover", (e) => {
+        if (!e.dataTransfer?.types?.includes("Files")) return;
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = seriesRun ? "none" : "copy";
+        drop.classList.add("is-over");
+      });
+      drop.addEventListener("dragleave", (e) => { if (!drop.contains(e.relatedTarget)) drop.classList.remove("is-over"); });
+      // A drop that misses the card would navigate the app away to the dropped file.
+      ["dragover", "drop"].forEach((type) => modal.addEventListener(type, (e) => e.preventDefault()));
+      drop.addEventListener("drop", async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        drop.classList.remove("is-over");
+        const item = [...(e.dataTransfer?.items || [])].find((it) => it.kind === "file");
+        const file = item?.getAsFile();
+        const path = file && (file.path || window.electronAPI?.getPathForFile?.(file));
+        if (!path) return showToast("Drop a folder from your computer.", "warning");
+        const folder = item.webkitGetAsEntry?.()?.isDirectory ? path : dirOf(path);
+        if (!(await confirmNewFolder())) return;
+        scanFolder(folder);
+      });
+
+      async function scanFolder(folder) {
+        localStorage.setItem("lastPath:joinEpisodes", folder);
         scan = null;
         render();
-        $("ds-folder").textContent = res.path;
+        $("ds-folder").textContent = folder;
+        $("ds-drop").classList.add("has-folder");
+        $("ds-intro").classList.add("is-hidden");
         $("ds-summary").classList.remove("hidden");
         $("ds-summary").classList.add("flex");
-        $("ds-stats").textContent = "Reading episodes…";
+        setStats("", "Reading episodes…");
         try {
-          const r = await postJson(`${API}/episodes/scan`, { folder: res.path });
+          const r = await postJson(`${API}/episodes/scan`, { folder });
           if (!r.success) throw new Error(r.error);
-          scan = { ...r, folder: r.folder || res.path };
+          scan = { ...r, folder: r.folder || folder };
           // Every video 20 minutes or longer: merged already, not episodes (switchable).
           const readable = r.files.filter((f) => !f.error);
           $("ds-merged").checked = readable.length > 0 && readable.every((f) => f.duration >= 20 * 60);
           $("ds-name").value = r.seriesName || "";
           const warn = $("ds-warnings");
-          warn.innerHTML = (r.warnings || []).map((w) => `⚠ ${esc(w)}`).join("<br>");
+          const ws = r.warnings || [];
+          warn.innerHTML = ws.map((w) => (ws.length > 1 ? `• ${esc(w)}` : esc(w))).join("<br>"); // the callout has its own icon
           warn.classList.toggle("hidden", !(r.warnings || []).length);
           render();
         } catch (e) {
           scan = null;
           render();
+          $("ds-folder").textContent = folder;
+          $("ds-drop").classList.add("has-folder");
+          $("ds-intro").classList.add("is-hidden");
           $("ds-summary").classList.remove("hidden");
           $("ds-summary").classList.add("flex");
-          $("ds-stats").textContent = `Could not read the folder: ${e.message}`;
+          setStats("", `Could not read the folder: ${e.message}`);
         }
-      });
+      }
 
       $("ds-start").addEventListener("click", () => {
         if (seriesRun) {
