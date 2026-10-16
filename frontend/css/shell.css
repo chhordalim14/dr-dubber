@@ -2181,9 +2181,15 @@ body.kbd-nav .app-header button:focus-visible {
   --tool-tint: #22d3ee;
 }
 
-#timeline-toolbar-header #btn-fit-duration,
-#timeline-toolbar-header #btn-fix-fast-audio {
+#timeline-toolbar-header #btn-fit-duration {
   --tool-tint: #4f8cff;
+}
+
+/* The "N rushed" chip: amber, a quality warning (see css/fix-rushed.css). */
+#timeline-toolbar-header #btn-fix-fast-audio {
+  --tool-tint: #f59e0b;
+  color: #f59e0b;
+  font-weight: 600;
 }
 
 #timeline-toolbar-header #btn-auto-fit.opacity-70 svg {
@@ -2558,9 +2564,9 @@ body.kbd-nav .app-header button:focus-visible {
     max-width: 240px;
   }
 
-  /* Timeline: the two audio fixes go icon-only so the toolbar keeps one row. */
-  #timeline-toolbar-header #text-fit-duration,
-  #timeline-toolbar-header #text-fix-fast-audio {
+  /* Timeline: Fit Audio Slot goes icon-only so the toolbar keeps one row
+     (the rushed chip keeps its short "N rushed" count). */
+  #timeline-toolbar-header #text-fit-duration {
     display: none;
   }
 

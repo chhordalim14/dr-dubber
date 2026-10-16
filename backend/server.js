@@ -4297,7 +4297,9 @@ app.post('/api/generate-voxcmp2', async (req, res) => {
         };
 
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 120000); // 2 minute timeout for neural synthesis
+        // VoxCPM2 on a CPU (no NVIDIA card) takes about 30 s per second of speech, so a long
+        // line needs minutes; 2 minutes cut those off and the page then voiced them again.
+        const timeout = setTimeout(() => controller.abort(), 15 * 60 * 1000);
 
         let targetEndpoint = `${baseUrl}/api/generate`;
         logVox(`[Send] POST ${targetEndpoint}`);
@@ -4442,6 +4444,7 @@ const videoSplitter = createVideoSplitter({ getFFmpegBinary, getFFprobeBinary, t
 app.use('/api', require('./routes/system')({ detectAvailableEncoders }));
 app.use('/api', require('./routes/preview')({ previewService }));
 app.use('/api', require('./routes/waveform')({ getFFmpegBinary }));
+app.use('/api', require('./routes/voice-capture')({ getFFmpegBinary, getFFprobeBinary, audioRepair, trackProcess }));
 app.use('/api/episodes', require('./routes/episodes')({ episodeJoiner }));
 app.use('/api/split', require('./routes/split')({ videoSplitter }));
 app.use('/api', require('./routes/render')({ upload, renderVideo, cancelRender, getRenderProgress, audioRepair }));

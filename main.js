@@ -926,7 +926,8 @@ handle('voxcpm2:startServer', async (event, opts = {}) => {
         HF_HOME: path.join(scriptDir, 'cache'),
         MODELSCOPE_CACHE: path.join(scriptDir, 'cache'),
         PIP_CACHE_DIR: path.join(scriptDir, 'cache', 'pip'),
-        PYTHONUNBUFFERED: '1'
+        PYTHONUNBUFFERED: '1',
+        HF_HUB_DISABLE_XET: '1' // same plain-HTTP download the installer uses (Xet stalled on slow lines)
     });
 
     try {
@@ -975,6 +976,51 @@ handle('voxcpm2:startServer', async (event, opts = {}) => {
         return { success: false, error: err.message };
     }
 });
+
+// One-click VoxCPM2 install (backend/lib/voxcpm-installer.js). The folder it builds is
+// exactly what voxcpm2:startServer runs: app.py + venv inside it.
+const DEFAULT_VOXCPM_DIR = path.join(app.getPath('home'), 'DR Dubber VoxCPM2');
+function voxScriptsDir() {
+    const unpacked = path.join(ROOT_DIR.replace('app.asar', 'app.asar.unpacked'), 'backend', 'python');
+    return fs.existsSync(unpacked) ? unpacked : path.join(ROOT_DIR, 'backend', 'python');
+}
+function approveProgram(p) {
+    const approved = loadApprovedPrograms();
+    approved.add(normalizePathForCompare(canonicalPath(p)));
+    try { fs.writeFileSync(APPROVED_EXEC_FILE, JSON.stringify([...approved], null, 2), 'utf8'); } catch (e) {}
+}
+let voxInstaller = null;
+const getVoxInstaller = () => voxInstaller || (voxInstaller = require('./backend/lib/voxcpm-installer').createVoxcpmInstaller({
+    scriptsDir: voxScriptsDir(),
+    killProcessTree,
+    approveProgram,
+}));
+// Only a plain local folder; never a network share or a relative path.
+function voxInstallDir(dir) {
+    const d = typeof dir === 'string' && dir.trim() ? dir.trim() : DEFAULT_VOXCPM_DIR;
+    if (security.isNetworkPath(d) || !path.isAbsolute(d) || (process.platform === 'win32' && !/^[a-zA-Z]:[\\/]/.test(d))) return null;
+    return path.resolve(d);
+}
+
+handle('voxcpm2:installInfo', async (event, opts = {}) => {
+    const dir = voxInstallDir(opts.dir);
+    if (!dir) return { success: false, error: 'Pick a folder on this PC.' };
+    return { success: true, defaultDir: DEFAULT_VOXCPM_DIR, ...(await getVoxInstaller().info(dir)) };
+});
+
+handle('voxcpm2:install', async (event, opts = {}) => {
+    const dir = voxInstallDir(opts.dir);
+    if (!dir) return { success: false, error: 'Pick a folder on this PC.' };
+    if (activeVoxServerJob) return { success: false, error: 'Stop the VoxCPM2 server first.' };
+    const send = (d) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('voxcpm2:installProgress', d); };
+    try {
+        return await getVoxInstaller().install(dir, send);
+    } catch (e) {
+        return { success: false, error: e.message, cancelled: !!e.cancelled, needPython: !!e.needPython };
+    }
+});
+
+handle('voxcpm2:cancelInstall', async () => ({ success: getVoxInstaller().cancel() }));
 
 handle('voxcpm2:stopServer', async () => {
     if (activeVoxServerJob && activeVoxServerJob.child) {

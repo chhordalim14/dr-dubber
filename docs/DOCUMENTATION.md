@@ -77,14 +77,14 @@ The rail on the left opens a drawer for each area. The subtitle panel on the rig
 | **Effects** | Color, Vignette, Video Presets, Aspect Ratio, Crop |
 | Subtitles tab | Language, Add Text, Transcribe, Edit, Delete, Find (Ctrl+H) |
 | AI Dubbing tab | Drama genre, DAI-Transcribe, All Tabs menu, Fix Missing, AI Refactor (Natural & Short, Ultra-Short, Dramatic, Royal, Comedy) |
-| Voice tab | Male / Female / profile per line, Reverb, Auto-Fit, Sync End, Fit Audio Slot, Fix Fast Audio, Generate Audio, Generate All Tabs |
+| Voice tab | Male / Female / profile per line, Reverb, Auto-Fit, Sync End, Fit Audio Slot, Fix Rushed Lines (the amber "N rushed" chip), Generate Audio, Generate All Tabs |
 
 ### Dub one video
 
 1. **Media › Load Video**, or **Open Video** in the header to open it in a new tab.
 2. **Subtitles › Transcribe**. In Direct mode Gemini writes Khmer subtitles straight from the speech. To bring your own, use **Import SRT**.
 3. Check the translation. **Fix Missing** re-translates only lines with no Khmer; **AI Refactor** rewrites lines in a chosen tone.
-4. In **Voice**, assign **Male** (Piseth) or **Female** (Sreymom) and press **Generate Audio**. If a line sounds rushed, use **Fix Fast Audio** to shorten its text, or **Fit Audio Slot** to change its tempo.
+4. In **Voice**, assign **Male** (Piseth) or **Female** (Sreymom) and press **Generate Audio**. If a line sounds rushed, an amber **N rushed** chip appears beside Auto-Fit: click it to give the lines the free time after them or have AI rewrite them shorter, then apply and regenerate. Or use **Fit Audio Slot** to change its tempo.
 5. **Audio › Isolate BGM** removes the original voices and keeps the music.
 6. **Video › Blur Subtitles** hides burned-in text. **Match Subtitles to Video** re-times lines to the picture.
 7. Fine-tune on the timeline: Zoom, Split, and per-clip Speed (0.5–2.5), Vol (0–5) and Pitch (±12).
@@ -110,6 +110,12 @@ Progress is saved after every step. After a Stop, a quota pause or a restart, **
 ## Settings
 
 Most choices live in **Settings** (General, API Keys, VoxCPM2 AI, Theme, Shortcuts, Statistics, About), with a search box at the top. Settings are saved per user in the app; API keys are never read from `.env`.
+
+### VoxCPM2 voice cloning
+
+**Settings → VoxCPM2 AI → Install VoxCPM2** sets everything up in one click: a private Python environment (needs Python 3.10–3.12 on the PC), PyTorch, the `voxcpm` package, the `openbmb/VoxCPM2` model (4.6 GB) and the app's own server (`backend/python/voxcpm2_server.py`, copied in as `app.py`). The default folder is `%USERPROFILE%\DR Dubber VoxCPM2` (about 12 GB free needed). With an NVIDIA card of 6 GB or more it installs the GPU build; otherwise the CPU build, which works but is slow: about 30 seconds of computing per second of speech (measured on an i5-12400), so a 3-second line takes 1–2 minutes. A stalled download restarts itself and resumes; clicking Install again also repairs or finishes an interrupted install. When it is done, **VoxCPM2 Local Path** is filled in and **Start Server** loads the model (the status turns ready when it is loaded).
+
+The server listens on `127.0.0.1:8808` only: `GET /` answers 503 while the model loads and 200 when ready; `POST /api/generate` takes `text`, `instruction` (a voice/style description, passed to VoxCPM2 in brackets before the text) and the reference clip as `reference_audio_base64`, and returns `audio_base64` and `duration`. Any server with the same API (for example on a cloud GPU) can be used instead through **Server URL**.
 
 ### Interface language
 

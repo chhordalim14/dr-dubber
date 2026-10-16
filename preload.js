@@ -39,6 +39,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     writeVoxLog: (msg) => ipcRenderer.send('voxcpm2:writeLog', msg),
     onVoxServerLog: (cb) => ipcRenderer.on('voxcpm2:log', (e, d) => cb(d)),
     onVoxServerStopped: (cb) => ipcRenderer.on('voxcpm2:serverStopped', (e, d) => cb(d)),
+    voxInstallInfo: (opts) => ipcRenderer.invoke('voxcpm2:installInfo', opts),
+    voxInstall: (opts) => ipcRenderer.invoke('voxcpm2:install', opts),
+    voxCancelInstall: () => ipcRenderer.invoke('voxcpm2:cancelInstall'),
+    onVoxInstallProgress: (cb) => ipcRenderer.on('voxcpm2:installProgress', (e, d) => cb(d)),
 
     // Presets
     savePreset: (p) => ipcRenderer.invoke('preset:save', p),

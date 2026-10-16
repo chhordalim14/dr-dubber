@@ -1078,6 +1078,9 @@
         file,
         blobUrl: null,
         currentTime: 0,
+        // VoxCPM2 voice group this tab's lines are voiced from (null = all voices).
+        // Sticky like the edit template: the next episode keeps the same cast.
+        voxGroupId: (typeof projects !== "undefined" && projects[activeProjectIndex]?.voxGroupId) || null,
         subtitles: [],
         detachedAudios: [],
         videoColorAdj: { ...videoColorAdj },
@@ -2192,8 +2195,11 @@
     });
 
     // --- 🟢 SMART VOXCPM2 PROFILE RESOLVER ---
-    function resolveSmartVoxCpmProfile(subVoiceTag, loadedProfiles) {
+    // `pool` (optional) is the tab's voice group: a line already set to a profile
+    // keeps it wherever it lives, but a plain Male/Female line is voiced from the group.
+    function resolveSmartVoxCpmProfile(subVoiceTag, loadedProfiles, pool) {
       if (!loadedProfiles || loadedProfiles.length === 0) return null;
+      if (!pool || pool.length === 0) pool = loadedProfiles;
 
       const cleanTag = (subVoiceTag || "").trim().toLowerCase();
 
@@ -2205,7 +2211,13 @@
       const isFemaleTag = cleanTag.includes("female") || cleanTag.includes("woman") || cleanTag.includes("girl");
       const isMaleTag = !isFemaleTag && (cleanTag.includes("male") || cleanTag.includes("man") || cleanTag.includes("boy"));
 
-      for (const profile of loadedProfiles) {
+      // A profile's own gender says more than its name.
+      if (isFemaleTag || isMaleTag) {
+        const byGender = pool.find((p) => (p.gender || "").toLowerCase() === (isFemaleTag ? "female" : "male"));
+        if (byGender) return byGender;
+      }
+
+      for (const profile of pool) {
         const combinedStr = `${profile.name || ""} ${profile.label || ""} ${profile.id || ""}`.toLowerCase();
 
         if (isFemaleTag && (combinedStr.includes("female") || combinedStr.includes("woman"))) {
@@ -2218,7 +2230,7 @@
       }
 
       // 3. Absolute Fallback: Return the first available profile safely
-      return loadedProfiles[0];
+      return pool[0];
     }
 
     // Close preset panel when color-adjust opens (and vice versa)
@@ -4210,7 +4222,7 @@
                 renderSubtitles();
                 showToast("Transcription & Translation Complete!", "success");
               } else {
-                autoAssignVoxProfiles(targetProject.subtitles);
+                autoAssignVoxProfiles(targetProject.subtitles, targetProject);
                 showToast(`Whisper + Translation complete for "${targetProject.file?.name || 'project tab'}"!`, "success");
               }
 
@@ -4359,7 +4371,7 @@
                 const repairMsg = typeof window.describeRepair === "function" ? window.describeRepair(genData.repair) : "";
                 showToast(repairMsg ? `Transcription Complete! Auto-check ${repairMsg}.` : "Transcription Complete!", "success");
               } else {
-                autoAssignVoxProfiles(targetProject.subtitles);
+                autoAssignVoxProfiles(targetProject.subtitles, targetProject);
                 showToast(`Transcription finished for "${targetProject.file?.name || 'project tab'}"!`, "success");
               }
 
@@ -4548,7 +4560,7 @@
           };
         });
         if (newSubs.length) {
-          if (typeof autoAssignVoxProfiles === "function") autoAssignVoxProfiles(newSubs);
+          if (typeof autoAssignVoxProfiles === "function") autoAssignVoxProfiles(newSubs, targetProject);
           list.push(...newSubs);
           list.sort((a, b) => parseFloat(a.textStart) - parseFloat(b.textStart));
           changedIds.push(...newSubs.map((s) => s.id));
@@ -9769,12 +9781,14 @@
       };
     }
 
-    function voxCmp2Save(data) {
+    // opts.quiet: skip the Subtitle Data re-render (a long project takes a moment);
+    // the caller re-renders once when it is done (e.g. closing Voice Groups).
+    function voxCmp2Save(data, opts = {}) {
       localStorage.setItem(VOXCMP2_KEY, JSON.stringify(data));
 
       document.dispatchEvent(new Event("voxcpm2-settings-changed"));
       // Instantly re-render the Subtitle Data table to reflect the new/updated Voice Profiles
-      if (typeof renderSubtitles === "function") {
+      if (!opts.quiet && typeof renderSubtitles === "function") {
         renderSubtitles();
       }
     }
@@ -9840,7 +9854,7 @@
           body: JSON.stringify({
             text: sub.text,
             originalText: sub.originalText || "",
-            // The line's slot: Shorten sizes the line to it (same engine as AI Shorten All).
+            // The line's slot: Shorten sizes the line to it (same engine as Fix Rushed Lines).
             textStart: sub.textStart,
             textEnd: sub.textEnd,
             mode: refactorMode,
@@ -10811,6 +10825,7 @@
 
       // Proceed with deletion if there are 2 or more
       data.profiles = data.profiles.filter((p) => p.id !== id);
+      if (typeof voxGroupsPrune === "function") voxGroupsPrune(data);
       voxCmp2Save(data);
 
       if (typeof voxCmp2RenderProfiles === "function") {
@@ -10951,6 +10966,7 @@
         // Cross-platform safe: store the native OS path and derive a clean display name
         profile.audioPath = result.filePath;
         profile.audioName = result.fileName || result.filePath.split(/[\\/]/).pop();
+        delete profile.isNew;
         voxCmp2Save(data);
         // Update only the name label in the DOM without full re-render
         const nameEl = document.getElementById(`voxcpm2-audio-name-${profileId}`);
@@ -10959,7 +10975,6 @@
         const playBtn = document.getElementById(`voxcmp2-play-btn-${profileId}`);
         if (playBtn) {
           playBtn.disabled = false;
-          playBtn.className = "p-1.5 rounded-lg border transition-all active:scale-90 bg-violet-500/10 border-violet-500/30 text-violet-400 hover:bg-violet-500/20";
           if (window.lucide) _lucideCreateIcons({ root: playBtn });
         }
       } else {
@@ -10972,6 +10987,7 @@
       const profile = data.profiles.find((p) => p.id === profileId);
       if (profile) {
         profile[field] = value;
+        delete profile.isNew; // edited: it joins the rest of the gallery
         voxCmp2Save(data);
       }
     }
@@ -10992,80 +11008,9 @@
       if (typeof showToast === "function") showToast("All voice profile colors reset to default.", "success");
     }
 
+    // The voice gallery (search, filter, sort, grid/list) lives in js/vox-gallery.js.
     function voxCmp2RenderProfiles(profiles) {
-      const container = document.getElementById("voxcmp2-profiles-list");
-      if (!container) return;
-      container.innerHTML = profiles
-        .map(
-          (p) => `
-          <div class="flex flex-col gap-3 p-4 rounded-xl bg-[var(--bg-base)] border border-[var(--border-light)] group relative" data-vox-profile-id="${escHtml(p.id)}">
-            <!-- Profile header row -->
-            <div class="flex items-center gap-2">
-              <input
-                type="color"
-                value="${escHtml(p.color || "#6366f1")}"
-                data-vox-field="color"
-                title="Voice profile color — used in dropdowns and A1 audio items"
-                class="w-8 h-8 shrink-0 rounded-full border border-[var(--border-light)] bg-[var(--bg-panel)] cursor-pointer p-0.5 [&::-webkit-color-swatch-wrapper]:rounded-full [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:rounded-full [&::-webkit-color-swatch]:border-none [&::-moz-color-swatch]:rounded-full [&::-moz-color-swatch]:border-none"
-              />
-              <input
-                type="text"
-                value="${escHtml(p.label)}"
-                data-vox-field="label"
-                class="flex-1 bg-[var(--bg-panel)] border border-[var(--border-light)] rounded-lg px-2.5 py-1.5 text-sm font-semibold text-[var(--text-bright)] outline-none focus:border-violet-400 transition-colors font-khmer"
-                placeholder="Profile name"
-              />
-              <select
-                data-vox-field="gender"
-                class="bg-[var(--bg-panel)] border border-[var(--border-light)] rounded-lg px-2 py-1.5 text-xs text-[var(--text-primary)] outline-none focus:border-violet-400 transition-colors"
-              >
-                <option value="Male"   ${p.gender === "Male" ? "selected" : ""}>Male</option>
-                <option value="Female" ${p.gender === "Female" ? "selected" : ""}>Female</option>
-              </select>
-              <button data-vox-action="delete"
-                class="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-red-400 hover:bg-red-500/10 border border-transparent hover:border-red-500/20 transition-all active:scale-90">
-                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
-              </button>
-            </div>
-            <!-- Control Instruction -->
-            <div class="flex flex-col gap-1">
-              <label class="text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wider">Control Instruction</label>
-              <textarea
-                rows="2"
-                data-vox-field="instruction"
-                class="w-full bg-[var(--bg-panel)] border border-[var(--border-light)] rounded-lg px-3 py-2 text-xs text-[var(--text-primary)] resize-none outline-none focus:border-violet-400 transition-colors"
-                placeholder="e.g. Speak calmly with a deep tone..."
-              >${escHtml(p.instruction)}</textarea>
-            </div>
-            <!-- Audio Profile -->
-            <div class="flex items-center gap-2">
-              <div class="flex-1 bg-[var(--bg-panel)] border border-[var(--border-light)] rounded-lg px-3 py-1.5 text-xs font-mono text-[var(--text-muted)] truncate">
-                <span id="voxcpm2-audio-name-${escHtml(p.id)}">${escHtml(p.audioName || "No audio profile selected")}</span>
-              </div>
-              <button id="voxcmp2-play-btn-${escHtml(p.id)}" data-vox-action="play"
-                class="p-1.5 rounded-lg border transition-all active:scale-90 ${p.audioPath ? "bg-violet-500/10 border-violet-500/30 text-violet-400 hover:bg-violet-500/20" : "bg-[var(--bg-hover)] border-[var(--border-light)] text-[var(--text-muted)] opacity-40 cursor-not-allowed"}"
-                ${p.audioPath ? "" : "disabled"} title="Preview voice clone">
-                <i data-lucide="circle-play" class="w-4 h-4"></i>
-              </button>
-              <button data-vox-action="browse"
-                class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--bg-hover)] border border-[var(--border-light)] text-[var(--text-primary)] hover:brightness-110 transition-all active:scale-95 whitespace-nowrap shrink-0">
-                <i data-lucide="music" class="w-3.5 h-3.5 text-violet-400"></i> Browse .mp3/.wav
-              </button>
-            </div>
-          </div>
-        `,
-        )
-        .join("");
-      container.querySelectorAll("[data-vox-profile-id]").forEach((card) => {
-        const profileId = card.getAttribute("data-vox-profile-id");
-        card.querySelectorAll("[data-vox-field]").forEach((el) => {
-          el.addEventListener("change", (e) => voxCmp2SaveField(profileId, el.getAttribute("data-vox-field"), e.target.value));
-        });
-        card.querySelector('[data-vox-action="delete"]')?.addEventListener("click", () => voxCmp2DeleteProfile(profileId));
-        card.querySelector('[data-vox-action="play"]')?.addEventListener("click", () => voxCmp2PlayAudio(profileId));
-        card.querySelector('[data-vox-action="browse"]')?.addEventListener("click", () => voxCmp2BrowseAudio(profileId));
-      });
-      if (window.lucide) _lucideCreateIcons({ root: container });
+      if (typeof voxGalleryRender === "function") voxGalleryRender(profiles);
     }
 
     function voxCmp2Init() {
@@ -11107,8 +11052,10 @@
           rate: p.rate
         }));
       } else {
-        // VoxCMP2 on — custom profiles
-        options = (data.profiles || []).map((p) => ({
+        // VoxCMP2 on — the tab's voice group (plus the line's own voice if it sits outside it)
+        const pool = voxCmp2ScopedProfiles(data);
+        const own = (data.profiles || []).find((p) => p.id === currentGender);
+        options = (own && !pool.includes(own) ? [...pool, own] : pool).map((p) => ({
           value: p.id,
           label: p.label,
           isMale: (p.gender || "").toLowerCase() === "male",
@@ -12333,7 +12280,7 @@
     });
 
     // --- BULK VOICE LOGIC (selection-aware) ---
-    const setBulkVoice = (gender) => {
+    const setBulkVoice = (gender, label) => {
       if (subtitles.length === 0) return showToast("No subtitles to modify.", "error");
 
       const selectedIds = [...new Set(selectedItems.map((i) => i.split("-")[1]))].filter(Boolean);
@@ -12349,7 +12296,7 @@
 
       const charKey = typeof window.resolveCharacterKey === "function" ? window.resolveCharacterKey(gender) : gender;
       const charPreset = window.CHARACTER_PRESETS ? window.CHARACTER_PRESETS[charKey] : null;
-      const displayLabel = charPreset ? charPreset.label : charKey;
+      const displayLabel = label || (charPreset ? charPreset.label : charKey); // a VoxCPM2 profile passes its own name
 
       subtitles = subtitles.map((s) => {
         if (selectedIds.includes(s.id)) {
@@ -12376,121 +12323,127 @@
     document.getElementById("btn-bulk-female")?.addEventListener("click", () => setBulkVoice("Female"));
 
     // ── BULK VOX PROFILE SWITCHER ────────────────────────────────────
-    const bulkVoxSelectWrap = document.getElementById("bulk-vox-custom-wrap");
-    const bulkVoxSelect = document.getElementById("bulk-vox-profile-select");
-    const bulkVoxApply = document.getElementById("btn-bulk-vox-apply");
+    // Two dropdowns when VoxCPM2 is on: one listing the male profiles, one the
+    // female ones — both limited to the tab's voice group (js/vox-groups.js).
     const btnBulkMale = document.getElementById("btn-bulk-male");
     const btnBulkFemale = document.getElementById("btn-bulk-female");
+    const bulkVoxSwitchers = ["Male", "Female"].map((gender) => {
+      const key = gender.toLowerCase();
+      const wrap = document.getElementById(`bulk-vox-${key}-wrap`);
+      return {
+        gender,
+        isMale: gender === "Male",
+        wrap,
+        apply: document.getElementById(`btn-bulk-vox-${key}-apply`),
+        trigger: wrap?.querySelector("[data-bulk-vox-trigger]"),
+        label: wrap?.querySelector("[data-bulk-vox-label]"),
+        chevron: wrap?.querySelector("[data-bulk-vox-chevron]"),
+        panel: wrap?.querySelector("[data-bulk-vox-panel]"),
+        list: wrap?.querySelector("[data-bulk-vox-list]"),
+        select: wrap?.querySelector("[data-bulk-vox-select]"),
+        open: false,
+      };
+    });
 
-    const bulkVoxTrigger = document.getElementById("bulk-vox-custom-trigger");
-    const bulkVoxLabel = document.getElementById("bulk-vox-custom-label");
-    const bulkVoxChevron = document.getElementById("bulk-vox-custom-chevron");
-    const bulkVoxPanel = document.getElementById("bulk-vox-custom-panel");
-    const bulkVoxList = document.getElementById("bulk-vox-custom-list");
-    let bulkVoxOpen = false;
-
-    const closeBulkVoxDropdown = () => {
-      if (!bulkVoxPanel) return;
-      bulkVoxPanel.style.gridTemplateRows = "0fr";
-      if (bulkVoxChevron) bulkVoxChevron.style.transform = "rotate(0deg)";
-      bulkVoxOpen = false;
-      // Stop + reset marquee on every dropdown item
-      bulkVoxList?.querySelectorAll(".vox-marquee-text").forEach((el) => el.classList.remove("is-marquee-active"));
+    const closeBulkVoxDropdown = (sw) => {
+      if (!sw.panel) return;
+      sw.panel.style.gridTemplateRows = "0fr";
+      if (sw.chevron) sw.chevron.style.transform = "rotate(0deg)";
+      sw.open = false;
+      sw.list?.querySelectorAll(".vox-marquee-text").forEach((el) => el.classList.remove("is-marquee-active"));
     };
 
-    const openBulkVoxDropdown = () => {
-      if (!bulkVoxPanel) return;
-      bulkVoxPanel.style.gridTemplateRows = "1fr";
-      if (bulkVoxChevron) bulkVoxChevron.style.transform = "rotate(180deg)";
-      bulkVoxOpen = true;
-      // Start marquee on every dropdown item
-      bulkVoxList?.querySelectorAll(".vox-marquee-text").forEach((el) => el.classList.add("is-marquee-active"));
+    const openBulkVoxDropdown = (sw) => {
+      if (!sw.panel) return;
+      bulkVoxSwitchers.forEach((o) => o !== sw && closeBulkVoxDropdown(o));
+      sw.panel.style.gridTemplateRows = "1fr";
+      if (sw.chevron) sw.chevron.style.transform = "rotate(180deg)";
+      sw.open = true;
+      sw.list?.querySelectorAll(".vox-marquee-text").forEach((el) => el.classList.add("is-marquee-active"));
     };
 
-    if (bulkVoxTrigger) {
-      bulkVoxTrigger.addEventListener("click", (e) => {
+    bulkVoxSwitchers.forEach((sw) => {
+      sw.trigger?.addEventListener("click", (e) => {
         e.stopPropagation();
-        bulkVoxOpen ? closeBulkVoxDropdown() : openBulkVoxDropdown();
+        sw.open ? closeBulkVoxDropdown(sw) : openBulkVoxDropdown(sw);
       });
-    }
+      sw.list?.addEventListener("click", (e) => {
+        const btn = e.target.closest(".bulk-vox-opt");
+        if (!btn) return;
+        e.stopPropagation();
+        setBulkVoxValue(sw, btn.getAttribute("data-value"));
+        closeBulkVoxDropdown(sw);
+      });
+      sw.apply?.addEventListener("click", () => {
+        const profileId = sw.select?.value;
+        if (!profileId) return showToast(`Please pick a ${sw.gender.toLowerCase()} voice profile first.`, "warning");
+        const voxData = typeof voxCmp2Load === "function" ? voxCmp2Load() : null;
+        const profile = voxData?.profiles?.find((p) => (p.id || p.name) === profileId);
+        setBulkVoice(profileId, profile?.label || profileId);
+      });
+    });
 
     document.addEventListener("click", (e) => {
-      if (bulkVoxSelectWrap && !bulkVoxSelectWrap.contains(e.target)) {
-        closeBulkVoxDropdown();
-      }
+      bulkVoxSwitchers.forEach((sw) => {
+        if (sw.wrap && !sw.wrap.contains(e.target)) closeBulkVoxDropdown(sw);
+      });
     });
+
+    const bulkVoxProfilesFor = (sw, voxData) => {
+      const pool = typeof voxCmp2ScopedProfiles === "function" ? voxCmp2ScopedProfiles(voxData) : voxData.profiles || [];
+      return pool.filter((p) => ((p.gender || "").toLowerCase() === "male") === sw.isMale);
+    };
+
+    const setBulkVoxValue = (sw, val) => {
+      if (!sw.select || !sw.trigger) return;
+      const voxData = typeof voxCmp2Load === "function" ? voxCmp2Load() : null;
+      const selected = (voxData?.profiles || []).find((p) => (p.id || p.name) === val);
+      sw.select.value = selected ? val : "";
+      const icon = `<span class="w-3 text-center shrink-0">${sw.isMale ? "♂" : "♀"}</span>`;
+      if (!selected) {
+        if (sw.label) sw.label.innerHTML = `${icon}<span class="truncate">${sw.gender} Profile</span>`;
+        return;
+      }
+      const swatch = `<span class="w-2 h-2 rounded-full shrink-0" style="background-color:${escHtml(selected.color || "#6366f1")}"></span>`;
+      if (sw.label) sw.label.innerHTML = `${icon}${swatch}<span class="truncate">${escHtml(selected.label || selected.name)}</span>`;
+    };
 
     // Populate and toggle bulk voice controls based on VoxCPM2 mode
     const refreshBulkVoiceBar = () => {
       const voxData = typeof voxCmp2Load === "function" ? voxCmp2Load() : null;
       const isVoxOn = voxData?.enabled && voxData.profiles?.length > 0;
 
-      // Toggle which controls are visible
       btnBulkMale.classList.toggle("hidden", isVoxOn);
       btnBulkFemale.classList.toggle("hidden", isVoxOn);
-      if (bulkVoxSelectWrap) bulkVoxSelectWrap.classList.toggle("hidden", !isVoxOn);
-      bulkVoxApply.classList.toggle("hidden", !isVoxOn);
 
-      if (isVoxOn && bulkVoxList) {
-        bulkVoxList.innerHTML = voxData.profiles
+      bulkVoxSwitchers.forEach((sw) => {
+        const profiles = isVoxOn ? bulkVoxProfilesFor(sw, voxData) : [];
+        const show = isVoxOn && profiles.length > 0;
+        sw.wrap?.classList.toggle("hidden", !show);
+        sw.apply?.classList.toggle("hidden", !show);
+        if (!show || !sw.list) return;
+
+        sw.list.innerHTML = profiles
           .map((p) => {
-            const isMale = (p.gender || "").toLowerCase() === "male";
-            const icon = isMale ? "♂" : "♀";
-            const colorClass = isMale ? "text-blue-400" : "text-pink-400";
             const label = String(p.label || p.name || "");
             const safeLabel = escHtml(label);
             const labelHtml = label.length > 14 ? `<div class="flex-1 overflow-hidden whitespace-nowrap marquee-wrapper"><span class="vox-marquee-text vox-marquee-inner" title="${safeLabel}">${safeLabel}</span></div>` : `<span class="truncate" title="${safeLabel}">${safeLabel}</span>`;
             const swatch = `<span class="w-2.5 h-2.5 rounded-full shrink-0 border border-white/20" style="background-color:${escHtml(p.color || "#6366f1")}"></span>`;
-            return `<button data-value="${escHtml(p.id || p.name)}" class="bulk-vox-opt w-full text-left flex items-center gap-2 px-2 py-1.5 rounded hover:bg-[var(--bg-hover)] transition-colors text-xs text-[var(--text-primary)] font-khmer">${swatch}<span class="${colorClass} w-3 text-center shrink-0">${icon}</span>${labelHtml}</button>`;
+            const icon = `<span class="${sw.isMale ? "text-blue-400" : "text-pink-400"} w-3 text-center shrink-0">${sw.isMale ? "♂" : "♀"}</span>`;
+            return `<button type="button" data-value="${escHtml(p.id || p.name)}" class="bulk-vox-opt w-full text-left flex items-center gap-2 px-2 py-1.5 rounded hover:bg-[var(--bg-hover)] transition-colors text-xs text-[var(--text-primary)] font-khmer">${swatch}${icon}${labelHtml}</button>`;
           })
           .join("");
 
-        const updateSelectColor = (val) => {
-          if (!bulkVoxSelect || !bulkVoxTrigger) return;
-          bulkVoxSelect.value = val;
-          const selected = voxData.profiles.find((p) => (p.id || p.name) === val);
-          if (!selected) return;
-          const isMale = (selected.gender || "").toLowerCase() === "male";
-          bulkVoxTrigger.className = bulkVoxTrigger.className
-            .replace(/text-(blue|pink|violet)-400/g, "")
-            .replace(/border-(blue|pink|violet)-[^/\s]+\/\d+/g, "")
-            .replace(/bg-(blue|pink|violet)-[^/\s]+\/\d+/g, "")
-            .trim();
-          bulkVoxTrigger.classList.add(isMale ? "text-blue-400" : "text-pink-400", isMale ? "border-blue-400/30" : "border-pink-400/30", isMale ? "bg-blue-500/5" : "bg-pink-500/5");
-          const icon = isMale ? "♂" : "♀";
-          const colorClass = isMale ? "text-blue-400" : "text-pink-400";
-          if (bulkVoxLabel) bulkVoxLabel.innerHTML = `<span class="${colorClass} w-3 text-center shrink-0">${icon}</span><span class="truncate">${escHtml(selected.label || selected.name)}</span>`;
-          closeBulkVoxDropdown();
-        };
-
-        document.querySelectorAll(".bulk-vox-opt").forEach((btn) => {
-          btn.addEventListener("click", (e) => {
-            e.stopPropagation();
-            updateSelectColor(btn.getAttribute("data-value"));
-          });
-        });
-
-        if (!bulkVoxSelect.value && voxData.profiles.length > 0) {
-          updateSelectColor(voxData.profiles[0].id || voxData.profiles[0].name);
-        } else if (bulkVoxSelect.value) {
-          updateSelectColor(bulkVoxSelect.value);
-        }
-      }
+        // Keep the pick while it is still on offer; otherwise the group's first.
+        const keep = profiles.find((p) => (p.id || p.name) === sw.select?.value);
+        setBulkVoxValue(sw, keep ? sw.select.value : profiles[0].id || profiles[0].name);
+      });
     };
 
-    // Apply selected VoxCPM2 profile to all selected subtitle rows
-    bulkVoxApply.addEventListener("click", () => {
-      const profileId = bulkVoxSelect.value;
-      if (!profileId) return showToast("Please select a voice profile first.", "warning");
-      setBulkVoice(profileId);
-      const voxData = typeof voxCmp2Load === "function" ? voxCmp2Load() : null;
-      const profile = voxData?.profiles?.find((p) => (p.id || p.name) === profileId);
-      showToast(`"${profile?.label || profileId}" applied to selected subtitles — audio cleared`, "success");
-    });
-
-    // Run once on load, and re-run whenever VoxCPM2 settings change
+    // Run once on load, and re-run whenever VoxCPM2 settings or the tab's group change
     refreshBulkVoiceBar();
     document.addEventListener("voxcpm2-settings-changed", refreshBulkVoiceBar);
+    document.addEventListener("vox-group-changed", refreshBulkVoiceBar);
 
     // ── FIND & REPLACE ──────────────────────────────────────────────
     (() => {
@@ -12869,7 +12822,7 @@
       }
     })();
 
-    function autoAssignVoxProfiles(subs) {
+    function autoAssignVoxProfiles(subs, proj) {
       const voxData =
         typeof voxCmp2Load === "function"
           ? voxCmp2Load()
@@ -12880,8 +12833,9 @@
 
       if (!voxData.enabled || !voxData.profiles || voxData.profiles.length === 0) return;
 
-      const firstMale = voxData.profiles.find((p) => p.gender === "Male");
-      const firstFemale = voxData.profiles.find((p) => p.gender === "Female");
+      const pool = voxCmp2ScopedProfiles(voxData, proj);
+      const firstMale = pool.find((p) => p.gender === "Male");
+      const firstFemale = pool.find((p) => p.gender === "Female");
 
       subs.forEach((sub) => {
         if (sub.gender === "Male" && firstMale) {
@@ -13262,7 +13216,7 @@
     const applySrtToProject = (newSubs, projIndex) => {
       const proj = projects[projIndex];
       if (!proj) return;
-      autoAssignVoxProfiles(newSubs);
+      autoAssignVoxProfiles(newSubs, proj);
       proj.subtitles = newSubs.map((s) => ({ ...s }));
       proj.detachedAudios = []; // new SRT invalidates old audio timing — drop stale split clips too
       // If this is the currently active tab, update the live globals and re-render
@@ -13335,7 +13289,7 @@
           autoAssignVoxProfiles(subtitles);
           renderSubtitles();
         } else {
-          autoAssignVoxProfiles(ref.subtitles);
+          autoAssignVoxProfiles(ref.subtitles, ref);
         }
         renderProjectTabs();
         if (typeof updateGenerateAllButtonState === "function") updateGenerateAllButtonState();
@@ -13401,7 +13355,7 @@
           }
           return next;
         });
-        autoAssignVoxProfiles(ref.subtitles);
+        autoAssignVoxProfiles(ref.subtitles, ref);
         if (isActive) {
           subtitles = ref.subtitles.map((s) => ({ ...s }));
           renderSubtitles();
@@ -15533,7 +15487,12 @@
 
           // 2. Branch UI rendering based on active engine
           if (isVoxCpmActive && voxCmp2Settings.profiles && voxCmp2Settings.profiles.length > 0) {
-            const profileOpts = voxCmp2Settings.profiles.map((p) => ({
+            // The tab's voice group decides what is offered; a line already set to a
+            // voice outside the group keeps it (and shows it).
+            const voxPool = voxCmp2ScopedProfiles(voxCmp2Settings);
+            let matchedProfile = voxCmp2Settings.profiles.find((p) => (p.id && p.id.toLowerCase() === currentVoiceTag) || (p.name && p.name.toLowerCase() === currentVoiceTag) || (p.label && p.label.toLowerCase() === currentVoiceTag));
+            const offered = matchedProfile && !voxPool.includes(matchedProfile) ? [...voxPool, matchedProfile] : voxPool;
+            const profileOpts = offered.map((p) => ({
               value: p.id || p.name,
               label: p.label || p.name,
               isMale: (p.gender || "").toLowerCase() === "male",
@@ -15542,18 +15501,16 @@
               selected: false,
             }));
 
-            let matchedProfile = voxCmp2Settings.profiles.find((p) => (p.id && p.id.toLowerCase() === currentVoiceTag) || (p.name && p.name.toLowerCase() === currentVoiceTag) || (p.label && p.label.toLowerCase() === currentVoiceTag));
-
             if (!matchedProfile) {
               const isFemale = sub.gender === "Female" || currentVoiceTag === "female";
               const isMale = sub.gender === "Male" || currentVoiceTag === "male";
-              if (isFemale) matchedProfile = voxCmp2Settings.profiles.find((p) => p.gender === "Female");
-              else if (isMale) matchedProfile = voxCmp2Settings.profiles.find((p) => p.gender === "Male");
+              if (isFemale) matchedProfile = voxPool.find((p) => p.gender === "Female");
+              else if (isMale) matchedProfile = voxPool.find((p) => p.gender === "Male");
 
               if (!matchedProfile) {
                 const isFemaleTag = currentVoiceTag.includes("female") || currentVoiceTag.includes("woman") || currentVoiceTag.includes("girl");
                 const isMaleTag = !isFemaleTag && (currentVoiceTag.includes("male") || currentVoiceTag.includes("man") || currentVoiceTag.includes("boy"));
-                for (const profile of voxCmp2Settings.profiles) {
+                for (const profile of voxPool) {
                   const combinedStr = `${profile.name || ""} ${profile.label || ""} ${profile.id || ""}`.toLowerCase();
                   if (isFemaleTag && (combinedStr.includes("female") || combinedStr.includes("woman"))) {
                     matchedProfile = profile;
@@ -15567,7 +15524,7 @@
               }
             }
 
-            if (!matchedProfile) matchedProfile = voxCmp2Settings.profiles[0];
+            if (!matchedProfile) matchedProfile = voxPool[0];
 
             const targetProfileId = matchedProfile.id || matchedProfile.name;
             profileOpts.forEach((o) => {
@@ -19496,19 +19453,17 @@
     const FAST_MAX_SPEED = 2.5;          // same ceiling as the timeline resize handles
     const FAST_FIT_TOLERANCE = 0.1;      // seconds a 1.0x voice may run past its slot end
     const FAST_EST_CHARS_PER_SEC = 12;   // natural pace estimate for lines without audio yet
-    const FAST_CONDENSE_CHUNK = 40;      // lines per Gemini request in "AI Shorten All"
+    const FAST_CONDENSE_CHUNK = 40;      // lines per Gemini request in Fix Rushed Lines
 
     const fastEscapeHtml = (str) => String(str ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
     const fastByStart = (a, b) => (parseFloat(a.textStart) || 0) - (parseFloat(b.textStart) || 0);
     const findLiveSub = (id) => subtitles.find((s) => String(s.id) === String(id));
-    const getFastCard = (id) => document.querySelector(`#fast-audio-list [data-fast-card="${CSS.escape(String(id))}"]`);
     const getFastProjectDuration = (proj) => (proj && proj.duration > 0 ? proj.duration : duration > 0 ? duration : Infinity);
 
     const fastDrafts = new Map(); // String(subId) -> { text, from } — `from` is the sub.text the draft was made from
     let fastDraftsProject = null;
     let fastRevoiceBusy = false;
     let fastCondenseEpoch = 0; // bumped on modal close to abandon in-flight "Shorten All" chunks
-    let fastModalHideTimer = null;
     const fastCondenseRequestIds = new Set();
 
     // Count base characters only (drops combining marks/spaces) so Khmer vowel signs don't inflate the estimate.
@@ -19599,206 +19554,238 @@
       else fastDrafts.set(String(sub.id), { text, from: sub.text });
     }
 
-    // ── Toolbar badge ──
+    // ── Toolbar chip: "N rushed" ──
+    // Hidden while every line plays at a natural pace; appears beside Auto-Fit with the count
+    // as soon as a line has to be sped up to fit its slot. Amber: a quality warning, not an error.
     function updateFastAudioBadge() {
-      const badge = document.getElementById("badge-fast-subs-count");
       const btn = document.getElementById("btn-fix-fast-audio");
-      if (!badge || !btn) return;
+      const label = document.getElementById("text-fix-fast-audio");
+      if (!btn || !label) return;
+      if (fastRevoiceBusy) return; // the chip shows the re-voice progress meanwhile
 
-      const count = getFastSubtitles().length;
-      if (badge.dataset.count === String(count)) return; // called on every render; skip DOM churn
-      badge.dataset.count = String(count);
-      badge.textContent = count;
-      if (count > 0) {
-        badge.className = "px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-red-500/25 text-red-300 border border-red-500/40 animate-pulse";
-        btn.title = `${count} fast subtitle(s) detected! Click to refactor and restore 1.0x speed.`;
-      } else {
-        badge.className = "px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30";
-        btn.title = "All subtitles have natural 1.0x speaking speed.";
-      }
+      const count = projects[activeProjectIndex] ? getFastSubtitles().length : 0;
+      if (btn.dataset.count === String(count)) return; // called on every render; skip DOM churn
+      btn.dataset.count = String(count);
+      label.textContent = `${count} rushed`;
+      btn.classList.toggle("hidden", count === 0);
+      btn.classList.toggle("inline-flex", count > 0);
+      btn.title = `${count} line${count === 1 ? " has" : "s have"} more words than ${count === 1 ? "its" : "their"} time slot fits, so ${count === 1 ? "it plays" : "they play"} too fast. Click to rewrite ${count === 1 ? "it" : "them"} shorter with AI — like a dubbing script writer.`;
     }
     window.updateFastAudioBadge = updateFastAudioBadge;
 
-    // ── Modal ──
+    // ── Fix Rushed Lines dialog ──
+    // One dialog, three phases: review (pick the lines; each row draws its time slot, its
+    // audio and the part that overflows) → busy (Gemini rewriting) → results (old struck
+    // through, new editable, accept per line) → Apply & regenerate at 1.0x.
+    const rushed = { phase: "review", picked: new Set(), accepted: new Set(), shown: [], progress: "" };
+
+    const rushedEl = (id) => document.getElementById(id);
+    const isFastModalOpen = () => {
+      const modal = rushedEl("modal-fix-rushed");
+      return !!modal && !modal.classList.contains("hidden");
+    };
+
     function openFixFastAudioModal() {
-      const modal = document.getElementById("modal-fix-fast-audio");
+      const modal = rushedEl("modal-fix-rushed");
       if (!modal) return;
       if (!projects[activeProjectIndex]) {
         showToast("Open a project first.", "info");
         return;
       }
-      clearTimeout(fastModalHideTimer);
       syncFastDraftsProject();
-      renderFastAudioList();
-      setFastBusyUI(fastRevoiceBusy);
+      const list = getFastSubtitles().sort(fastByStart);
+      rushed.shown = list.map((s) => String(s.id));
+      rushed.picked = new Set(list.filter((s) => isSpeakableText(s.text)).map((s) => String(s.id)));
+      // Shortened text from an earlier visit is still waiting: go straight to the results.
+      const withDraft = list.filter((s) => getFastDraft(s) != null);
+      rushed.accepted = new Set(withDraft.map((s) => String(s.id)));
+      rushed.phase = withDraft.length ? "results" : "review";
       modal.classList.remove("hidden");
-      requestAnimationFrame(() => {
-        modal.classList.remove("opacity-0");
-        modal.firstElementChild?.classList.remove("scale-95");
-        modal.firstElementChild?.classList.add("scale-100");
-      });
+      renderRushed();
     }
     window.openFixFastAudioModal = openFixFastAudioModal;
 
     function closeFixFastAudioModal() {
-      const modal = document.getElementById("modal-fix-fast-audio");
+      const modal = rushedEl("modal-fix-rushed");
       if (!modal || modal.classList.contains("hidden")) return;
       cancelFastCondenseRequests();
-      modal.classList.add("opacity-0");
-      modal.firstElementChild?.classList.remove("scale-100");
-      modal.firstElementChild?.classList.add("scale-95");
-      clearTimeout(fastModalHideTimer);
-      fastModalHideTimer = setTimeout(() => modal.classList.add("hidden"), 250);
+      modal.classList.add("hidden");
+      if (rushed.phase === "busy") rushed.phase = "review";
       updateFastAudioBadge();
     }
     window.closeFixFastAudioModal = closeFixFastAudioModal;
 
-    const isFastModalOpen = () => {
-      const modal = document.getElementById("modal-fix-fast-audio");
-      return !!modal && !modal.classList.contains("hidden") && !modal.classList.contains("opacity-0");
-    };
-
-    function setFastButtonLoading(btn, loading, label = "", iconSize = "w-3 h-3") {
-      if (!btn) return;
-      if (loading) {
-        if (btn.dataset.idleHtml === undefined) btn.dataset.idleHtml = btn.innerHTML;
-        btn.disabled = true;
-        btn.innerHTML = `<i data-lucide="loader-2" class="${iconSize} animate-spin"></i><span>${fastEscapeHtml(label)}</span>`;
-        if (window.lucide) _lucideCreateIcons({ root: btn });
-      } else {
-        btn.disabled = false;
-        if (btn.dataset.idleHtml !== undefined) {
-          btn.innerHTML = btn.dataset.idleHtml;
-          delete btn.dataset.idleHtml;
-        }
-      }
+    // Track scale: the longer of slot and speech is the full width.
+    function rushedTrack(pace) {
+      const total = Math.max(pace.slot, pace.speechDur, 0.1);
+      const pct = (v) => `${Math.max(0, Math.min(100, (v / total) * 100)).toFixed(1)}%`;
+      return `<span class="rushed-trk" style="--slot:${pct(pace.fitDur)}"><span class="rushed-slot"></span><span class="rushed-aud" data-w="${pct(Math.min(pace.speechDur, pace.fitDur))}"></span><span class="rushed-ovf" data-w="${pct(pace.overflow)}"></span></span>`;
     }
 
-    // While re-voicing, block every other re-voice/extend action (the generator is not re-entrant).
-    function setFastBusyUI(busy) {
-      document.querySelectorAll('#modal-fix-fast-audio [data-fast-action="apply"], #modal-fix-fast-audio [data-fast-action="extend"], #btn-fast-revoice-all')
-        .forEach((b) => { if (b.dataset.idleHtml === undefined) b.disabled = busy; });
+    function rushedEstSpeed(sub, text) {
+      // The new line's pace: its audio length scaled by how much shorter the text is.
+      const pace = analyzeSubPace(sub);
+      const was = Math.max(1, fastSpokenLength(window.KhmerSpeech.normalizeForSpeech(sub.text)));
+      const now = fastSpokenLength(window.KhmerSpeech.normalizeForSpeech(text));
+      return (pace.speechDur * (now / was)) / pace.fitDur;
     }
 
-    function renderFastAudioList() {
-      const container = document.getElementById("fast-audio-list");
-      const badge = document.getElementById("fast-modal-badge");
-      if (!container) return;
+    function renderRushed() {
+      const review = rushedEl("rushed-phase-review");
+      const busy = rushedEl("rushed-phase-busy");
+      const results = rushedEl("rushed-phase-results");
+      const primary = rushedEl("rushed-primary");
+      const cancel = rushedEl("rushed-cancel");
+      const sub = rushedEl("rushed-subtitle");
+      if (!review || !busy || !results || !primary) return;
 
+      review.classList.toggle("hidden", rushed.phase !== "review");
+      busy.classList.toggle("hidden", rushed.phase !== "busy");
+      busy.classList.toggle("flex", rushed.phase === "busy");
+      results.classList.toggle("hidden", rushed.phase !== "results");
+
+      const lines = rushed.shown.map(findLiveSub).filter(Boolean);
       const proj = projects[activeProjectIndex];
-      const fastList = getFastSubtitles().sort(fastByStart);
+      const nextStartById = buildFastNextStartMap(subtitles, getFastProjectDuration(proj));
+      const cfg = getFastGeminiConfig();
+      rushedEl("rushed-via").textContent = cfg.keys.length ? `Uses Gemini (${cfg.model}) with your API keys` : window.textAi?.ready() ? "Uses your text AI from Settings" : "Add a Gemini API key in Settings to rewrite lines";
+      if (cancel) cancel.textContent = rushed.phase === "results" ? "Discard" : "Cancel";
 
-      if (badge) {
-        badge.textContent = `${fastList.length} Fast ${fastList.length === 1 ? "Line" : "Lines"}`;
-        badge.className = fastList.length > 0
-          ? "px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30"
-          : "px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30";
-      }
-
-      if (fastList.length === 0) {
-        container.innerHTML = `
-          <div class="py-16 flex flex-col items-center justify-center text-center">
-            <div class="w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 mb-3 shadow-lg shadow-emerald-500/10">
-              <i data-lucide="check-circle-2" class="w-7 h-7"></i>
-            </div>
-            <h3 class="text-sm font-semibold text-[var(--text-bright)]">All Subtitles Have Natural Speed!</h3>
-            <p class="text-xs text-[var(--text-secondary)] mt-1 max-w-sm">No lines need more than ${FAST_SPEED_THRESHOLD.toFixed(2)}x to fit their slot. Your dubbing pace is comfortable and natural.</p>
-          </div>
-        `;
-        if (window.lucide) _lucideCreateIcons({ root: container });
+      if (rushed.phase === "review") {
+        if (sub) sub.textContent = "These lines have more words than their time slot fits, so they play too fast. AI rewrites them shorter — like a dubbing script writer — so they sound natural at normal speed.";
+        if (!lines.length) {
+          review.innerHTML = `<div class="rushed-empty"><i data-lucide="check-circle-2" class="w-7 h-7"></i><b>Every line plays at a natural pace</b><span>No line needs more than ${FAST_SPEED_THRESHOLD.toFixed(2)}x to fit its slot.</span></div>`;
+          primary.disabled = true;
+          primary.textContent = "Rewrite 0 lines";
+          if (window.lucide) _lucideCreateIcons({ root: review });
+          return;
+        }
+        let extendable = 0;
+        const rows = lines.map((s, i) => {
+          const id = String(s.id);
+          const pace = analyzeSubPace(s);
+          const ext = getFastExtendEnd(pace, nextStartById.get(id) ?? Infinity);
+          if (ext != null) extendable++;
+          const hot = pace.effectiveSpeed >= FAST_SPEED_CRITICAL;
+          const est = pace.hasAudio ? "" : "~";
+          return `<div class="rushed-row rushed-fade" style="animation-delay:${Math.min(i, 12) * 25}ms" data-rid="${fastEscapeHtml(id)}">
+              <input type="checkbox" class="rushed-pick" data-pick ${rushed.picked.has(id) ? "checked" : ""} aria-label="Rewrite this line" />
+              <span class="rushed-time">${formatTime(pace.tStart)}</span>
+              <span class="rushed-mid">
+                <span class="rushed-text">${fastEscapeHtml(s.text)}</span>
+                ${rushedTrack(pace)}
+                <span class="rushed-meta">slot ${pace.fitDur.toFixed(1)}s · ${pace.hasAudio ? "audio" : "est. speech"} ${pace.speechDur.toFixed(1)}s${ext != null ? ` · <button type="button" class="rushed-ext" data-extend title="Move the line's end into the silence before the next line — no text change">↔ use +${(ext - pace.tEnd).toFixed(1)}s free time</button>` : ""}</span>
+              </span>
+              <span class="rushed-spd${hot ? " hot" : ""}"><b>${est}${pace.effectiveSpeed.toFixed(2)}x</b><small>${pace.overflow > 0 ? `+${pace.overflow.toFixed(1)}s over` : "fits"}</small></span>
+            </div>`;
+        });
+        const n = lines.filter((s) => rushed.picked.has(String(s.id))).length;
+        review.innerHTML = `<div class="rushed-bar">
+            <span>${lines.length} rushed line${lines.length === 1 ? "" : "s"}</span>
+            <button type="button" data-pick-all>All</button><button type="button" data-pick-none>None</button>
+            <span class="flex-1"></span>
+            ${extendable ? `<button type="button" class="rushed-ext" data-extend-all title="Every line that has silence after it gets that time first — no text change">↔ Use free time on ${extendable} line${extendable === 1 ? "" : "s"}</button>` : ""}
+          </div>${rows.join("")}`;
+        primary.disabled = n === 0 || fastRevoiceBusy;
+        primary.textContent = `Rewrite ${n} line${n === 1 ? "" : "s"}`;
+        if (window.lucide) _lucideCreateIcons({ root: review });
+        requestAnimationFrame(() => review.querySelectorAll("[data-w]").forEach((el) => (el.style.width = el.dataset.w)));
         return;
       }
 
-      const scrollTop = container.scrollTop;
-      const nextStartById = buildFastNextStartMap(subtitles, getFastProjectDuration(proj));
+      if (rushed.phase === "busy") {
+        primary.disabled = true;
+        primary.textContent = "Rewriting…";
+        const p = rushedEl("rushed-busy-text");
+        if (p) p.textContent = `Rewriting as a professional script writer…${rushed.progress ? ` ${rushed.progress}` : ""}`;
+        return;
+      }
 
-      container.innerHTML = fastList.map((sub) => {
-        const id = String(sub.id);
-        const idAttr = fastEscapeHtml(id);
-        const pace = analyzeSubPace(sub);
-        const speed = pace.effectiveSpeed;
-        const speedText = `${pace.hasAudio ? "" : "~"}${speed.toFixed(2)}x`;
-
-        let speedBadgeClass = "bg-amber-500/20 text-amber-300 border-amber-500/40";
-        let speedLabel = `${speedText} (Fast${pace.hasAudio ? "" : ", est."})`;
-        let speedIcon = "gauge";
-        if (speed >= FAST_SPEED_CRITICAL) {
-          speedBadgeClass = "bg-red-500/20 text-red-300 border-red-500/40 animate-pulse";
-          speedLabel = `${speedText} (Very Fast${pace.hasAudio ? "" : ", est."})`;
-          speedIcon = "zap";
-        }
-
-        const extendEnd = getFastExtendEnd(pace, nextStartById.get(id) ?? Infinity);
-        const extendAmount = extendEnd != null ? extendEnd - pace.tEnd : 0;
-        const extendFitsAll = extendEnd != null && extendEnd >= pace.aStart + pace.speechDur;
-        const draftText = getFastDraft(sub) ?? sub.text;
-        const hasDraft = draftText !== sub.text;
-        const maxSyllables = Math.max(2, Math.round(pace.fitDur * 3.5)); // mirrors the backend prompt target
-
-        return `
-          <div data-fast-card="${idAttr}" class="bg-[var(--bg-base)] border border-[var(--border-color)] hover:border-[var(--border-light)] rounded-xl p-4 transition-all flex flex-col gap-3 shadow-sm">
-            <div class="flex items-center justify-between gap-3 text-xs">
-              <div class="flex items-center gap-2 flex-wrap">
-                <span class="font-bold text-[var(--text-bright)] px-2 py-0.5 rounded bg-[var(--bg-panel)] border border-[var(--border-color)]">#${idAttr}</span>
-                <span class="font-mono text-[var(--text-secondary)] text-[11px]">${formatTime(pace.tStart)} ➔ ${formatTime(pace.tEnd)}</span>
-                <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-cyan-500/10 text-cyan-300 border border-cyan-500/25">Slot: ${pace.slot.toFixed(2)}s</span>
-                <span class="text-[10px] text-[var(--text-muted)]">${pace.hasAudio ? "Speech" : "Est. speech"}: ${pace.speechDur.toFixed(2)}s (${pace.overflow > 0 ? `+${pace.overflow.toFixed(2)}s overflow` : "fits"})</span>
-              </div>
-              <span class="px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 border shrink-0 ${speedBadgeClass}">
-                <i data-lucide="${speedIcon}" class="w-3 h-3"></i>
-                <span>${speedLabel}</span>
-              </span>
-            </div>
-
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-              <div class="flex flex-col gap-1">
-                <span class="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">Current (${sub.text.length} chars)</span>
-                <div class="p-2.5 rounded-lg bg-[var(--bg-panel)] border border-[var(--border-color)] text-[var(--text-secondary)] select-all leading-relaxed font-sans max-h-24 overflow-y-auto custom-scrollbar whitespace-pre-wrap">${fastEscapeHtml(sub.text)}</div>
-              </div>
-
-              <div class="flex flex-col gap-1">
-                <div class="flex items-center justify-between text-[10px]">
-                  <span class="font-semibold text-amber-400 uppercase tracking-wider flex items-center gap-1">
-                    <i data-lucide="sparkles" class="w-2.5 h-2.5"></i>
-                    Shortened (Target: ≤ ${maxSyllables} syllables)
-                  </span>
-                  <span data-fast-count class="text-[var(--text-muted)]">${draftText.length} chars</span>
-                </div>
-                <textarea data-fast-input="${idAttr}" rows="2"
-                  class="w-full p-2.5 rounded-lg bg-[var(--bg-panel)] border ${hasDraft ? "border-amber-400/60" : "border-amber-500/30"} focus:border-amber-400 focus:ring-1 focus:ring-amber-400/40 text-[var(--text-bright)] resize-none font-sans text-xs leading-relaxed custom-scrollbar transition-all"
-                  placeholder="Click 'AI Shorten' or write concise dialogue here...">${fastEscapeHtml(draftText)}</textarea>
-              </div>
-            </div>
-
-            <div class="flex items-center justify-between pt-1 border-t border-[var(--border-color)] text-xs flex-wrap gap-2">
-              <div class="flex items-center gap-2">
-                <button data-fast-action="condense"
-                  class="px-2.5 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 transition-all bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 active:scale-95 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">
-                  <i data-lucide="sparkles" class="w-3 h-3 text-amber-400"></i>
-                  <span>AI Shorten</span>
-                </button>
-                ${extendEnd != null ? `
-                <button data-fast-action="extend"
-                  class="px-2.5 py-1 rounded-lg text-[11px] font-medium flex items-center gap-1.5 transition-all bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="Extend the subtitle end by +${extendAmount.toFixed(1)}s into the silence before the next line${extendFitsAll ? "" : " (not enough room to fit it fully)"}">
-                  <i data-lucide="arrow-right-to-line" class="w-3 h-3 text-cyan-400"></i>
-                  <span>Extend Slot (+${extendAmount.toFixed(1)}s${extendFitsAll ? "" : ", partial"})</span>
-                </button>` : ""}
-              </div>
-              <button data-fast-action="apply"
-                class="px-3 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 transition-all bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm shadow-indigo-600/30 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed">
-                <i data-lucide="audio-lines" class="w-3 h-3"></i>
-                <span>Apply & Re-Voice (1.0x)</span>
-              </button>
-            </div>
-          </div>
-        `;
-      }).join("");
-
-      if (window.lucide) _lucideCreateIcons({ root: container });
-      container.scrollTop = scrollTop;
-      setFastBusyUI(fastRevoiceBusy);
+      // results
+      if (sub) sub.textContent = "Check each rewrite — edit any line you like. Ticked lines are applied and voiced again at normal 1.0x speed. One Ctrl+Z undoes it.";
+      const rows = lines.map((s, i) => {
+        const id = String(s.id);
+        const draft = getFastDraft(s);
+        const text = draft ?? s.text;
+        const dead = draft == null;
+        const was = Math.max(1, fastSpokenLength(s.text));
+        const cut = Math.round((1 - fastSpokenLength(text) / was) * 100);
+        const spd = rushedEstSpeed(s, text);
+        return `<div class="rushed-row rushed-fade${dead ? " is-dead" : ""}" style="animation-delay:${Math.min(i, 12) * 25}ms" data-rid="${fastEscapeHtml(id)}">
+            <input type="checkbox" class="rushed-pick" data-accept ${rushed.accepted.has(id) ? "checked" : ""} aria-label="Apply this rewrite" />
+            <span class="rushed-time">${formatTime(parseFloat(s.textStart) || 0)}</span>
+            <span class="rushed-mid">
+              <span class="rushed-old">${fastEscapeHtml(s.text)}</span>
+              <textarea class="rushed-new" data-new rows="1" spellcheck="false">${fastEscapeHtml(text)}</textarea>
+              ${dead ? `<span class="rushed-none">No shorter version came back — edit it yourself, or leave it.</span>` : ""}
+            </span>
+            <span class="rushed-spd${spd >= FAST_SPEED_THRESHOLD ? " hot" : ""}">${cut > 0 ? `<span class="rushed-cut">−${cut}%</span>` : ""}<small>≈ ${spd.toFixed(2)}x</small></span>
+          </div>`;
+      });
+      results.innerHTML = rows.join("") || `<div class="rushed-empty"><b>Nothing to apply</b></div>`;
+      results.querySelectorAll("textarea[data-new]").forEach(rushedAutoGrow);
+      const n = rushed.shown.filter((id) => rushed.accepted.has(id)).length;
+      primary.disabled = n === 0 || fastRevoiceBusy;
+      primary.textContent = `Apply & regenerate ${n} line${n === 1 ? "" : "s"}`;
     }
+
+    function rushedAutoGrow(t) {
+      t.style.height = "auto";
+      t.style.height = `${t.scrollHeight}px`;
+    }
+
+    // Stores AI results as drafts. Returns how many lines got a usable, shorter rewrite.
+    function applyFastCondenseResults(results) {
+      let updated = 0;
+      results.forEach((r) => {
+        const sub = findLiveSub(r.id);
+        const text = String(r.condensedText || "").trim();
+        if (!sub || !text || text === String(sub.text).trim()) return;
+        setFastDraft(sub, text);
+        updated++;
+      });
+      return updated;
+    }
+
+    async function condenseAllFastSubtitles() {
+      const picked = rushed.shown.map(findLiveSub).filter((s) => s && rushed.picked.has(String(s.id)));
+      if (picked.length === 0) {
+        showToast("Tick at least one line to rewrite.", "info");
+        return;
+      }
+      if (getFastGeminiConfig().keys.length === 0 && !window.textAi?.ready()) {
+        showToast("Please add at least one Gemini API Key in Settings.", "error");
+        return;
+      }
+      const epoch = fastCondenseEpoch;
+      rushed.phase = "busy";
+      rushed.progress = "";
+      renderRushed();
+      let updated = 0;
+      let failedChunks = 0;
+      for (let i = 0; i < picked.length; i += FAST_CONDENSE_CHUNK) {
+        rushed.progress = picked.length > FAST_CONDENSE_CHUNK ? `${Math.min(i + FAST_CONDENSE_CHUNK, picked.length)}/${picked.length}` : "";
+        renderRushed();
+        const results = await requestFastCondense(picked.slice(i, i + FAST_CONDENSE_CHUNK));
+        if (epoch !== fastCondenseEpoch) return; // dialog closed or cancelled — abandoned
+        if (results) updated += applyFastCondenseResults(results);
+        else failedChunks++;
+      }
+      // Rewritten lines are ticked; the ones the AI kept are shown so they can be edited.
+      rushed.accepted = new Set(picked.filter((s) => getFastDraft(s) != null).map((s) => String(s.id)));
+      rushed.shown = picked.map((s) => String(s.id));
+      if (updated === 0) {
+        rushed.phase = "review";
+        renderRushed();
+        if (failedChunks === 0) showToast("AI returned no shorter text. Try again or edit the lines yourself.", "error");
+        return;
+      }
+      rushed.phase = "results";
+      renderRushed();
+      const missed = picked.length - updated;
+      if (missed > 0) showToast(`AI shortened ${updated} line(s); ${missed} came back unchanged.`, "info");
+    }
+    window.condenseAllFastSubtitles = condenseAllFastSubtitles;
 
     // ── AI shortening ──
     function getFastGeminiConfig() {
@@ -19866,82 +19853,9 @@
       fastCondenseRequestIds.clear();
     }
 
-    // Stores AI results as drafts and updates any visible textareas. Returns how many lines were updated.
-    function applyFastCondenseResults(results) {
-      let updated = 0;
-      results.forEach((r) => {
-        const sub = findLiveSub(r.id);
-        const text = String(r.condensedText || "").trim();
-        if (!sub || !text) return;
-        setFastDraft(sub, text);
-        updated++;
-        const card = getFastCard(sub.id);
-        const textarea = card?.querySelector("[data-fast-input]");
-        if (textarea) {
-          textarea.value = text;
-          textarea.classList.add("ring-2", "ring-amber-400", "bg-amber-500/10");
-          setTimeout(() => textarea.classList.remove("ring-2", "ring-amber-400", "bg-amber-500/10"), 1200);
-        }
-        const countEl = card?.querySelector("[data-fast-count]");
-        if (countEl) countEl.textContent = `${text.length} chars`;
-      });
-      return updated;
-    }
-
-    async function condenseSingleFastSub(subId) {
-      const sub = findLiveSub(subId);
-      if (!sub) return;
-      const btn = getFastCard(subId)?.querySelector('[data-fast-action="condense"]');
-      setFastButtonLoading(btn, true, "Shortening...");
-      try {
-        const results = await requestFastCondense([sub]);
-        if (!results) return;
-        if (applyFastCondenseResults(results) > 0) showToast(`✓ Shortened line #${sub.id}!`, "success");
-        else showToast("AI returned no usable text for this line. Try again or edit it manually.", "error");
-      } finally {
-        setFastButtonLoading(btn, false);
-      }
-    }
-    window.condenseSingleFastSub = condenseSingleFastSub;
-
-    async function condenseAllFastSubtitles() {
-      const fastList = getFastSubtitles().sort(fastByStart);
-      if (fastList.length === 0) {
-        showToast("No fast subtitles found to shorten.", "info");
-        return;
-      }
-      if (getFastGeminiConfig().keys.length === 0 && !window.textAi?.ready()) {
-        showToast("Please add at least one Gemini API Key in Settings.", "error");
-        return;
-      }
-
-      const btn = document.getElementById("btn-fast-condense-all");
-      const epoch = fastCondenseEpoch;
-      let updated = 0;
-      let failedChunks = 0;
-      try {
-        for (let i = 0; i < fastList.length; i += FAST_CONDENSE_CHUNK) {
-          setFastButtonLoading(btn, true, `Shortening ${Math.min(i + FAST_CONDENSE_CHUNK, fastList.length)}/${fastList.length}...`, "w-3.5 h-3.5");
-          const results = await requestFastCondense(fastList.slice(i, i + FAST_CONDENSE_CHUNK));
-          if (epoch !== fastCondenseEpoch) return; // modal closed — abandoned
-          if (results) updated += applyFastCondenseResults(results);
-          else failedChunks++;
-        }
-        if (updated > 0) {
-          const missed = fastList.length - updated;
-          showToast(`✓ AI shortened ${updated} line(s)${missed > 0 ? `, ${missed} not shortened` : ""}. Review, then click "Re-Voice All".`, missed > 0 ? "info" : "success");
-        } else if (failedChunks === 0) {
-          showToast("AI returned no usable text. Try again or edit lines manually.", "error");
-        }
-      } finally {
-        setFastButtonLoading(btn, false);
-      }
-    }
-    window.condenseAllFastSubtitles = condenseAllFastSubtitles;
-
     // ── Dub Whole Series: fit rushed lines in every tab ──
     // A voice longer than its slot is played faster (up to 2.5x), which sounds rushed. Same two
-    // fixes as the Fast Audio window, without the window: move the line's end into the free
+    // fixes as Fix Rushed Lines, without the dialog: move the line's end into the free
     // time before the next line (no text change), then have Gemini shorten the lines that are
     // still clearly rushed. Shortened lines are left "idle" for Generate to voice again.
     // The tabs are shortened at once, one API key each (like the series' Transcribe): one tab
@@ -20057,33 +19971,49 @@
     }
 
     // ── Timeline changes ──
-    function extendSlotForSub(subId) {
-      if (fastRevoiceBusy) return;
+    // Moves a line's end into the silence before the next one (no text change) and refits
+    // its speed. Returns true when it moved. `quiet`: no toast, no undo step (the caller takes one).
+    function extendSlotForSub(subId, { quiet = false } = {}) {
+      if (fastRevoiceBusy) return false;
       const sub = findLiveSub(subId);
-      if (!sub) return;
+      if (!sub) return false;
       const nextStart = buildFastNextStartMap(subtitles, getFastProjectDuration(projects[activeProjectIndex])).get(String(sub.id)) ?? Infinity;
       const pace = analyzeSubPace(sub);
       const newEnd = getFastExtendEnd(pace, nextStart);
       if (newEnd == null) {
-        showToast("No free space after this line to extend into.", "info");
-        renderFastAudioList();
-        return;
+        if (!quiet) showToast("No free space after this line to extend into.", "info");
+        return false;
       }
-
-      saveStateToPast();
+      if (!quiet) saveStateToPast();
       sub.textEnd = newEnd.toFixed(2);
       refitFastSubSpeed(sub, nextStart);
-      saveCurrentProjectState();
-      renderSubtitles();
-      updateContextualControls();
-
-      showToast(`↔️ Extended line #${sub.id} by +${(newEnd - pace.tEnd).toFixed(1)}s`, "success");
-      renderFastAudioList();
+      if (!quiet) {
+        saveCurrentProjectState();
+        renderSubtitles();
+        updateContextualControls();
+        showToast(`↔️ Line at ${formatTime(pace.tStart)} now has +${(newEnd - pace.tEnd).toFixed(1)}s more time`, "success");
+      }
+      return true;
     }
     window.extendSlotForSub = extendSlotForSub;
 
+    function extendAllRushedIntoFreeTime() {
+      if (fastRevoiceBusy) return;
+      saveStateToPast();
+      const ids = rushed.shown.slice();
+      const moved = ids.filter((id) => extendSlotForSub(id, { quiet: true })).length;
+      saveCurrentProjectState();
+      renderSubtitles();
+      updateContextualControls();
+      // Lines that now fit drop out of the list.
+      rushed.shown = ids.filter((id) => isFastSub(findLiveSub(id)));
+      rushed.picked = new Set([...rushed.picked].filter((id) => rushed.shown.includes(id)));
+      showToast(moved ? `↔️ ${moved} line(s) given the free time after them${rushed.shown.length ? ` — ${rushed.shown.length} still rushed` : " — all fit now"}.` : "No free time after these lines.", moved ? "success" : "info");
+      renderRushed();
+    }
+
     // Applies drafts to the given lines, re-voices them at natural pace, then re-fits their playback speed.
-    async function revoiceFastSubs(ids, { all = false } = {}) {
+    async function revoiceFastSubs(ids) {
       const proj = projects[activeProjectIndex];
       if (!proj || ids.length === 0) return;
       if (fastRevoiceBusy || isGeneratingAudio || isGeneratingAudioAll || proj.isGeneratingAudio) {
@@ -20096,23 +20026,20 @@
         const sub = findLiveSub(id);
         if (!sub) continue;
         const text = String(getFastDraft(sub) ?? sub.text ?? "").trim();
-        if (!text) {
-          if (!all) showToast("Dialogue text cannot be empty.", "error");
-          continue;
-        }
-        if (!all && text === String(sub.text).trim() && sub.audioStatus === "ready") {
-          showToast("Shorten or edit the line first — re-voicing the same text won't change its length.", "info");
-          return;
-        }
+        if (!text) continue;
         targets.push({ id: sub.id, text });
       }
       if (targets.length === 0) return;
 
-      const singleBtn = all ? null : getFastCard(ids[0])?.querySelector('[data-fast-action="apply"]');
-      const allBtn = document.getElementById("btn-fast-revoice-all");
       fastRevoiceBusy = true;
-      setFastButtonLoading(all ? allBtn : singleBtn, true, all ? `Re-voicing ${targets.length} line(s)...` : "Generating...", all ? "w-3.5 h-3.5" : "w-3 h-3");
-      setFastBusyUI(true);
+      const chip = document.getElementById("btn-fix-fast-audio");
+      const chipLabel = document.getElementById("text-fix-fast-audio");
+      if (chip && chipLabel) {
+        chip.disabled = true;
+        chip.classList.remove("hidden");
+        chip.classList.add("inline-flex");
+        chipLabel.textContent = `Re-voicing ${targets.length}…`;
+      }
 
       // Sync live → project, then change only the project's copy. generateStandardAudioForProject reads the
       // project copy and snapshots the still-untouched live array for undo, so one Ctrl+Z restores the
@@ -20152,10 +20079,9 @@
 
         const parts = [];
         if (fixed) parts.push(`${fixed} now natural`);
-        if (stillFast) parts.push(`${stillFast} still fast — shorten more or extend the slot`);
+        if (stillFast) parts.push(`${stillFast} still rushed — open the chip again to shorten more`);
         if (failed) parts.push(`${failed} failed to generate`);
-        const label = all ? `Re-voiced ${targets.length} line(s)` : `Line #${targets[0].id}`;
-        showToast(`${label}: ${parts.join(", ") || "done"}.`, failed || stillFast ? "info" : "success");
+        showToast(`Re-voiced ${targets.length} line(s): ${parts.join(", ") || "done"}.`, failed || stillFast ? "info" : "success");
       } catch (err) {
         console.error("Re-voice error:", err);
         // Put the project copy back in sync with the live array and keep the user's shortened text as drafts.
@@ -20167,9 +20093,10 @@
         showToast(`Failed to re-generate audio: ${err.message}`, "error");
       } finally {
         fastRevoiceBusy = false;
-        setFastButtonLoading(all ? allBtn : singleBtn, false);
-        setFastBusyUI(false);
-        if (isFastModalOpen()) renderFastAudioList();
+        if (chip) {
+          chip.disabled = false;
+          delete chip.dataset.count;
+        }
         updateFastAudioBadge();
       }
     }
@@ -20180,48 +20107,107 @@
     window.applyAndRevoiceSingleSub = applyAndRevoiceSingleSub;
 
     function applyAndRevoiceAllFastSubtitles() {
-      const ids = getFastSubtitles()
-        .sort(fastByStart)
-        .filter((s) => {
-          const draft = getFastDraft(s);
-          return draft != null && draft.trim() && draft.trim() !== String(s.text).trim();
-        })
-        .map((s) => s.id);
+      const ids = rushed.shown.filter((id) => {
+        if (!rushed.accepted.has(id)) return false;
+        const s = findLiveSub(id);
+        const draft = s && getFastDraft(s);
+        return draft != null && draft.trim() && draft.trim() !== String(s.text).trim();
+      });
       if (ids.length === 0) {
-        showToast('Shorten some lines first ("AI Shorten All" or edit the text), then re-voice.', "info");
+        showToast("Tick at least one rewritten line to apply.", "info");
         return;
       }
-      return revoiceFastSubs(ids, { all: true });
+      // Unticked rewrites are dropped: the dialog shows the lines as they are next time.
+      rushed.shown.forEach((id) => {
+        if (!ids.includes(id)) fastDrafts.delete(String(id));
+      });
+      rushed.phase = "review";
+      closeFixFastAudioModal();
+      return revoiceFastSubs(ids);
     }
     window.applyAndRevoiceAllFastSubtitles = applyAndRevoiceAllFastSubtitles;
 
     // ── Wiring ──
     document.getElementById("btn-fix-fast-audio")?.addEventListener("click", openFixFastAudioModal);
-    document.getElementById("btn-fast-condense-all")?.addEventListener("click", condenseAllFastSubtitles);
-    document.getElementById("btn-fast-revoice-all")?.addEventListener("click", applyAndRevoiceAllFastSubtitles);
+    document.getElementById("rushed-close")?.addEventListener("click", closeFixFastAudioModal);
+    document.getElementById("rushed-cancel")?.addEventListener("click", () => {
+      if (rushed.phase === "busy") {
+        cancelFastCondenseRequests();
+        rushed.phase = "review";
+        renderRushed();
+        return;
+      }
+      if (rushed.phase === "results") rushed.shown.forEach((id) => fastDrafts.delete(String(id))); // Discard
+      rushed.phase = "review";
+      closeFixFastAudioModal();
+    });
+    document.getElementById("rushed-primary")?.addEventListener("click", () => {
+      if (rushed.phase === "review") condenseAllFastSubtitles();
+      else if (rushed.phase === "results") applyAndRevoiceAllFastSubtitles();
+    });
+    document.getElementById("modal-fix-rushed")?.addEventListener("mousedown", (e) => {
+      if (e.target.id === "modal-fix-rushed" && rushed.phase !== "busy") closeFixFastAudioModal();
+    });
 
-    const fastAudioListEl = document.getElementById("fast-audio-list");
-    if (fastAudioListEl) {
-      fastAudioListEl.addEventListener("input", (e) => {
-        const textarea = e.target.closest("[data-fast-input]");
-        if (!textarea) return;
-        const sub = findLiveSub(textarea.dataset.fastInput);
-        if (!sub) return;
-        setFastDraft(sub, textarea.value);
-        const countEl = textarea.closest("[data-fast-card]")?.querySelector("[data-fast-count]");
-        if (countEl) countEl.textContent = `${textarea.value.length} chars`;
-      });
-      fastAudioListEl.addEventListener("click", (e) => {
-        const btn = e.target.closest("[data-fast-action]");
-        if (!btn || btn.disabled) return;
-        const id = btn.closest("[data-fast-card]")?.dataset.fastCard;
-        if (id === undefined) return;
-        const action = btn.dataset.fastAction;
-        if (action === "condense") condenseSingleFastSub(id);
-        else if (action === "extend") extendSlotForSub(id);
-        else if (action === "apply") applyAndRevoiceSingleSub(id);
-      });
-    }
+    const rushedReviewEl = document.getElementById("rushed-phase-review");
+    rushedReviewEl?.addEventListener("click", (e) => {
+      if (e.target.closest("[data-pick-all]") || e.target.closest("[data-pick-none]")) {
+        const all = !!e.target.closest("[data-pick-all]");
+        rushed.picked = new Set(all ? rushed.shown : []);
+        return renderRushed();
+      }
+      if (e.target.closest("[data-extend-all]")) return extendAllRushedIntoFreeTime();
+      const row = e.target.closest("[data-rid]");
+      if (!row) return;
+      const id = row.dataset.rid;
+      if (e.target.closest("[data-extend]")) {
+        if (extendSlotForSub(id)) {
+          if (!isFastSub(findLiveSub(id))) rushed.shown = rushed.shown.filter((x) => x !== id);
+          renderRushed();
+        }
+        return;
+      }
+      // anywhere on the row ticks / unticks it
+      rushed.picked.has(id) ? rushed.picked.delete(id) : rushed.picked.add(id);
+      renderRushed();
+    });
+
+    const rushedResultsEl = document.getElementById("rushed-phase-results");
+    rushedResultsEl?.addEventListener("input", (e) => {
+      const t = e.target.closest("textarea[data-new]");
+      const row = e.target.closest("[data-rid]");
+      if (!t || !row) return;
+      const sub = findLiveSub(row.dataset.rid);
+      if (!sub) return;
+      rushedAutoGrow(t);
+      setFastDraft(sub, t.value.trim() ? t.value : sub.text);
+      // An edited line is meant to be applied.
+      const changed = getFastDraft(sub) != null;
+      changed ? rushed.accepted.add(row.dataset.rid) : rushed.accepted.delete(row.dataset.rid);
+      const cb = row.querySelector("[data-accept]");
+      if (cb) cb.checked = changed;
+      row.classList.toggle("is-dead", !changed);
+      const spd = rushedEstSpeed(sub, t.value);
+      const box = row.querySelector(".rushed-spd");
+      if (box) {
+        const cut = Math.round((1 - fastSpokenLength(t.value) / Math.max(1, fastSpokenLength(sub.text))) * 100);
+        box.classList.toggle("hot", spd >= FAST_SPEED_THRESHOLD);
+        box.innerHTML = `${cut > 0 ? `<span class="rushed-cut">−${cut}%</span>` : ""}<small>≈ ${spd.toFixed(2)}x</small>`;
+      }
+      const n = rushed.shown.filter((id) => rushed.accepted.has(id)).length;
+      const primary = document.getElementById("rushed-primary");
+      if (primary) {
+        primary.disabled = n === 0 || fastRevoiceBusy;
+        primary.textContent = `Apply & regenerate ${n} line${n === 1 ? "" : "s"}`;
+      }
+    });
+    rushedResultsEl?.addEventListener("change", (e) => {
+      const cb = e.target.closest("[data-accept]");
+      const row = e.target.closest("[data-rid]");
+      if (!cb || !row) return;
+      cb.checked ? rushed.accepted.add(row.dataset.rid) : rushed.accepted.delete(row.dataset.rid);
+      renderRushed();
+    });
 
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && isFastModalOpen()) {
@@ -20939,7 +20925,7 @@
             let data;
 
             if (isVoxCmp2Enabled) {
-              const matchedProfile = resolveSmartVoxCpmProfile(sub.gender, voxCmp2Data.profiles);
+              const matchedProfile = resolveSmartVoxCpmProfile(sub.gender, voxCmp2Data.profiles, voxCmp2ScopedProfiles(voxCmp2Data, targetProject));
               data = await executeVoxCpm2Synthesis({
                 text: sub.text,
                 serverUrl: voxCmp2Data.serverUrl,
@@ -21573,7 +21559,7 @@
             }
 
             try {
-              const matchedProfile = resolveSmartVoxCpmProfile(sub.gender, voxCmp2Data.profiles);
+              const matchedProfile = resolveSmartVoxCpmProfile(sub.gender, voxCmp2Data.profiles, voxCmp2ScopedProfiles(voxCmp2Data, proj));
               const data = await executeVoxCpm2Synthesis({
                 text: sub.text,
                 serverUrl: voxCmp2Data.serverUrl,
@@ -27029,6 +27015,9 @@
     function renderProjectTabs() {
       const bar = document.getElementById("project-tabs-bar");
       const noProjectLabel = document.getElementById("footer-no-project");
+      // Tabs were added, closed or switched: the voice-group chip and the bulk
+      // voice dropdowns follow the open tab (js/vox-groups.js).
+      document.dispatchEvent(new Event("vox-group-changed"));
 
       if (projects.length === 0) {
         // No project yet → show the static label, no tabs
