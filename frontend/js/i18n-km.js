@@ -1843,4 +1843,8 @@ window.I18N_KM = {
   "Turn on VoxCPM2 AI first (the switch at the top).": "សូមបើក VoxCPM2 AI ជាមុនសិន (កុងតាក់ខាងលើ)។",
   "Install stopped. Click Install again to carry on.": "ការដំឡើងបានឈប់។ ចុចដំឡើងម្ដងទៀតដើម្បីបន្ត។",
   "VoxCPM2 is installed ({0} build). Click Start Server to load it.": "បានដំឡើង VoxCPM2 ({0})។ ចុច Start Server ដើម្បីដំណើរការ។",
+  "Checking rushed lines": "កំពុងពិនិត្យឃ្លាដែលនិយាយប្រញាប់",
+  "Part {0}/{1} · Checking rushed lines": "ផ្នែក {0}/{1} · កំពុងពិនិត្យឃ្លាដែលនិយាយប្រញាប់",
+  "Part {0}/{1} · Shortening rushed lines {2}/{3}": "ផ្នែក {0}/{1} · កំពុងបង្រួមឃ្លាដែលនិយាយប្រញាប់ {2}/{3}",
+  "· {0} still fast (the \"N rushed\" chip lists them)": "· {0} ឃ្លានៅតែលឿន (មើលក្នុងប៊ូតុង \"N rushed\")",
 };

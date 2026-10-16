@@ -17978,25 +17978,28 @@
         };
         await voiceMissingLines();
 
-        // Rushed lines (voice sped up to fit): extend into free time, shorten the rest with
-        // Gemini and voice those again - a 2x voice sounds robotic.
+        // Fix Rushed Lines, unattended, one pass: the fastest lines (a 2x voice sounds robotic)
+        // get the free time after them, or Gemini shortens them and they are voiced again.
+        // Not repeated until none are left: taking the worst rushing out is enough, and a
+        // line that is only a little fast keeps its full translation.
+        setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Checking rushed lines`);
         const fit = await fitFastLinesAllTabs({
           checkStop,
           onProgress: (done, total) => setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Shortening rushed lines ${done}/${total}`),
         });
-        let stillRushed = 0;
         if (fit.shortened) {
           setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Voicing ${fit.shortened} shortened line(s)`);
           g = await runGenerate();
           await voiceMissingLines();
-          stillRushed = refitShortenedLinesAllTabs();
+          refitShortenedLinesAllTabs();
         }
+        const stillRushed = countRushedLinesAllTabs();
 
         const voiced = projects.reduce((n, p) => n + liveSubtitlesOf(p).filter((s) => isSpeakableText(s.text)).length, 0);
         let note = `${g.vox ? "VoxCPM2 · " : ""}all ${voiced} line(s) voiced in ${projects.length} tab(s)`;
         if (fit.extended) note += ` · ${fit.extended} line(s) given more time`;
         if (fit.shortened) note += ` · ${fit.shortened} rushed line(s) shortened`;
-        if (stillRushed) note += ` · ${stillRushed} still fast`;
+        if (stillRushed) note += ` · ${stillRushed} still fast (the "N rushed" chip lists them)`;
         return note;
       }
 
@@ -19968,6 +19971,18 @@
       }
       refreshActiveTabFromProject();
       return stillRushed;
+    }
+
+    // Voiced lines in every tab that still clearly sound rushed (what Dub Whole Series reports).
+    function countRushedLinesAllTabs() {
+      saveCurrentProjectState();
+      let n = 0;
+      for (const proj of projects) {
+        for (const sub of proj.subtitles || []) {
+          if (sub.audioStatus === "ready" && isSpeakableText(sub.text) && analyzeSubPace(sub).effectiveSpeed >= SERIES_FIT_SPEED) n++;
+        }
+      }
+      return n;
     }
 
     // ── Timeline changes ──

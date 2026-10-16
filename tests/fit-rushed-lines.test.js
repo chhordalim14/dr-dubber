@@ -47,7 +47,7 @@ function makeEnv({ condense, keys = ['k1'], delayMs = 0 }) {
     };
     ${voiceSlotSrc}
     ${fastBlock}
-    return { fitFastLinesAllTabs, refitShortenedLinesAllTabs, analyzeSubPace, settleMatchedSubtitles, setProjects: (p) => { projects = p; }, setActive: (i, live) => { activeProjectIndex = i; subtitles = live; }, getLive: () => subtitles };
+    return { fitFastLinesAllTabs, refitShortenedLinesAllTabs, countRushedLinesAllTabs, analyzeSubPace, settleMatchedSubtitles, setProjects: (p) => { projects = p; }, setActive: (i, live) => { activeProjectIndex = i; subtitles = live; }, getLive: () => subtitles };
   `);
   return { env, api: factory(env, condense, JSON.stringify(keys), delayMs, KhmerSpeech) };
 }
@@ -182,6 +182,27 @@ describe('fit rushed lines (Dub Whole Series)', () => {
     assert.equal(api.refitShortenedLinesAllTabs(), 0);
     assert.equal(tab.subtitles[0].speed, 1.0);
     assert.equal(tab.subtitles[0]._fitShortened, undefined);
+  });
+
+  test('one pass fixes the fastest lines; what is left a little fast is only counted', async () => {
+    const { env, api } = makeEnv({ condense: (subs) => subs.map((s) => ({ id: s.id, condensedText: 'ខ្ញុំមិនដឹងទេ' })) });
+    // a: 1.75x, no room -> shortened. c: 1.2x -> only sped up, never rewritten.
+    const tab = { duration: 60, subtitles: [line('a', 0, 2, 3.5), line('b', 2.05, 4, 1.5), line('c', 4.05, 6, 2.4), line('d', 6.05, 8, 1.5)] };
+    api.setProjects([tab]);
+    const r = await api.fitFastLinesAllTabs();
+    assert.equal(r.shortened, 1);
+    assert.deepEqual(env.requests[0].subtitles.map((s) => s.id), ['a'], 'only the clearly rushed line goes to Gemini');
+    Object.assign(tab.subtitles[0], { audioStatus: 'ready', baseAudioDuration: 2.8 }); // re-voiced: 1.4x, better
+    api.refitShortenedLinesAllTabs();
+    assert.equal(api.countRushedLinesAllTabs(), 1, 'still a little fast: reported, not chased');
+  });
+
+  test('Dub Whole Series runs the rushed-line fix once per part, not until none are left', () => {
+    const main = src.replace(/\r\n/g, '\n');
+    const step = main.slice(main.indexOf('      async function generateStep() {'), main.indexOf('      function noEngineInstalled(p) {'));
+    assert.equal((step.match(/await fitFastLinesAllTabs\(/g) || []).length, 1);
+    assert.ok(!/for \(let round/.test(step), 'no repeat rounds');
+    assert.match(step, /const stillRushed = countRushedLinesAllTabs\(\);/);
   });
 });
 
