@@ -15447,9 +15447,16 @@
               `;
               btn.addEventListener("click", (e) => {
                 e.stopPropagation();
-                setVoxRowValue(opt.value, options);
                 closeRowDropdown();
                 rowListBuilt = false; // rebuild with the new checkmark next time it opens
+                if (opt.value === genderHidden.value) return;
+                setVoxRowValue(opt.value, options); // its change event updates the line and resets its audio
+                // Redraw so the timeline picks up the new voice, and bounce the pill.
+                bouncingGenderId = sub.id;
+                renderSubtitles();
+                setTimeout(() => {
+                  bouncingGenderId = null;
+                }, 400);
               });
               voxRowList.appendChild(btn);
             });
@@ -15591,32 +15598,6 @@
                 if (a1Block) a1Block.remove();
               }
             }
-          });
-
-          // 🟢 TWO-WAY RE-RENDER ON CLICK (Male/Female or Voice Switch)
-          voxRowTrigger.addEventListener("click", () => {
-            const currentIndex = subtitles.findIndex((s) => s.id === sub.id);
-            if (currentIndex > -1) {
-              if (subtitles[currentIndex].audioStatus === "ready") {
-                subtitles[currentIndex].audioStatus = "idle";
-                subtitles[currentIndex].audioUrl = null;
-                subtitles[currentIndex].file = null;
-                if (typeof window.releaseAudioChain === "function") window.releaseAudioChain(activeAudios[sub.id]);
-                delete activeAudios[sub.id];
-              }
-            }
-
-            if (typeof bouncingGenderId !== "undefined") {
-              bouncingGenderId = sub.id;
-            }
-
-            renderSubtitles();
-
-            setTimeout(() => {
-              if (typeof bouncingGenderId !== "undefined") {
-                bouncingGenderId = null;
-              }
-            }, 400);
           });
         }
 

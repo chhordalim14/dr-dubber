@@ -966,8 +966,8 @@
     .animate-cute-bounce {
       animation: cuteBounce 0.4s cubic-bezier(0.25, 1.5, 0.5, 1) forwards;
       transform-origin: center;
-      display: inline-block;
-      /* Required for transform to work on selects */
+      /* No display here: the voice pill is a flex button, and inline-block
+         dropped its chevron onto a second line under the label. */
     }
 
     /* ── RENDER QUEUE ITEM ANIMATIONS ── */
