@@ -9,7 +9,8 @@ const {
     getKhmerDramaRegisterGuidance, parseSrtBlocksForTranslate, translatePromptLine, buildTranslatePrompt
 } = require('../backend/lib/khmer-prompts');
 
-const serverSource = fs.readFileSync(path.join(__dirname, '..', 'backend', 'server.js'), 'utf8');
+// A Windows checkout has CRLF; the multi-line searches below are written with \n.
+const serverSource = fs.readFileSync(path.join(__dirname, '..', 'backend', 'server.js'), 'utf8').replace(/\r\n/g, '\n');
 
 describe('dubbing rules do not contradict each other', () => {
     test('"តើ" is banned at the start of questions and not offered as a particle', () => {
