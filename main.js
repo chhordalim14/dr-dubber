@@ -896,6 +896,17 @@ handle('voxcpm2:startServer', async (event, opts = {}) => {
         return { success: false, error: `Error accessing VoxCPM2 path: ${e.message}` };
     }
 
+    // A folder the one-click install built runs a copy of backend/python/voxcpm2_server.py
+    // made on install day; bring it up to this version so server fixes reach it.
+    if (path.basename(scriptPath) === 'app.py' && fs.existsSync(path.join(scriptDir, 'drdubber-voxcpm2.json'))) {
+        try {
+            const bundled = fs.readFileSync(path.join(voxScriptsDir(), 'voxcpm2_server.py'));
+            if (!bundled.equals(fs.readFileSync(scriptPath))) fs.writeFileSync(scriptPath, bundled);
+        } catch (e) {
+            console.warn('[VoxCPM2] Could not refresh app.py:', e.message);
+        }
+    }
+
     // Detect virtualenv or embedded Python if available, else system python
     const possiblePythons = [
         path.join(scriptDir, 'venv', 'Scripts', 'python.exe'),

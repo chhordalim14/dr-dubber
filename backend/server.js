@@ -855,6 +855,30 @@ function isolateBgmWithFfmpeg(audioPath, outputDir, jobId, isFallback = false, f
     });
 }
 
+// VoxCPM2 (a 2B model) and an ML separator together overfill a 6 GB laptop GPU, and
+// Windows then pages video memory: a 98 s episode's MDX-Net isolation, 8 s on its own,
+// ran for over 8 minutes beside a loaded VoxCPM2. A local VoxCPM2 server is asked to
+// release the GPU first (its next line loads the model again). 'cpu' when one is on the
+// GPU but can't release it (an older app.py): the separator then stays off the GPU.
+async function lendVoxCpmGpu(serverUrl) {
+    const base = String(serverUrl || 'http://127.0.0.1:8808').trim().replace(/\/+$/, '').replace('//localhost', '//127.0.0.1');
+    if (!/^http:\/\/127\.0\.0\.1(:\d+)?$/.test(base)) return 'none';
+    try {
+        const health = await secureFetch(`${base}/`, { signal: AbortSignal.timeout(2000) });
+        const info = await health.json().catch(() => ({}));
+        if (info.device !== 'cuda' || info.sleeping) return 'none';
+        // Waits for a line being spoken to finish.
+        const r = await secureFetch(`${base}/api/release`, { method: 'POST', signal: AbortSignal.timeout(180000) });
+        if (r.ok) {
+            console.log('[Vocal Separator] VoxCPM2 released the GPU for BGM isolation.');
+            return 'released';
+        }
+        return 'cpu';
+    } catch (e) {
+        return 'none'; // no VoxCPM2 server running
+    }
+}
+
 // 3. Remove Vocals / BGM Isolation
 app.post('/api/remove-vocals', upload.any(), async (req, res) => {
     const uploadedFile = (req.files && req.files.length > 0) ? req.files[0].path : null;
@@ -946,6 +970,15 @@ app.post('/api/remove-vocals', upload.any(), async (req, res) => {
         PYTHONUTF8: '1',
         TF_CPP_MIN_LOG_LEVEL: '2'
     };
+    if ((engine === 'mdx' || (engine === 'demucs' && useGPU)) && await lendVoxCpmGpu(req.body.voxServerUrl) === 'cpu') {
+        console.warn(`[Vocal Separator] Job ${jobId}: VoxCPM2 is holding the GPU and can't release it; ${engineLabel} runs on the CPU.`);
+        runEnv.MDX_DEVICE = 'cpu';
+        if (engine === 'demucs') pyArgs.push('--device', 'cpu');
+    }
+    if (isBgmJobCancelled(jobId)) {
+        removeDirQuietly(workDir);
+        return;
+    }
     let child;
     try {
         // Own process group off Windows, so Stop can kill the separator and its

@@ -20902,8 +20902,12 @@
       const cleanText = window.KhmerSpeech.normalizeForSpeech(text);
       const isKhmer = /[\u1780-\u17FF]/.test(cleanText);
 
+      // A starter profile's description ("A clear, natural young male voice…") is for a voice
+      // with no clip; once a clip is attached it pulled the clone towards a generic voice.
+      const starter = voxCmp2Defaults().profiles.some((p) => p.instruction === profile?.instruction);
+      const ownInstruction = profile?.audioPath && starter ? "" : (profile?.instruction || "");
       // If text is Khmer and no reference audio is used, avoid injecting English prompt context
-      const effectiveInstruction = (isKhmer && !profile?.audioPath) ? "" : (profile?.instruction || "");
+      const effectiveInstruction = (isKhmer && !profile?.audioPath) ? "" : ownInstruction;
 
       // 🌐 METHOD 1: Direct Browser Fetch for remote/Colab servers
       if (isRemote) {
@@ -20961,7 +20965,7 @@
           text: cleanText,
           serverUrl: srvUrl,
           tempPath,
-          profile,
+          profile: profile && { ...profile, instruction: effectiveInstruction },
           index,
           speed: parseFloat(speed) || 1.0,
           emotion: emotion || "Neutral",
@@ -23865,6 +23869,8 @@
         let demucsFolder = localStorage.getItem("aiDubberDemucsFolder") || "";
         let demucsSegment = localStorage.getItem("aiDubberDemucsSegment") || "7";
         let spleeterFolder = localStorage.getItem("aiDubberSpleeterFolder") || "";
+        // A local VoxCPM2 server is asked to lend its GPU while this runs.
+        const voxServerUrl = typeof voxCmp2Load === "function" ? voxCmp2Load().serverUrl || "" : "";
 
         let response;
         const localVideoPath = targetProject.videoFilePath || (targetProject.file && targetProject.file.path ? targetProject.file.path : null);
@@ -23882,6 +23888,7 @@
               demucsFolder,
               demucsSegment,
               spleeterFolder,
+              voxServerUrl,
               parallelJobs: opts.parallelJobs || 1,
             }),
             signal: targetProject.isolateAbortController.signal,
@@ -23907,6 +23914,7 @@
           if (demucsFolder) formData.append("demucsFolder", demucsFolder);
           if (demucsSegment) formData.append("demucsSegment", demucsSegment);
           if (spleeterFolder) formData.append("spleeterFolder", spleeterFolder);
+          if (voxServerUrl) formData.append("voxServerUrl", voxServerUrl);
           formData.append("parallelJobs", String(opts.parallelJobs || 1));
 
           response = await fetch("http://localhost:3001/api/remove-vocals", {

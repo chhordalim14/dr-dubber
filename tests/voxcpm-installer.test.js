@@ -46,8 +46,12 @@ test('the server speaks the API the app calls', () => {
     assert.match(py, /"audio_base64":/);
     assert.match(py, /--port/);
     assert.match(py, /default="127\.0\.0\.1"/, 'local only');
-    // the ping loop waits on GET /: 503 while the model loads
-    assert.match(py, /\{"ready": 200, "loading": 503\}/);
+    // the ping loop waits on GET /: 503 while the model loads; released for BGM isolation is ready
+    assert.match(py, /\{"ready": 200, "sleeping": 200, "loading": 503\}/);
+    // BGM isolation asks a local server to lend the GPU
+    assert.match(py, /route == "\/api\/release"/);
+    assert.match(server, /\$\{base\}\/api\/release/);
+    assert.match(server, /await lendVoxCpmGpu\(req\.body\.voxServerUrl\)/);
 });
 
 test('install folders are local paths only', () => {
