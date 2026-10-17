@@ -79,6 +79,7 @@ storage/preview_cache/
 storage/audio_repair/
 storage/text_detect/
 storage/batch_results/
+storage/character_sheets/
 
 # Local experiments
 scratch/
