@@ -16618,6 +16618,16 @@
       }, 1500);
     });
 
+    // Shows a local folder in Explorer/Finder. Resolves false when it isn't there. The URL needs
+    // three slashes before the drive (file:///D:/...): file://D:/... reads as a network share
+    // named "D:" and is refused. # and ? are encoded so they stay part of the folder name.
+    const openLocalFolder = async (dir) => {
+      if (!dir || !window.electronAPI?.openExternal) return false;
+      const p = dir.replace(/\\/g, "/");
+      const url = "file://" + (p.startsWith("/") ? "" : "/") + encodeURI(p).replace(/#/g, "%23").replace(/\?/g, "%3F");
+      try { return !!(await window.electronAPI.openExternal(url)); } catch { return false; }
+    };
+
     // ── Join Episodes ──────────────────────────────────────────────────────
     (() => {
       const $ = (id) => document.getElementById(id);
@@ -16769,7 +16779,7 @@
       });
 
       $("je-open").addEventListener("click", () => {
-        window.electronAPI?.openExternal?.("file://" + encodeURI(outDir.replace(/\\/g, "/")));
+        openLocalFolder(outDir);
       });
 
       $("je-load").addEventListener("click", () => {
@@ -16975,7 +16985,7 @@
       });
 
       $("sm-open").addEventListener("click", () => {
-        window.electronAPI?.openExternal?.("file://" + encodeURI(outDir.replace(/\\/g, "/")));
+        openLocalFolder(outDir);
       });
 
       $("sm-load").addEventListener("click", () => {
@@ -18466,6 +18476,23 @@
         }
       }
 
+      // Where the series is exported: a folder of its own in the export folder, "<Name>_Dubbed",
+      // so every part's videos and the joined video are together and apart from other exports.
+      // A series exported before keeps the folder its first videos went to.
+      function seriesExportDir() {
+        if (!plan) return "";
+        if (!plan.exportDir) {
+          const done = plan.parts.find((p) => p.outputs?.[0])?.outputs[0];
+          const base = (exportPath || "").trim().replace(/[\\/]+$/, "");
+          if (done) plan.exportDir = dirOf(done);
+          else if (base) {
+            const name = (plan.seriesName || "Series").replace(/[<>:"/\\|?*\x00-\x1f]/g, " ").replace(/\s+/g, " ").trim().replace(/[. ]+$/, "") || "Series";
+            plan.exportDir = pathJoin(base, `${name}_Dubbed`);
+          }
+        }
+        return plan.exportDir || "";
+      }
+
       // Puts the open tabs of finished part i in the render queue (once; nothing renders yet).
       function queuePartExport(i) {
         const part = plan.parts[i];
@@ -18473,7 +18500,7 @@
         // Only the part's own tabs; the tag names this series run (plan.id), so dubbing the same
         // folder again never takes an earlier run's export as this one.
         const pieces = plan.lastDone?.index === i ? plan.lastDone.pieces : null;
-        const items = window.seriesRenderApi.queueAllTabs(`${plan.outDir}|${plan.id || ""}|part${i + 1}`, pieces || null);
+        const items = window.seriesRenderApi.queueAllTabs(`${plan.outDir}|${plan.id || ""}|part${i + 1}`, pieces || null, seriesExportDir() || null);
         if (!items.length) throw new Error(`Part ${i + 1}: no tab to export.`);
         seriesExports.set(part, { items, run: null, rendering: false, result: null, tabsClosed: false });
         part.autoExport = true;
@@ -19026,8 +19053,12 @@
         $("ds-warnings").classList.add("hidden");
         render();
       });
-      $("ds-open").addEventListener("click", () => {
-        if (plan?.outDir) window.electronAPI?.openExternal?.("file://" + encodeURI(plan.outDir.replace(/\\/g, "/")));
+      // The series' own export folder (its exported episodes and joined video); before anything
+      // is exported there, the folder its parts are joined into.
+      $("ds-open").addEventListener("click", async () => {
+        if (!plan) return;
+        for (const dir of [seriesExportDir(), plan.outDir]) if (await openLocalFolder(dir)) return;
+        showToast("That folder isn't on disk yet - it is made when the first part is exported.", "warning");
       });
       ["ds-join-minutes", "ds-split-minutes"].forEach((id) => {
         $(id).addEventListener("input", render);
@@ -26587,7 +26618,8 @@
         // tag: which series part these exports belong to - a retry reuses that part's finished
         // exports instead of rendering them again. onlyPaths: the part's own tabs (their video
         // files) - a tab opened for something else is never exported as part of the series.
-        const queueAllTabsForSeries = (tag = null, onlyPaths = null) => {
+        // exportDir: the series' own export folder (made when the first video is written there).
+        const queueAllTabsForSeries = (tag = null, onlyPaths = null, exportDir = null) => {
           window._isSavingForRender = true;
           saveCurrentProjectState();
           window._isSavingForRender = false;
@@ -26607,6 +26639,7 @@
               return;
             }
             const item = { status: "pending", progress: 0, projectLabel: proj.file.name, seriesTag: tag, ...buildConfigSnapshot(proj, fileName, audioOnly, "mp3") };
+            if (exportDir) item.config.exportPath = exportDir;
             renderQueue.push(item);
             items.add(item);
           });
@@ -26669,7 +26702,9 @@
             const proj = projects.find((p) => p.file && p.file.name === item.projectLabel);
             if (!proj) return;
             const audioOnly = /\.mp3$/i.test(item.config?.outputFileName || "");
+            const exportDir = item.config.exportPath; // the series' own folder
             Object.assign(item, buildConfigSnapshot(proj, item.config.outputFileName, audioOnly, "mp3"));
+            if (exportDir) item.config.exportPath = exportDir;
             refreshed++;
           });
           return refreshed;
