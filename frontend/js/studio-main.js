@@ -17110,7 +17110,8 @@
         const imgs = await Promise.all(window.imageOverlays.map(async (i) => {
           const { file, _file, blobUrl, dataUrl, ...rest } = i;
           const encoded = await imageOverlayToDataUrl(i);
-          return encoded ? { ...rest, dataUrl: encoded } : null;
+          const kept = encoded && (await keepableImage(await (await fetch(encoded)).blob()));
+          return kept ? { ...rest, dataUrl: kept } : null;
         }));
         if (imgs.some((i) => !i)) return showToast("Could not read an image of this tab. Add it again and retry.", "error");
         try {
@@ -17172,6 +17173,34 @@
         el.onerror = () => resolve(1);
         el.src = src;
       });
+      // The copy of an image kept with the series (localStorage holds only a few MB in all): a
+      // big image is scaled down for it. Export still uses the original file (filePath) while
+      // it is there; this copy is the preview, and what is exported if the file was moved.
+      // null: not an image Chromium can read.
+      const SERIES_IMG_MAX_BYTES = 1024 * 1024;
+      const blobDataUrl = (blob) => new Promise((res) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = () => res(null); fr.readAsDataURL(blob); });
+      async function keepableImage(blob) {
+        if (blob.size <= SERIES_IMG_MAX_BYTES) return blobDataUrl(blob);
+        let bmp;
+        try { bmp = await createImageBitmap(blob); } catch (e) { return null; }
+        try {
+          for (const side of [1920, 1280, 960, 640]) {
+            const s = Math.min(1, side / Math.max(bmp.width, bmp.height));
+            const c = document.createElement("canvas");
+            c.width = Math.max(1, Math.round(bmp.width * s));
+            c.height = Math.max(1, Math.round(bmp.height * s));
+            c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+            // PNG first (a logo stays sharp), WebP when that is still too big; both keep transparency.
+            for (const type of ["image/png", "image/webp"]) {
+              const out = await new Promise((res) => c.toBlob(res, type, 0.9));
+              if (out && out.size <= SERIES_IMG_MAX_BYTES) return blobDataUrl(out);
+            }
+          }
+          return null;
+        } finally {
+          bmp.close();
+        }
+      }
 
       function renderImageEditor() {
         const stage = $("ds-img-stage");
@@ -17245,11 +17274,11 @@
         if (r.dirPath) localStorage.setItem("lastImageDir", r.dirPath);
         for (const f of r.files) {
           const blob = await (await fetch(f.fileUrl)).blob();
-          if (blob.size > 2.5 * 1024 * 1024) {
-            showToast(`"${f.fileName}" is ${(blob.size / 1048576).toFixed(1)} MB — use a smaller image (a PNG logo of a few hundred KB).`, "error");
+          const dataUrl = await keepableImage(blob);
+          if (!dataUrl) {
+            showToast(`"${f.fileName}" could not be read as an image. Use a PNG or JPG.`, "error");
             continue;
           }
-          const dataUrl = await new Promise((res) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(blob); });
           const ar = await imgNatural(dataUrl);
           const im = { id: crypto.randomUUID(), dataUrl, filePath: f.filePath || null, ar, x: 0, y: 0, w: 1, h: 1, opacity: 100, radius: 0, motion: "none", speed: 2, idleStyle: "none", idleStrength: 5 };
           sizeImg(im, 15);
@@ -27720,7 +27749,7 @@
           window.imageOverlays.push({
             id,
             file,
-            filePath: file.path || null,
+            filePath: file.path || window.electronAPI?.getPathForFile?.(file) || null,
             blobUrl: url,
             x: 35,
             y: 35,
