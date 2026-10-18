@@ -63,7 +63,7 @@ test('Reset and Start over hold the countdown while their confirm is open', () =
 
 test('hands-free export: only the part\'s own tabs, tagged with this series run, and Stop only stops series exports', () => {
     assert.match(source, /plan\.lastDone = \{ index: i, steps: plan\.stepState, pieces: plan\.pieces \};/);
-    assert.match(source, /queueAllTabs\(`\$\{plan\.outDir\}\|\$\{plan\.id \|\| ""\}\|part\$\{i \+ 1\}`, pieces \|\| null\)/);
+    assert.match(source, /queueAllTabs\(`\$\{plan\.outDir\}\|\$\{plan\.id \|\| ""\}\|part\$\{i \+ 1\}`, pieces \|\| null, seriesExportDir\(\) \|\| null\)/);
     assert.match(source, /if \(onlyPaths && !onlyPaths\.includes\(proj\.videoFilePath\)\) return;/);
     assert.match(source, /if \(job\.rendering\) window\.seriesRenderApi\?\.stopItems\(job\.items\);/);
 });

@@ -51,6 +51,9 @@ function makeSeries({ parts = 3, outcome = () => 'done', renderMs = 10, dubMs = 
     // Join Episodes' server side, for "Join into one video".
     const API = 'api';
     const dirOf = (p) => p.slice(0, p.lastIndexOf('/'));
+    // The app's export folder setting (seriesExportDir): unset, so the series keeps its parts' folder.
+    let exportPath = '';
+    const pathJoin = (...p) => p.join('/');
     const mergeWanted = () => merge;
     const mergeScope = () => scope;
     const currentClips = () => clips;
