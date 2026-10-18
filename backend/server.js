@@ -4324,7 +4324,7 @@ app.post('/api/generate-voxcmp2', async (req, res) => {
             reference_audio_base64: refAudioBase64,
             speed: parseFloat(speed) || 1.0,
             emotion: emotion || 'Neutral',
-            cfg_value: parseFloat(req.body.cfg_value) || 1.5,
+            cfg_value: parseFloat(req.body.cfg_value) || 2.0,
             output_path: outFile,
             profile: profile || null
         };

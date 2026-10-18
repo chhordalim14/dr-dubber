@@ -11,9 +11,10 @@ uses (backend/server.js /api/generate-voxcmp2 and the page's direct call):
                       -> {"success": true, "audio_base64": <wav>, "duration": s,
                           "sample_rate": hz}
 
-Only listens on 127.0.0.1. Writes only a temp file for the reference clip and
-each voice's anchor line (voice_anchors/ beside this file); the app saves the
-returned audio itself.
+Only listens on 127.0.0.1. Writes only temp files for the reference clip (and its
+cleaned copy) and each voice's anchor line (voice_anchors/ beside this file); the
+app saves the returned audio itself. The first noisy clip downloads the clip
+cleaner (ZipEnhancer, about 19 MB) into the model cache.
 """
 
 import argparse
@@ -73,17 +74,37 @@ LINE_LEVEL_DB = -24.0  # mean loudness of the speech
 LINE_PAD = (0.08, 0.15)  # seconds of room kept before / after the speech
 LINE_FADE = (0.01, 0.04)
 
+# A dub line should sound like a voice actor in a booth: rumble cut, and the loudest syllables
+# pressed gently towards the rest so the line sits evenly over the film's music.
+HIGHPASS_HZ = 60.0
+COMP_RATIO = 2.5
+COMP_KNEE_DB = 8.0  # only what rises this far above the line's typical level is pressed down
+COMP_MAX_CUT_DB = 6.0
+COMP_ATTACK, COMP_RELEASE = 0.008, 0.15
+
 # VoxCPM2 clones from seconds of voice; a minute-long clip with music under it gives a
 # voice that wanders. A longer clip is cut to its clearest stretch of this length.
 REF_MAX_SECONDS = 12.0
-ref_cache = {}  # sha1 of the clip -> wav bytes of its clearest stretch
+# A clip cut from a film carries its music and room into every line spoken from it. Measured
+# on a clip with music 14 dB under the voice: cleaned first (ZipEnhancer, VoxCPM2's own
+# denoiser), the lines came out with 16 dB less noise under them. A clean clip is left as it
+# is: cleaned, the lines of a studio-clean clip held the voice less well.
+REF_NOISY_DB = -45.0  # the quiet between words within this far of the speech: noisy
+DENOISER_ID = "iic/speech_zipenhancer_ans_multiloss_16k_base"
+denoiser = {"model": None, "failed": False}
+denoiser_lock = threading.Lock()
+ref_cache = {}  # sha1 of the clip -> wav bytes of the clip made ready to clone from, or None
+REF_PREP = "clean1"  # changes when the way a clip is made ready changes (anchors follow it)
 
 # Cloned from the clip alone, each line drew the voice afresh and one profile could sound
 # like two people. So each voice (and style) first says one fixed Khmer line, its anchor,
 # and every line it speaks continues from that anchor (VoxCPM2's "ultimate cloning", which
 # needs the prompt's exact words: here they are known). Kept on disk, so a voice sounds the
-# same next session too.
-ANCHOR_TEXT = "ខ្ញុំនៅទីនេះហើយ ហើយខ្ញុំកំពុងស្ដាប់អ្នកនិយាយ។"
+# same next session too. A statement, a question and a reply: over one short sentence, every
+# line of a voice came out closer to the others (CAM++ likeness between lines 0.68-0.78 ->
+# 0.73-0.81 on three voices).
+ANCHOR_TEXT = ("ខ្ញុំនៅទីនេះហើយ ហើយខ្ញុំកំពុងស្ដាប់អ្នកនិយាយ។ តើមានរឿងអ្វីកើតឡើង? "
+               "ប្រាប់ខ្ញុំមកចុះ យើងនឹងរកផ្លូវដោះស្រាយជាមួយគ្នា។")
 ANCHOR_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "voice_anchors")
 anchor_lock = threading.Lock()
 takes = {}  # (seed, text) -> times asked, so asking again gives a new take
@@ -137,10 +158,33 @@ def frame_db(wav, sr, step=0.02):
     return hop, 20 * np.log10(rms)
 
 
+def voice_over(wav, sr):
+    """Cut the rumble under the voice and press its loudest syllables gently down."""
+    import numpy as np
+    from scipy.signal import butter, sosfilt
+
+    wav = sosfilt(butter(2, HIGHPASS_HZ, "highpass", fs=sr, output="sos"), wav).astype(np.float32)
+    hop, db = frame_db(wav, sr, 0.005)
+    if len(db) < 4:
+        return wav
+    thr = np.median(db[db > db.max() - 35]) + COMP_KNEE_DB
+    want = -np.minimum(COMP_MAX_CUT_DB, np.maximum(0.0, db - thr) * (1 - 1 / COMP_RATIO))
+    attack, release = (np.exp(-hop / (s * sr)) for s in (COMP_ATTACK, COMP_RELEASE))
+    cut = np.empty(len(want))
+    cur = 0.0
+    for i, w in enumerate(want):  # quick to press down, slow to let go
+        k = attack if w < cur else release
+        cur = k * cur + (1 - k) * w
+        cut[i] = cur
+    gain = np.interp(np.arange(len(wav)), (np.arange(len(cut)) + 0.5) * hop, 10 ** (cut / 20))
+    return (wav * gain).astype(np.float32)
+
+
 def finish_line(wav, sr):
     """Trim the silence around the speech, fade its ends and bring it to the line level."""
     import numpy as np
 
+    wav = voice_over(wav, sr)
     hop, db = frame_db(wav, sr)
     loud = np.nonzero(db > db.max() - 40)[0]
     if len(loud):
@@ -163,8 +207,65 @@ def finish_line(wav, sr):
     return wav.astype(np.float32)
 
 
-def clearest_reference(ref_bytes):
-    """A clip longer than REF_MAX_SECONDS cut to its clearest stretch (wav bytes), else None."""
+def noise_db(wav, sr):
+    """How loud the quiet between words is, against the speech (dB; lower is cleaner)."""
+    import numpy as np
+
+    _, db = frame_db(wav, sr)
+    loud = np.nonzero(db > db.max() - 35)[0]
+    if len(loud) < 5:
+        return -120.0
+    speech = db[loud[0]:loud[-1] + 1]
+    return float(np.percentile(speech, 5) - np.percentile(speech, 90))
+
+
+def get_denoiser():
+    """VoxCPM2's ZipEnhancer, loaded the first time a noisy clip comes in (None if it can't be)."""
+    with denoiser_lock:
+        if denoiser["model"] is None and not denoiser["failed"]:
+            try:
+                from voxcpm.zipenhancer import ZipEnhancer
+
+                t0 = time.time()
+                denoiser["model"] = ZipEnhancer(DENOISER_ID)
+                log(f"Loaded the clip cleaner in {time.time() - t0:.0f}s")
+            except Exception:  # noqa: BLE001 - offline on first use, or an install without modelscope
+                denoiser["failed"] = True
+                log("Could not load the clip cleaner; noisy clips are used as they are:\n" + traceback.format_exc())
+        return denoiser["model"]
+
+
+def clean_clip(wav, sr):
+    """The clip with its music and room noise taken out (16 kHz wav bytes), else None."""
+    import soundfile as sf
+
+    enhancer = get_denoiser()
+    if enhancer is None:
+        return None
+    fd, src = tempfile.mkstemp(prefix="drd_noisy_", suffix=".wav")
+    os.close(fd)
+    out = src[:-4] + "_clean.wav"
+    try:
+        sf.write(src, wav, sr, subtype="PCM_16")
+        enhancer.enhance(src, output_path=out)
+        with open(out, "rb") as f:
+            return f.read()
+    except Exception:  # noqa: BLE001 - the clip is still usable as it is
+        log("Could not clean the reference clip; using it as it is:\n" + traceback.format_exc())
+        return None
+    finally:
+        for p in (src, out):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+
+def prepared_reference(ref_bytes):
+    """The clip made ready to clone from (wav bytes), or None to use it as it came.
+
+    A clip longer than REF_MAX_SECONDS is cut to its clearest stretch, and a noisy one cleaned.
+    """
     key = hashlib.sha1(ref_bytes).hexdigest()
     if key in ref_cache:
         return ref_cache[key]
@@ -192,11 +293,19 @@ def clearest_reference(ref_bytes):
         n = int(0.02 * sr)
         part[:n] *= np.linspace(0, 1, n, dtype=np.float32)
         part[-n:] *= np.linspace(1, 0, n, dtype=np.float32)
+        log(f"Reference clip is {len(wav) / sr:.0f}s: cloning from its clearest {REF_MAX_SECONDS:.0f}s "
+            f"(from {start / sr:.1f}s)")
+        wav = part
         buf = io.BytesIO()
         sf.write(buf, part, sr, format="WAV", subtype="PCM_16")
         cut = buf.getvalue()
-        log(f"Reference clip is {len(wav) / sr:.0f}s: cloning from its clearest {REF_MAX_SECONDS:.0f}s "
-            f"(from {start / sr:.1f}s)")
+    noise = noise_db(wav, sr)
+    if noise > REF_NOISY_DB:
+        t0 = time.time()
+        clean = clean_clip(wav, sr)
+        if clean:
+            log(f"Reference clip has noise {-noise:.0f} dB under the voice: cleaned it ({time.time() - t0:.1f}s)")
+            cut = clean
     ref_cache[key] = cut
     return cut
 
@@ -299,6 +408,8 @@ def release_model():
             return False
         state["model"] = None
         state["status"] = "sleeping"
+        with denoiser_lock:
+            denoiser["model"] = None
         import gc
 
         import torch
@@ -341,7 +452,10 @@ def voice_anchor(model, base, ref_bytes, style, seed, sr):
     """The anchor wav for this voice and style, made from the reference clip the first time."""
     import soundfile as sf
 
-    key = hashlib.sha1(ref_bytes + b"|" + style.encode("utf-8")).hexdigest()[:20]
+    # Its words, how the clip is made ready and the guidance shape the anchor too: a change to any
+    # of them makes it anew.
+    tag = f"|{style}|{REF_PREP}|{base.get('cfg_value')}|{ANCHOR_TEXT}".encode("utf-8")
+    key = hashlib.sha1(ref_bytes + tag).hexdigest()[:20]
     path = os.path.join(ANCHOR_DIR, f"{key}.wav")
     with anchor_lock:
         if os.path.exists(path):
@@ -372,9 +486,9 @@ def synthesize(payload):
         if ext not in (".wav", ".mp3", ".flac", ".ogg", ".m4a"):
             ext = ".wav"
         try:
-            clip = clearest_reference(ref_bytes)
+            clip = prepared_reference(ref_bytes)
         except Exception:  # noqa: BLE001 - an unreadable clip still goes to VoxCPM2 whole
-            log("Could not read the reference clip to shorten it; using it whole:\n" + traceback.format_exc())
+            log("Could not read the reference clip to prepare it; using it whole:\n" + traceback.format_exc())
             clip = None
         fd, tmp = tempfile.mkstemp(prefix="drd_ref_", suffix=".wav" if clip else ext)
         with os.fdopen(fd, "wb") as f:
