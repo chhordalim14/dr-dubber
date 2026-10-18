@@ -3222,6 +3222,96 @@ app.post('/api/translate-srt', async (req, res) => {
     }
 });
 
+// An imported SRT has no emotions: Transcribe hears them and Translate reads them in, but a line
+// typed into an SRT is spoken flat (VoxCPM2 acts each line's emotion out). This reads them from
+// the dialogue itself, a scene at a time, so a line is judged with the lines around it.
+const EMOTION_BATCH = 120;
+const EMOTION_RESPONSE_SCHEMA = {
+    type: 'ARRAY',
+    items: {
+        type: 'OBJECT',
+        properties: { i: { type: 'INTEGER' }, emotion: { type: 'STRING', enum: TRANSCRIBE_EMOTIONS } },
+        required: ['i', 'emotion'],
+        propertyOrdering: ['i', 'emotion']
+    }
+};
+const EMOTION_SYSTEM_PROMPT = `You direct the voice actors who dub a drama into Khmer. For every subtitle line, choose the emotion the actor should speak it with:
+- "Neutral": ordinary talk, questions, explanations, small talk. Most lines are Neutral.
+- "Angry": shouting, scolding, threatening, arguing, cold fury.
+- "Sad": grief, crying, heartbreak, loss, a painful apology or farewell.
+- "Whisper": a secret, a plot, something said so others nearby do not hear.
+- "Excited": joy, delight, surprise, cheering, eagerness.
+- "Royal": a ruler, a lord or a commander speaking with authority: orders, decrees, judgments.
+- "Romantic": tender words between lovers, flirting, affection.
+- "Fear": terror, panic, begging for mercy, nervous stammering.
+Read the lines as one scene: a mood carries over several lines, and a reply inside an argument is usually still Angry. Judge from the words, the punctuation (! ? ...) and the scene. When unsure, choose "Neutral" - a wrong strong emotion sounds worse than a calm line.
+Answer with a JSON array holding one {"i", "emotion"} for every line, using each line's "i".`;
+
+app.post('/api/detect-emotions', async (req, res) => {
+    const { lines, genre = 'historical', apiKey, apiKeys, model = 'gemini-3.8-flash', requestId } = req.body || {};
+    if (!Array.isArray(lines) || !lines.length) {
+        return res.status(400).json({ success: false, error: 'No lines to read.' });
+    }
+    const keyPool = textKeys([apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])]);
+    if (!keyPool.length) {
+        return res.status(400).json({ success: false, error: 'INVALID_API_KEY', message: 'API key is required.' });
+    }
+    const items = lines.slice(0, 5000).map((l, i) => ({
+        i,
+        text: String((l && l.text) || '').slice(0, 400),
+        ...(l && (l.gender === 'Male' || l.gender === 'Female') && { gender: l.gender })
+    }));
+    const abortCtrl = new AbortController();
+    if (requestId) activeTranscribeRequests.set(requestId, abortCtrl);
+    try {
+        const emotions = new Array(items.length).fill(null);
+        const usage = createTokenUsage();
+        const systemInstruction = { parts: [{ text: `${EMOTION_SYSTEM_PROMPT}\n\nThe drama's genre: ${String(genre).slice(0, 40)}.` }] };
+        const batches = [];
+        for (let b = 0; b < items.length; b += EMOTION_BATCH) batches.push(items.slice(b, b + EMOTION_BATCH));
+        const laneCount = Math.max(1, Math.min(textLaneCount(keyPool), TRANSCRIBE_MAX_LANES, batches.length));
+        let failure = null;
+
+        const readBatch = async (keys, batch) => {
+            const payload = {
+                systemInstruction,
+                contents: [{ role: 'user', parts: [{ text: JSON.stringify(batch.filter(x => x.text)) }] }],
+                generationConfig: { responseMimeType: 'application/json', responseSchema: EMOTION_RESPONSE_SCHEMA, maxOutputTokens: 8192 }
+            };
+            const out = await geminiWithKeys(keys, async (key) => {
+                const r = await generateText(key, model, payload, abortCtrl.signal, { thinking: 'low' });
+                if (!r.success) return { ok: false, result: r };
+                addTokenUsage(usage, r);
+                const parsed = parseJsonArrayLoose(r.text);
+                return Array.isArray(parsed) ? { ok: true, parsed } : { ok: false, result: { status: 502, error: 'JSON_PARSE_ERROR' } };
+            }, abortCtrl.signal, { retries: GEMINI_RETRY_DELAYS_MS.length });
+            if (!out.ok) { failure = failure || out.result; return; }
+            const wanted = new Set(batch.map(x => x.i));
+            for (const item of out.parsed) {
+                const i = Number(item && item.i);
+                if (wanted.has(i) && TRANSCRIBE_EMOTIONS.includes(item.emotion)) emotions[i] = item.emotion;
+            }
+        };
+
+        await Promise.all(Array.from({ length: laneCount }, async (_, lane) => {
+            const keys = textLaneKeys(keyPool, lane);
+            const from = Math.floor(lane * batches.length / laneCount);
+            const to = Math.floor((lane + 1) * batches.length / laneCount);
+            for (let b = from; b < to && !abortCtrl.signal.aborted; b++) await readBatch(keys, batches[b]);
+        }));
+        if (abortCtrl.signal.aborted) return res.json({ success: false, error: 'CANCELLED' });
+        // Some batches answered: keep what was read (a line left null stays as it is).
+        if (failure && emotions.every(e => !e)) return geminiFailureResponse(res, failure);
+        console.log(`[Emotions] ${emotions.filter(Boolean).length}/${items.length} lines read: ${formatTokenUsage(usage)}`);
+        res.json({ success: true, emotions, usage });
+    } catch (e) {
+        if (e.name === 'AbortError') return res.json({ success: false, error: 'CANCELLED' });
+        res.status(500).json({ success: false, error: e.message });
+    } finally {
+        if (requestId) activeTranscribeRequests.delete(requestId);
+    }
+});
+
 // 4c. Batch Save SRT Subtitle Files
 app.post('/api/batch-save-srts', (req, res) => {
     const { items = [], customFolder } = req.body;

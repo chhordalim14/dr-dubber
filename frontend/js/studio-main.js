@@ -13228,7 +13228,51 @@
       }
       if (typeof updateGenerateAllButtonState === "function") updateGenerateAllButtonState();
       if (typeof renderProjectTabs === "function") renderProjectTabs();
+      readLineEmotions(proj);
     };
+
+    // An imported SRT has no emotions, so every line would be voiced flat: Gemini reads them from
+    // the dialogue in the background. Only lines still without one get it - an emotion picked on
+    // the voice pill meanwhile is kept. Without a Gemini key the lines stay Neutral.
+    async function readLineEmotions(proj) {
+      const todo = (proj.subtitles || []).filter((s) => !s.emotion && isSpeakableText(s.text));
+      const apiKeys = getGeminiKeys();
+      if (!todo.length || !apiKeys.length) return;
+      try {
+        const res = await fetch("http://localhost:3001/api/detect-emotions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            lines: todo.map((s) => ({ text: s.text, gender: knownVoiceGender(s) })),
+            genre: activeDramaGenre || "historical",
+            apiKey: apiKeys[0],
+            apiKeys,
+            model: localStorage.getItem("aiDubberModel") || "gemini-3.8-flash",
+          }),
+        });
+        const data = await res.json();
+        if (!data.success || !Array.isArray(data.emotions) || projects.indexOf(proj) < 0) return;
+        const read = new Map(todo.map((s, i) => [String(s.id), data.emotions[i]]).filter(([, e]) => e));
+        const isActive = projects[activeProjectIndex] === proj;
+        let set = 0;
+        for (const s of liveSubtitlesOf(proj)) {
+          const e = read.get(String(s.id));
+          if (e && !s.emotion) {
+            s.emotion = e;
+            set++;
+          }
+        }
+        if (!set) return;
+        if (isActive) {
+          proj.subtitles = subtitles.map((s) => ({ ...s }));
+          renderSubtitles();
+        }
+        const strong = [...read.values()].filter((e) => e !== "Neutral").length;
+        if (isActive) showToast(`Emotions read for ${set} line(s): ${strong} with feeling, the rest calm. Change any on the voice pill.`, "success");
+      } catch (e) {
+        console.warn("[Emotions] Could not read the lines' emotions:", e.message);
+      }
+    }
 
     // "Male"/"Female" when a line's voice is known (heard by Transcribe, picked by hand, or an SRT
     // tag), else null. A text-only translation keeps a known gender instead of guessing it again.
@@ -15108,6 +15152,20 @@
     // renderSubtitles(onlyIds): pass a Set of subtitle ids to rebuild just those
     // rows + timeline blocks in place (used for selection changes). Rebuilding all
     // rows on every click froze the UI for seconds on 1-2 hour projects.
+    // The emotions a line can be voiced with (backend TRANSCRIBE_EMOTIONS); set by Transcribe,
+    // Translate or the SRT emotion read, and changed by hand on the voice pill.
+    const LINE_EMOTIONS = [
+      { value: "Neutral", icon: "😐", label: "Neutral" },
+      { value: "Sad", icon: "😢", label: "Sad" },
+      { value: "Angry", icon: "😠", label: "Angry" },
+      { value: "Whisper", icon: "🤫", label: "Whisper" },
+      { value: "Excited", icon: "😄", label: "Excited" },
+      { value: "Royal", icon: "👑", label: "Royal" },
+      { value: "Romantic", icon: "💕", label: "Romantic" },
+      { value: "Fear", icon: "😨", label: "Fear" },
+    ];
+    const lineEmotion = (sub) => LINE_EMOTIONS.find((e) => e.value.toLowerCase() === String(sub.emotion || "").toLowerCase()) || LINE_EMOTIONS[0];
+
     const renderSubtitles = (onlyIds = null) => {
       const isPartial = onlyIds instanceof Set && onlyIds.size > 0 && subtitles.length > 0;
       // "Total Subtitles" under the list.
@@ -15217,13 +15275,18 @@
                 <button
                   class="vox-row-trigger w-full flex items-center justify-between gap-1.5 bg-[var(--bg-base)] border rounded text-xs px-2 h-[26px] outline-none cursor-pointer transition-colors min-w-[130px] ${voiceSelectColor} ${typeof bouncingGenderId !== "undefined" && bouncingGenderId === sub.id ? "animate-cute-bounce" : ""}"
                 >
-                  <span class="vox-row-label font-khmer truncate flex items-center gap-1">${escHtml(selectedOpt?.label || "")}</span>
+                  <span class="vox-row-emotion shrink-0 leading-none" title="${escHtml(lineEmotion(sub).label)}">${lineEmotion(sub).value === "Neutral" ? "" : lineEmotion(sub).icon}</span>
+                  <span class="vox-row-label font-khmer truncate flex-1 min-w-0 text-left flex items-center gap-1">${escHtml(selectedOpt?.label || "")}</span>
                   <i data-lucide="chevron-down" class="vox-row-chevron w-3 h-3 shrink-0 transition-transform duration-300"></i>
                 </button>
                 <input type="hidden" class="select-gender" data-id="${escHtml(sub.id)}" value="${escHtml(selectedOpt?.value || "")}" />
                 <div class="vox-row-panel absolute z-[999] top-full mt-1 left-0 rounded-lg border border-[var(--border-light)] bg-[var(--bg-panel)] shadow-xl overflow-hidden grid grid-rows-[0fr] transition-[grid-template-rows] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] min-w-[130px]">
                   <div class="overflow-hidden">
                     <div class="vox-row-list flex flex-col p-1 gap-0.5 overflow-y-auto custom-scrollbar max-h-48"></div>
+                    <div class="border-t border-[var(--border-light)] p-1">
+                      <div class="text-[9px] font-semibold uppercase tracking-wide text-[var(--text-muted)] px-1 py-0.5">Emotion</div>
+                      <div class="vox-row-emotions grid grid-cols-2 gap-0.5"></div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -15388,6 +15451,7 @@
             if (!rowListBuilt) {
               rowListBuilt = true;
               buildVoxRowList(rowOptions.map((o) => ({ ...o, selected: o.value === genderHidden.value })));
+              buildEmotionList();
             }
             document.querySelectorAll(".vox-row-panel").forEach((p) => {
               if (p !== voxRowPanel) p.style.gridTemplateRows = "0fr";
@@ -15461,6 +15525,67 @@
               voxRowList.appendChild(btn);
             });
             _lucideCreateIcons({ root: voxRowList });
+          };
+
+          // A line's voice or emotion changed: its ready audio no longer matches, so it is pending again.
+          const resetRowAudio = (currentIndex) => {
+            if (subtitles[currentIndex].audioStatus !== "ready") return;
+            subtitles[currentIndex].audioStatus = "idle";
+            subtitles[currentIndex].audioUrl = null;
+            subtitles[currentIndex].file = null;
+
+            if (activeAudios[sub.id]) {
+              activeAudios[sub.id].pause();
+              if (typeof window.releaseAudioChain === "function") window.releaseAudioChain(activeAudios[sub.id]);
+              activeAudios[sub.id].removeAttribute("src");
+              activeAudios[sub.id].load();
+              delete activeAudios[sub.id];
+            }
+
+            const statusCell = tr.querySelector("td:last-child");
+            if (statusCell) {
+              const isRowSelected = selectedItems.includes(`text-${sub.id}`) || selectedItems.includes(`audio-${sub.id}`);
+              const statusTextColor = isRowSelected ? "text-[var(--text-primary)] font-semibold" : "text-[var(--text-muted)]";
+              statusCell.innerHTML = `<span class="text-xs transition-colors ${statusTextColor} font-medium">Pending</span>`;
+            }
+
+            const a1Block = document.getElementById(`ui-a1-${sub.id}`);
+            if (a1Block) a1Block.remove();
+          };
+
+          // The emotion this line is acted with (VoxCPM2 and edge-tts both take it), under the voices.
+          const voxRowEmotions = tr.querySelector(".vox-row-emotions");
+          const voxRowEmotionIcon = tr.querySelector(".vox-row-emotion");
+          const buildEmotionList = () => {
+            if (!voxRowEmotions) return;
+            const current = lineEmotion(subtitles.find((s) => s.id === sub.id) || sub).value;
+            voxRowEmotions.innerHTML = "";
+            LINE_EMOTIONS.forEach((em) => {
+              const on = em.value === current;
+              const btn = document.createElement("button");
+              btn.type = "button";
+              btn.className = `flex items-center gap-1 px-1.5 py-1 rounded text-[11px] text-left cursor-pointer border transition-colors ${on ? "bg-violet-500/15 text-violet-400 font-semibold border-violet-500/20" : "border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"}`;
+              btn.innerHTML = `<span class="leading-none">${em.icon}</span><span class="truncate">${escHtml(em.label)}</span>`;
+              btn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                closeRowDropdown();
+                rowListBuilt = false; // rebuild with the new choice next time it opens
+                const currentIndex = subtitles.findIndex((s) => s.id === sub.id);
+                if (currentIndex < 0) return;
+                if (on) {
+                  // Neutral picked on a line not read yet: it stays Neutral when the read comes back.
+                  if (!subtitles[currentIndex].emotion) subtitles[currentIndex].emotion = em.value;
+                  return;
+                }
+                subtitles[currentIndex].emotion = em.value;
+                if (voxRowEmotionIcon) {
+                  voxRowEmotionIcon.textContent = em.value === "Neutral" ? "" : em.icon;
+                  voxRowEmotionIcon.title = em.label;
+                }
+                resetRowAudio(currentIndex);
+              });
+              voxRowEmotions.appendChild(btn);
+            });
           };
 
           const setVoxRowValue = (val, profilesList) => {
@@ -15573,30 +15698,7 @@
               subtitles[currentIndex].gender = selectedValue;
               subtitles[currentIndex].character = selectedValue;
               delete subtitles[currentIndex].genderUnknown; // picked by hand: a translation keeps it
-
-              if (subtitles[currentIndex].audioStatus === "ready") {
-                subtitles[currentIndex].audioStatus = "idle";
-                subtitles[currentIndex].audioUrl = null;
-                subtitles[currentIndex].file = null;
-
-                if (activeAudios[sub.id]) {
-                  activeAudios[sub.id].pause();
-                  if (typeof window.releaseAudioChain === "function") window.releaseAudioChain(activeAudios[sub.id]);
-                  activeAudios[sub.id].removeAttribute("src");
-                  activeAudios[sub.id].load();
-                  delete activeAudios[sub.id];
-                }
-
-                const statusCell = tr.querySelector("td:last-child");
-                if (statusCell) {
-                  const isRowSelected = selectedItems.includes(`text-${sub.id}`) || selectedItems.includes(`audio-${sub.id}`);
-                  const statusTextColor = isRowSelected ? "text-[var(--text-primary)] font-semibold" : "text-[var(--text-muted)]";
-                  statusCell.innerHTML = `<span class="text-xs transition-colors ${statusTextColor} font-medium">Pending</span>`;
-                }
-
-                const a1Block = document.getElementById(`ui-a1-${sub.id}`);
-                if (a1Block) a1Block.remove();
-              }
+              resetRowAudio(currentIndex);
             }
           });
         }
