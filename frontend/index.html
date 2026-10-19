@@ -2810,6 +2810,15 @@
             class="w-full accent-emerald-500 h-1.5 bg-[var(--border-light)] rounded-lg appearance-none cursor-pointer hover:accent-emerald-400 transition-all" />
         </div>
 
+        <div class="flex flex-col gap-1.5 w-full" title="When it is on the video: from the first time to the second (m:ss or seconds). Leave the first empty to start with the video, the second to stay to the end.">
+          <label class="text-xs font-medium text-[var(--text-primary)] flex items-center gap-1.5"><i data-lucide="clock" class="w-3.5 h-3.5 text-[var(--text-secondary)]"></i> Show</label>
+          <div class="flex items-center gap-1.5">
+            <input type="text" id="ctx-img-start" inputmode="decimal" placeholder="start" class="w-full min-w-0 bg-[var(--bg-base)] border border-[var(--border-light)] rounded px-1.5 py-1 text-[11px] font-mono text-[var(--text-primary)] outline-none focus:border-emerald-500" />
+            <span class="text-[10px] text-[var(--text-muted)]">to</span>
+            <input type="text" id="ctx-img-end" inputmode="decimal" placeholder="end" class="w-full min-w-0 bg-[var(--bg-base)] border border-[var(--border-light)] rounded px-1.5 py-1 text-[11px] font-mono text-[var(--text-primary)] outline-none focus:border-emerald-500" />
+          </div>
+        </div>
+
         <div class="pt-2 border-t border-[var(--border-light)] w-full">
           <button id="btn-img-apply-all"
             class="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 hover:text-amber-300 border border-amber-500/25 transition-all text-xs font-medium active:scale-95"
@@ -2926,6 +2935,14 @@
         </div>
         <input type="range" id="ctx-vid-radius" min="0" max="100" value="0"
           class="w-full accent-sky-400 h-1.5 bg-[var(--border-light)] rounded-lg appearance-none cursor-pointer" />
+      </div>
+      <div class="flex flex-col gap-1.5 w-full" title="When it is on the video: from the first time to the second (m:ss or seconds). Leave the first empty to start with the video, the second to stay to the end.">
+        <label class="text-[11px] font-medium text-[var(--text-primary)] flex items-center gap-1.5"><i data-lucide="clock" class="w-3 h-3 text-[var(--text-secondary)]"></i> Show</label>
+        <div class="flex items-center gap-1.5">
+          <input type="text" id="ctx-vid-start" inputmode="decimal" placeholder="start" class="w-full min-w-0 bg-[var(--bg-base)] border border-[var(--border-light)] rounded px-1.5 py-1 text-[11px] font-mono text-[var(--text-primary)] outline-none focus:border-sky-400" />
+          <span class="text-[10px] text-[var(--text-muted)]">to</span>
+          <input type="text" id="ctx-vid-end" inputmode="decimal" placeholder="end" class="w-full min-w-0 bg-[var(--bg-base)] border border-[var(--border-light)] rounded px-1.5 py-1 text-[11px] font-mono text-[var(--text-primary)] outline-none focus:border-sky-400" />
+        </div>
       </div>
     </div>
     <button id="vid-ctx-chroma-key"
@@ -3759,19 +3776,22 @@
             </label>
           </div>
           <div class="ds-field">
-            <span>Image overlay</span>
+            <span>Overlays</span>
             <div class="ds-fieldbox">
               <span id="ds-images-info" class="ds-images-info"></span>
-              <button id="ds-images-clear" class="hidden ds-icon-btn ds-icon-btn--sm" title="No image overlay: tabs open as they are"><i data-lucide="x"></i></button>
-              <button id="ds-images-add" class="ds-btn ds-btn--ghost ds-btn--sm ml-auto" title="Pick a logo or watermark (PNG / JPG) and place it on a frame of the series — no video needs to be open"><i data-lucide="image-plus"></i> <span id="ds-images-add-label">Add image…</span></button>
-              <button id="ds-images-use" class="ds-btn ds-btn--ghost ds-btn--sm" title="Add the images to a tab with the Image tool (place, size, opacity, motion), then press this: every tab of each part gets the same images in the same place. Pressed while a part is open, that part's tabs get them too."><i data-lucide="copy"></i> Use this tab's images</button>
+              <button id="ds-images-clear" class="hidden ds-icon-btn ds-icon-btn--sm" title="No overlay: tabs open as they are"><i data-lucide="x"></i></button>
+              <button id="ds-images-add" class="ds-btn ds-btn--ghost ds-btn--sm ml-auto" title="Pick a logo (PNG / JPG) or a video banner and place it on a frame of the series — no video needs to be open. Each one can be shown only for a while."><i data-lucide="image-plus"></i> <span id="ds-images-add-label">Add overlay…</span></button>
+              <button id="ds-images-use" class="ds-btn ds-btn--ghost ds-btn--sm" title="Add the images and videos to a tab with the Image and Video tools (place, size, opacity, motion, when they show), then press this: every tab of each part gets the same overlays in the same place. Pressed while a part is open, that part's tabs get them too. The clips between episodes never get them."><i data-lucide="copy"></i> Use this tab's overlays</button>
             </div>
           </div>
-          <!-- Place images without opening a video: a frame of the series' first episode,
-               the images on it (drag to move), a corner grid, size and opacity. -->
+          <!-- Place images and video overlays without opening a video: a frame of the series' first
+               episode, the overlays on it (drag to move), a corner grid, size, opacity and when they show. -->
           <div id="ds-img-editor" class="ds-img-editor hidden">
             <div id="ds-img-stage" class="ds-img-stage">
               <canvas id="ds-img-frame"></canvas>
+              <button type="button" id="ds-img-full" class="ds-img-full" title="Full screen (Esc to go back)"><i data-lucide="maximize-2"></i></button>
+              <div id="ds-img-guide-v" class="ds-img-guide ds-img-guide--v"></div>
+              <div id="ds-img-guide-h" class="ds-img-guide ds-img-guide--h"></div>
               <span id="ds-img-frame-note" class="ds-img-frame-note">Loading a frame of the series…</span>
             </div>
             <div class="ds-img-side">
@@ -3786,6 +3806,21 @@
               </div>
               <label class="ds-img-row"><span class="ds-img-lbl">Size</span><input id="ds-img-size" type="range" min="4" max="80" step="1" /><span id="ds-img-size-v" class="ds-img-val"></span></label>
               <label class="ds-img-row"><span class="ds-img-lbl">Opacity</span><input id="ds-img-op" type="range" min="10" max="100" step="5" /><span id="ds-img-op-v" class="ds-img-val"></span></label>
+              <div class="ds-img-row" title="When it is on the video: from the first time to the second (m:ss or seconds). Empty: from the start / to the end. The times count from the start of each tab, so it comes back on every tab.">
+                <span class="ds-img-lbl">Show</span><input id="ds-img-start" type="text" inputmode="decimal" placeholder="start" class="ds-img-time" /><span>to</span><input id="ds-img-end" type="text" inputmode="decimal" placeholder="end" class="ds-img-time" />
+              </div>
+              <!-- Chroma key, for a video overlay shot on a green / blue screen: removes that colour. -->
+              <div id="ds-ck" class="ds-ck hidden">
+                <div class="ds-img-row" title="Remove the background colour of this video (a banner shot on green or blue). The export removes it exactly as shown here.">
+                  <span class="ds-img-lbl">Key out</span>
+                  <input id="ds-ck-on" type="checkbox" class="ds-switch ds-switch--sm" />
+                  <input id="ds-ck-color" type="color" value="#00ff00" class="ds-ck-color" title="The colour to remove" />
+                  <button type="button" id="ds-ck-pick" class="ds-btn ds-btn--ghost ds-btn--sm ml-auto" title="Then click the video on the frame where its background is"><i data-lucide="pipette"></i> Pick</button>
+                </div>
+                <label class="ds-img-row" title="How much of the colour is removed: higher removes more shades of it"><span class="ds-img-lbl">Tolerance</span><input id="ds-ck-tol" type="range" min="0" max="255" step="1" /><span id="ds-ck-tol-v" class="ds-img-val"></span></label>
+                <label class="ds-img-row" title="Softens the edge between what stays and what is removed"><span class="ds-img-lbl">Smooth</span><input id="ds-ck-smooth" type="range" min="0" max="100" step="1" /><span id="ds-ck-smooth-v" class="ds-img-val"></span></label>
+                <label class="ds-img-row" title="Takes the green / blue tint off the edges that stay"><span class="ds-img-lbl">Spill</span><input id="ds-ck-spill" type="range" min="0" max="100" step="1" /><span id="ds-ck-spill-v" class="ds-img-val"></span></label>
+              </div>
               <div class="ds-img-actions">
                 <button type="button" id="ds-img-remove" class="ds-btn ds-btn--ghost ds-btn--sm"><i data-lucide="trash-2"></i> Remove</button>
                 <span class="flex-1"></span>
@@ -3826,6 +3861,24 @@
                 <button id="ds-clip-add" class="ds-btn ds-btn--ghost ds-btn--sm ml-auto"><i data-lucide="plus"></i> Add clip</button>
               </div>
               <div id="ds-clips" class="flex flex-col gap-1.5 max-h-[140px] overflow-y-auto custom-scrollbar pr-1"></div>
+              <div class="flex items-center gap-2 min-w-0 pt-1.5 border-t border-[var(--border-light)]" title="Your sponsors' ads, played a few times spread evenly through the video: after every few episodes and once more at the very end. Auto plays them 3 to 5 times by the running time: 3 under 1h30, 4 under 3h, 5 for longer. With several ads: one ad each time (the ads take turns), or all the ads each time.">
+                <span class="ds-row-label shrink-0">Ads (spread evenly)</span>
+                <span id="ds-repeat-none" class="text-[var(--text-muted)]">None</span>
+                <span class="flex-1"></span>
+                <select id="ds-repeat-mode" class="ds-select-sm shrink-0 hidden">
+                  <option value="turns">One ad each time (take turns)</option>
+                  <option value="all">All ads each time</option>
+                </select>
+                <select id="ds-repeat-count" class="ds-select-sm shrink-0">
+                  <option value="auto">auto (3–5 times)</option>
+                  <option value="3">3 times</option>
+                  <option value="4">4 times</option>
+                  <option value="5">5 times</option>
+                </select>
+                <button id="ds-repeat-pick" class="ds-btn ds-btn--ghost ds-btn--sm shrink-0" title="Add one or more ad videos"><i data-lucide="plus"></i> Add ads</button>
+              </div>
+              <div id="ds-repeat-list" class="flex flex-col gap-1 max-h-[120px] overflow-y-auto custom-scrollbar pr-1"></div>
+              <div id="ds-repeat-note" class="text-[var(--text-muted)]"></div>
             </div>
           </section>
 
@@ -6472,7 +6525,7 @@
       }
 
       50% {
-        filter: drop-shadow(0 0 4px var(--glow-color, #fff)) drop-shadow(0 0 8px var(--glow-color, #fff));
+        filter: drop-shadow(0 0 calc(var(--idle-k, 1) * 4px) var(--glow-color, #fff)) drop-shadow(0 0 calc(var(--idle-k, 1) * 8px) var(--glow-color, #fff));
       }
     }
 
@@ -6488,7 +6541,7 @@
       }
 
       50% {
-        filter: drop-shadow(0 0 4px var(--glow-color, #fff)) drop-shadow(0 0 8px var(--glow-color, #fff));
+        filter: drop-shadow(0 0 calc(var(--idle-k, 1) * 4px) var(--glow-color, #fff)) drop-shadow(0 0 calc(var(--idle-k, 1) * 8px) var(--glow-color, #fff));
       }
     }
 
@@ -6500,27 +6553,27 @@
       }
 
       15% {
-        translate: -18px 0px;
+        translate: calc(var(--idle-k, 1) * -18px) 0px;
       }
 
       30% {
-        translate: 18px 0px;
+        translate: calc(var(--idle-k, 1) * 18px) 0px;
       }
 
       45% {
-        translate: -14px 0px;
+        translate: calc(var(--idle-k, 1) * -14px) 0px;
       }
 
       60% {
-        translate: 14px 0px;
+        translate: calc(var(--idle-k, 1) * 14px) 0px;
       }
 
       75% {
-        translate: -8px 0px;
+        translate: calc(var(--idle-k, 1) * -8px) 0px;
       }
 
       90% {
-        translate: 8px 0px;
+        translate: calc(var(--idle-k, 1) * 8px) 0px;
       }
     }
 
@@ -6548,7 +6601,7 @@
       }
 
       50% {
-        translate: 0px -24px;
+        translate: 0px calc(var(--idle-k, 1) * -24px);
       }
     }
 

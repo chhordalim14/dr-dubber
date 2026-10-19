@@ -1936,7 +1936,7 @@
             if (!liveCanvas) {
               liveCanvas = document.createElement("canvas");
               liveCanvas.className = "chroma-live-canvas";
-              liveCanvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;pointer-events:none;";
+              liveCanvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none;";
               wrapper.appendChild(liveCanvas);
             }
             if (vidEl.readyState >= 2) {
@@ -7368,11 +7368,24 @@
     }
 
     // --- SMOOTH TEXT STROKE GENERATOR ---
+    // Preview pixels per video pixel: the preview frame's height over the exported frame's.
+    // Sizes kept in video pixels - a text's size, outline and idle movement, an overlay's
+    // rounded corners - are drawn times this, so the preview looks like the export.
+    function previewCanvasScale() {
+      const boundsInner = document.getElementById("video-bounds-inner");
+      const currentH = boundsInner ? boundsInner.clientHeight : 1080;
+      const refCanvasH = window.customAspectRatio && window.customAspectRatio.h > 0 ? window.customAspectRatio.h : mainVideo.videoHeight || 1080;
+      return currentH / refCanvasH || 1;
+    }
+
     const getSmoothStroke = (width, color) => {
       if (width <= 0) return "none";
 
       let shadows = [];
-      for (let r = 1; r <= width; r++) {
+      // Rings out to the outline's width (one ring for an outline under a pixel).
+      const rings = Math.max(1, Math.ceil(width));
+      for (let k = 1; k <= rings; k++) {
+        const r = (width * k) / rings;
         let steps = Math.round(r * 2 * Math.PI);
         for (let i = 0; i < steps; i++) {
           let angle = (i * 2 * Math.PI) / steps;
@@ -7428,16 +7441,15 @@
         // FIX 3: Dynamic Z-Index based on the array order.
         // Lowest is 100 (safely above the video), highest goes up infinitely!
         textWrapper.style.zIndex = 100 + index;
-        const boundsInner = document.getElementById("video-bounds-inner");
-        const currentH = boundsInner ? boundsInner.clientHeight : 1080;
-        const refCanvasH = (window.customAspectRatio && window.customAspectRatio.h > 0) ? window.customAspectRatio.h : (mainVideo.videoHeight || 1080);
-        const previewScaleFactor = currentH / refCanvasH;
+        const previewScaleFactor = previewCanvasScale();
         const scaledFontSize = Math.max(1, Math.round(item.fontSize * previewScaleFactor));
         const displayStyle = isSelected ? "flex" : "none";
+        // The idle movement (shake, float, glow) is in video pixels too (index.html keyframes).
+        textWrapper.style.setProperty("--idle-k", String(previewScaleFactor));
 
         const sw = item.strokeWidth !== undefined ? item.strokeWidth : 1.5;
         const sc = item.strokeColor || "#000000";
-        const dynamicStroke = getSmoothStroke(sw, sc);
+        const dynamicStroke = getSmoothStroke(sw * previewScaleFactor, sc);
 
         textWrapper.innerHTML = `
             <div class="text-menu-bar absolute -top-10 bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-lg shadow-xl px-2 py-1 items-center gap-2 cursor-default z-[90]" style="display: ${displayStyle}">
@@ -8375,7 +8387,7 @@
         if (!liveCanvas) {
           liveCanvas = document.createElement("canvas");
           liveCanvas.className = "chroma-live-canvas";
-          liveCanvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;pointer-events:none;";
+          liveCanvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none;";
           wrapper.appendChild(liveCanvas);
         }
         vid.style.opacity = "0";
@@ -16915,6 +16927,35 @@
       return out;
     }
 
+    // A clip repeated evenly through the joined video (a sponsor's promo): `count` times, "auto"
+    // = 3 to 5 by the running time (under 1h30 3, under 3h 4, else 5), never more than there are
+    // episodes. It goes after every round(episodes / count) episodes and once more at the very
+    // end: 15 episodes, 3 times -> after EP5, EP10, EP15. Returns the episode counts it goes
+    // after (k = after the k-th episode), as a clip's pos.
+    function evenClipPositions(epCount, totalSeconds, count = "auto") {
+      if (!(epCount > 0)) return [];
+      const wanted = count === "auto" || !count
+        ? (totalSeconds < 90 * 60 ? 3 : totalSeconds < 180 * 60 ? 4 : 5)
+        : Math.max(1, Math.round(Number(count)) || 1);
+      const target = Math.min(epCount, wanted);
+      const step = Math.max(1, Math.round(epCount / target));
+      const out = [];
+      for (let k = 1; k < target && k * step < epCount; k++) out.push(k * step);
+      out.push(epCount);
+      return out;
+    }
+
+    // The repeated clips (several sponsors' ads) at those places, as clips with a pos:
+    // "turns" - one a break, the first clip at the first break, the next at the next, round
+    // again; "all" - every clip at every break, one after the other in their order.
+    function repeatClipInserts(positions, clips, mode = "turns") {
+      if (!clips?.length) return [];
+      const at = (pos, c) => ({ pos, path: c.path, name: c.name });
+      return mode === "all"
+        ? positions.flatMap((pos) => clips.map((c) => at(pos, c)))
+        : positions.map((pos, k) => at(pos, clips[k % clips.length]));
+    }
+
     // ── Split Movie ────────────────────────────────────────────────────────
     (() => {
       const $ = (id) => document.getElementById(id);
@@ -17149,6 +17190,21 @@
       // How long a step took ("" under a second, or not timed - a plan saved before).
       const tookText = (st) => (st && st.ms >= 1000 ? fmtDur(st.ms / 1000) : "");
       const stepsTotalMs = (steps) => Object.values(steps || {}).reduce((n, st) => n + (st.ms || 0), 0);
+      // How long the whole series took: the time Dub Whole Series was working on it - dubbing
+      // every part, exporting, the final join - added up over every Continue, not the time it
+      // was stopped or waiting (plan.workMs, plus the run going on now).
+      const workedMs = () => (plan?.workMs || 0) + (seriesRun?.startedAt ? Date.now() - seriesRun.startedAt : 0);
+      // "in 2:13:05 of work (about 33:16 a part)" ("" for a series timed before this was kept).
+      const workedText = () => {
+        const sec = workedMs() / 1000;
+        const n = plan?.parts.length || 0;
+        return sec >= 1 ? `in ${fmtDur(sec)} of work${n > 1 ? ` (about ${fmtDur(sec / n)} a part)` : ""}` : "";
+      };
+      const fmtWhen = (ms) => new Date(ms).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+      // Everything done: every part dubbed, hands-free exports made, the whole-series video joined.
+      const seriesFinished = () => !!plan && plan.parts.length > 0 &&
+        plan.parts.every((p) => p.status === "done" && (!p.autoExport || p.exported)) &&
+        !(mergeWanted() && mergeScope() === "series" && !plan.fullMerged);
       const esc = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
       const dirOf = (p) => p.replace(/[\\/][^\\/]*$/, "");
       const pathJoin = (dir, name) => (dir.includes("\\") ? `${dir}\\${name}` : `${dir}/${name}`);
@@ -17205,40 +17261,76 @@
       const SERIES_IMAGES_KEY = "aiDubberSeriesImages";
       let seriesImages = null;
       try { seriesImages = JSON.parse(localStorage.getItem(SERIES_IMAGES_KEY) || "null"); } catch (e) { }
+      // Video overlays (an animated sponsor banner) the same way: kept as the video's path on
+      // disk ({ kind: "video", videoPath, name, x, y, w, h, opacity, loop, start, end, ... }).
+      const SERIES_VIDEOS_KEY = "aiDubberSeriesVideos";
+      let seriesVideos = null;
+      try { seriesVideos = JSON.parse(localStorage.getItem(SERIES_VIDEOS_KEY) || "null"); } catch (e) { }
+      const keepSeriesVideos = (list) => {
+        seriesVideos = list?.length ? list : null;
+        try {
+          if (seriesVideos) localStorage.setItem(SERIES_VIDEOS_KEY, JSON.stringify(seriesVideos));
+          else localStorage.removeItem(SERIES_VIDEOS_KEY);
+        } catch (e) { }
+      };
       const showSeriesImages = () => {
         const n = seriesImages?.length || 0;
-        $("ds-images-info").innerHTML = n
-          ? seriesImages.slice(0, 4).map((i) => `<img src="${esc(i.dataUrl)}" class="h-5 max-w-[40px] rounded object-contain bg-black/30">`).join("") + `<span>${n} image${n !== 1 ? "s" : ""}</span>`
+        const nv = seriesVideos?.length || 0;
+        const counts = [n && `${n} image${n !== 1 ? "s" : ""}`, nv && `${nv} video${nv !== 1 ? "s" : ""}`].filter(Boolean).join(" + ");
+        $("ds-images-info").innerHTML = n || nv
+          ? (seriesImages || []).slice(0, 4).map((i) => `<img src="${esc(i.dataUrl)}" class="h-5 max-w-[40px] rounded object-contain bg-black/30">`).join("") + `<span>${counts}</span>`
           : "None";
-        $("ds-images-clear").classList.toggle("hidden", !n);
-        $("ds-images-add-label").textContent = n ? "Edit images…" : "Add image…";
+        $("ds-images-clear").classList.toggle("hidden", !(n || nv));
+        $("ds-images-add-label").textContent = n || nv ? "Edit overlays…" : "Add overlay…";
       };
       showSeriesImages();
+      // A tab's video overlay as kept for the series; null when it isn't a file on disk.
+      const seriesVideoOf = (v) => {
+        const path = v.videoPath || v.file?.path || "";
+        if (!/[\\/]/.test(path) || /^(blob|https?):/i.test(path)) return null;
+        const { file, _file, blobUrl, _paused, ...rest } = v;
+        const chromaKey = v.chromaKey || window.chromaSettings?.[v.id] || null;
+        return { ...rest, kind: "video", videoPath: path, name: path.split(/[\\/]/).pop(), chromaKey: chromaKey ? { ...chromaKey } : null };
+      };
       $("ds-images-use").addEventListener("click", async () => {
-        if (!projects.length) return showToast("Open a video and add the images with the Image tool first.", "error");
-        // The geometry dragged on screen, into window.imageOverlays.
+        if (!projects.length) return showToast("Open a video and add the overlays with the Image or Video tool first.", "error");
+        // The geometry dragged on screen, into window.imageOverlays / window.videoOverlays.
         document.querySelectorAll(".image-overlay-item").forEach((w) => { if (w.dataset.id) updateImageState(w.dataset.id, w); });
-        if (!window.imageOverlays?.length) return showToast("This tab has no image overlay. Add one with the Image tool first.", "error");
-        const imgs = await Promise.all(window.imageOverlays.map(async (i) => {
+        document.querySelectorAll(".video-overlay-item").forEach((w) => {
+          const v = (window.videoOverlays || []).find((o) => o.id === w.dataset.id);
+          if (v) Object.assign(v, { x: parseFloat(w.style.left) || 0, y: parseFloat(w.style.top) || 0, w: parseFloat(w.style.width) || 0, h: parseFloat(w.style.height) || 0 });
+        });
+        const tabVideos = window.videoOverlays || [];
+        if (!window.imageOverlays?.length && !tabVideos.length) return showToast("This tab has no image or video overlay. Add one with the Image or Video tool first.", "error");
+        const imgs = await Promise.all((window.imageOverlays || []).map(async (i) => {
           const { file, _file, blobUrl, dataUrl, ...rest } = i;
           const encoded = await imageOverlayToDataUrl(i);
           const kept = encoded && (await keepableImage(await (await fetch(encoded)).blob()));
           return kept ? { ...rest, dataUrl: kept } : null;
         }));
         if (imgs.some((i) => !i)) return showToast("Could not read an image of this tab. Add it again and retry.", "error");
+        const vids = tabVideos.map(seriesVideoOf);
+        if (vids.some((v) => !v)) return showToast("A video overlay of this tab isn't a file on disk. Add it again with the Video tool and retry.", "error");
         try {
-          localStorage.setItem(SERIES_IMAGES_KEY, JSON.stringify(imgs));
+          if (imgs.length) localStorage.setItem(SERIES_IMAGES_KEY, JSON.stringify(imgs));
+          else localStorage.removeItem(SERIES_IMAGES_KEY);
         } catch (e) {
           return showToast("The images are too large to keep. Use a smaller image (a PNG logo of a few hundred KB).", "error");
         }
-        seriesImages = imgs;
+        seriesImages = imgs.length ? imgs : null;
+        keepSeriesVideos(vids);
         showSeriesImages();
-        if (piecesOpen()) applyImageOverlaysToAllProjects();
-        else showToast(`${imgs.length} image overlay${imgs.length !== 1 ? "s" : ""} will be added to every tab of each part.`, "success");
+        if (piecesOpen()) {
+          if (imgs.length) applyImageOverlaysToAllProjects();
+          if (vids.length) applyVideoOverlaysToAllProjects();
+        } else {
+          showToast(`${imgs.length + vids.length} overlay${imgs.length + vids.length !== 1 ? "s" : ""} will be added to every tab of each part.`, "success");
+        }
       });
       $("ds-images-clear").addEventListener("click", () => {
         seriesImages = null;
         try { localStorage.removeItem(SERIES_IMAGES_KEY); } catch (e) { }
+        keepSeriesVideos(null);
         showSeriesImages();
         closeImageEditor();
       });
@@ -17314,33 +17406,130 @@
         }
       }
 
+      const isVideoItem = (im) => im.kind === "video";
+      // A video overlay on the stage is a canvas showing its frames while the <video> plays out of
+      // sight; with chroma key on, each frame is keyed by the editor's own chroma-worker.js first,
+      // so the stage shows what the export will (render_service.js chromaKeyFilters keys alike).
+      const CK_DEFAULTS = { enabled: false, color: "#00ff00", tolerance: 80, smooth: 20, spill: 80 };
+      const STAGE_VIDEO_MAX_W = 640; // keyed at most this wide: the stage is small
+      const stageVideos = new Map(); // overlay id -> { video, canvas, raf, busy }
+      let stageKeyWorker = null;
+      const keyWorker = () => {
+        if (stageKeyWorker) return stageKeyWorker;
+        stageKeyWorker = new Worker("chroma-worker.js");
+        stageKeyWorker.onmessage = (e) => {
+          const entry = stageVideos.get(e.data.overlayId);
+          if (entry) {
+            const ctx = entry.canvas.getContext("2d");
+            ctx.clearRect(0, 0, entry.canvas.width, entry.canvas.height);
+            ctx.drawImage(e.data.bitmap, 0, 0, entry.canvas.width, entry.canvas.height);
+            entry.busy = false;
+          }
+          e.data.bitmap?.close?.();
+        };
+        return stageKeyWorker;
+      };
+      function startStageVideo(im, canvas) {
+        const video = document.createElement("video");
+        Object.assign(video, { muted: true, loop: true, autoplay: true, playsInline: true });
+        video.src = diskPathToMediaUrl(im.videoPath);
+        const entry = { video, canvas, raf: 0, busy: false };
+        stageVideos.set(im.id, entry);
+        const ctx = canvas.getContext("2d");
+        const draw = () => {
+          entry.raf = requestAnimationFrame(draw);
+          if (video.readyState < 2 || entry.busy || !video.videoWidth) return;
+          const s = Math.min(1, STAGE_VIDEO_MAX_W / video.videoWidth);
+          const w = Math.max(1, Math.round(video.videoWidth * s)), h = Math.max(1, Math.round(video.videoHeight * s));
+          if (canvas.width !== w || canvas.height !== h) Object.assign(canvas, { width: w, height: h });
+          const ck = imgEd.list.find((x) => x.id === im.id)?.chromaKey;
+          if (!ck?.enabled) {
+            ctx.drawImage(video, 0, 0, w, h);
+            return;
+          }
+          entry.busy = true;
+          const hex = String(ck.color || CK_DEFAULTS.color).replace("#", "");
+          createImageBitmap(video, { resizeWidth: w, resizeHeight: h })
+            .then((bitmap) => keyWorker().postMessage({
+              bitmap, width: w, height: h, overlayId: im.id,
+              kr: parseInt(hex.slice(0, 2), 16) || 0, kg: parseInt(hex.slice(2, 4), 16) || 0, kb: parseInt(hex.slice(4, 6), 16) || 0,
+              tolerance: ck.tolerance ?? CK_DEFAULTS.tolerance, smoothing: ck.smooth ?? CK_DEFAULTS.smooth, spill: ck.spill ?? CK_DEFAULTS.spill,
+            }, [bitmap]))
+            .catch(() => { entry.busy = false; });
+        };
+        entry.raf = requestAnimationFrame(draw);
+      }
+      const stopStageVideo = (id) => {
+        const entry = stageVideos.get(id);
+        if (!entry) return;
+        cancelAnimationFrame(entry.raf);
+        entry.video.pause();
+        entry.video.removeAttribute("src");
+        entry.video.load();
+        stageVideos.delete(id);
+      };
       function renderImageEditor() {
         const stage = $("ds-img-stage");
         stage.style.aspectRatio = String(imgEd.frameAR);
+        stage.style.setProperty("--ar", String(imgEd.frameAR)); // full screen sizes the frame by it
         stage.classList.toggle("is-portrait", imgEd.frameAR < 1);
-        stage.querySelectorAll(".ds-img-item").forEach((n) => n.remove());
+        // Kept between renders: a video overlay plays on in place while it is moved or resized.
+        const ids = new Set(imgEd.list.map((im) => im.id));
+        stage.querySelectorAll(".ds-img-item").forEach((n) => {
+          if (!ids.has(n.dataset.id)) {
+            stopStageVideo(n.dataset.id);
+            n.remove();
+          }
+        });
         imgEd.list.forEach((im, k) => {
-          const el = document.createElement("img");
+          let el = [...stage.querySelectorAll(".ds-img-item")].find((n) => n.dataset.id === im.id);
+          if (!el) {
+            if (isVideoItem(im)) {
+              el = document.createElement("canvas");
+              startStageVideo(im, el);
+            } else {
+              el = document.createElement("img");
+              el.src = im.dataUrl;
+            }
+            el.dataset.id = im.id;
+            el.draggable = false;
+            stage.appendChild(el);
+          }
           el.className = `ds-img-item${k === imgEd.sel ? " is-sel" : ""}`;
-          el.src = im.dataUrl;
           el.dataset.k = String(k);
-          el.draggable = false;
           Object.assign(el.style, { left: `${im.x}%`, top: `${im.y}%`, width: `${im.w}%`, height: `${im.h}%`, opacity: String((im.opacity ?? 100) / 100) });
-          stage.appendChild(el);
         });
         $("ds-img-list").innerHTML =
-          imgEd.list.map((im, k) => `<button type="button" class="ds-img-thumb${k === imgEd.sel ? " is-sel" : ""}" data-k="${k}" title="Image ${k + 1}"><img src="${esc(im.dataUrl)}"></button>`).join("") +
-          `<button type="button" class="ds-img-thumb ds-img-thumb--add" data-add="1" title="Add another image"><i data-lucide="plus"></i></button>`;
+          imgEd.list.map((im, k) => `<button type="button" class="ds-img-thumb${k === imgEd.sel ? " is-sel" : ""}" data-k="${k}" title="${isVideoItem(im) ? esc(im.name || "Video") : `Image ${k + 1}`}">${isVideoItem(im) ? `<i data-lucide="film"></i>` : `<img src="${esc(im.dataUrl)}">`}</button>`).join("") +
+          `<button type="button" class="ds-img-thumb ds-img-thumb--add" data-add="image" title="Add an image"><i data-lucide="image-plus"></i></button>` +
+          `<button type="button" class="ds-img-thumb ds-img-thumb--add" data-add="video" title="Add a video overlay (an animated banner)"><i data-lucide="film"></i></button>`;
         const im = imgEd.list[imgEd.sel];
         const has = !!im;
-        ["ds-img-size", "ds-img-op", "ds-img-remove"].forEach((id) => ($(id).disabled = !has));
+        ["ds-img-size", "ds-img-op", "ds-img-remove", "ds-img-start", "ds-img-end"].forEach((id) => ($(id).disabled = !has));
         $("ds-img-done").disabled = !imgEd.list.length;
         if (has) {
           $("ds-img-size").value = String(Math.round(im.w));
           $("ds-img-size-v").textContent = `${Math.round(im.w)}%`;
           $("ds-img-op").value = String(im.opacity ?? 100);
           $("ds-img-op-v").textContent = `${im.opacity ?? 100}%`;
+          $("ds-img-start").value = fmtOverlayClock(im.start || null);
+          $("ds-img-end").value = fmtOverlayClock(im.end ?? null);
         }
+        // Chroma key: for a video overlay (a banner shot on green / blue).
+        const keyable = has && isVideoItem(im);
+        $("ds-ck").classList.toggle("hidden", !keyable);
+        if (keyable) {
+          const ck = { ...CK_DEFAULTS, ...(im.chromaKey || {}) };
+          $("ds-ck-on").checked = !!ck.enabled;
+          $("ds-ck-color").value = ck.color;
+          [["tol", ck.tolerance], ["smooth", ck.smooth], ["spill", ck.spill]].forEach(([key, v]) => {
+            $(`ds-ck-${key}`).value = String(v);
+            $(`ds-ck-${key}-v`).textContent = String(v);
+          });
+        }
+        if (!keyable) imgEd.picking = false;
+        $("ds-img-stage").classList.toggle("is-picking", !!imgEd.picking);
+        $("ds-ck-pick").classList.toggle("is-on", !!imgEd.picking);
         $("ds-img-pos").querySelectorAll("[data-pos]").forEach((b) => b.classList.toggle("is-on", !!has && im._pos === b.dataset.pos));
         if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: $("ds-img-editor") });
       }
@@ -17351,8 +17540,8 @@
         const note = $("ds-img-frame-note");
         const v = seriesVideo();
         const ctx = canvas.getContext("2d");
-        canvas.width = 640;
-        canvas.height = Math.round(640 / imgEd.frameAR);
+        canvas.width = 1280; // sharp enough full screen
+        canvas.height = Math.round(1280 / imgEd.frameAR);
         ctx.fillStyle = "#111";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         if (!v) {
@@ -17401,10 +17590,37 @@
         renderImageEditor();
       }
 
+      const videoNatural = (src) => new Promise((resolve) => {
+        const v = document.createElement("video");
+        const done = (ar) => { v.removeAttribute("src"); v.load(); resolve(ar); };
+        v.muted = true;
+        v.preload = "metadata";
+        v.onloadedmetadata = () => done(v.videoWidth && v.videoHeight ? v.videoWidth / v.videoHeight : 16 / 9);
+        v.onerror = () => done(16 / 9);
+        v.src = src;
+      });
+      async function addEditorVideos() {
+        const api = window.electronAPI;
+        if (!api?.openMultiFile) return showToast("Picking a video only works in the desktop app.", "error");
+        const r = await api.openMultiFile({ title: "Choose a video overlay", defaultPath: localStorage.getItem("lastVideoDir") || "", filters: [{ name: "Videos", extensions: ["mp4", "mov", "webm", "mkv", "avi", "m4v"] }] });
+        if (!r || r.canceled || !r.files?.length) return;
+        if (r.dirPath) localStorage.setItem("lastVideoDir", r.dirPath);
+        for (const f of r.files) {
+          if (!f.filePath) continue;
+          const ar = await videoNatural(diskPathToMediaUrl(f.filePath));
+          const im = { id: crypto.randomUUID(), kind: "video", videoPath: f.filePath, name: f.fileName, ar, x: 0, y: 0, w: 1, h: 1, opacity: 100, radius: 0, loop: true, chromaKey: null };
+          sizeImg(im, 25);
+          placeImg(im, "bl"); // a banner's usual place, away from a logo top right
+          imgEd.list.push(im);
+          imgEd.sel = imgEd.list.length - 1;
+        }
+        renderImageEditor();
+      }
+
       async function openImageEditor() {
         imgEd.frameAR = frameAspect();
-        imgEd.list = (seriesImages || []).map((i) => ({ ...i }));
-        for (const im of imgEd.list) if (!im.ar) im.ar = await imgNatural(im.dataUrl);
+        imgEd.list = [...(seriesImages || []), ...(seriesVideos || [])].map((i) => ({ ...i, id: i.id || crypto.randomUUID() }));
+        for (const im of imgEd.list) if (!im.ar) im.ar = isVideoItem(im) ? await videoNatural(diskPathToMediaUrl(im.videoPath)) : await imgNatural(im.dataUrl);
         imgEd.sel = 0;
         $("ds-img-editor").classList.remove("hidden");
         renderImageEditor();
@@ -17415,6 +17631,13 @@
 
       function closeImageEditor() {
         $("ds-img-editor")?.classList.add("hidden");
+        imgEd.picking = false;
+        if (document.fullscreenElement === $("ds-img-editor")) document.exitFullscreen().catch(() => { });
+        $("ds-img-stage")?.classList.remove("is-picking");
+        $("ds-img-stage")?.querySelectorAll(".ds-img-item").forEach((n) => {
+          stopStageVideo(n.dataset.id);
+          n.remove();
+        });
       }
 
       $("ds-images-add").addEventListener("click", () => ($("ds-img-editor").classList.contains("hidden") ? openImageEditor() : closeImageEditor()));
@@ -17422,9 +17645,91 @@
       $("ds-img-list").addEventListener("click", (e) => {
         const b = e.target.closest("button");
         if (!b) return;
-        if (b.dataset.add) return addEditorImages();
+        if (b.dataset.add) return b.dataset.add === "video" ? addEditorVideos() : addEditorImages();
         imgEd.sel = Number(b.dataset.k);
         renderImageEditor();
+      });
+      // Chroma key of the selected video overlay. Choosing a colour turns the key on.
+      const selectedCk = () => {
+        const im = imgEd.list[imgEd.sel];
+        if (!im || !isVideoItem(im)) return null;
+        im.chromaKey = { ...CK_DEFAULTS, ...(im.chromaKey || {}) };
+        return im.chromaKey;
+      };
+      $("ds-ck-on").addEventListener("change", (e) => {
+        const ck = selectedCk();
+        if (ck) ck.enabled = e.target.checked;
+        renderImageEditor();
+      });
+      $("ds-ck-color").addEventListener("input", (e) => {
+        const ck = selectedCk();
+        if (!ck) return;
+        Object.assign(ck, { color: e.target.value, enabled: true });
+        renderImageEditor();
+      });
+      [["tol", "tolerance"], ["smooth", "smooth"], ["spill", "spill"]].forEach(([key, field]) => {
+        $(`ds-ck-${key}`).addEventListener("input", (e) => {
+          const ck = selectedCk();
+          if (!ck) return;
+          ck[field] = Number(e.target.value);
+          $(`ds-ck-${key}-v`).textContent = e.target.value;
+        });
+      });
+      // Full screen: the editor fills the screen (Esc or the button again to go back).
+      $("ds-img-full").addEventListener("mousedown", (e) => e.stopPropagation()); // not a drag or a pick
+      $("ds-img-full").addEventListener("click", async () => {
+        const ed = $("ds-img-editor");
+        try {
+          if (document.fullscreenElement === ed) await document.exitFullscreen();
+          else await ed.requestFullscreen();
+        } catch (e) {
+          showToast("Full screen isn't available here.", "error");
+        }
+      });
+      document.addEventListener("fullscreenchange", () => {
+        const on = document.fullscreenElement === $("ds-img-editor");
+        const btn = $("ds-img-full");
+        btn.title = on ? "Leave full screen (Esc)" : "Full screen (Esc to go back)";
+        btn.innerHTML = `<i data-lucide="${on ? "minimize-2" : "maximize-2"}"></i>`;
+        if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: btn });
+      });
+
+      $("ds-ck-pick").addEventListener("click", () => {
+        imgEd.picking = !imgEd.picking;
+        renderImageEditor();
+      });
+      // Picking: the colour of the video itself (not the keyed picture) where it is clicked.
+      function pickKeyColor(e) {
+        const el = e.target.closest(".ds-img-item");
+        const im = el && imgEd.list[Number(el.dataset.k)];
+        const entry = im && isVideoItem(im) && stageVideos.get(im.id);
+        imgEd.picking = false;
+        if (!entry || entry.video.readyState < 2) return renderImageEditor();
+        const { video } = entry;
+        const rect = el.getBoundingClientRect();
+        // The video fills its box and is cropped (object-fit: cover).
+        const scale = Math.max(rect.width / video.videoWidth, rect.height / video.videoHeight);
+        const vx = Math.min(video.videoWidth - 1, Math.max(0, (e.clientX - rect.left - (rect.width - video.videoWidth * scale) / 2) / scale));
+        const vy = Math.min(video.videoHeight - 1, Math.max(0, (e.clientY - rect.top - (rect.height - video.videoHeight * scale) / 2) / scale));
+        const probe = document.createElement("canvas");
+        probe.width = probe.height = 1;
+        const pctx = probe.getContext("2d", { willReadFrequently: true });
+        pctx.drawImage(video, Math.floor(vx), Math.floor(vy), 1, 1, 0, 0, 1, 1);
+        const [r, g, b] = pctx.getImageData(0, 0, 1, 1).data;
+        imgEd.sel = Number(el.dataset.k);
+        Object.assign(selectedCk(), { color: `#${[r, g, b].map((c) => c.toString(16).padStart(2, "0")).join("")}`, enabled: true });
+        renderImageEditor();
+      }
+
+      ["start", "end"].forEach((key) => {
+        $(`ds-img-${key}`).addEventListener("change", (e) => {
+          const im = imgEd.list[imgEd.sel];
+          if (im) setOverlayTime(im, key, e.target.value);
+          renderImageEditor();
+        });
+        $(`ds-img-${key}`).addEventListener("keydown", (e) => {
+          if (e.key === "Enter") e.target.blur();
+        });
       });
       $("ds-img-pos").addEventListener("click", (e) => {
         const b = e.target.closest("[data-pos]");
@@ -17453,6 +17758,10 @@
       });
       // Drag an image on the frame.
       $("ds-img-stage").addEventListener("mousedown", (e) => {
+        if (imgEd.picking) {
+          e.preventDefault();
+          return pickKeyColor(e);
+        }
         const el = e.target.closest(".ds-img-item");
         if (!el) return;
         e.preventDefault();
@@ -17461,24 +17770,41 @@
         const rect = $("ds-img-stage").getBoundingClientRect();
         const sx = e.clientX, sy = e.clientY, x0 = im.x, y0 = im.y;
         renderImageEditor();
+        // Centre snapping: within SNAP_PX of the frame's centre line, the overlay's centre goes
+        // exactly on it and a guide line shows (Alt held: placed freely).
+        const SNAP_PX = 8;
+        const guides = (v, h) => {
+          $("ds-img-guide-v").classList.toggle("is-on", v);
+          $("ds-img-guide-h").classList.toggle("is-on", h);
+        };
         const move = (ev) => {
+          // The button let go where no mouseup reached the page (outside the window): the drag ends.
+          if (!(ev.buttons & 1)) return up();
           im.x = x0 + ((ev.clientX - sx) / rect.width) * 100;
           im.y = y0 + ((ev.clientY - sy) / rect.height) * 100;
           im._pos = null;
           clampImg(im);
+          const snapX = !ev.altKey && Math.abs(im.x + im.w / 2 - 50) * rect.width / 100 <= SNAP_PX;
+          const snapY = !ev.altKey && Math.abs(im.y + im.h / 2 - 50) * rect.height / 100 <= SNAP_PX;
+          if (snapX) im.x = 50 - im.w / 2;
+          if (snapY) im.y = 50 - im.h / 2;
+          guides(snapX, snapY);
           const node = $("ds-img-stage").querySelector(`.ds-img-item[data-k="${imgEd.sel}"]`);
           if (node) Object.assign(node.style, { left: `${im.x}%`, top: `${im.y}%` });
         };
         const up = () => {
           window.removeEventListener("mousemove", move);
           window.removeEventListener("mouseup", up);
+          guides(false, false);
           renderImageEditor();
         };
         window.addEventListener("mousemove", move);
         window.addEventListener("mouseup", up);
       });
       $("ds-img-done").addEventListener("click", () => {
-        const imgs = imgEd.list.map(({ _pos, ...rest }) => ({ ...rest, x: +rest.x.toFixed(2), y: +rest.y.toFixed(2), w: +rest.w.toFixed(2), h: +rest.h.toFixed(2) }));
+        const all = imgEd.list.map(({ _pos, ...rest }) => ({ ...rest, x: +rest.x.toFixed(2), y: +rest.y.toFixed(2), w: +rest.w.toFixed(2), h: +rest.h.toFixed(2) }));
+        const imgs = all.filter((im) => !isVideoItem(im));
+        const vids = all.filter(isVideoItem);
         try {
           if (imgs.length) localStorage.setItem(SERIES_IMAGES_KEY, JSON.stringify(imgs));
           else localStorage.removeItem(SERIES_IMAGES_KEY);
@@ -17486,44 +17812,98 @@
           return showToast("The images are too large to keep. Use a smaller image (a PNG logo of a few hundred KB).", "error");
         }
         seriesImages = imgs.length ? imgs : null;
+        keepSeriesVideos(vids);
         showSeriesImages();
         closeImageEditor();
-        if (seriesImages && piecesOpen()) {
-          // A part is open: its tabs get the images now too.
-          window.imageOverlays = seriesImages.map((i) => ({ ...hydrateImageOverlay(i), id: crypto.randomUUID() }));
-          renderImageOverlaysFromState();
-          applyImageOverlaysToAllProjects();
-        } else if (seriesImages) {
-          showToast(`${imgs.length} image overlay${imgs.length !== 1 ? "s" : ""} will be added to every tab of each part.`, "success");
+        if ((seriesImages || seriesVideos) && piecesOpen()) {
+          // A part is open: its tabs get the overlays now too.
+          if (seriesImages) {
+            window.imageOverlays = seriesImages.map((i) => ({ ...hydrateImageOverlay(i), id: crypto.randomUUID() }));
+            renderImageOverlaysFromState();
+            applyImageOverlaysToAllProjects();
+          }
+          if (seriesVideos) {
+            window.videoOverlays = seriesVideos.map((v) => ({ ...v, id: crypto.randomUUID(), file: null, blobUrl: null }));
+            renderVideoOverlaysFromState();
+            applyVideoOverlaysToAllProjects();
+          }
+        } else if (all.length) {
+          showToast(`${all.length} overlay${all.length !== 1 ? "s" : ""} will be added to every tab of each part.`, "success");
         }
       });
 
       // Clips between episodes: video files put into the joined video of a part ("Join into one
       // video"), each at its own place: pos k = after the series' k-th episode (0 = before the
-      // first). Kept for the folder they were chosen for.
+      // first). Plus clips repeated evenly - several sponsors' ads (repeat: { clips: [{ path, name }],
+      // count, mode }, see evenClipPositions and repeatClipInserts). Kept for the folder they were
+      // chosen for. The clips go in as they are: the image and video overlays are on the tabs' own
+      // videos, not on the clips.
       const SERIES_CLIPS_KEY = "aiDubberSeriesClips";
-      let clipsState = { folder: "", clips: [] };
+      let clipsState = { folder: "", clips: [], repeat: null };
       try { clipsState = JSON.parse(localStorage.getItem(SERIES_CLIPS_KEY) || "null") || clipsState; } catch (e) { }
       const seriesFolder = () => plan?.folder || scan?.folder || "";
-      const currentClips = () => (clipsState.folder && clipsState.folder === seriesFolder() ? clipsState.clips : []);
+      const clipsForSeries = () => clipsState.folder && clipsState.folder === seriesFolder();
+      const placedClips = () => (clipsForSeries() ? clipsState.clips : []);
+      // The repeated clips, or null without any. One clip kept by an older version ({ path, name })
+      // is read as a list of one.
+      const repeatClip = () => {
+        const r = clipsForSeries() ? clipsState.repeat : null;
+        if (!r) return null;
+        if (!r.clips) Object.assign(r, { clips: r.path ? [{ path: r.path, name: r.name }] : [] });
+        return r.clips.length ? r : null;
+      };
+      // The breaks the repeated clips go in at (pos as for a placed clip); [] without any.
+      const repeatPositions = () => {
+        const eps = repeatClip() && seriesEpisodes();
+        return eps ? evenClipPositions(eps.length, eps.reduce((s, e) => s + (e.duration || 0), 0), repeatClip().count) : [];
+      };
+      const repeatInserts = () => (repeatClip() ? repeatClipInserts(repeatPositions(), repeatClip().clips, repeatClip().mode) : []);
+      const currentClips = () => [...placedClips(), ...repeatInserts()];
       const saveClips = () => { try { localStorage.setItem(SERIES_CLIPS_KEY, JSON.stringify(clipsState)); } catch (e) { } };
-      // The series' episode labels in order (null: unknown - a plan from before clips).
-      const seriesEpisodeLabels = () => {
-        if (plan) return plan.parts.every((p) => p.eps) ? plan.parts.flatMap((p) => p.eps.map((e) => e.label)) : null;
+      const clipsForThisFolder = () => {
+        if (!clipsForSeries()) clipsState = { folder: seriesFolder(), clips: [], repeat: null };
+      };
+      // The series' episodes in order, { label, duration } (null: unknown - a plan from before clips).
+      const seriesEpisodes = () => {
+        if (plan) return plan.parts.every((p) => p.eps) ? plan.parts.flatMap((p) => p.eps) : null;
         if (!scan) return null;
         const ready = readyParts();
-        return ready ? ready.map((jp) => jp.label) : planEpisodeParts(scan.files, joinMinutes()).flat().map(epLabel);
+        return ready
+          ? ready.map((jp) => ({ label: jp.label, duration: jp.duration }))
+          : planEpisodeParts(scan.files, joinMinutes()).flat().map((f) => ({ label: epLabel(f), duration: f.duration }));
       };
+      const seriesEpisodeLabels = () => seriesEpisodes()?.map((e) => e.label) || null;
       let clipsShown = "";
       function renderClips() {
         const labels = seriesEpisodeLabels();
-        const clips = currentClips();
+        const clips = placedClips();
+        const repeat = repeatClip();
         const box = $("ds-clips-box");
         const show = !!seriesFolder() && mergeWanted(); // clips only go into a joined video
         box.classList.toggle("hidden", !show);
         box.classList.toggle("flex", show);
         $("ds-clip-add").disabled = !labels;
+        $("ds-repeat-pick").disabled = !labels;
         $("ds-clips-note").textContent = !labels ? "Start the series again to add clips." : clips.length ? "" : "None";
+        $("ds-repeat-none").classList.toggle("hidden", !!repeat);
+        $("ds-repeat-count").value = String(repeat?.count || "auto");
+        $("ds-repeat-mode").value = repeat?.mode === "all" ? "all" : "turns";
+        $("ds-repeat-count").disabled = $("ds-repeat-mode").disabled = !repeat;
+        $("ds-repeat-mode").classList.toggle("hidden", !repeat || repeat.clips.length < 2);
+        const list = repeat ? repeat.clips : [];
+        $("ds-repeat-list").innerHTML = list.map((c, k) => `<div class="flex items-center gap-2 min-w-0">
+            <span class="shrink-0 w-4 text-right text-[var(--text-muted)]">${k + 1}.</span>
+            <span class="truncate font-mono text-[var(--text-secondary)]" title="${esc(c.path)}">${esc(c.name)}</span>
+            ${k ? `<button data-repeat-up="${k}" class="shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)]" title="Play this one earlier">↑</button>` : ""}
+            <button data-repeat-del="${k}" class="shrink-0 ml-auto text-[var(--text-muted)] hover:text-rose-400" title="Remove this clip">✕</button>
+          </div>`).join("");
+        // Where each goes: "Ads play 3 times: after EP5: Ad A · after EP10: Ad B · after EP15 (the end): Ad A".
+        const at = repeatPositions();
+        const inserts = repeatInserts();
+        const last = at[at.length - 1];
+        $("ds-repeat-note").textContent = repeat && labels && at.length
+          ? `Ads play ${at.length} time${at.length !== 1 ? "s" : ""}: ` + at.map((p) => `after ${labels[p - 1]}${p === last ? " (the end)" : ""}: ${inserts.filter((c) => c.pos === p).map((c) => c.name).join(" + ")}`).join(" · ")
+          : "";
         const sig = JSON.stringify([labels, clips]);
         if (sig === clipsShown) return;
         clipsShown = sig;
@@ -17534,18 +17914,61 @@
             <button data-del="${k}" class="shrink-0 text-[var(--text-muted)] hover:text-rose-400" title="Remove this clip">✕</button>
           </div>`).join("");
       }
-      $("ds-clip-add").addEventListener("click", async () => {
-        const labels = seriesEpisodeLabels();
-        if (!labels || !seriesFolder()) return;
-        if (!window.electronAPI?.openMultiFile) return showToast("Choosing a clip needs the desktop app.", "error");
+      const pickClipFiles = async () => {
+        if (!window.electronAPI?.openMultiFile) {
+          showToast("Choosing a clip needs the desktop app.", "error");
+          return null;
+        }
         const r = await window.electronAPI.openMultiFile({
           defaultPath: localStorage.getItem("lastClipDir") || "",
           filters: [{ name: "Video Files", extensions: ["mp4", "mov", "mkv", "webm", "avi", "m4v", "ts"] }],
         });
-        if (!r || r.canceled || !r.files?.length) return;
+        if (!r || r.canceled || !r.files?.length) return null;
         localStorage.setItem("lastClipDir", r.dirPath);
-        if (clipsState.folder !== seriesFolder()) clipsState = { folder: seriesFolder(), clips: [] };
-        r.files.forEach((f) => clipsState.clips.push({ pos: Math.min(1, labels.length), path: f.filePath, name: f.fileName }));
+        return r.files;
+      };
+      $("ds-clip-add").addEventListener("click", async () => {
+        const labels = seriesEpisodeLabels();
+        if (!labels || !seriesFolder()) return;
+        const files = await pickClipFiles();
+        if (!files) return;
+        clipsForThisFolder();
+        files.forEach((f) => clipsState.clips.push({ pos: Math.min(1, labels.length), path: f.filePath, name: f.fileName }));
+        saveClips();
+        renderClips();
+      });
+      $("ds-repeat-pick").addEventListener("click", async () => {
+        if (!seriesEpisodeLabels() || !seriesFolder()) return;
+        const files = await pickClipFiles();
+        if (!files) return;
+        clipsForThisFolder();
+        const r = repeatClip() || { clips: [], count: clipsState.repeat?.count || "auto", mode: "turns" };
+        files.forEach((f) => r.clips.push({ path: f.filePath, name: f.fileName }));
+        clipsState.repeat = { clips: r.clips, count: r.count || "auto", mode: r.mode === "all" ? "all" : "turns" };
+        saveClips();
+        renderClips();
+      });
+      $("ds-repeat-mode").addEventListener("change", (e) => {
+        if (!repeatClip()) return;
+        clipsState.repeat.mode = e.target.value === "all" ? "all" : "turns";
+        saveClips();
+        renderClips();
+      });
+      $("ds-repeat-list").addEventListener("click", (e) => {
+        const r = repeatClip();
+        if (!r) return;
+        const del = e.target.closest("[data-repeat-del]")?.dataset.repeatDel;
+        const up = e.target.closest("[data-repeat-up]")?.dataset.repeatUp;
+        if (del !== undefined) r.clips.splice(Number(del), 1);
+        else if (up !== undefined) r.clips.splice(Number(up) - 1, 0, ...r.clips.splice(Number(up), 1));
+        else return;
+        if (!r.clips.length) clipsState.repeat = null;
+        saveClips();
+        renderClips();
+      });
+      $("ds-repeat-count").addEventListener("change", (e) => {
+        if (!repeatClip()) return;
+        clipsState.repeat.count = e.target.value === "auto" ? "auto" : parseInt(e.target.value, 10);
         saveClips();
         renderClips();
       });
@@ -17554,7 +17977,7 @@
         if (k === undefined) return;
         clipsState.clips[k].pos = parseInt(e.target.value, 10);
         saveClips();
-        clipsShown = JSON.stringify([seriesEpisodeLabels(), currentClips()]); // the select shows it already
+        clipsShown = JSON.stringify([seriesEpisodeLabels(), placedClips()]); // the select shows it already
       });
       $("ds-clips").addEventListener("click", (e) => {
         const k = e.target.closest("[data-del]")?.dataset.del;
@@ -17869,7 +18292,12 @@
           noteText = `Paused: ${autoResume.reason} Continuing by itself in ${fmtDur(left)} (try ${plan.autoResume?.tries || 1} of ${AUTO_RESUME_MAX[plan.autoResume?.kind] || 1}) - or press Continue now.`;
         }
         else if (plan && !running && lostExportsNote) noteText = lostExportsNote;
-        else if (plan && !running && u < 0 && nextIdx < 0 && !toJoin.length && !joining.length) noteText = "All parts are dubbed ✓ Start over to dub another series.";
+        else if (plan && !running && u < 0 && nextIdx < 0 && !toJoin.length && !joining.length) {
+          const took = workedText();
+          const when = plan.startedAt && plan.finishedAt ? ` Started ${fmtWhen(plan.startedAt)}, finished ${fmtWhen(plan.finishedAt)}.` : "";
+          const allParts = plan.parts.length === 1 ? "The part is" : `All ${plan.parts.length} parts are`;
+          noteText = `${allParts} dubbed ✓${took ? ` ${took}.` : ""}${when} Start over to dub another series.`;
+        }
         else if (plan && !running && u < 0 && (nextIdx >= 0 || joining.length) && plan.lastDone) {
           noteText = !handsFree() ? `Export part ${plan.lastDone.index + 1} first if you haven't - Next part closes its tabs.`
             : exportPending() ? `Continue exports what is left of part ${exportPendingPart()}, then goes on with the next part.` : "";
@@ -18025,7 +18453,8 @@
 
       async function withRun(fn) {
         cancelAutoResume();
-        seriesRun = { stopped: false, step: null, joinJobId: null, splitJobId: null };
+        seriesRun = { stopped: false, step: null, joinJobId: null, splitJobId: null, startedAt: Date.now() };
+        const runStartedAt = seriesRun.startedAt;
         lostExportsNote = ""; // shown until the series goes on
         allTabsJob = "series";
         setLabel("Dub series");
@@ -18045,6 +18474,12 @@
           // A pause ends the run: isolating beside it would keep Continue waiting ("another job
           // is running"). Tabs already isolated come back from the server's cache.
           stopSeriesBackgroundIsolate();
+          // This run's time goes into the series' working time; the first run is when it started.
+          if (plan) {
+            plan.workMs = (plan.workMs || 0) + (Date.now() - runStartedAt);
+            plan.startedAt = plan.startedAt || runStartedAt;
+            if (!plan.finishedAt && seriesFinished()) plan.finishedAt = Date.now();
+          }
           seriesRun = null;
           allTabsJob = null;
           allTabsJobLabel = "";
@@ -18187,7 +18622,7 @@
         }
         const preset = colorPreset();
         await loadVideoFiles(plan.pieces.map((p) => ({ name: p.split(/[\\/]/).pop(), path: p, url: `${API}/audio?path=${encodeURIComponent(p)}` })),
-          { videoColorAdj: preset?.adj, imageOverlays: seriesImages });
+          { videoColorAdj: preset?.adj, imageOverlays: seriesImages, videoOverlays: seriesVideos });
         if (preset) {
           window.activeColorPresetName = preset.name;
           caUpdateActiveCards();
@@ -18525,7 +18960,7 @@
         const next = [nextPartIndex(), ...joiningIndices(), ...partsToJoin()].find((k) => k >= 0) ?? -1;
         showToast(next >= 0
           ? `Part ${i + 1} of ${plan.parts.length} is dubbed ✓ Export it, then press Next part in Dub Whole Series.`
-          : `Part ${i + 1} is dubbed ✓ That was the last part.`, "success");
+          : `Part ${i + 1} is dubbed ✓ That was the last part. The whole series took ${fmtDur(workedMs() / 1000)} of work.`, "success");
         modal.classList.remove("hidden");
       }
 
@@ -18557,7 +18992,8 @@
             const joined = mergeScope() === "series"
               ? (plan.fullMerged ? `, joined into one video: ${plan.fullMerged.split(/[\\/]/).pop()}` : "")
               : (merged ? ` (${merged} joined into one video each)` : "");
-            showToast(`All ${plan.parts.length} parts are dubbed and exported${joined} ✓`, "success");
+            const allParts = plan.parts.length === 1 ? "The part is" : `All ${plan.parts.length} parts are`;
+            showToast(`${allParts} dubbed and exported${joined} ✓ ${workedText()}`.trim(), "success");
             modal.classList.remove("hidden");
             return;
           }
@@ -19272,6 +19708,8 @@
         }
         if (opts.videoColorAdj) proj.videoColorAdj = { ...colorDefaults, ...opts.videoColorAdj };
         if (optImages) proj.imageOverlays = optImages.map((i) => ({ ...i, id: crypto.randomUUID() }));
+        // Shown from their path on disk (renderVideoOverlaysFromState).
+        if (opts.videoOverlays) proj.videoOverlays = opts.videoOverlays.map((v) => ({ ...v, id: crypto.randomUUID(), file: null, blobUrl: null }));
 
         projects.push(proj);
       }
@@ -25154,11 +25592,13 @@
                 italic: t.italic || false,
                 color: t.color || "#ffffff",
                 opacity: t.opacity !== undefined ? t.opacity : 100,
-                strokeWidth: t.strokeWidth || 0,
+                underline: t.underline || false,
+                strokeWidth: t.strokeWidth ?? 1.5, // the preview's default outline
                 strokeColor: t.strokeColor || "#000000",
                 motion: t.motion || "none",
                 speed: t.speed ?? 2,
                 idleStyle: t.idleStyle || "none",
+                idleStrength: t.idleStrength ?? 5,
               })),
               overlayImages: (targetProject.imageOverlays || []).map((img) => ({
                 x: img.x,
@@ -25170,6 +25610,8 @@
                 motion: img.motion || "none",
                 speed: img.speed ?? 2,
                 idleStyle: img.idleStyle || "none",
+                start: img.start ?? null,
+                end: img.end ?? null,
                 filePath: img.filePath || (img.file && img.file.path ? img.file.path : (img._file && img._file.path ? img._file.path : null)),
               })),
 
@@ -25183,6 +25625,8 @@
                   opacity: v.opacity ?? 100,
                   radius: v.radius ?? 0,
                   loop: v.loop !== false,
+                  start: v.start ?? null,
+                  end: v.end ?? null,
                   chromaKey: v.chromaKey || null,
                   filePath: localPath,
                   videoPath: localPath,
@@ -25708,10 +26152,13 @@
                 italic: t.italic || false,
                 color: t.color || "#ffffff",
                 opacity: t.opacity ?? 100,
-                strokeWidth: t.strokeWidth || 0,
+                underline: t.underline || false,
+                strokeWidth: t.strokeWidth ?? 1.5, // the preview's default outline
                 strokeColor: t.strokeColor || "#000000",
                 motion: t.motion || "none",
                 speed: t.speed ?? 2,
+                idleStyle: t.idleStyle || "none",
+                idleStrength: t.idleStrength ?? 5,
               })),
               overlayImages: (proj.imageOverlays || []).map((img) => ({
                 x: img.x,
@@ -25723,6 +26170,8 @@
                 motion: img.motion || "none",
                 speed: img.speed ?? 2,
                 idleStyle: img.idleStyle || "none",
+                start: img.start ?? null,
+                end: img.end ?? null,
                 filePath: img.filePath || (img.file && img.file.path ? img.file.path : (img._file && img._file.path ? img._file.path : null)),
               })),
 
@@ -25736,6 +26185,8 @@
                   opacity: v.opacity ?? 100,
                   radius: v.radius ?? 0,
                   loop: v.loop !== false,
+                  start: v.start ?? null,
+                  end: v.end ?? null,
                   chromaKey: v.chromaKey || null,
                   filePath: localPath,
                   videoPath: localPath,
@@ -28278,6 +28729,7 @@
           if (opLabel) opLabel.textContent = `${item.opacity ?? 100}%`;
           if (radSlider) radSlider.value = item.radius ?? 0;
           if (radLabel) radLabel.textContent = `${item.radius ?? 0}px`;
+          fillOverlayTimeInputs("vid", item);
         }
         smartPosition(menu, e.pageX, e.pageY);
         menu.classList.remove("hidden");
@@ -28382,7 +28834,7 @@
         const val = parseInt(e.target.value, 10);
         document.getElementById("lbl-vid-radius").textContent = `${val}px`;
         // Apply radius to wrapper (overflow:hidden clips the video)
-        activeVideoItem.style.borderRadius = `${val}px`;
+        activeVideoItem.style.borderRadius = `${val * previewCanvasScale()}px`;
         const item = window.videoOverlays.find((v) => v.id === activeVideoItem.dataset.id);
         if (item) item.radius = val;
       });
@@ -28429,7 +28881,7 @@
           wrapper.style.top = `${item.y}%`;
           wrapper.style.width = `${item.w}%`;
           wrapper.style.height = `${item.h}%`;
-          if (item.radius) wrapper.style.borderRadius = `${item.radius}px`;
+          if (item.radius) wrapper.style.borderRadius = `${item.radius * previewCanvasScale()}px`;
           const vidEl = wrapper.querySelector("video");
           if (vidEl) {
             vidEl.style.opacity = (item.opacity ?? 100) / 100;
@@ -28470,7 +28922,7 @@
             if (!liveCanvas) {
               liveCanvas = document.createElement("canvas");
               liveCanvas.className = "chroma-live-canvas";
-              liveCanvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;pointer-events:none;";
+              liveCanvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none;";
               wrapper.appendChild(liveCanvas);
             }
             if (vidEl.readyState >= 2) {
@@ -28489,6 +28941,7 @@
           }
         }
       });
+      applyOverlayTimePreview();
     }
 
     // --- APPLY ALL VIDEO OVERLAYS TO ALL PROJECTS ---
@@ -28614,10 +29067,11 @@
           const imgEl = wrapper.querySelector("img");
           if (imgEl) {
             imgEl.style.opacity = (item.opacity ?? 100) / 100;
-            imgEl.style.borderRadius = `${item.radius ?? 0}px`;
+            imgEl.style.borderRadius = `${(item.radius ?? 0) * previewCanvasScale()}px`;
           }
         }
       });
+      applyOverlayTimePreview();
     }
 
     function createImageOverlay(src, id, autoSelect = false) {
@@ -28724,6 +29178,7 @@
             document.getElementById("lbl-img-opacity").innerText = `${imgState.opacity}%`;
             document.getElementById("ctx-img-radius").value = imgState.radius;
             document.getElementById("lbl-img-radius").innerText = `${imgState.radius}px`;
+            fillOverlayTimeInputs("img", imgState);
           }
         }
 
@@ -28831,7 +29286,7 @@
 
         const imgTag = activeImageItem.querySelector("img");
         if (imgTag) {
-          imgTag.style.borderRadius = `${val}px`;
+          imgTag.style.borderRadius = `${val * previewCanvasScale()}px`;
           imgTag.style.overflow = "hidden";
         }
 
@@ -28839,6 +29294,78 @@
         if (imgState) imgState.radius = parseInt(val, 10);
       });
     }
+
+    // --- OVERLAY TIMING: when an image / video overlay is on the video ---
+    // start / end in seconds of the video (null: from the start / to the end), typed as m:ss,
+    // h:mm:ss or seconds. Exported with the overlay filter's enable= (render_service.js).
+    // (Function declarations: Dub Whole Series and the overlays drawn on a tab switch use them
+    // before this part of the file has run.)
+    function parseOverlayClock(text) {
+      const t = String(text || "").trim().replace(",", ".");
+      if (!t) return null;
+      if (!/^\d+(\.\d+)?$|^\d+(:\d{1,2}){1,2}(\.\d+)?$/.test(t)) return NaN;
+      return t.split(":").reduce((s, part) => s * 60 + parseFloat(part), 0);
+    }
+    function fmtOverlayClock(sec) {
+      if (sec === null || sec === undefined || !Number.isFinite(sec)) return "";
+      const whole = Math.floor(sec), frac = Math.round((sec - whole) * 10) / 10;
+      const h = Math.floor(whole / 3600), m = Math.floor((whole % 3600) / 60), s = whole % 60;
+      const ss = String(s).padStart(2, "0") + (frac ? String(frac).slice(1) : "");
+      return h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+    }
+    // A time typed for an overlay's start or end, kept on the overlay (start / end in seconds,
+    // null = from the start / to the end; an end not after the start is dropped).
+    // Returns false (nothing changed) when the text isn't a time.
+    function setOverlayTime(item, key, text) {
+      const sec = parseOverlayClock(text);
+      if (Number.isNaN(sec)) {
+        showToast("Type a time as m:ss (1:30) or seconds (90).", "error");
+        return false;
+      }
+      item[key] = key === "start" ? sec || null : sec;
+      if (item.end !== null && item.end !== undefined && item.end <= (item.start || 0)) {
+        if (key === "end") showToast("The end must be after the start - the overlay stays to the end of the video.", "warning");
+        item.end = null;
+      }
+      return true;
+    }
+    function overlayOnAt(item, t) {
+      return (!item.start || t >= item.start) && (item.end === null || item.end === undefined || t <= item.end);
+    }
+    // The preview shows an overlay faintly while the video is outside its time, so it can still be moved.
+    function applyOverlayTimePreview() {
+      const t = mainVideo?.currentTime || 0;
+      document.querySelectorAll(".image-overlay-item, .video-overlay-item").forEach((w) => {
+        const list = w.classList.contains("video-overlay-item") ? window.videoOverlays : window.imageOverlays;
+        const item = (list || []).find((o) => o.id === w.dataset.id);
+        w.style.opacity = item && !overlayOnAt(item, t) ? "0.25" : "";
+      });
+    }
+    mainVideo?.addEventListener("timeupdate", applyOverlayTimePreview);
+    mainVideo?.addEventListener("seeked", applyOverlayTimePreview);
+    function fillOverlayTimeInputs(prefix, item) {
+      const a = document.getElementById(`ctx-${prefix}-start`), b = document.getElementById(`ctx-${prefix}-end`);
+      if (a) a.value = fmtOverlayClock(item?.start || null);
+      if (b) b.value = fmtOverlayClock(item?.end ?? null);
+    }
+    function bindOverlayTimeInputs(prefix, currentItem) {
+      ["start", "end"].forEach((key) => {
+        const input = document.getElementById(`ctx-${prefix}-${key}`);
+        if (!input) return;
+        input.addEventListener("change", () => {
+          const item = currentItem();
+          if (!item) return;
+          setOverlayTime(item, key, input.value);
+          fillOverlayTimeInputs(prefix, item);
+          applyOverlayTimePreview();
+        });
+        input.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") input.blur();
+        });
+      });
+    }
+    bindOverlayTimeInputs("img", () => activeImageItem && window.imageOverlays.find((i) => i.id === activeImageItem.dataset.id));
+    bindOverlayTimeInputs("vid", () => activeVideoItem && window.videoOverlays.find((v) => v.id === activeVideoItem.dataset.id));
 
     // --- APPLY ALL IMAGE OVERLAYS TO ALL PROJECTS ---
     function applyImageOverlaysToAllProjects(triggerBtn = null) {

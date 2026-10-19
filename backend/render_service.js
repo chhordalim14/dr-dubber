@@ -546,45 +546,258 @@ function buildSubtitleAss(cues, options, canvasW, canvasH) {
 // Renders draggable "free text" overlays (persistent, full-duration captions the user
 // positions freely on the canvas) by piggy-backing on the libass `subtitles` filter,
 // since this ffmpeg build path already guarantees libass availability via hasSubtitlesFilter().
+// Image / text motion, as the editor previews it (tickOverlayMotion in studio-main.js):
+// scroll-left / -right / -up / -down move across the frame and come back in from the other
+// side, bounce-x goes left and right between the edges. The preview moves speed x 0.035 % of the
+// frame per animation frame (about 60 a second), so speed x 2.1 % of the frame a second.
+// Older names (scroll_left) are read the same way.
+const MOTION_PCT_PER_SEC = 2.1;
+function normalizeMotion(motion) {
+    return String(motion || 'none').trim().toLowerCase().replace(/_/g, '-');
+}
+function motionSpeed(speed) {
+    const v = parseFloat(speed);
+    return Math.min(10, Math.max(0.1, Number.isFinite(v) ? v : 2));
+}
+
+// A free text's moves along one axis over the video, as the preview makes them:
+// [{ t0, t1, p0, p1 }] (seconds, % of the frame), or null when it doesn't move.
+const TEXT_MOTION_RANGE = {
+    'scroll-left': { lo: -20, hi: 110, dir: -1 },
+    'scroll-right': { lo: -20, hi: 110, dir: 1 },
+    'scroll-up': { lo: -10, hi: 110, dir: -1 },
+    'scroll-down': { lo: -10, hi: 110, dir: 1 },
+    'bounce-x': { lo: 10, hi: 90, dir: 1, bounce: true }
+};
+function textMotionSegments(motion, start, speed, duration) {
+    const range = TEXT_MOTION_RANGE[normalizeMotion(motion)];
+    const v = motionSpeed(speed) * MOTION_PCT_PER_SEC;
+    if (!range || !(duration > 0)) return null;
+    const { lo, hi, bounce } = range;
+    let dir = range.dir;
+    let p = Math.min(hi, Math.max(lo, parseFloat(start) || 0));
+    let t = 0;
+    const out = [];
+    while (t < duration && out.length < 5000) {
+        const target = dir < 0 ? lo : hi;
+        const dt = Math.abs(target - p) / v;
+        if (dt > 0) {
+            const t1 = Math.min(duration, t + dt);
+            const p1 = p + (target - p) * ((t1 - t) / dt);
+            out.push({ t0: t, t1, p0: p, p1 });
+            t = t1;
+            p = p1;
+            if (t >= duration) break;
+        }
+        if (bounce) dir = -dir;
+        else p = dir < 0 ? hi : lo; // off one side: back in from the other
+    }
+    return out;
+}
+
+// The editor's idle styles (index.html, @keyframes idle-*) in video pixels: keyframes over one
+// cycle as [phase 0..1, value]. dur: seconds a cycle at strength 5; strength 10 is twice as fast.
+// alpha: opacity factor, glow: halo amount 0..1, dx / dy: offset px, rot: degrees clockwise.
+const TEXT_IDLE = {
+    pulse: { dur: 2, key: 'alpha', track: [[0, 1], [0.5, 0.45], [1, 1]] },
+    glow: { dur: 2, key: 'glow', track: [[0, 0], [0.5, 1], [1, 0]] },
+    shake: { dur: 0.6, key: 'dx', track: [[0, 0], [0.15, -18], [0.3, 18], [0.45, -14], [0.6, 14], [0.75, -8], [0.9, 8], [1, 0]] },
+    wobble: { dur: 1.2, key: 'rot', track: [[0, 0], [0.25, -12], [0.75, 12], [1, 0]] },
+    float: { dur: 2.5, key: 'dy', track: [[0, 0], [0.5, -24], [1, 0]] }
+};
+const TEXT_MAX_EVENTS = 120000; // per text; past it the idle style is left out (the motion stays)
+
+function trackAt(track, phase) {
+    for (let i = 1; i < track.length; i++) {
+        const [p1, v1] = track[i];
+        if (phase <= p1) {
+            const [p0, v0] = track[i - 1];
+            return p1 > p0 ? v0 + ((v1 - v0) * (phase - p0)) / (p1 - p0) : v1;
+        }
+    }
+    return track[track.length - 1][1];
+}
+
+// A CSS colour (#rgb, #rrggbb, rgb()/rgba()) as an ASS inline colour &HBBGGRR&; null if not one.
+function cssColorToAss(value) {
+    const v = String(value || '').trim();
+    let rgb = null;
+    let m = v.match(/^#?([0-9a-f]{3})$/i);
+    if (m) rgb = m[1].split('').map((c) => parseInt(c + c, 16));
+    if (!rgb && (m = v.match(/^#?([0-9a-f]{6})(?:[0-9a-f]{2})?$/i))) rgb = [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16));
+    if (!rgb && (m = v.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i))) rgb = [m[1], m[2], m[3]].map((n) => Math.min(255, parseInt(n, 10)));
+    if (!rgb) return null;
+    const hex = (n) => n.toString(16).padStart(2, '0').toUpperCase();
+    return `&H${hex(rgb[2])}${hex(rgb[1])}${hex(rgb[0])}&`;
+}
+
+const HTML_ENTITIES = { nbsp: ' ', amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+function decodeHtmlEntities(text) {
+    return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e) => {
+        if (e[0] === '#') {
+            const code = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+            return Number.isFinite(code) && code > 0 && code < 0x110000 ? String.fromCodePoint(code) : '';
+        }
+        return HTML_ENTITIES[e.toLowerCase()] ?? m;
+    });
+}
+
+// A free text as the editor keeps it - the HTML of its contenteditable box (sanitizeRichText:
+// b / strong, i / em, u, span / font with a colour, br, div, p) - as ASS text with the same
+// bold, italic, underline, colours and line breaks. base: { b, i, u, c } of the whole text.
+function richTextToAss(html, base) {
+    const out = [];
+    const stack = [{ ...base, tag: null }];
+    const top = () => stack[stack.length - 1];
+    const switchTags = (from, to) => {
+        let tags = '';
+        if (!!from.b !== !!to.b) tags += `\\b${to.b ? 1 : 0}`;
+        if (!!from.i !== !!to.i) tags += `\\i${to.i ? 1 : 0}`;
+        if (!!from.u !== !!to.u) tags += `\\u${to.u ? 1 : 0}`;
+        if (from.c !== to.c && to.c) tags += `\\c${to.c}`;
+        return tags ? `{${tags}}` : '';
+    };
+    const lineBreak = () => { if (out.length && out[out.length - 1] !== '\\N') out.push('\\N'); };
+    const re = /<(\/?)([a-z][a-z0-9]*)([^>]*)>|([^<]+)/gi;
+    let m;
+    while ((m = re.exec(String(html ?? '')))) {
+        if (m[4] !== undefined) {
+            out.push(escapeAssText(decodeHtmlEntities(m[4])).replace(/ /g, '\\h'));
+            continue;
+        }
+        const closing = m[1] === '/';
+        const tag = m[2].toLowerCase();
+        if (tag === 'br') { out.push('\\N'); continue; }
+        if (!closing) {
+            if (tag === 'div' || tag === 'p') lineBreak(); // a new line in the box
+            const prev = top();
+            const next = { ...prev, tag };
+            if (tag === 'b' || tag === 'strong') next.b = true;
+            if (tag === 'i' || tag === 'em') next.i = true;
+            if (tag === 'u') next.u = true;
+            const attrs = m[3] || '';
+            const styleColor = attrs.match(/color\s*:\s*([^;"']+)/i);
+            const fontColor = tag === 'font' && attrs.match(/color\s*=\s*["']?([^"'\s>]+)/i);
+            const color = cssColorToAss(decodeHtmlEntities((styleColor || fontColor || [])[1] || ''));
+            if (color) next.c = color;
+            stack.push(next);
+            out.push(switchTags(prev, next));
+        } else {
+            let k = stack.length - 1;
+            while (k > 0 && stack[k].tag !== tag) k--;
+            if (k === 0) continue; // a closing tag never opened
+            const before = top();
+            stack.length = k;
+            out.push(switchTags(before, top()));
+        }
+    }
+    return out.join('').replace(/^(\\N)+/, '').replace(/(\\N)+(\{[^}]*\})*$/, '$2');
+}
+
+const assAlphaByte = (opacity) => Math.round((1 - Math.min(1, Math.max(0, opacity))) * 255).toString(16).padStart(2, '0').toUpperCase();
+
+// One free text as ASS events over the video: the timeline is cut wherever the motion turns or
+// wraps and at each idle keyframe, and every piece moves / fades / turns straight from its
+// start to its end value (\move, \t), so motion and idle style play together as in the preview.
+function freeTextEvents(t, ctx) {
+    const { w, h, duration, styleName, text, opacity, outlineW } = ctx;
+    const r2 = (v) => Math.round(v * 100) / 100;
+    const motion = normalizeMotion(t.motion);
+    const vertical = motion === 'scroll-up' || motion === 'scroll-down';
+    const segments = textMotionSegments(motion, vertical ? t.y : t.x, t.speed, duration);
+    const baseX = (w * (parseFloat(t.x) || 0)) / 100;
+    const baseY = (h * (parseFloat(t.y) || 0)) / 100;
+    let idle = TEXT_IDLE[String(t.idleStyle || '').toLowerCase()] || null;
+    const strength = Math.min(10, Math.max(1, parseFloat(t.idleStrength) || 5));
+    const cycle = idle ? idle.dur / (strength / 5) : 0;
+
+    const cutsOf = (withIdle) => {
+        const cuts = new Set([0, r2(duration)]);
+        (segments || []).forEach((sg) => { cuts.add(r2(sg.t0)); cuts.add(r2(sg.t1)); });
+        if (withIdle) {
+            for (let c = 0; c * cycle < duration && cuts.size <= TEXT_MAX_EVENTS; c++) {
+                idle.track.forEach(([ph]) => { const x = r2((c + ph) * cycle); if (x < duration) cuts.add(x); });
+            }
+        }
+        return [...cuts].filter((x) => x >= 0 && x <= duration).sort((a, b) => a - b);
+    };
+    let cuts = cutsOf(!!idle);
+    if (idle && cuts.length > TEXT_MAX_EVENTS) {
+        console.warn(`[Render] Free text "${String(t.text).slice(0, 30)}": its ${t.idleStyle} style is too many steps for this long a video - left out.`);
+        idle = null;
+        cuts = cutsOf(false);
+    }
+
+    // Where the motion has it at a time inside segment sg (or still).
+    let segIdx = 0;
+    const segmentAt = (mid) => {
+        if (!segments) return null;
+        while (segIdx < segments.length - 1 && segments[segIdx].t1 <= mid) segIdx++;
+        return segments[segIdx];
+    };
+    const posAt = (sg, time) => {
+        if (!sg) return [baseX, baseY];
+        const f = sg.t1 > sg.t0 ? Math.min(1, Math.max(0, (time - sg.t0) / (sg.t1 - sg.t0))) : 0;
+        const p = ((sg.p0 + (sg.p1 - sg.p0) * f) * (vertical ? h : w)) / 100;
+        return vertical ? [baseX, p] : [p, baseY];
+    };
+    const idleAt = (time, mid) => {
+        if (!idle) return null;
+        const c = Math.floor(mid / cycle);
+        return trackAt(idle.track, Math.min(1, Math.max(0, time / cycle - c)));
+    };
+
+    const lines = [];
+    const glowColor = cssColorToAss(t.strokeColor) || '&HFFFFFF&';
+    for (let k = 0; k + 1 < cuts.length; k++) {
+        const a = cuts[k], b = cuts[k + 1];
+        const from = formatAssTimestamp(a), to = formatAssTimestamp(b);
+        if (from === to) continue;
+        const mid = (a + b) / 2;
+        const sg = segmentAt(mid);
+        let [xa, ya] = posAt(sg, a);
+        let [xb, yb] = posAt(sg, b);
+        const va = idleAt(a, mid), vb = idleAt(b, mid);
+        if (idle?.key === 'dx') { xa += va; xb += vb; }
+        if (idle?.key === 'dy') { ya += va; yb += vb; }
+        [xa, ya, xb, yb] = [xa, ya, xb, yb].map(Math.round);
+        const place = xa === xb && ya === yb ? `\\pos(${xa},${ya})` : `\\move(${xa},${ya},${xb},${yb})`;
+        let fx = `\\alpha&H${assAlphaByte(opacity)}&`;
+        if (idle?.key === 'alpha') {
+            fx = `\\alpha&H${assAlphaByte(opacity * va)}&`;
+            if (va !== vb) fx += `\\t(\\alpha&H${assAlphaByte(opacity * vb)}&)`;
+        }
+        // CSS turns clockwise for a positive angle, ASS counter-clockwise.
+        if (idle?.key === 'rot') fx += `\\frz${r2(-va)}` + (va !== vb ? `\\t(\\frz${r2(-vb)})` : '');
+        if (idle?.key === 'glow') {
+            // The halo under the text: its outline grown and blurred in the glow colour, fading in and out.
+            const ga = assAlphaByte(opacity * 0.85 * va), gb = assAlphaByte(opacity * 0.85 * vb);
+            lines.push(`Dialogue: 0,${from},${to},${styleName},,0,0,0,,{\\an5${place}\\1a&HFF&\\shad0\\3c${glowColor}\\bord${r2(outlineW + 4)}\\blur8\\3a&H${ga}&${ga !== gb ? `\\t(\\3a&H${gb}&)` : ''}}${text}`);
+        }
+        lines.push(`Dialogue: 1,${from},${to},${styleName},,0,0,0,,{\\an5${place}${fx}}${text}`);
+    }
+    return lines;
+}
+
 function buildFreeTextAssFile(freeTexts, canvasW, canvasH, videoDuration, tempDir) {
     const w = canvasW || 1920;
     const h = canvasH || 1080;
-    const endTime = formatAssTimestamp(Math.max(0.1, videoDuration || 60));
+    const duration = Math.max(0.1, videoDuration || 60);
 
     const events = freeTexts.map((t) => {
-        const px = Math.round((w * (parseFloat(t.x) || 0)) / 100);
-        const py = Math.round((h * (parseFloat(t.y) || 0)) / 100);
         const fontName = assSafeName(t.fontFamily) || 'Kantumruy Pro';
         const fontSize = parseInt(t.fontSize, 10) || 28;
         const primaryColor = hexToAssColor(t.color, '&H00FFFFFF');
         const outlineColor = hexToAssColor(t.strokeColor, '&H00000000');
-        const outlineW = t.strokeWidth !== undefined ? parseFloat(t.strokeWidth) || 0 : 0;
+        const outlineW = t.strokeWidth !== undefined ? Math.max(0, parseFloat(t.strokeWidth) || 0) : 0;
         const rawOpacity = t.opacity !== undefined ? parseFloat(t.opacity) : 100;
         const opacityPct = !isNaN(rawOpacity) ? Math.min(100, Math.max(0, rawOpacity)) : 100;
-        const alphaByte = Math.round((1 - opacityPct / 100) * 255).toString(16).padStart(2, '0').toUpperCase();
-        const alphaTag = `\\alpha&H${alphaByte}&`;
-        const boldTag = t.bold ? '\\b1' : '\\b0';
-        const italicTag = t.italic ? '\\i1' : '\\i0';
 
         const styleName = `FT_${Math.random().toString(36).slice(2, 8)}`;
-        const styleLine = `Style: ${styleName},${fontName},${fontSize},${primaryColor},${primaryColor},${outlineColor},&H64000000,${t.bold ? -1 : 0},${t.italic ? -1 : 0},0,0,100,100,0,0,1,${outlineW},0,5,0,0,0,1`;
-
-        const text = escapeAssText(t.text);
-        const motion = t.motion || 'none';
-        let dialogueLine;
-        if (motion === 'scroll_left') {
-            const startX = w + 150;
-            const endX = -150;
-            dialogueLine = `Dialogue: 0,0:00:00.00,${endTime},${styleName},,0,0,0,,{\\an5\\move(${startX},${py},${endX},${py})${boldTag}${italicTag}${alphaTag}}${text}`;
-        } else if (motion === 'scroll_right') {
-            const startX = -150;
-            const endX = w + 150;
-            dialogueLine = `Dialogue: 0,0:00:00.00,${endTime},${styleName},,0,0,0,,{\\an5\\move(${startX},${py},${endX},${py})${boldTag}${italicTag}${alphaTag}}${text}`;
-        } else {
-            dialogueLine = `Dialogue: 0,0:00:00.00,${endTime},${styleName},,0,0,0,,{\\an5\\pos(${px},${py})${boldTag}${italicTag}${alphaTag}}${text}`;
-        }
-
-        return { styleLine, dialogueLine };
+        const styleLine = `Style: ${styleName},${fontName},${fontSize},${primaryColor},${primaryColor},${outlineColor},&H64000000,${t.bold ? -1 : 0},${t.italic ? -1 : 0},${t.underline ? -1 : 0},0,100,100,0,0,1,${outlineW},0,5,0,0,0,1`;
+        const text = richTextToAss(t.text, { b: !!t.bold, i: !!t.italic, u: !!t.underline, c: cssColorToAss(t.color) || '&HFFFFFF&' });
+        const dialogueLines = freeTextEvents(t, { w, h, duration, styleName, text, opacity: opacityPct / 100, outlineW });
+        return { styleLine, dialogueLines };
     });
 
     if (events.length === 0) return null;
@@ -603,7 +816,7 @@ function buildFreeTextAssFile(freeTexts, canvasW, canvasH, videoDuration, tempDi
         '',
         '[Events]',
         'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
-        ...events.map(e => e.dialogueLine)
+        ...events.flatMap(e => e.dialogueLines)
     ].join('\n');
 
     const assPath = path.join(tempDir, 'freetext_burn.ass');
@@ -855,6 +1068,79 @@ function hexToAssColor(hex, defaultVal = '&H00FFFFFF') {
         return `&H${a}${b}${g}${r}`.toUpperCase();
     }
     return defaultVal;
+}
+
+// An image or video overlay shown only for a while: start / end in seconds of the video (no end:
+// to the end of the video). { start, end: null } with no start is the whole video.
+function overlayTimeWindow(ov) {
+    const start = Math.max(0, parseFloat(ov && ov.start) || 0);
+    const end = parseFloat(ov && ov.end);
+    return { start, end: Number.isFinite(end) && end > start ? end : null };
+}
+
+// The overlay filter's enable option for that window ('' for the whole video).
+function overlayEnableOption(win) {
+    if (!win.start && win.end === null) return '';
+    const s = win.start.toFixed(3);
+    return win.end === null ? `:enable='gte(t,${s})'` : `:enable='between(t,${s},${win.end.toFixed(3)})'`;
+}
+
+// Chroma key exactly as the editor previews it (frontend/chroma-worker.js), so a keyed video
+// overlay looks the same in the export:
+// - a green key: d = g - max(r, b); transparent from d >= cutoff + feather, opaque up to cutoff,
+//   a smoothstep between; the green left on what stays is pulled down by spill x d (despill).
+//   cutoff = 28 x (1 - tolerance / 255) + 2, feather = smoothing x 0.35. A blue key the same with b.
+// - any other colour: distance in YUV from the key colour (luma weighted 1/4), transparent up to
+//   tolerance x 0.65, a smoothstep over smoothing x 0.45 more.
+// The green / blue keys are built from per-plane filters (fast); the other is a geq.
+// Returns the filter chains from [src] to [out] (rgba).
+function chromaKeyFilters(src, out, ck, tag) {
+    const rawColor = /^#?[0-9a-fA-F]{6}$/.test(String(ck.color || '').trim()) ? String(ck.color).trim().replace('#', '') : '00ff00';
+    const kr = parseInt(rawColor.slice(0, 2), 16), kg = parseInt(rawColor.slice(2, 4), 16), kb = parseInt(rawColor.slice(4, 6), 16);
+    const num = (v, dflt, lo, hi) => { const n = parseFloat(v); return Math.min(hi, Math.max(lo, Number.isFinite(n) ? n : dflt)); };
+    const tolerance = num(ck.tolerance, 80, 0, 255);
+    const smoothing = num(ck.smooth, 20, 0, 100);
+    const spill = num(ck.spill, 80, 0, 100) / 100;
+    const isGreen = (kg > kr * 1.15 && kg > kb * 1.15) || (kg >= 170 && kr < 110 && kb < 110);
+    const isBlue = !isGreen && kb > kr * 1.15 && kb > kg * 1.15;
+    const f = (n) => Number(n.toFixed(6)).toString();
+
+    if (isGreen || isBlue) {
+        const cutoff = Math.max(1, Math.round(28 * (1 - tolerance / 255) + 2));
+        const feather = Math.max(1, Math.round(smoothing * 0.35));
+        // K = the key channel, O1 / O2 = the other two.
+        const [K, O1, O2] = isGreen ? ['g', 'b', 'r'] : ['b', 'g', 'r'];
+        const t = (n) => `${tag}_${n}`;
+        const alphaLut = `if(gte(val,${cutoff + feather}),0,if(gt(val,${cutoff}),255*(1-st(0,(val-${cutoff})/${feather})*ld(0)*(3-2*ld(0))),255))`;
+        // The planes as they end up: the key channel despilled, the other two as they were.
+        const final = { [K]: t('kd2'), [O1]: t(`${O1}2`), [O2]: t(`${O2}2`) };
+        return [
+            // extractplanes gives r, g, b in that order whatever order they are asked in.
+            `[${src}]format=gbrp,extractplanes=r+g+b[${t('r')}][${t('g')}][${t('b')}]`,
+            ...['r', 'g', 'b'].map((c) => `[${t(c)}]split[${t(`${c}1`)}][${t(`${c}2`)}]`),
+            `[${t(`${O1}1`)}][${t(`${O2}1`)}]blend=all_mode=lighten[${t('m')}]`, // max of the other two
+            `[${t(`${K}1`)}][${t('m')}]blend=all_mode=subtract[${t('d')}]`,       // d (never below 0)
+            `[${t('d')}]split[${t('d1')}][${t('d2')}]`,
+            `[${t('d1')}]lut=c0='${alphaLut}'[${t('a')}]`,
+            `[${t('d2')}]lut=c0='val*${f(spill)}'[${t('sd')}]`,
+            `[${t(`${K}2`)}][${t('sd')}]blend=all_mode=subtract[${t('kd2')}]`,    // despill: key - spill x d
+            // gbrap planes are g, b, r, a.
+            `[${final.g}][${final.b}][${final.r}][${t('a')}]mergeplanes=map0s=0:map0p=0:map1s=1:map1p=0:map2s=2:map2p=0:map3s=3:map3p=0:format=gbrap,format=rgba[${out}]`
+        ];
+    }
+
+    const ky = 0.299 * kr + 0.587 * kg + 0.114 * kb;
+    const ku = -0.168736 * kr - 0.331264 * kg + 0.5 * kb;
+    const kv = 0.5 * kr - 0.418688 * kg - 0.081312 * kb;
+    const tol = tolerance * 0.65;
+    const smo = Math.max(1, smoothing * 0.45);
+    const R = 'r(X,Y)', G = 'g(X,Y)', B = 'b(X,Y)';
+    const alpha = `st(1,-0.168736*${R}-0.331264*${G}+0.5*${B}-(${f(ku)}));` +
+        `st(2,0.5*${R}-0.418688*${G}-0.081312*${B}-(${f(kv)}));` +
+        `st(3,(0.299*${R}+0.587*${G}+0.114*${B}-(${f(ky)}))*0.25);` +
+        `st(4,sqrt(ld(1)*ld(1)+ld(2)*ld(2)+ld(3)*ld(3)));` +
+        `if(lte(ld(4),${f(tol)}),0,if(lt(ld(4),${f(tol + smo)}),st(5,(ld(4)-${f(tol)})/${f(smo)})*ld(5)*(3-2*ld(5))*255,255))`;
+    return [`[${src}]format=rgba,geq=r='${R}':g='${G}':b='${B}':a='${alpha}'[${out}]`];
 }
 
 function resolveTargetDimensions(options) {
@@ -1578,14 +1864,11 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                 const ovH = Math.max(2, Math.round((canvasH * (parseFloat(ov.h) || 20)) / 100 / 2) * 2);
 
                 let radiusFilter = '';
-                const rPercent = parseFloat(ov.radius) || 0;
-                if (rPercent > 0) {
-                    const maxR = Math.min(ovW, ovH) / 2;
-                    const rPx = Math.min(maxR, (Math.min(ovW, ovH) * (rPercent / 100)));
-                    if (rPx >= 1) {
-                        const r = Math.round(rPx);
-                        radiusFilter = `,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(X,${r})*lt(Y,${r}),if(gt(hypot(${r}-X,${r}-Y),${r}),0,alpha(X,Y)),if(gt(X,${ovW}-${r})*lt(Y,${r}),if(gt(hypot(X-(${ovW}-${r}),${r}-Y),${r}),0,alpha(X,Y)),if(lt(X,${r})*gt(Y,${ovH}-${r}),if(gt(hypot(${r}-X,Y-(${ovH}-${r})),${r}),0,alpha(X,Y)),if(gt(X,${ovW}-${r})*gt(Y,${ovH}-${r}),if(gt(hypot(X-(${ovW}-${r}),Y-(${ovH}-${r})),${r}),0,alpha(X,Y)),alpha(X,Y)))))'`;
-                    }
+                // Video pixels, as the editor draws them (previewCanvasScale), up to a full round end.
+                const rPx = Math.min(Math.min(ovW, ovH) / 2, Math.max(0, parseFloat(ov.radius) || 0));
+                if (rPx >= 1) {
+                    const r = Math.round(rPx);
+                    radiusFilter = `,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(X,${r})*lt(Y,${r}),if(gt(hypot(${r}-X,${r}-Y),${r}),0,alpha(X,Y)),if(gt(X,${ovW}-${r})*lt(Y,${r}),if(gt(hypot(X-(${ovW}-${r}),${r}-Y),${r}),0,alpha(X,Y)),if(lt(X,${r})*gt(Y,${ovH}-${r}),if(gt(hypot(${r}-X,Y-(${ovH}-${r})),${r}),0,alpha(X,Y)),if(gt(X,${ovW}-${r})*gt(Y,${ovH}-${r}),if(gt(hypot(X-(${ovW}-${r}),Y-(${ovH}-${r})),${r}),0,alpha(X,Y)),alpha(X,Y)))))'`;
                 }
 
                 let alphaFilter = '';
@@ -1600,22 +1883,39 @@ async function renderVideo(options, onProgress, onComplete, onError) {
 
                 const baseX = Math.round((canvasW * (parseFloat(ov.x) || 0)) / 100);
                 const baseY = Math.round((canvasH * (parseFloat(ov.y) || 0)) / 100);
-                const motion = ov.motion || 'none';
-                const speed = parseFloat(ov.speed) || 1.0;
+                const motion = normalizeMotion(ov.motion);
+                const speed = motionSpeed(ov.speed);
+                // Pixels a second, as fast as the preview moves it.
+                const vx = ((canvasW * speed * MOTION_PCT_PER_SEC) / 100).toFixed(3);
+                const vy = ((canvasH * speed * MOTION_PCT_PER_SEC) / 100).toFixed(3);
 
                 let xExpr = `${baseX}`;
                 let yExpr = `${baseY}`;
                 let evalParam = '';
 
-                if (motion === 'scroll_left') {
-                    const totalDist = canvasW + ovW;
-                    const speedPx = Math.round(50 * speed);
-                    xExpr = `mod(${baseX}+${ovW}-t*${speedPx}+100000*${totalDist},${totalDist})-${ovW}`;
+                // Scrolling: off one side, back in from the other (mod over the frame plus the image).
+                // The big multiple keeps mod()'s argument positive however long the video is.
+                if (motion === 'scroll-left') {
+                    const dist = canvasW + ovW;
+                    xExpr = `mod(${baseX + ovW}-t*${vx}+${100000 * dist},${dist})-${ovW}`;
                     evalParam = ':eval=frame';
-                } else if (motion === 'scroll_right') {
-                    const totalDist = canvasW + ovW;
-                    const speedPx = Math.round(50 * speed);
-                    xExpr = `mod(${baseX}+t*${speedPx},${totalDist})-${ovW}`;
+                } else if (motion === 'scroll-right') {
+                    const dist = canvasW + ovW;
+                    xExpr = `mod(${baseX + ovW}+t*${vx},${dist})-${ovW}`;
+                    evalParam = ':eval=frame';
+                } else if (motion === 'scroll-up') {
+                    const dist = canvasH + ovH;
+                    yExpr = `mod(${baseY + ovH}-t*${vy}+${100000 * dist},${dist})-${ovH}`;
+                    evalParam = ':eval=frame';
+                } else if (motion === 'scroll-down') {
+                    const dist = canvasH + ovH;
+                    yExpr = `mod(${baseY + ovH}+t*${vy},${dist})-${ovH}`;
+                    evalParam = ':eval=frame';
+                } else if (motion === 'bounce-x' && canvasW > ovW) {
+                    // Left and right between the frame's edges (a triangle wave), going right first.
+                    const range = canvasW - ovW;
+                    const x0 = Math.min(range, Math.max(0, baseX));
+                    xExpr = `${range}-abs(mod(${x0}+t*${vx},${2 * range})-${range})`;
                     evalParam = ':eval=frame';
                 } else if (motion === 'bounce') {
                     xExpr = `${baseX}`;
@@ -1628,7 +1928,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                 }
 
                 const nextVideoTag = `ov_out_${ovIdx}`;
-                filterComplex.push(`[${currentVideoTag}][${ovProcTag}]overlay=x='${xExpr}':y='${yExpr}'${evalParam}:eof_action=repeat[${nextVideoTag}]`);
+                filterComplex.push(`[${currentVideoTag}][${ovProcTag}]overlay=x='${xExpr}':y='${yExpr}'${evalParam}:eof_action=repeat${overlayEnableOption(overlayTimeWindow(ov))}[${nextVideoTag}]`);
                 currentVideoTag = nextVideoTag;
             });
         }
@@ -1639,47 +1939,14 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                 const ovW = Math.max(2, Math.round((canvasW * (parseFloat(ov.w) || 20)) / 100 / 2) * 2);
                 const ovH = Math.max(2, Math.round((canvasH * (parseFloat(ov.h) || 20)) / 100 / 2) * 2);
 
-                let chromaFilter = '';
-                if (ov.chromaKey && ov.chromaKey.enabled) {
-                    // Goes straight into -filter_complex, so only a plain #RRGGBB is accepted.
-                    const rawColor = /^#?[0-9a-fA-F]{6}$/.test(String(ov.chromaKey.color || '').trim()) ? String(ov.chromaKey.color).trim() : '#00ff00';
-                    const hexColor = '0x' + rawColor.replace('#', '');
-                    const tolerance = parseFloat(ov.chromaKey.tolerance);
-                    const safeTol = Math.min(255, Math.max(0, isNaN(tolerance) ? 80 : tolerance));
-                    // FFmpeg chromakey similarity typically ranges 0.05 to 0.40
-                    const similarity = ((safeTol / 255) * 0.35 + 0.05).toFixed(3);
-
-                    const smooth = parseFloat(ov.chromaKey.smooth);
-                    const safeSmooth = Math.min(100, Math.max(0, isNaN(smooth) ? 20 : smooth));
-                    // FFmpeg chromakey blend typically ranges 0.01 to 0.16
-                    const blend = ((safeSmooth / 100) * 0.15 + 0.01).toFixed(3);
-
-                    // Despill filter for green or blue keys
-                    const rVal = parseInt(rawColor.slice(1, 3), 16) || 0;
-                    const gVal = parseInt(rawColor.slice(3, 5), 16) || 0;
-                    const bVal = parseInt(rawColor.slice(5, 7), 16) || 0;
-                    const rawSpill = parseFloat(ov.chromaKey.spill);
-                    const spillMix = (!isNaN(rawSpill) ? Math.min(1.0, Math.max(0, rawSpill / 100)) : 0.8).toFixed(2);
-
-                    let despillFilter = '';
-                    if ((gVal > rVal * 1.1 && gVal > bVal * 1.1) || (gVal >= 170 && rVal < 110 && bVal < 110)) {
-                        despillFilter = `,despill=type=green:mix=${spillMix}:expand=0`;
-                    } else if (bVal > rVal * 1.1 && bVal > gVal * 1.1) {
-                        despillFilter = `,despill=type=blue:mix=${spillMix}:expand=0`;
-                    }
-
-                    chromaFilter = `,chromakey=color=${hexColor}:similarity=${similarity}:blend=${blend}${despillFilter},format=rgba`;
-                }
+                const keyed = !!(ov.chromaKey && ov.chromaKey.enabled);
 
                 let radiusFilter = '';
-                const rPercent = parseFloat(ov.radius) || 0;
-                if (rPercent > 0) {
-                    const maxR = Math.min(ovW, ovH) / 2;
-                    const rPx = Math.min(maxR, (Math.min(ovW, ovH) * (rPercent / 100)));
-                    if (rPx >= 1) {
-                        const r = Math.round(rPx);
-                        radiusFilter = `,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(X,${r})*lt(Y,${r}),if(gt(hypot(${r}-X,${r}-Y),${r}),0,alpha(X,Y)),if(gt(X,${ovW}-${r})*lt(Y,${r}),if(gt(hypot(X-(${ovW}-${r}),${r}-Y),${r}),0,alpha(X,Y)),if(lt(X,${r})*gt(Y,${ovH}-${r}),if(gt(hypot(${r}-X,Y-(${ovH}-${r})),${r}),0,alpha(X,Y)),if(gt(X,${ovW}-${r})*gt(Y,${ovH}-${r}),if(gt(hypot(X-(${ovW}-${r}),Y-(${ovH}-${r})),${r}),0,alpha(X,Y)),alpha(X,Y)))))'`;
-                    }
+                // Video pixels, as the editor draws them (previewCanvasScale), up to a full round end.
+                const rPx = Math.min(Math.min(ovW, ovH) / 2, Math.max(0, parseFloat(ov.radius) || 0));
+                if (rPx >= 1) {
+                    const r = Math.round(rPx);
+                    radiusFilter = `,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(X,${r})*lt(Y,${r}),if(gt(hypot(${r}-X,${r}-Y),${r}),0,alpha(X,Y)),if(gt(X,${ovW}-${r})*lt(Y,${r}),if(gt(hypot(X-(${ovW}-${r}),${r}-Y),${r}),0,alpha(X,Y)),if(lt(X,${r})*gt(Y,${ovH}-${r}),if(gt(hypot(${r}-X,Y-(${ovH}-${r})),${r}),0,alpha(X,Y)),if(gt(X,${ovW}-${r})*gt(Y,${ovH}-${r}),if(gt(hypot(X-(${ovW}-${r}),Y-(${ovH}-${r})),${r}),0,alpha(X,Y)),alpha(X,Y)))))'`;
                 }
 
                 let alphaFilter = '';
@@ -1690,13 +1957,23 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                 }
 
                 const ovProcTag = `vov_proc_${ovIdx}`;
-                filterComplex.push(`[${ov.inputIndex}:v]scale=${ovW}:${ovH}:force_original_aspect_ratio=increase,crop=${ovW}:${ovH},format=rgba${chromaFilter}${radiusFilter}${alphaFilter}[${ovProcTag}]`);
+                // A video shown from a later second starts playing there (an animated banner from its first
+                // frame), not part-way through.
+                const win = overlayTimeWindow(ov);
+                const delay = win.start ? `,setpts=PTS-STARTPTS+${win.start.toFixed(3)}/TB` : '';
+                // Keyed at the video's own size, then fitted to the box, as the preview does.
+                let ovSource = `${ov.inputIndex}:v`;
+                if (keyed) {
+                    ovSource = `vov_keyed_${ovIdx}`;
+                    filterComplex.push(...chromaKeyFilters(`${ov.inputIndex}:v`, ovSource, ov.chromaKey, `ck${ovIdx}`));
+                }
+                filterComplex.push(`[${ovSource}]scale=${ovW}:${ovH}:force_original_aspect_ratio=increase,crop=${ovW}:${ovH},format=rgba${radiusFilter}${alphaFilter}${delay}[${ovProcTag}]`);
 
                 const baseX = Math.round((canvasW * (parseFloat(ov.x) || 0)) / 100);
                 const baseY = Math.round((canvasH * (parseFloat(ov.y) || 0)) / 100);
 
                 const nextVideoTag = `vov_out_${ovIdx}`;
-                filterComplex.push(`[${currentVideoTag}][${ovProcTag}]overlay=x=${baseX}:y=${baseY}:eof_action=repeat[${nextVideoTag}]`);
+                filterComplex.push(`[${currentVideoTag}][${ovProcTag}]overlay=x=${baseX}:y=${baseY}:eof_action=repeat${overlayEnableOption(win)}[${nextVideoTag}]`);
                 currentVideoTag = nextVideoTag;
             });
         }
@@ -1944,5 +2221,11 @@ module.exports = {
     detectAvailableEncoders,
     // Exposed for tests (tests/subtitle-layout.test.js).
     _buildSubtitleAss: buildSubtitleAss,
-    _resolveSubtitleFace: resolveSubtitleFace
+    _resolveSubtitleFace: resolveSubtitleFace,
+    _overlayTimeWindow: overlayTimeWindow,
+    _overlayEnableOption: overlayEnableOption,
+    _textMotionSegments: textMotionSegments,
+    _buildFreeTextAssFile: buildFreeTextAssFile,
+    _richTextToAss: richTextToAss,
+    _chromaKeyFilters: chromaKeyFilters
 };

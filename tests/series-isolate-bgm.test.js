@@ -151,7 +151,7 @@ test('the open part is isolated beside Transcribe once its subtitles are found',
   // A tab being isolated can still be transcribed (DAI skips busy tabs).
   assert.match(src, /isTabBusy: \(ref\) => !!\(ref && \(ref\.isTranscribing \|\| ref\.isGeneratingAudio \|\| ref\.isBatchTranscribing \|\| ref\.isFixingMissing\)\)/);
   // A pause or Stop ends it, so Continue isn't blocked by "another job is running".
-  assert.match(src, /stopSeriesBackgroundIsolate\(\);\r?\n\s+seriesRun = null;/);
+  assert.match(src, /stopSeriesBackgroundIsolate\(\);\r?\n(?:(?!\s+seriesRun = )[^\n]*\n){0,12}\s+seriesRun = null;/);
 });
 
 test('the note says how long the background isolation took (does it still hold the part up?)', async () => {

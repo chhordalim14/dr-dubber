@@ -43,6 +43,7 @@ function makeSeries({ parts = 3, outcome = () => 'done', renderMs = 10, dubMs = 
     const stoppedError = () => Object.assign(new Error('stopped'), { seriesStopped: true });
     const checkStop = () => { if (!seriesRun || seriesRun.stopped) throw stoppedError(); };
     const handsFree = () => true;
+    const workedText = () => 'in 1:00 of work'; // the series' working time (shown in the last toast)
     const nextPartIndex = () => plan.parts.findIndex((p) => p.status === 'joined');
     const joiningIndices = () => [];
     const partsToJoin = () => [];
@@ -219,7 +220,8 @@ describe('Dub Whole Series hands-free export', () => {
     assert.equal(plan.fullMerged, 'D:/out/Show_Dubbed_full.mp4');
     assert.ok(plan.parts.every((p) => !p.merged), 'no per-part videos');
     assert.deepEqual(env.saved.parts.map((p) => p.outputs.length), [3, 3, 3], "each part's videos kept in the plan (an app restart)");
-    assert.ok(env.toasts.some((t) => /All 3 parts are dubbed and exported, joined into one video: Show_Dubbed_full\.mp4 ✓/.test(t.m)));
+    assert.ok(env.toasts.some((t) => /All 3 parts are dubbed and exported, joined into one video: Show_Dubbed_full\.mp4 ✓ in 1:00 of work$/.test(t.m)));
+    // ^ how long the whole series took to make, in the last message
   });
 
   test('whole series with clips: each clip at the second its episode ends, counted over the whole series', async () => {
