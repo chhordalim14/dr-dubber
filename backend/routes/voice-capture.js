@@ -146,6 +146,39 @@ function refPieces(lines) {
     return pieces;
 }
 
+// The feelings Transcribe hears on a line (server.js TRANSCRIBE_EMOTIONS).
+const EMOTIONS = ['Neutral', 'Angry', 'Sad', 'Whisper', 'Excited', 'Royal', 'Romantic', 'Fear'];
+const CALM_MIN = 3;       // seconds of calm lines for the main clip to be cut from them alone
+const FEELING_MIN = 2.5;  // seconds of one feeling for that feeling to get a clip of its own
+const span = (pieces) => pieces.reduce((t, p) => t + p.end - p.start, 0);
+const emotionOf = (v) => EMOTIONS.find((e) => e.toLowerCase() === String(v || '').trim().toLowerCase()) || 'Neutral';
+
+// The clips to cut for one speaker, so each line is cloned from the actor in the same feeling:
+// a calm main clip (VoxCPM2 copies the feeling of its clip: one cut from shouting made every
+// line angry), and one clip per feeling they speak enough of. refLines are their clearest lines,
+// best first, each with its .emotion. `have` is what an earlier episode already gave this voice
+// ('Neutral' = a calm main clip, plus feelings), or null for a new speaker.
+// Returns [{ emotion: null for the main clip | 'Angry'..., calm, pieces }].
+function planClips(refLines, have) {
+    const plans = [];
+    const of = (e) => refLines.filter((l) => l.emotion === e);
+    if (!have || !have.has('Neutral')) {
+        const calm = refPieces(of('Neutral'));
+        if (span(calm) >= CALM_MIN) {
+            plans.push({ emotion: null, calm: true, pieces: calm });
+        } else if (!have) {
+            const any = refPieces(refLines); // hardly a calm word: their clearest lines, whatever the feeling
+            if (any.length) plans.push({ emotion: null, calm: false, pieces: any });
+        }
+    }
+    for (const e of EMOTIONS.slice(1)) {
+        if (have && have.has(e)) continue;
+        const pieces = refPieces(of(e));
+        if (span(pieces) >= FEELING_MIN) plans.push({ emotion: e, calm: false, pieces });
+    }
+    return plans;
+}
+
 module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobeBinary, audioRepair, trackProcess }) {
     const router = express.Router();
     const probeCache = new Map(); // file key -> Promise<{ duration, stream }>
@@ -326,8 +359,9 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
     }
 
     // Clone Voices from Video: groups the lines by who speaks them (the VoxCPM2 server's
-    // /api/speakers) and cuts a reference clip for every speaker not already known from an
-    // earlier episode. Lines: [{ id, start, end, gender }] in the movie's own time.
+    // /api/speakers) and cuts each speaker's clips (planClips: a calm one, and one per feeling)
+    // that an earlier episode has not given their voice yet.
+    // Lines: [{ id, start, end, gender, emotion }] in the movie's own time.
     router.post('/voice-capture/speakers', async (req, res) => {
         let sentFile = null;
         try {
@@ -338,6 +372,7 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
                     start: Number(l && l.start),
                     end: Number(l && l.end),
                     gender: /^(male|female)$/i.test(String(l && l.gender)) ? String(l.gender) : null,
+                    emotion: emotionOf(l && l.emotion),
                 }))
                 .filter((l) => Number.isFinite(l.start) && Number.isFinite(l.end) && l.end > l.start);
             if (!lines.length) return res.status(400).json({ success: false, error: 'There are no timed lines to listen to.' });
@@ -361,7 +396,16 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
             } finally {
                 fs.closeSync(fd);
             }
-            const payload = { lines: packed.sent, known: Array.isArray(body.known) ? body.known.slice(0, 1000) : [] };
+            const known = Array.isArray(body.known) ? body.known.slice(0, 1000) : [];
+            // The clips each earlier voice already has: only the feelings it lacks are cut.
+            const haveOf = new Map();
+            known.forEach((k) => {
+                if (!k || !k.id) return;
+                const have = haveOf.get(k.id) || new Set();
+                (Array.isArray(k.emotions) ? k.emotions : []).forEach((e) => have.add(emotionOf(e)));
+                haveOf.set(k.id, have);
+            });
+            const payload = { lines: packed.sent, known: known.map((k) => ({ id: k && k.id, gender: k && k.gender, embedding: k && k.embedding })) };
             if (local) {
                 // A local server reads the file itself instead of a JSON body hundreds of MB long.
                 sentFile = path.join(SEPARATED_DIR, `spk_lines_${crypto.randomUUID()}.wav`);
@@ -400,14 +444,17 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
                     seconds: s.seconds || 0,
                     embedding: Array.isArray(s.embedding) ? s.embedding : null,
                     known: s.known || null,
+                    emotionClips: {},
                 };
-                if (!sp.known) {
-                    const pieces = refPieces((s.refs || []).map((id) => byId.get(String(id))).filter(Boolean));
-                    if (pieces.length) {
-                        const name = freeName(dir, `${stem} - ${s.key}`);
-                        await cutReference({ resolved, hasCenter, map, pieces, out: path.join(dir, name) });
-                        Object.assign(sp, { filePath: path.join(dir, name), fileName: name, clipSeconds: +pieces.reduce((t, p) => t + p.end - p.start, 0).toFixed(1) });
-                    }
+                const refLines = (s.refs || []).map((id) => byId.get(String(id))).filter(Boolean);
+                const have = sp.known ? haveOf.get(sp.known) || new Set() : null;
+                for (const plan of planClips(refLines, have)) {
+                    const name = freeName(dir, `${stem} - ${s.key}${plan.emotion ? ` - ${plan.emotion}` : ''}`);
+                    const out = path.join(dir, name);
+                    await cutReference({ resolved, hasCenter, map, pieces: plan.pieces, out });
+                    const seconds = +span(plan.pieces).toFixed(1);
+                    if (plan.emotion) sp.emotionClips[plan.emotion] = { filePath: out, fileName: name, seconds };
+                    else Object.assign(sp, { filePath: out, fileName: name, clipSeconds: seconds, calm: plan.calm });
                 }
                 speakers.push(sp);
             }
@@ -430,3 +477,4 @@ module.exports.layoutHasCenter = layoutHasCenter;
 module.exports.eqFilters = eqFilters;
 module.exports.linesWav = linesWav;
 module.exports.refPieces = refPieces;
+module.exports.planClips = planClips;

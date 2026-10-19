@@ -1,7 +1,9 @@
 // Clone Voices from Video (VoxCPM2): every speaker in the movie gets a voice cloned from
 // the movie itself, and each line is voiced by its own speaker.
 //
-// Before a tab is voiced (generateStandardAudioForProject calls voxSpeakers.ensure), the
+// As soon as a tab's lines land (autoAssignVoxProfiles calls voxSpeakers.soon, once the tab is
+// done transcribing and the VoxCPM2 server is running), and again before a tab is voiced
+// (generateStandardAudioForProject calls voxSpeakers.ensure), the
 // lines no one has looked at yet are sent to /api/voice-capture/speakers: the VoxCPM2
 // server groups them by voice (backend/python/voxcpm2_speakers.py) and the backend cuts a
 // reference clip of each new speaker. Each speaker becomes a voice profile in the tab's
@@ -11,7 +13,9 @@
 //
 // A line remembers the speaker it was given (sub.voxSpeaker); a line whose voice was
 // changed by hand since keeps that voice when speakers are found again. The Speakers window
-// lists this tab's speakers: rename, set the gender, play the clip, or merge one into another.
+// lists this tab's speakers: rename, set the gender, play their clips, or merge one into another.
+// Each speaker has a calm clip and one per feeling they speak enough of, so an angry line is
+// cloned from the actor's own angry voice (see FEELING_ICONS below).
 (function () {
   const API = "http://localhost:3001";
   const PRINTS_KEY = "voxSpeakerPrints";
@@ -42,6 +46,16 @@
       return {};
     }
   }
+  // Feelings: besides a calm main clip (audioPath, calmClip), a speaker keeps a clip of each
+  // feeling they speak enough of (emotionClips.Angry = { path, name, seconds }), cut from their
+  // own lines in that feeling. A line is cloned from the clip of its feeling (executeVoxCpm2Synthesis).
+  const FEELING_ICONS = { Sad: "😢", Angry: "😠", Whisper: "🤫", Excited: "😄", Royal: "👑", Romantic: "💕", Fear: "😨" };
+  // The clips a voice has, as the backend counts them ("Neutral" = a calm main clip).
+  const clipsHave = (p) => [...(p.calmClip ? ["Neutral"] : []), ...Object.keys(p.emotionClips || {})];
+  const toClips = (m) => Object.fromEntries(Object.entries(m || {}).map(([e, c]) => [e, { path: c.filePath, name: c.fileName, seconds: c.seconds }]));
+  // Its main clip is still the one found for it (profiles from before autoClip: the backend's name).
+  const ownClip = (p) => (p.autoClip ? p.audioPath === p.autoClip : / - S\d+( \(\d+\))?\.wav$/i.test(p.audioName || ""));
+
   // A profile's voice prints (several once another speaker was merged into it).
   const printsOf = (pr, id) => (Array.isArray(pr[id]) ? pr[id] : []).filter((e) => Array.isArray(e) && e.length === 192);
 
@@ -124,7 +138,43 @@
     return job;
   }
 
-  async function run(proj, { auto = false } = {}) {
+  // ── found on their own as soon as lines land ───────────────────────────
+  // autoAssignVoxProfiles calls soon() after every Transcribe, Import SRT and Fix Missing. The
+  // search waits until the tab is done, runs one tab at a time, and stays quiet when the
+  // VoxCPM2 server is not running: Generate asks for the speakers again before voicing.
+  const waiting = new Map(); // tab -> timer
+  let queued = Promise.resolve(); // one search at a time
+  const busy = (p) => !!(p.isTranscribing || p.isBatchTranscribing || p.isFixingMissing);
+
+  function soon(proj) {
+    if (!proj || !isOn(load())) return;
+    clearTimeout(waiting.get(proj));
+    waiting.set(proj, setTimeout(() => {
+      waiting.delete(proj);
+      queued = queued.then(() => background(proj)).catch(() => {});
+    }, 2000));
+  }
+
+  async function background(proj) {
+    if (!tabs().includes(proj) || !isOn(load()) || jobs.has(proj) || proj.isGeneratingAudio) return;
+    if (!sourcePath(proj) || !pending(proj).length) return;
+    if (busy(proj)) return soon(proj); // still transcribing: once it is done
+    if (!(await serverUp(load().serverUrl))) return;
+    await find(proj, { auto: true, quiet: true });
+  }
+
+  // The server is running: any answer counts, model loaded, loading or failed (the speaker
+  // search does not need the model).
+  async function serverUp(url) {
+    try {
+      await fetch(String(url || "http://localhost:8808/").trim(), { signal: AbortSignal.timeout(3000) });
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  async function run(proj, { auto = false, quiet = false } = {}) {
     const filePath = sourcePath(proj);
     const tabName = (proj.tabTitle || proj.file?.name || proj.name || "this tab").replace(/\.[^/.]+$/, "");
     if (!filePath) {
@@ -134,7 +184,7 @@
     let data = load();
     const lines = liveSubs(proj)
       .filter(speakable)
-      .map((s) => ({ id: s.id, start: parseFloat(s.textStart), end: parseFloat(s.textEnd), gender: lineGender(s, data) }))
+      .map((s) => ({ id: s.id, start: parseFloat(s.textStart), end: parseFloat(s.textEnd), gender: lineGender(s, data), emotion: s.emotion || "Neutral" }))
       .filter((l) => l.end > l.start);
     if (!lines.length) return { ok: false };
 
@@ -145,7 +195,7 @@
     // A voice merged into another keeps its print there, so it is not found as a new speaker.
     const known = (data.profiles || [])
       .filter((p) => inGroup.has(p.id) && p.source === "speakers" && p.audioPath)
-      .flatMap((p) => printsOf(pr, p.id).map((embedding) => ({ id: p.id, gender: p.gender, embedding })));
+      .flatMap((p) => printsOf(pr, p.id).map((embedding) => ({ id: p.id, gender: p.gender, embedding, emotions: clipsHave(p) })));
 
     toast(`Finding who speaks in "${tabName}"…`, "info");
     const res = await fetch(`${API}/api/voice-capture/speakers`, {
@@ -162,6 +212,10 @@
     });
     const out = await res.json().catch(() => ({}));
     if (!out.success) {
+      if (quiet) {
+        console.warn("[Speakers] Will try again at Generate:", out.error);
+        return { ok: false, error: out.error };
+      }
       toast(`${out.error || "Could not find the speakers."}${auto ? " Voicing with the voices you picked instead." : ""}`, auto ? "warning" : "error");
       return { ok: false, error: out.error };
     }
@@ -174,11 +228,21 @@
     let number = (data.profiles || []).filter((p) => (group.profileIds || []).includes(p.id) && p.source === "speakers").length;
     const profileOf = new Map(); // speaker key -> profile id
     let made = 0;
+    let feelings = 0;
     const knownIds = new Set();
     for (const s of out.speakers || []) {
-      if (s.known && (data.profiles || []).some((p) => p.id === s.known)) {
-        profileOf.set(s.key, s.known);
-        knownIds.add(s.known);
+      const known = s.known && (data.profiles || []).find((p) => p.id === s.known);
+      if (known) {
+        // What this episode adds to a voice from an earlier one: a calm clip if it had none (and
+        // its clip is still the one found for it, not one picked by hand), and new feelings.
+        if (s.filePath && s.calm && !known.calmClip && ownClip(known)) {
+          Object.assign(known, { audioPath: s.filePath, audioName: s.fileName, autoClip: s.filePath, calmClip: true });
+        }
+        const added = toClips(s.emotionClips);
+        feelings += Object.keys(added).length;
+        if (Object.keys(added).length) known.emotionClips = { ...added, ...(known.emotionClips || {}) };
+        profileOf.set(s.key, known.id);
+        knownIds.add(known.id);
         continue;
       }
       if (!s.filePath) continue;
@@ -192,10 +256,14 @@
         instruction: "",
         audioPath: s.filePath,
         audioName: s.fileName,
+        autoClip: s.filePath,
+        calmClip: !!s.calm,
+        emotionClips: toClips(s.emotionClips),
         createdAt: Date.now(),
         source: "speakers",
         isNew: true,
       };
+      feelings += Object.keys(profile.emotionClips).length;
       data.profiles = [...(data.profiles || []), profile];
       group.profileIds = [...new Set([...(group.profileIds || []), profile.id])];
       if (Array.isArray(s.embedding)) pr2[profile.id] = [s.embedding];
@@ -248,6 +316,7 @@
     const bits = [];
     if (made) bits.push(`${made} new voice${made === 1 ? "" : "s"}`);
     if (matched) bits.push(`${matched} already in ${group.name}`);
+    if (feelings) bits.push(`${feelings} feeling${feelings === 1 ? "" : "s"} cloned`);
     toast(`Found ${total} speaker${total === 1 ? "" : "s"} in "${tabName}"${bits.length ? ` (${bits.join(", ")})` : ""}.${changedVoiced ? ` ${changedVoiced} voiced line(s) now have another voice: generate them again to hear it.` : ""}`, "success");
     if (dlg.open && dlg.proj === proj) renderDialog();
     return { ok: true, speakers: total, made, matched };
@@ -350,6 +419,7 @@
         .map(({ p, n }) => {
           const male = (p.gender || "").toLowerCase() !== "female";
           const others = rows.filter((r) => r.p.id !== p.id);
+          const feels = Object.keys(FEELING_ICONS).filter((e) => p.emotionClips?.[e]?.path);
           return `<div class="vsp-row" data-pid="${esc(p.id)}">
             <span class="vox-group-dot vgm-big-dot" style="background:${esc(p.color || "#6366f1")}"></span>
             <input class="vgm-input font-khmer" data-act="label" value="${esc(p.label || "")}" maxlength="40" spellcheck="false" aria-label="Speaker name" />
@@ -358,9 +428,12 @@
               <button type="button" data-act="gender" data-g="Female" aria-pressed="${!male}" title="Female">♀</button>
             </div>
             <span class="vsp-n">${n} line${n === 1 ? "" : "s"}</span>
-            <button type="button" class="vg-ib" data-act="play" ${p.audioPath ? "" : "disabled"} title="Play the voice cloned from the video">
+            <button type="button" class="vg-ib" data-act="play" ${p.audioPath ? "" : "disabled"} title="${p.calmClip ? "Play their calm voice, cloned from the video" : "Play the voice cloned from the video"}">
               <i data-lucide="${dlg.playing === p.id ? "square" : "circle-play"}" class="w-3.5 h-3.5"></i>
             </button>
+            <div class="vsp-feels" role="group" aria-label="Feelings cloned from the video">${feels
+              .map((e) => `<button type="button" class="vsp-feel${dlg.playing === `${p.id}|${e}` ? " is-playing" : ""}" data-act="play" data-emo="${esc(e)}" title="Play their ${esc(e.toLowerCase())} voice from the video: their ${esc(e.toLowerCase())} lines are cloned from it">${FEELING_ICONS[e] || "🎭"}</button>`)
+              .join("")}</div>
             ${others.length ? `<select class="vsp-merge" data-act="merge" title="Same person as another speaker? Merge their lines into that speaker">
               <option value="">Merge into…</option>
               ${others.map((r) => `<option value="${esc(r.p.id)}">${esc(r.p.label || r.p.id)}</option>`).join("")}
@@ -389,7 +462,7 @@
       mutateProfile(pid, (p) => (p.gender = btn.dataset.g));
       renderDialog();
     } else if (btn.dataset.act === "play") {
-      play(pid);
+      play(pid, btn.dataset.emo || null);
     }
   }
 
@@ -421,6 +494,11 @@
       });
     tabs().forEach((p) => move(p.subtitles));
     if (typeof subtitles !== "undefined") move(subtitles);
+    // The same actor: feelings only the merged voice had, and its calm clip if this one has none.
+    into.emotionClips = { ...(from.emotionClips || {}), ...(into.emotionClips || {}) };
+    if (from.calmClip && !into.calmClip && ownClip(into)) {
+      Object.assign(into, { audioPath: from.audioPath, audioName: from.audioName, autoClip: from.audioPath, calmClip: true });
+    }
     data.profiles = data.profiles.filter((p) => p.id !== fromId);
     if (typeof voxGroupsPrune === "function") voxGroupsPrune(data);
     save(data);
@@ -441,14 +519,17 @@
     dlg.playing = null;
   }
 
-  async function play(pid) {
+  // A speaker's main clip, or the clip of one feeling.
+  async function play(pid, emotion = null) {
+    const key = emotion ? `${pid}|${emotion}` : pid;
     const was = dlg.playing;
     stopPlaying();
-    if (was === pid) return renderDialog();
+    if (was === key) return renderDialog();
     const p = (load().profiles || []).find((x) => x.id === pid);
-    if (!p?.audioPath || !window.electronAPI?.readFileAsBase64) return;
+    const file = emotion ? p?.emotionClips?.[emotion]?.path : p?.audioPath;
+    if (!file || !window.electronAPI?.readFileAsBase64) return;
     try {
-      const r = await window.electronAPI.readFileAsBase64(p.audioPath);
+      const r = await window.electronAPI.readFileAsBase64(file);
       if (!r?.success || !r.base64) throw new Error(r?.error || "The clip could not be read.");
       const bytes = Uint8Array.from(atob(r.base64), (c) => c.charCodeAt(0));
       const audio = new Audio(URL.createObjectURL(new Blob([bytes], { type: r.mime || "audio/wav" })));
@@ -459,7 +540,7 @@
         }
       };
       dlg.audio = audio;
-      dlg.playing = pid;
+      dlg.playing = key;
       renderDialog();
       await audio.play();
     } catch (e) {
@@ -497,11 +578,14 @@
       data.cloneFromVideo = !data.cloneFromVideo;
       save(data);
       syncSwitch();
-      if (data.cloneFromVideo) toast("Each speaker's voice will be cloned from the video before the lines are voiced.", "success");
+      if (data.cloneFromVideo) {
+        toast("Each speaker's voice will be cloned from the video before the lines are voiced.", "success");
+        tabs().forEach(soon); // tabs already transcribed: find their speakers now
+      }
     });
     syncSwitch();
   });
   document.addEventListener("voxcpm2-settings-changed", syncSwitch);
 
-  window.voxSpeakers = { ensure, find, open, seriesOf };
+  window.voxSpeakers = { ensure, find, open, soon, seriesOf };
 })();

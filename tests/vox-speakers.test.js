@@ -52,6 +52,45 @@ test('refPieces: the clearest lines in order until about 6 s, never more than 10
     assert.deepEqual(refPieces([at(0, 0.5), at(1, 1.7)]), [], 'lines too short to hear a voice in');
 });
 
+test('planClips: a calm main clip, and a clip of each feeling the actor speaks enough of', () => {
+    const { planClips } = require('../backend/routes/voice-capture');
+    const at = (start, len, emotion) => ({ start, end: start + len, emotion });
+    const lines = [
+        at(0, 2.5, 'Angry'), at(10, 2, 'Neutral'), at(20, 2, 'Neutral'), at(30, 1.5, 'Angry'),
+        at(40, 1.2, 'Sad'), at(50, 3, 'Whisper'), at(60, 0.6, 'Fear'),
+    ];
+    const plans = planClips(lines, null);
+    const main = plans.find((p) => p.emotion === null);
+    assert.equal(main.calm, true, 'cut from the calm lines only');
+    assert.deepEqual(main.pieces.map((p) => Math.round(p.start)), [10, 20]);
+    assert.deepEqual(plans.filter((p) => p.emotion).map((p) => p.emotion), ['Angry', 'Whisper'], 'Sad (1.1 s) and Fear (too short) get none');
+    assert.deepEqual(plans.find((p) => p.emotion === 'Angry').pieces.map((p) => Math.round(p.start)), [0, 30]);
+
+    // hardly a calm word: the main clip is their clearest lines, whatever the feeling
+    const loud = planClips([at(0, 3, 'Angry'), at(5, 3, 'Angry'), at(9, 1, 'Neutral')], null);
+    assert.equal(loud.find((p) => p.emotion === null).calm, false);
+    assert.ok(loud.some((p) => p.emotion === 'Angry'));
+
+    // a voice from an earlier episode: only what it lacks
+    assert.deepEqual(planClips(lines, new Set(['Neutral', 'Angry'])).map((p) => p.emotion), ['Whisper']);
+    const noCalm = planClips(lines, new Set(['Angry']));
+    assert.deepEqual(noCalm.map((p) => [p.emotion, p.calm]), [[null, true], ['Whisper', false]], 'gets the calm clip it had none of');
+    assert.deepEqual(planClips([at(0, 3, 'Angry')], new Set()).map((p) => p.emotion), ['Angry'], 'never a non-calm main clip for a known voice');
+});
+
+test('a line is cloned from its speaker\'s clip of its feeling', () => {
+    const main = read('frontend', 'js', 'studio-main.js');
+    const fn = main.slice(main.indexOf('async function executeVoxCpm2Synthesis('));
+    const swap = fn.indexOf('profile = { ...profile, audioPath: feeling.path');
+    assert.ok(swap > 0 && swap < fn.indexOf('let refBase64'), 'before the clip is read');
+    assert.match(fn.slice(0, swap), /profile\?\.emotionClips/);
+    assert.doesNotMatch(fn.slice(0, swap), /checkPathExists\?*\.?\(/, 'app:checkPathExists makes a folder of a missing path');
+    assert.match(fn, /refBase64 = rRes\.base64 \|\| rRes\.data/, 'app:readFileAsBase64 answers base64');
+    const page = read('frontend', 'js', 'vox-speakers.js');
+    assert.match(page, /emotion: s\.emotion \|\| "Neutral"/, 'each line\'s feeling goes to the backend');
+    assert.match(page, /emotions: clipsHave\(p\)/, 'with what each earlier voice already has');
+});
+
 function loadSpeakersModule() {
     const window = {};
     const document = { addEventListener() {}, getElementById: () => null };
@@ -99,6 +138,17 @@ test('voicing a tab finds its speakers first, and the server speaks /api/speaker
     assert.ok(py.indexOf('route == "/api/speakers"') < py.indexOf('Loading the model back after another GPU job'), 'answers while the model loads');
     assert.match(py, /import voxcpm2_speakers/);
     assert.match(read('backend', 'python', 'voxcpm2_speakers.py'), /def find_speakers\(wav, lines, known=None/);
+});
+
+test('lines landing in a tab start the search on their own; a translation keeps their speakers', () => {
+    const main = read('frontend', 'js', 'studio-main.js');
+    const fn = main.slice(main.indexOf('function autoAssignVoxProfiles('), main.indexOf('// --- EXPORT SRT ---'));
+    assert.match(fn, /window\.voxSpeakers\?\.soon\(proj \|\| projects\[activeProjectIndex\]\)/);
+    assert.ok(fn.indexOf('sub.gender = sub.voxSpeaker') < fn.indexOf('sub.gender = firstMale.id'), 'a found speaker before the first Male voice');
+    const page = read('frontend', 'js', 'vox-speakers.js');
+    assert.match(page, /function soon\(proj\)/);
+    assert.match(page, /if \(busy\(proj\)\) return soon\(proj\)/, 'waits until the tab is done transcribing');
+    assert.match(page, /if \(!\(await serverUp\(load\(\)\.serverUrl\)\)\) return;/, 'quiet when the server is not running');
 });
 
 test('voxcpm2_speakers.py ships beside app.py: on install and on every Start Server', () => {

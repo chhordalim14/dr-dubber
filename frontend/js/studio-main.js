@@ -12848,14 +12848,22 @@
       const pool = voxCmp2ScopedProfiles(voxData, proj);
       const firstMale = pool.find((p) => p.gender === "Male");
       const firstFemale = pool.find((p) => p.gender === "Female");
+      const live = new Set(voxData.profiles.map((p) => p.id));
 
       subs.forEach((sub) => {
-        if (sub.gender === "Male" && firstMale) {
+        // A translation sets the voice back to plain Male/Female: a line whose speaker was
+        // found (js/vox-speakers.js) gets that speaker's voice again.
+        if ((sub.gender === "Male" || sub.gender === "Female") && sub.voxSpeaker && live.has(sub.voxSpeaker)) {
+          sub.gender = sub.voxSpeaker;
+        } else if (sub.gender === "Male" && firstMale) {
           sub.gender = firstMale.id;
         } else if (sub.gender === "Female" && firstFemale) {
           sub.gender = firstFemale.id;
         }
       });
+      // New lines have landed (every Transcribe, Import SRT, Fix Missing path comes here):
+      // Clone Voices from Video finds their speakers in the background.
+      window.voxSpeakers?.soon(proj || projects[activeProjectIndex]);
     }
 
     // --- EXPORT SRT ---
@@ -21452,12 +21460,24 @@
       const srvUrl = (serverUrl || "http://127.0.0.1:8808").trim();
       const isRemote = srvUrl && !srvUrl.includes("localhost") && !srvUrl.includes("127.0.0.1");
 
+      // Clone Voices from Video (js/vox-speakers.js): a speaker found in the video has a clip of
+      // each feeling they speak enough of, so an angry line is cloned from the actor's own angry
+      // lines. Without one (or if its file is gone), the calm clip and the written emotion.
+      const feelingKey = Object.keys(profile?.emotionClips || {}).find((k) => k.toLowerCase() === String(emotion || "").toLowerCase());
+      const feeling = feelingKey && profile.emotionClips[feelingKey];
+      if (feeling?.path) {
+        // Read-only check (app:checkPathExists would make a folder of a missing path).
+        const found = window.electronAPI?.readFileAsBase64 ? await window.electronAPI.readFileAsBase64(feeling.path).catch(() => null) : { success: true };
+        if (found?.success) profile = { ...profile, audioPath: feeling.path, audioName: feeling.name };
+      }
+
       let refBase64 = null;
       if (profile && profile.audioPath && window.electronAPI && typeof window.electronAPI.readFileAsBase64 === "function") {
         try {
           const rRes = await window.electronAPI.readFileAsBase64(profile.audioPath);
-          if (rRes && rRes.success && rRes.data) {
-            refBase64 = rRes.data;
+          // app:readFileAsBase64 answers { success, base64, mime }.
+          if (rRes && rRes.success && (rRes.base64 || rRes.data)) {
+            refBase64 = rRes.base64 || rRes.data;
           }
         } catch (_) {}
       }

@@ -397,6 +397,30 @@
   color: var(--text-muted);
   white-space: nowrap;
 }
+.vsp-feels {
+  /* the same width on every row, so the columns line up (three feelings a row) */
+  width: 78px;
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+.vsp-feel {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1;
+  border: 1px solid var(--border-light);
+  background: var(--bg-base);
+}
+.vsp-feel:hover {
+  border-color: var(--vox-line);
+}
+.vsp-feel.is-playing {
+  border-color: var(--vox);
+  background: var(--vox-soft);
+}
 .vsp-merge {
   max-width: 130px;
   height: 30px;

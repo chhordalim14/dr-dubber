@@ -32,7 +32,9 @@ MIN_SPEAKER_SECONDS = 2.5
 # A speaker matches a voice from an earlier episode at this likeness (stricter than within one
 # episode: a wrong match gives a character another actor's voice for the rest of the series).
 KNOWN_SPEAKER = 0.70
-MAX_REFS = 8
+# Clearest lines handed back per speaker: the app picks a calm clip and one clip per feeling
+# (angry, sad...) from them, so it needs more than the very best few.
+MAX_REFS = 80
 
 _model = {"m": None}
 _lock = threading.Lock()
@@ -301,7 +303,8 @@ def find_speakers(wav, lines, known=None, log=print):
 
     Returns {"speakers": [{"key", "gender", "lines", "refs", "seconds", "embedding", "known"}]}:
     lines are the line ids that speaker says, refs their clearest lines (best first) to cut
-    a reference clip from, known the id of the earlier voice they match (or None).
+    reference clips from (a calm one, and one per feeling the app finds among them), known
+    the id of the earlier voice they match (or None).
     """
     import time
 
