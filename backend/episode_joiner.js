@@ -10,6 +10,8 @@
 //           (codec, size, frame rate, SPS/PPS). Otherwise each episode is first encoded
 //           with one fixed set of settings, then those are joined. (Copy-joining
 //           mismatched headers corrupts playback, exactly like mismatched audio.)
+//           Clips put in (ads): only the clips and the files they cut into are encoded,
+//           to the rest's size and frame rate; the rest is still copied.
 // Audio and video of a part are built at the same time, and converted episodes are encoded
 // three at a time on a hardware encoder.
 const path = require('path');
@@ -226,36 +228,65 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
         if (code !== 0) throw new Error(`audio encoding failed: ${lastLine(encTail)}`);
     }
 
+    // The video settings most of a part's own files have (by length; never a clip's, so a few
+    // long ads can't make the episodes be encoded to the ads' size), when its whole files can be
+    // copied around the encoded pieces: H.264 4:2:0, which the encoder makes too. Null if none.
+    function copyBase(eps) {
+        const length = new Map();
+        for (const e of eps) {
+            if (e.clip || !e.video || e.cut || e.video.codec !== 'h264' || e.video.pixFmt !== 'yuv420p' || e.video.width % 2 || e.video.height % 2) continue;
+            const g = length.get(e.video.signature) || { video: e.video, sec: 0 };
+            g.sec += e.duration;
+            length.set(e.video.signature, g);
+        }
+        const best = [...length.values()].sort((a, b) => b.sec - a.sec)[0];
+        return best && best.video.fps && best.video.fps !== '0/0' ? best.video : null;
+    }
+
     async function buildPartVideo(job, part, workDir, outPath, progress) {
         const eps = part.episodes;
         // An episode with no picture (an audio file in a video series) is filled with black
         // frames, which means every episode is converted to the same settings.
         const withVideo = eps.filter(e => e.video);
         const sameVideo = withVideo.length === eps.length && eps.every(e => e.video.signature === eps[0].video.signature);
-        const copyable = !part.convert && sameVideo && ['h264', 'hevc'].includes(eps[0].video.codec);
+        // A file a clip cuts into is only exact when encoded (a copy cuts at keyframes).
+        const copyable = !eps.some(e => e.cut) && sameVideo && ['h264', 'hevc'].includes(eps[0].video.codec);
         let sources = eps.map(e => e.path);
+        // Clips put in (sponsors' ads) with the rest one video: only the clips and the files a
+        // clip cuts into are encoded, to that video's size and frame rate, and the rest copied -
+        // not hours of a whole series encoded again for a few minutes of ads. The concat demuxer
+        // carries each piece's SPS/PPS in-band (auto_convert), so the encoded pieces play right
+        // between copied ones (checked on NVENC tabs: no decode errors, every frame in place).
+        const base = !copyable && part.inserts.length ? copyBase(eps) : null;
         if (!copyable) {
-            // Encode every episode with identical settings (size/fps of the first episode),
-            // so the pieces can then be joined without re-encoding.
-            job.videoMode = 'converted';
-            // Target the most common size/fps in the part (ties -> the larger), so one odd
-            // low-res episode doesn't downscale the whole part.
-            const mostCommon = (key) => {
-                const counts = new Map();
-                withVideo.forEach(e => counts.set(key(e), (counts.get(key(e)) || 0) + 1));
-                return [...counts].sort((a, b) => b[1] - a[1] || String(b[0]).localeCompare(String(a[0]), undefined, { numeric: true }))[0][0];
-            };
-            const [w0, h0] = mostCommon(e => `${String(e.video.width).padStart(5, '0')}x${String(e.video.height).padStart(5, '0')}`).split('x').map(Number);
-            const W = w0 % 2 ? w0 + 1 : w0;
-            const H = h0 % 2 ? h0 + 1 : h0;
-            const fpsCommon = mostCommon(e => e.video.fps || '30');
-            const fps = fpsCommon && fpsCommon !== '0/0' ? fpsCommon : '30';
-            const enc = await videoEncoderArgs(Math.max(...withVideo.map(e => e.video.bitRate || 0)));
+            const keep = (e) => base && e.video && !e.cut && e.video.signature === base.signature;
+            const toEncode = eps.map((e, i) => (keep(e) ? -1 : i)).filter(i => i >= 0);
+            job.videoMode = base ? 'mixed' : 'converted';
+            let W, H, fps;
+            if (base) {
+                [W, H, fps] = [base.width, base.height, base.fps];
+            } else {
+                // Encode every episode with identical settings, so the pieces can then be joined
+                // without re-encoding. Target the most common size/fps in the part (ties -> the
+                // larger), so one odd low-res episode doesn't downscale the whole part.
+                const mostCommon = (key) => {
+                    const counts = new Map();
+                    withVideo.forEach(e => counts.set(key(e), (counts.get(key(e)) || 0) + 1));
+                    return [...counts].sort((a, b) => b[1] - a[1] || String(b[0]).localeCompare(String(a[0]), undefined, { numeric: true }))[0][0];
+                };
+                const [w0, h0] = mostCommon(e => `${String(e.video.width).padStart(5, '0')}x${String(e.video.height).padStart(5, '0')}`).split('x').map(Number);
+                W = w0 % 2 ? w0 + 1 : w0;
+                H = h0 % 2 ? h0 + 1 : h0;
+                const fpsCommon = mostCommon(e => e.video.fps || '30');
+                fps = fpsCommon && fpsCommon !== '0/0' ? fpsCommon : '30';
+            }
+            const enc = await videoEncoderArgs(base ? base.bitRate : Math.max(...withVideo.map(e => e.video.bitRate || 0)));
             // A hardware encoder is held back by feeding it frames, not by its own speed: three
             // episodes at once is ~1.7x faster (measured on Intel QSV). libx264 already uses every
             // core, so running two at once is slower. (GPU decoding was tried: slower than CPU.)
             const lanes = enc[1] === 'libx264' ? 1 : 3;
-            sources = eps.map((_, i) => path.join(workDir, `v${String(i).padStart(4, '0')}.mp4`));
+            eps.forEach((e, i) => { if (keep(e)) progress(e.duration); }); // copied: no work to wait for
+            toEncode.forEach(i => { sources[i] = path.join(workDir, `v${String(i).padStart(4, '0')}.mp4`); });
             const encodeEpisode = async (i) => {
                 let done = 0;
                 const input = eps[i].video
@@ -270,10 +301,10 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
                 progress(Math.max(0, eps[i].duration - done));
             };
             let next = 0;
-            await Promise.all(Array.from({ length: Math.min(lanes, eps.length) }, async () => {
-                while (next < eps.length) {
+            await Promise.all(Array.from({ length: Math.min(lanes, toEncode.length) }, async () => {
+                while (next < toEncode.length) {
                     if (aborted(job)) throw new Error('cancelled');
-                    await encodeEpisode(next++);
+                    await encodeEpisode(toEncode[next++]);
                 }
             }));
         } else {
@@ -334,7 +365,7 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
                     (part.unreadable = part.unreadable || []).push(`${path.basename(file)} (${info.error || 'no audio or video'})`);
                     continue;
                 }
-                if (clip !== undefined) part.clips[clip] = { path: file, name: path.basename(file), episode: null, ...d };
+                if (clip !== undefined) part.clips[clip] = { path: file, name: path.basename(file), episode: null, clip: true, ...d };
                 else part.found[i] = { path: file, name: path.basename(file), episode: episodeNumber(path.basename(file)), ...d };
             }
         }));
@@ -345,10 +376,7 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
             // Joined without it, the part would be missing an episode and still say "done".
             else if (part.unreadable && !job.cancelled) Object.assign(part, { status: 'error', error: `${part.unreadable.length} episode(s) could not be read: ${part.unreadable.slice(0, 3).join(', ')}` });
             delete part.unreadable;
-            if (part.inserts.length && part.status !== 'error') {
-                part.episodes = withInserts(part.episodes, part.inserts, part.clips);
-                part.convert = true; // cut inside a file: only exact when encoded
-            }
+            if (part.inserts.length && part.status !== 'error') part.episodes = withInserts(part.episodes, part.inserts, part.clips);
             delete part.clips;
             // No episode has video: the part is audio only, saved as .m4a.
             part.audioOnly = part.episodes.length > 0 && part.episodes.every(e => !e.video);
@@ -370,12 +398,12 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
             while (k < order.length && order[k].at < end - 0.1) {
                 const cut = order[k].at - t;
                 if (cut > start + 0.1) {
-                    out.push({ ...ep, start, duration: cut - start });
+                    out.push({ ...ep, start, duration: cut - start, cut: true });
                     start = cut;
                 }
                 out.push(order[k++].clip);
             }
-            out.push(start ? { ...ep, start, duration: ep.duration - start } : ep);
+            out.push(start ? { ...ep, start, duration: ep.duration - start, cut: true } : ep);
             t = end;
         }
         while (k < order.length) out.push(order[k++].clip);

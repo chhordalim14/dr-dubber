@@ -8415,9 +8415,15 @@
           if (!wrapper.isConnected || !chromaSettings[overlayId]?.enabled) return;
           if (state.workerBusy) return;
 
-          const vw = vid.videoWidth || wrapper.offsetWidth;
-          const vh = vid.videoHeight || wrapper.offsetHeight;
-          if (!vw || !vh) return;
+          const nw = vid.videoWidth || wrapper.offsetWidth;
+          const nh = vid.videoHeight || wrapper.offsetHeight;
+          if (!nw || !nh) return;
+          // Keyed at the size it is shown (cover, in device pixels), never more than the video's own:
+          // a 3626 x 1080 banner keyed at full size 20 times a second kept a core busy beside exports.
+          const dpr = window.devicePixelRatio || 1;
+          const fit = Math.min(1, Math.max((wrapper.offsetWidth * dpr) / nw, (wrapper.offsetHeight * dpr) / nh)) || 1;
+          const vw = Math.max(1, Math.round(nw * fit));
+          const vh = Math.max(1, Math.round(nh * fit));
 
           if (vw !== state.cachedW || vh !== state.cachedH) {
             liveCanvas.width = vw;
@@ -8426,7 +8432,7 @@
             state.cachedH = vh;
           }
 
-          createImageBitmap(vid)
+          createImageBitmap(vid, { resizeWidth: vw, resizeHeight: vh })
             .then((bitmap) => {
               const w = getIdleWorker();
               w.busy = true;
@@ -16776,7 +16782,7 @@
           const row = document.createElement("div");
           row.className = "flex items-center gap-3 px-3 py-2 rounded-lg bg-[var(--bg-base)] border border-[var(--border-color)] text-xs";
           const pct = st ? st.percent || 0 : 0;
-          const state = !st ? "" : st.status === "done" ? `<span class="text-emerald-400">✓ done${st.videoMode === "converted" ? " (video converted)" : ""}</span>` : st.status === "error" ? `<span class="text-red-400" title="${esc(st.error)}">failed</span>` : st.status === "running" ? `<span class="text-sky-400">${pct}%</span>` : st.status === "cancelled" ? `<span class="text-[var(--text-muted)]">stopped</span>` : `<span class="text-[var(--text-muted)]">waiting</span>`;
+          const state = !st ? "" : st.status === "done" ? `<span class="text-emerald-400">✓ done${st.videoMode === "converted" ? " (video converted)" : st.videoMode === "mixed" ? " (clips converted)" : ""}</span>` : st.status === "error" ? `<span class="text-red-400" title="${esc(st.error)}">failed</span>` : st.status === "running" ? `<span class="text-sky-400">${pct}%</span>` : st.status === "cancelled" ? `<span class="text-[var(--text-muted)]">stopped</span>` : `<span class="text-[var(--text-muted)]">waiting</span>`;
           row.innerHTML = `<span class="font-semibold w-14 shrink-0">Part ${i + 1}</span>
             <span class="truncate flex-1">${epLabel(p[0])} – ${epLabel(p[p.length - 1])} · ${p.length} episodes</span>
             <span class="font-mono text-[var(--text-secondary)] shrink-0">${fmtDur(dur)}</span>

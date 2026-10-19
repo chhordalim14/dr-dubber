@@ -92,6 +92,9 @@ function createTextDetectService({
         });
         job.child = child;
         trackProcess(child);
+        // Below normal: an export running beside it gets the CPU first (four detections for the
+        // next part left a render 1.5 of 16 cores). The FFmpeg it starts inherits the priority.
+        try { if (child.pid) os.setPriority(child.pid, os.constants.priority.PRIORITY_BELOW_NORMAL); } catch (e) { }
         const dec = new StringDecoder('utf8');
         let buf = '', last = null, stderr = '';
         child.stdout.on('data', (d) => {

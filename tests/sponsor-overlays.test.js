@@ -126,7 +126,39 @@ describe('overlay shown for a while', () => {
     assert.match(service, /const trim = win\.end !== null \? `trim=duration=\$\{\(win\.end - win\.start\)\.toFixed\(3\)\},` : '';/);
     assert.match(service, /const eofAction = trim \? 'pass' : 'repeat';/);
     assert.match(service, /ovFps\[ovIdx\] > outFps \+ 0\.01 \? `fps=/);
-    // Fitted to the box first, then keyed.
-    assert.match(service, /filterComplex\.push\(\.\.\.chromaKeyFilters\(fitTag, keyedTag,/);
+    // Keyed in the render (no prepared copy): brought down and cut before keying, fewer frames to key;
+    // the prepared copy, timed like the original, gets the same in the fit.
+    assert.match(service, /filterComplex\.push\(`\[\$\{ovSource\}\]\$\{shown\.slice\(0, -1\)\}\[vov_shown_\$\{ovIdx\}\]`\);/);
+    assert.match(service, /const fitted = `\[\$\{ovSource\}\]\$\{shown\}scale=/);
+  });
+
+  test('a video overlay with an end time is read only for its window (not keyed to the end of the episode)', () => {
+    const service = fs.readFileSync(path.join(__dirname, '..', 'backend', 'render_service.js'), 'utf8').replace(/\r\n/g, '\n');
+    const inputs = service.slice(service.indexOf('// Overlay video inputs'), service.indexOf('// 3. Build Filter Graph'));
+    assert.match(inputs, /if \(win\.end !== null\) args\.push\('-t', \(win\.end - win\.start\)\.toFixed\(3\)\);\n\s+args\.push\('-i', p\);/);
+  });
+});
+
+// Rounded corners of a video overlay: a mask drawn once and multiplied into each frame's alpha
+// must cut exactly what the per-pixel geq (still used for images) cuts, on every frame.
+const binDir = path.join(__dirname, '..', 'backend', 'bin');
+const ffmpeg = ['ffmpeg.exe', 'ffmpeg'].map((n) => path.join(binDir, n)).find((p) => fs.existsSync(p));
+describe('rounded corners of a video overlay', { skip: !ffmpeg && 'no ffmpeg in backend/bin' }, () => {
+  const { execFileSync } = require('node:child_process');
+  const W = 96, H = 54, R = 20, FRAMES = 6;
+  // A moving picture whose alpha varies too (a keyed banner's), so both the colour and the alpha are checked.
+  const source = `testsrc2=s=${W}x${H}:r=10,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='mod(X*3+Y*5+N*40,256)'`;
+  const run = (graph) => execFileSync(ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', source, '-filter_complex', graph, '-map', '[out]',
+    '-frames:v', String(FRAMES), '-f', 'rawvideo', '-pix_fmt', 'rgba', '-'], { maxBuffer: 1 << 24 });
+
+  test('same pixels as the geq, every frame', () => {
+    const r = R, w = W, h = H;
+    const geq = `[0:v]format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(X,${r})*lt(Y,${r}),if(gt(hypot(${r}-X,${r}-Y),${r}),0,alpha(X,Y)),if(gt(X,${w}-${r})*lt(Y,${r}),if(gt(hypot(X-(${w}-${r}),${r}-Y),${r}),0,alpha(X,Y)),if(lt(X,${r})*gt(Y,${h}-${r}),if(gt(hypot(${r}-X,Y-(${h}-${r})),${r}),0,alpha(X,Y)),if(gt(X,${w}-${r})*gt(Y,${h}-${r}),if(gt(hypot(X-(${w}-${r}),Y-(${h}-${r})),${r}),0,alpha(X,Y)),alpha(X,Y)))))'[out]`;
+    const masked = ['[0:v]format=rgba[src]', ...rs._roundedCornerFilters('src', 'rnd', W, H, R, 'rc0'), '[rnd]format=rgba[out]'].join(';');
+    const a = run(geq), b = run(masked);
+    assert.equal(a.length, W * H * 4 * FRAMES);
+    assert.equal(b.length, a.length, 'one output frame per input frame');
+    assert.ok(a.equals(b), 'pixel for pixel');
+    assert.equal(b[3], 0, 'the top-left corner is cut');
   });
 });

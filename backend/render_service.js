@@ -6,6 +6,8 @@ const fs = require('fs');
 const os = require('os');
 const { getFFmpegBinary, getFFprobeBinary } = require('./ffmpeg_env');
 const { buildTextBlurFilters, probeDisplaySize } = require('./lib/text-blur');
+const crypto = require('crypto');
+const { SEPARATED_DIR } = require('./lib/paths');
 
 let activeRenderProcess = null;
 
@@ -1173,6 +1175,97 @@ function chromaKeyFilters(src, out, ck, tag) {
     return [`[${src}]format=rgba,geq=r='${R}':g='${G}':b='${B}':a='${alpha}'[${out}]`];
 }
 
+// A keyed video overlay from [src] to [out]: keyed, then fitted to its w x h box (rgba). A banner
+// far bigger than its box (a 3626x1080 strip shown 756 wide) is first brought down to twice the
+// box, never up: at twice the box the keyed edge stays as fine as the preview's, which keys at
+// the video's own size and shrinks after.
+function keyedOverlayFilters(src, out, w, h, ck) {
+    const fit = `min(1,max(${2 * w}/iw,${2 * h}/ih))`;
+    return [
+        `[${src}]scale=w='trunc(iw*${fit}/2)*2':h='trunc(ih*${fit}/2)*2'[${out}_pre]`,
+        ...chromaKeyFilters(`${out}_pre`, `${out}_key`, ck, `${out}_ck`),
+        `[${out}_key]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},format=rgba[${out}]`,
+    ];
+}
+
+// Keyed video overlays are keyed and fitted once and kept (lossless FFV1 with alpha, at the box's
+// size): every tab of a series shows the same sponsor banner, and keying it in each render meant
+// decoding and keying every frame of it again - a 3626x1080 banner took longer than the episode's
+// own picture. The copy loops and is timed like the original. Bump the version when
+// keyedOverlayFilters or chromaKeyFilters changes what they make.
+const KEYED_OVERLAY_VERSION = 1;
+const KEYED_OVERLAY_DIR = path.join(SEPARATED_DIR, 'keyed-overlays');
+const KEYED_OVERLAY_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000; // not used for this long: removed
+
+function keyedOverlayCachePath(srcPath, w, h, ck) {
+    const st = fs.statSync(srcPath);
+    const keying = ['color', 'tolerance', 'smooth', 'spill'].map((k) => String(ck && ck[k] !== undefined ? ck[k] : '')).join('|');
+    const id = crypto.createHash('sha1')
+        .update(`${KEYED_OVERLAY_VERSION}|${path.resolve(srcPath)}|${st.size}|${st.mtimeMs}|${w}x${h}|${keying}`)
+        .digest('hex').slice(0, 20);
+    return path.join(KEYED_OVERLAY_DIR, `${id}.nut`); // NUT: the frames' exact times (Matroska rounds to ms)
+}
+
+function pruneKeyedOverlays() {
+    let names = [];
+    try { names = fs.readdirSync(KEYED_OVERLAY_DIR); } catch (e) { return; }
+    for (const name of names) {
+        const p = path.join(KEYED_OVERLAY_DIR, name);
+        try { if (Date.now() - fs.statSync(p).mtimeMs > KEYED_OVERLAY_MAX_AGE_MS) fs.unlinkSync(p); } catch (e) { }
+    }
+}
+
+async function preparedKeyedOverlay(srcPath, w, h, ck) {
+    const out = keyedOverlayCachePath(srcPath, w, h, ck);
+    if (fs.existsSync(out)) {
+        try { const now = new Date(); fs.utimesSync(out, now, now); } catch (e) { } // in use: kept
+        return out;
+    }
+    fs.mkdirSync(KEYED_OVERLAY_DIR, { recursive: true });
+    pruneKeyedOverlays();
+    // Each render its own temp file: two tabs exporting at once may both make it.
+    const tmp = `${out}.${process.pid}.${Date.now()}.tmp.nut`;
+    try {
+        await new Promise((resolve, reject) => {
+            const ff = spawn(getFFmpegBinary(), ['-hide_banner', '-nostdin', '-y', '-i', srcPath,
+                '-filter_complex', keyedOverlayFilters('0:v', 'k', w, h, ck).join(';'), '-map', '[k]', '-an', '-sn',
+                '-c:v', 'ffv1', '-level', '3', '-slices', '4', '-pix_fmt', 'bgra', tmp], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+            let tail = '';
+            ff.stderr.on('data', (d) => { tail = (tail + d).slice(-2000); });
+            ff.on('error', reject);
+            ff.on('close', (code) => code === 0 ? resolve() : reject(new Error(`FFmpeg ${code}: ${tail.trim().split('\n').pop() || ''}`)));
+        });
+        try {
+            fs.renameSync(tmp, out);
+        } catch (e) {
+            if (!fs.existsSync(out)) throw e; // the other render's copy is the same
+        }
+        return out;
+    } finally {
+        try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch (e) { }
+    }
+}
+
+// Rounded corners for a video overlay ([src] rgba, w x h, radius r) to [out]: the corners cut
+// off the alpha exactly as the image overlays' geq does (0 outside the radius, the alpha kept
+// inside), but the mask is drawn once - one geq frame - and multiplied into each frame's alpha
+// (x 255 / 255 keeps it exact). A geq over every pixel of every frame doubled a banner's cost.
+function roundedCornerFilters(src, out, w, h, r, tag) {
+    const outside = `if(lt(X,${r})*lt(Y,${r}),gt(hypot(${r}-X,${r}-Y),${r}),` +
+        `if(gt(X,${w}-${r})*lt(Y,${r}),gt(hypot(X-(${w}-${r}),${r}-Y),${r}),` +
+        `if(lt(X,${r})*gt(Y,${h}-${r}),gt(hypot(${r}-X,Y-(${h}-${r})),${r}),` +
+        `if(gt(X,${w}-${r})*gt(Y,${h}-${r}),gt(hypot(X-(${w}-${r}),Y-(${h}-${r})),${r}),0))))`;
+    const t = (n) => `${tag}_${n}`;
+    return [
+        `color=c=white:s=${w}x${h}:r=1:d=1,format=gray,geq=lum='if(${outside},0,255)'[${t('mask')}]`,
+        `[${src}]split[${t('c')}][${t('a0')}]`,
+        `[${t('a0')}]alphaextract[${t('a')}]`,
+        // repeatlast: the one mask frame serves every frame of the overlay.
+        `[${t('a')}][${t('mask')}]blend=all_mode=multiply:shortest=0:repeatlast=1[${t('a2')}]`,
+        `[${t('c')}][${t('a2')}]alphamerge[${out}]`,
+    ];
+}
+
 function resolveTargetDimensions(options) {
     const { customAspectRatio, aspectRatio, resolution, bgBlur, blurStrength } = options;
 
@@ -1606,12 +1699,17 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             if (ov.loop !== false) {
                 args.push('-stream_loop', '-1');
             }
+            // Shown until an end time: read no further. Every frame after it would still be keyed
+            // and scaled only to be hidden by enable= (a short banner cost most of a long episode).
+            const win = overlayTimeWindow(ov);
+            if (win.end !== null) args.push('-t', (win.end - win.start).toFixed(3));
             args.push('-i', p);
             const inputIndex = nextInputIndex++;
             return {
                 ...ov,
                 path: p,
-                inputIndex
+                inputIndex,
+                pathArg: args.length - 1, // a keyed one is swapped for its prepared copy (preparedKeyedOverlay)
             };
         });
 
@@ -1967,19 +2065,14 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         if (validVideoOverlays.length > 0) {
             const outFps = videoPath ? await getVideoFrameRate(videoPath) : null;
             const ovFps = await Promise.all(validVideoOverlays.map(ov => getVideoFrameRate(ov.path)));
-            validVideoOverlays.forEach((ov, ovIdx) => {
+            for (const [ovIdx, ov] of validVideoOverlays.entries()) {
                 const ovW = Math.max(2, Math.round((canvasW * (parseFloat(ov.w) || 20)) / 100 / 2) * 2);
                 const ovH = Math.max(2, Math.round((canvasH * (parseFloat(ov.h) || 20)) / 100 / 2) * 2);
 
                 const keyed = !!(ov.chromaKey && ov.chromaKey.enabled);
 
-                let radiusFilter = '';
                 // Video pixels, as the editor draws them (previewCanvasScale), up to a full round end.
                 const rPx = Math.min(Math.min(ovW, ovH) / 2, Math.max(0, parseFloat(ov.radius) || 0));
-                if (rPx >= 1) {
-                    const r = Math.round(rPx);
-                    radiusFilter = `,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(X,${r})*lt(Y,${r}),if(gt(hypot(${r}-X,${r}-Y),${r}),0,alpha(X,Y)),if(gt(X,${ovW}-${r})*lt(Y,${r}),if(gt(hypot(X-(${ovW}-${r}),${r}-Y),${r}),0,alpha(X,Y)),if(lt(X,${r})*gt(Y,${ovH}-${r}),if(gt(hypot(${r}-X,Y-(${ovH}-${r})),${r}),0,alpha(X,Y)),if(gt(X,${ovW}-${r})*gt(Y,${ovH}-${r}),if(gt(hypot(X-(${ovW}-${r}),Y-(${ovH}-${r})),${r}),0,alpha(X,Y)),alpha(X,Y)))))'`;
-                }
 
                 let alphaFilter = '';
                 const rawOpacity = ov.opacity !== undefined ? parseFloat(ov.opacity) : 100;
@@ -2000,15 +2093,37 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                 // before it is keyed.
                 const fpsCap = outFps && ovFps[ovIdx] && ovFps[ovIdx] > outFps + 0.01 ? `fps=${Number(outFps.toFixed(6))},` : '';
                 const trim = win.end !== null ? `trim=duration=${(win.end - win.start).toFixed(3)},` : '';
-                const fit = `${fpsCap}${trim}scale=${ovW}:${ovH}:force_original_aspect_ratio=increase,crop=${ovW}:${ovH}`;
+                let shown = `${fpsCap}${trim}`; // still to apply to the source below
+                let ovSource = `${ov.inputIndex}:v`;
                 if (keyed) {
-                    const fitTag = `vov_fit_${ovIdx}`;
-                    const keyedTag = `vov_keyed_${ovIdx}`;
-                    filterComplex.push(`[${ov.inputIndex}:v]${fit}[${fitTag}]`);
-                    filterComplex.push(...chromaKeyFilters(fitTag, keyedTag, ov.chromaKey, `ck${ovIdx}`));
-                    filterComplex.push(`[${keyedTag}]format=rgba${radiusFilter}${alphaFilter}${delay}[${ovProcTag}]`);
+                    // Keyed and fitted once, then the render only reads the small prepared copy (timed
+                    // like the original, so the frame rate and the while above still apply to it);
+                    // keyed here as before when that could not be made.
+                    let prepared = null;
+                    try {
+                        prepared = await preparedKeyedOverlay(ov.path, ovW, ovH, ov.chromaKey);
+                    } catch (e) {
+                        console.warn(`[Render] Keying "${path.basename(ov.path)}" in the render instead: ${e.message}`);
+                    }
+                    if (prepared) {
+                        args[ov.pathArg] = prepared;
+                    } else {
+                        if (shown) { // fewer frames to key
+                            filterComplex.push(`[${ovSource}]${shown.slice(0, -1)}[vov_shown_${ovIdx}]`);
+                            ovSource = `vov_shown_${ovIdx}`;
+                            shown = '';
+                        }
+                        filterComplex.push(...keyedOverlayFilters(ovSource, `vov_keyed_${ovIdx}`, ovW, ovH, ov.chromaKey));
+                        ovSource = `vov_keyed_${ovIdx}`;
+                    }
+                }
+                const fitted = `[${ovSource}]${shown}scale=${ovW}:${ovH}:force_original_aspect_ratio=increase,crop=${ovW}:${ovH},format=rgba`;
+                if (rPx >= 1) {
+                    filterComplex.push(`${fitted}[vov_fit_${ovIdx}]`,
+                        ...roundedCornerFilters(`vov_fit_${ovIdx}`, `vov_round_${ovIdx}`, ovW, ovH, Math.round(rPx), `rc${ovIdx}`),
+                        `[vov_round_${ovIdx}]format=rgba${alphaFilter}${delay}[${ovProcTag}]`);
                 } else {
-                    filterComplex.push(`[${ov.inputIndex}:v]${fit},format=rgba${radiusFilter}${alphaFilter}${delay}[${ovProcTag}]`);
+                    filterComplex.push(`${fitted}${alphaFilter}${delay}[${ovProcTag}]`);
                 }
 
                 const baseX = Math.round((canvasW * (parseFloat(ov.x) || 0)) / 100);
@@ -2019,7 +2134,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                 const nextVideoTag = `vov_out_${ovIdx}`;
                 filterComplex.push(`[${currentVideoTag}][${ovProcTag}]overlay=x=${baseX}:y=${baseY}:eof_action=${eofAction}${overlayEnableOption(win)}[${nextVideoTag}]`);
                 currentVideoTag = nextVideoTag;
-            });
+            }
         }
 
         // Subtitles burning or soft muxing
@@ -2268,6 +2383,9 @@ module.exports = {
     _resolveSubtitleFace: resolveSubtitleFace,
     _overlayTimeWindow: overlayTimeWindow,
     _overlayEnableOption: overlayEnableOption,
+    _roundedCornerFilters: roundedCornerFilters,
+    _keyedOverlayFilters: keyedOverlayFilters,
+    _preparedKeyedOverlay: preparedKeyedOverlay,
     _textMotionSegments: textMotionSegments,
     _buildFreeTextAssFile: buildFreeTextAssFile,
     _richTextToAss: richTextToAss,

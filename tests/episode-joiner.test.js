@@ -119,9 +119,14 @@ describe('episode joiner', { skip }, () => {
         const inserts = [{ at: 0, path: clip }, { at: 3, path: clip }, { at: 4, path: clip }];
         const st = await join([{ files, inserts }], [7], 'Clips');
         assert.equal(st.parts[0].status, 'done', st.parts[0].error);
-        assert.equal(st.parts[0].videoMode, 'converted', 'cut inside a file: encoded, not copied');
+        assert.equal(st.parts[0].videoMode, 'mixed', 'E01 copied; the clips and E02 (cut) encoded');
         const d = duration(st.parts[0].outPath);
         assert.ok(Math.abs(d - 7) < 0.25, `4s of episodes + 3 one-second clips, got ${d}`);
+        // Copied and encoded pieces play as one stream: every frame decodes, none missing.
+        const decoded = execFileSync(FF, ['-v', 'error', '-i', st.parts[0].outPath, '-map', '0:v:0', '-f', 'null', '-'], { stdio: ['ignore', 'pipe', 'pipe'] });
+        assert.equal(String(decoded).trim(), '');
+        const frames = parseInt(execFileSync(FP, ['-v', 'error', '-count_frames', '-select_streams', 'v', '-show_entries', 'stream=nb_read_frames', '-of', 'csv=p=0', st.parts[0].outPath]).toString(), 10);
+        assert.equal(frames, 7 * 25, 'at the episodes\' 25 fps, the 30 fps clip converted');
         // clip | E01 | E02 0-1s | clip | E02 1-2s | clip
         assert.deepEqual(fs.readFileSync(path.join(out, 'Clips_part07_episodes.txt'), 'utf8').trim().split('\n').map((l) => l.split(' ')[1]),
             ['clip.mp4', 'EP1', 'EP2', 'clip.mp4', 'EP2', 'clip.mp4']);
