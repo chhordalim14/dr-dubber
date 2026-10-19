@@ -10,6 +10,12 @@ uses (backend/server.js /api/generate-voxcmp2 and the page's direct call):
                        "reference_audio_base64", "reference_audio", "cfg_value"}
                       -> {"success": true, "audio_base64": <wav>, "duration": s,
                           "sample_rate": hz}
+  POST /api/speakers  {"audio_path" | "audio_base64": 16 kHz mono wav of the lines,
+                       "lines": [{"id", "start", "end", "gender"}],
+                       "known": [{"id", "gender", "embedding"}]}
+                      -> {"success": true, "speakers": [...]} (voxcpm2_speakers.py: who
+                         speaks each line, for Clone Voices from Video; works while the
+                         model is still loading)
 
 Only listens on 127.0.0.1. Writes only temp files for the reference clip (and its
 cleaned copy) and each voice's anchor line (voice_anchors/ beside this file); the
@@ -35,9 +41,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 MODEL_ID = os.environ.get("VOXCPM_MODEL", "openbmb/VoxCPM2")
 DEFAULT_STEPS = int(os.environ.get("VOXCPM_STEPS", "10"))
 MAX_BODY = 64 * 1024 * 1024  # a reference clip is a few hundred KB
+MAX_SPEAKERS_BODY = 512 * 1024 * 1024  # a long movie's lines, sent by a remote app as base64
 
 state = {"status": "loading", "error": None, "device": None, "model": None, "sr": 48000}
 gen_lock = threading.Lock()  # one generation at a time: the model is not re-entrant
+speakers_lock = threading.Lock()  # one speaker search at a time (CPU; beside generation)
 use_lock = threading.Lock()  # held for a whole line, so the model is never released mid-line
 load_lock = threading.Lock()
 
@@ -552,6 +560,39 @@ def synthesize(payload):
                 pass
 
 
+def find_speakers(payload):
+    """Who speaks each line (voxcpm2_speakers.py), from the lines' audio the app sends."""
+    import numpy as np
+    import soundfile as sf
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:  # copied beside this file; python -I leaves this folder off the path
+        sys.path.insert(0, here)
+    import voxcpm2_speakers
+
+    src = payload.get("audio_path")
+    if src:
+        src = str(src)
+        if not src.lower().endswith(".wav") or not os.path.isfile(src):
+            raise ValueError("The lines' audio file was not found.")
+    elif payload.get("audio_base64"):
+        src = io.BytesIO(base64.b64decode(payload["audio_base64"]))
+    else:
+        raise ValueError("No audio was sent.")
+    wav, sr = sf.read(src, dtype="float32", always_2d=True)
+    wav = wav.mean(axis=1)
+    if sr != voxcpm2_speakers.SR:
+        import librosa
+
+        wav = librosa.resample(wav, orig_sr=sr, target_sr=voxcpm2_speakers.SR).astype(np.float32)
+    lines = payload.get("lines") or []
+    if not isinstance(lines, list):
+        raise ValueError("lines must be a list.")
+    known = payload.get("known") or []
+    with speakers_lock:
+        return voxcpm2_speakers.find_speakers(wav, lines, known=known if isinstance(known, list) else [], log=log)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "DRDubberVoxCPM2/1.0"
 
@@ -592,6 +633,17 @@ class Handler(BaseHTTPRequestHandler):
                 released = release_model() if state["device"] == "cuda" else False
                 return self._json(200, {"success": True, "released": released, "device": state["device"]})
             except Exception as e:  # noqa: BLE001
+                return self._json(500, {"success": False, "error": f"{type(e).__name__}: {e}"})
+        if route == "/api/speakers":
+            # Its own small model on the CPU: no need to wait for VoxCPM2 to load.
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                if n <= 0 or n > MAX_SPEAKERS_BODY:
+                    return self._json(413, {"success": False, "error": "Request too large."})
+                payload = json.loads(self.rfile.read(n).decode("utf-8"))
+                return self._json(200, {"success": True, **find_speakers(payload)})
+            except Exception as e:  # noqa: BLE001
+                log("Finding the speakers failed:\n" + traceback.format_exc())
                 return self._json(500, {"success": False, "error": f"{type(e).__name__}: {e}"})
         if route not in ("/api/generate", "/generate"):
             return self._json(404, {"success": False, "error": "Not found"})

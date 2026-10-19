@@ -4,7 +4,10 @@
 //                               page decodes to draw the wave, check and preview
 //   POST /voice-capture/save    the picked 3-7 s, cleaned / EQ'd / levelled,
 //                               written as a wav into the captures folder
-// Both read the original file (never the preview proxy) and the same audio track
+//   POST /voice-capture/speakers  Clone Voices from Video: who speaks each line
+//                               (asked of the VoxCPM2 server), and a reference clip
+//                               of each new speaker cut into the captures folder
+// All read the original file (never the preview proxy) and the same audio track
 // the preview plays.
 const express = require('express');
 const fs = require('fs');
@@ -13,6 +16,7 @@ const crypto = require('crypto');
 const { spawn, execFile } = require('child_process');
 const { resolveLocalFilePath, STORAGE_BASE, SEPARATED_DIR } = require('../lib/paths');
 const { isNetworkPath, safeOutputFileName } = require('../lib/security');
+const { secureFetch } = require('../lib/secure-fetch');
 
 const DEFAULT_CAPTURE_DIR = path.join(STORAGE_BASE, 'VoiceCaptures');
 const WINDOW_RATE = 22050;     // enough for a wave, checks and a clear preview
@@ -57,6 +61,89 @@ function eqFilters(eq) {
         if (type === 'highshelf') return `highshelf=f=${f}:g=${g}:t=q:w=${q}`;
         return `equalizer=f=${f}:t=q:w=${q}:g=${g}`;
     }).filter(Boolean);
+}
+
+// The folder captures go to: the one picked in Settings, else the default.
+function captureDir(outDir) {
+    let dir = DEFAULT_CAPTURE_DIR;
+    const want = typeof outDir === 'string' ? outDir.trim() : '';
+    if (want) {
+        // A full local path only: on Windows "\folder" is "the current
+        // drive's root", which is never what the folder picker returns.
+        const full = process.platform === 'win32' ? /^[a-zA-Z]:[\\/]/.test(want) : path.isAbsolute(want);
+        if (isNetworkPath(want) || !full) {
+            throw Object.assign(new Error('Captures can only be saved to a folder on this PC.'), { status: 400 });
+        }
+        dir = want;
+    }
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+}
+
+// "<label>.wav", or "<label> (2).wav"... when that name is taken.
+function freeName(dir, label) {
+    let name = safeOutputFileName(`${String(label || '').trim() || 'Voice'}.wav`, ['.wav'], 'Voice.wav');
+    const stem = name.slice(0, -4);
+    for (let i = 2; fs.existsSync(path.join(dir, name)); i++) name = `${stem} (${i}).wav`;
+    return name;
+}
+
+// ── Clone Voices from Video: who speaks each line ────────────────────────
+const SPEAKER_RATE = 16000;     // what the speaker model listens at
+const SPEAKER_MAX_LINE = 15;    // seconds of one line sent for its voice print
+const SPEAKER_GAP = 0.3;        // silence between lines in what is sent
+const REF_TARGET = 6;           // seconds of a speaker's voice to clone from...
+const REF_MAX = 10;             // ...and at most (VoxCPM2 cuts longer clips to 12 s)
+const REF_PIECES = 4;           // lines joined into one clip at most
+const REF_TRIM = 0.04;          // trimmed off each end of a line: no breath of the line before
+
+// The lines' audio back to back (16 kHz mono wav), and each line's place in it.
+// The movie is raw s16le at SPEAKER_RATE, `size` bytes long; read(a, b) gives bytes a..b of it
+// (a 2-hour movie is 230 MB: only the lines are read).
+function linesWav(read, size, lines) {
+    const bps = SPEAKER_RATE * 2;
+    const gap = Buffer.alloc(Math.round(SPEAKER_GAP * SPEAKER_RATE) * 2);
+    const parts = [];
+    const sent = [];
+    let at = 0;
+    for (const l of lines) {
+        const a = Math.max(0, Math.floor(l.start * SPEAKER_RATE) * 2);
+        const b = Math.min(size, Math.floor(Math.min(l.end, l.start + SPEAKER_MAX_LINE) * SPEAKER_RATE) * 2);
+        if (!(b > a)) continue;
+        parts.push(read(a, b), gap);
+        sent.push({ id: l.id, start: +(at / bps).toFixed(3), end: +((at + b - a) / bps).toFixed(3), gender: l.gender });
+        at += b - a + gap.length;
+    }
+    const data = Buffer.concat(parts);
+    const head = Buffer.alloc(44);
+    head.write('RIFF', 0);
+    head.writeUInt32LE(36 + data.length, 4);
+    head.write('WAVEfmt ', 8);
+    head.writeUInt32LE(16, 16);
+    head.writeUInt16LE(1, 20);          // PCM
+    head.writeUInt16LE(1, 22);          // mono
+    head.writeUInt32LE(SPEAKER_RATE, 24);
+    head.writeUInt32LE(bps, 28);
+    head.writeUInt16LE(2, 32);
+    head.writeUInt16LE(16, 34);
+    head.write('data', 36);
+    head.writeUInt32LE(data.length, 40);
+    return { wav: Buffer.concat([head, data]), sent };
+}
+
+// A speaker's clearest lines (best first), joined until there is enough voice to clone from.
+function refPieces(lines) {
+    const pieces = [];
+    let total = 0;
+    for (const l of lines) {
+        const a = l.start + REF_TRIM;
+        const b = Math.min(l.end - REF_TRIM, a + REF_MAX - total);
+        if (!(b - a >= 0.8)) continue;
+        pieces.push({ start: a, end: b });
+        total += b - a;
+        if (total >= REF_TARGET || total >= REF_MAX - 0.8 || pieces.length >= REF_PIECES) break;
+    }
+    return pieces;
 }
 
 module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobeBinary, audioRepair, trackProcess }) {
@@ -166,22 +253,8 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
             const dur = Math.min(MAX_CLIP, end - start);
             if (!(dur >= 0.5)) return res.json({ success: false, error: 'Pick at least half a second of speech.' });
 
-            let dir = DEFAULT_CAPTURE_DIR;
-            const want = typeof body.outDir === 'string' ? body.outDir.trim() : '';
-            if (want) {
-                // A full local path only: on Windows "\folder" is "the current
-                // drive's root", which is never what the folder picker returns.
-                const full = process.platform === 'win32' ? /^[a-zA-Z]:[\\/]/.test(want) : path.isAbsolute(want);
-                if (isNetworkPath(want) || !full) {
-                    return res.status(400).json({ success: false, error: 'Captures can only be saved to a folder on this PC.' });
-                }
-                dir = want;
-            }
-            fs.mkdirSync(dir, { recursive: true });
-
-            let name = safeOutputFileName(`${String(body.name || '').trim() || 'Voice'}.wav`, ['.wav'], 'Voice.wav');
-            const stem = name.slice(0, -4);
-            for (let i = 2; fs.existsSync(path.join(dir, name)); i++) name = `${stem} (${i}).wav`;
+            const dir = captureDir(body.outDir);
+            const name = freeName(dir, body.name);
             const out = path.join(dir, name);
 
             const fade = Math.min(0.02, dur / 10).toFixed(3);
@@ -208,6 +281,144 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
         }
     });
 
+    // The movie's audio as raw 16 kHz mono s16le (the dialogue channel of a 5.1 track: less
+    // music under the voices), cached beside the other separated audio.
+    async function dialoguePcm(resolved, hasCenter, map) {
+        const st = fs.statSync(resolved);
+        const id = crypto.createHash('sha1').update(`${resolved}|${st.size}|${st.mtimeMs}|${map}|${hasCenter}`).digest('hex').slice(0, 16);
+        const out = path.join(SEPARATED_DIR, `spk_${id}.pcm`);
+        if (!fs.existsSync(out)) {
+            fs.mkdirSync(SEPARATED_DIR, { recursive: true });
+            const tmp = `${out}.${process.pid}.tmp`;
+            try {
+                await runFfmpeg(['-hide_banner', '-nostdin', '-y', '-i', resolved, ...(map ? ['-map', map] : []), '-vn',
+                    ...(hasCenter ? ['-af', 'pan=mono|c0=FC'] : []),
+                    '-ac', '1', '-ar', String(SPEAKER_RATE), '-f', 's16le', '-c:a', 'pcm_s16le', tmp]);
+                fs.renameSync(tmp, out);
+            } finally {
+                try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch (e) { }
+            }
+        }
+        return out;
+    }
+
+    // One speaker's reference clip: their clearest lines cut from the original file, joined
+    // with a short pause, cleaned and levelled like a capture.
+    async function cutReference({ resolved, hasCenter, map, pieces, out }) {
+        const args = ['-hide_banner', '-nostdin', '-y'];
+        pieces.forEach((p) => args.push('-ss', p.start.toFixed(3), '-t', (p.end - p.start).toFixed(3), '-i', resolved));
+        const stream = map ? map.split(':')[1] : 'a:0';
+        const clean = cleanFilters({ center: true, hasCenter, denoise: false });
+        const chains = pieces.map((p, i) => {
+            const fade = Math.min(0.02, (p.end - p.start) / 10).toFixed(3);
+            return `[${i}:${stream}]${[...clean, 'aformat=channel_layouts=mono', `afade=t=in:st=0:d=${fade}`,
+                `afade=t=out:st=${Math.max(0, p.end - p.start - Number(fade)).toFixed(3)}:d=${fade}`,
+                ...(i < pieces.length - 1 ? ['apad=pad_dur=0.15'] : [])].join(',')}[p${i}]`;
+        });
+        const graph = `${chains.join(';')};${pieces.map((p, i) => `[p${i}]`).join('')}concat=n=${pieces.length}:v=0:a=1,loudnorm=I=-18:TP=-2:LRA=11[out]`;
+        const tmp = path.join(path.dirname(out), `.${path.basename(out)}.${process.pid}.tmp.wav`);
+        try {
+            await runFfmpeg([...args, '-filter_complex', graph, '-map', '[out]', '-ac', '1', '-ar', String(SAVE_RATE), '-c:a', 'pcm_s16le', tmp]);
+            fs.renameSync(tmp, out);
+        } finally {
+            try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch (e) { }
+        }
+    }
+
+    // Clone Voices from Video: groups the lines by who speaks them (the VoxCPM2 server's
+    // /api/speakers) and cuts a reference clip for every speaker not already known from an
+    // earlier episode. Lines: [{ id, start, end, gender }] in the movie's own time.
+    router.post('/voice-capture/speakers', async (req, res) => {
+        let sentFile = null;
+        try {
+            const body = req.body || {};
+            const lines = (Array.isArray(body.lines) ? body.lines : [])
+                .map((l) => ({
+                    id: String(l && l.id),
+                    start: Number(l && l.start),
+                    end: Number(l && l.end),
+                    gender: /^(male|female)$/i.test(String(l && l.gender)) ? String(l.gender) : null,
+                }))
+                .filter((l) => Number.isFinite(l.start) && Number.isFinite(l.end) && l.end > l.start);
+            if (!lines.length) return res.status(400).json({ success: false, error: 'There are no timed lines to listen to.' });
+            const { resolved, hasCenter, map } = await source(req);
+
+            // Same host rule as /api/generate-voxcmp2 (Node 18+ resolves localhost to ::1 first).
+            let base = String(body.serverUrl || 'http://127.0.0.1:8808').trim().replace(/\/+$/, '').replace('localhost', '127.0.0.1');
+            if (!/^https?:\/\//i.test(base)) base = `http://${base}`;
+            const local = /^https?:\/\/127\.0\.0\.1(:\d+)?$/i.test(base);
+
+            const pcm = await dialoguePcm(resolved, hasCenter, map);
+            const fd = fs.openSync(pcm, 'r');
+            let packed;
+            try {
+                const read = (a, b) => {
+                    const buf = Buffer.alloc(b - a);
+                    fs.readSync(fd, buf, 0, b - a, a);
+                    return buf;
+                };
+                packed = linesWav(read, fs.fstatSync(fd).size, lines);
+            } finally {
+                fs.closeSync(fd);
+            }
+            const payload = { lines: packed.sent, known: Array.isArray(body.known) ? body.known.slice(0, 1000) : [] };
+            if (local) {
+                // A local server reads the file itself instead of a JSON body hundreds of MB long.
+                sentFile = path.join(SEPARATED_DIR, `spk_lines_${crypto.randomUUID()}.wav`);
+                fs.writeFileSync(sentFile, packed.wav);
+                payload.audio_path = sentFile;
+            } else {
+                payload.audio_base64 = packed.wav.toString('base64');
+            }
+
+            let r;
+            try {
+                r = await secureFetch(`${base}/api/speakers`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                    signal: AbortSignal.timeout(15 * 60 * 1000),
+                });
+            } catch (e) {
+                return res.status(503).json({ success: false, error: 'The VoxCPM2 server is not running. Start it in Settings → VoxCPM2 AI.' });
+            }
+            if (r.status === 404) {
+                return res.status(501).json({ success: false, error: 'This VoxCPM2 server cannot find speakers yet. Restart it from Settings → VoxCPM2 AI (Stop, then Start Server) to update it.' });
+            }
+            const data = await r.json().catch(() => ({}));
+            if (!r.ok || !data.success) throw new Error(data.error || `The VoxCPM2 server answered ${r.status}.`);
+
+            const byId = new Map(lines.map((l) => [l.id, l]));
+            const dir = captureDir(body.outDir);
+            const stem = String(body.name || '').trim() || 'Speaker';
+            const speakers = [];
+            for (const s of Array.isArray(data.speakers) ? data.speakers : []) {
+                const sp = {
+                    key: s.key,
+                    gender: s.gender || null,
+                    lines: Array.isArray(s.lines) ? s.lines.map(String) : [],
+                    seconds: s.seconds || 0,
+                    embedding: Array.isArray(s.embedding) ? s.embedding : null,
+                    known: s.known || null,
+                };
+                if (!sp.known) {
+                    const pieces = refPieces((s.refs || []).map((id) => byId.get(String(id))).filter(Boolean));
+                    if (pieces.length) {
+                        const name = freeName(dir, `${stem} - ${s.key}`);
+                        await cutReference({ resolved, hasCenter, map, pieces, out: path.join(dir, name) });
+                        Object.assign(sp, { filePath: path.join(dir, name), fileName: name, clipSeconds: +pieces.reduce((t, p) => t + p.end - p.start, 0).toFixed(1) });
+                    }
+                }
+                speakers.push(sp);
+            }
+            res.json({ success: true, speakers, dir });
+        } catch (e) {
+            res.status(e.status || 500).json({ success: false, error: e.message });
+        } finally {
+            try { if (sentFile && fs.existsSync(sentFile)) fs.unlinkSync(sentFile); } catch (e) { }
+        }
+    });
+
     router.get('/voice-capture/default-dir', (req, res) => {
         res.json({ success: true, dir: DEFAULT_CAPTURE_DIR });
     });
@@ -217,3 +428,5 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
 
 module.exports.layoutHasCenter = layoutHasCenter;
 module.exports.eqFilters = eqFilters;
+module.exports.linesWav = linesWav;
+module.exports.refPieces = refPieces;

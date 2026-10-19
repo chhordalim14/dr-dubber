@@ -364,6 +364,67 @@
   filter: brightness(1.1);
 }
 
+/* ── Speakers (Clone Voices from Video, js/vox-speakers.js) ──────────── */
+.vsp-panel {
+  width: min(640px, 100%);
+  height: min(520px, calc(100vh - 32px));
+}
+.vsp-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.vsp-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+}
+.vsp-row:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-light);
+}
+.vsp-n {
+  min-width: 56px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.vsp-merge {
+  max-width: 130px;
+  height: 30px;
+  font-size: 11.5px;
+  border-radius: 8px;
+  padding: 0 6px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-base);
+  color: var(--text-secondary);
+}
+.vsp-merge:focus {
+  outline: none;
+  border-color: var(--vox);
+}
+@media (max-width: 560px) {
+  .vsp-row {
+    flex-wrap: wrap;
+  }
+}
+.vox-capture-btn.is-busy {
+  animation: vsp-busy 1.2s ease-in-out infinite;
+}
+@keyframes vsp-busy {
+  50% {
+    opacity: 0.55;
+  }
+}
+
 /* segmented control (manager + gallery) */
 .vg-seg {
   display: inline-flex;

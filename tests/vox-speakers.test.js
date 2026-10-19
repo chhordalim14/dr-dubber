@@ -1,0 +1,107 @@
+// Clone Voices from Video: the lines' audio sent to the speaker search, the reference clip
+// picked for each speaker, the series a video belongs to, and the wiring from voicing to the
+// VoxCPM2 server's /api/speakers.
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+
+const root = path.join(__dirname, '..');
+const read = (...p) => fs.readFileSync(path.join(root, ...p), 'utf8').replace(/\r\n/g, '\n');
+const { linesWav, refPieces } = require('../backend/routes/voice-capture');
+
+test('linesWav: only the lines, back to back, as a 16 kHz mono wav with their new times', () => {
+    const rate = 16000;
+    const movie = Buffer.alloc(10 * rate * 2); // 10 s of raw s16le
+    for (let i = 0; i < movie.length / 2; i++) movie.writeInt16LE(i % 30000, i * 2);
+    const reads = [];
+    const readPart = (a, b) => {
+        reads.push([a, b]);
+        return movie.subarray(a, b);
+    };
+    const { wav, sent } = linesWav(readPart, movie.length, [
+        { id: 'a', start: 1, end: 2, gender: 'Male' },
+        { id: 'b', start: 5, end: 5.5, gender: null },
+        { id: 'c', start: 9.5, end: 12, gender: 'Female' }, // runs past the end: cut there
+        { id: 'd', start: 20, end: 21 },                    // past the end: left out
+    ]);
+    assert.deepEqual(reads, [[32000, 64000], [160000, 176000], [304000, 320000]], 'reads only the lines');
+    assert.equal(wav.toString('ascii', 0, 4), 'RIFF');
+    assert.equal(wav.readUInt16LE(22), 1, 'mono');
+    assert.equal(wav.readUInt32LE(24), rate);
+    assert.equal(wav.readUInt32LE(40), wav.length - 44);
+    assert.deepEqual(sent.map((s) => s.id), ['a', 'b', 'c']);
+    assert.deepEqual(sent[0], { id: 'a', start: 0, end: 1, gender: 'Male' });
+    assert.deepEqual([sent[1].start, sent[1].end], [1.3, 1.8], 'after a 0.3 s gap');
+    assert.deepEqual([sent[2].start, sent[2].end], [2.1, 2.6]);
+    // the first sample of line b sits where its new start says
+    assert.equal(wav.readInt16LE(44 + Math.round(1.3 * rate) * 2), (5 * rate) % 30000);
+});
+
+test('refPieces: the clearest lines in order until about 6 s, never more than 10 s or 4 lines', () => {
+    const at = (start, end) => ({ start, end });
+    let p = refPieces([at(10, 14), at(20, 23), at(30, 31)]);
+    assert.equal(p.length, 2, 'stops once there is enough voice');
+    assert.ok(Math.abs(p[0].start - 10.04) < 1e-9 && Math.abs(p[0].end - 13.96) < 1e-9, 'trimmed at both ends');
+    p = refPieces([at(0, 30)]);
+    assert.equal(p.length, 1);
+    assert.ok(p[0].end - p[0].start <= 10 + 1e-9, 'one long line is cut to 10 s');
+    p = refPieces([at(0, 1.2), at(2, 3.2), at(4, 5.2), at(6, 7.2), at(8, 9.2)]);
+    assert.equal(p.length, 4, 'at most four lines joined');
+    assert.deepEqual(refPieces([at(0, 0.5), at(1, 1.7)]), [], 'lines too short to hear a voice in');
+});
+
+function loadSpeakersModule() {
+    const window = {};
+    const document = { addEventListener() {}, getElementById: () => null };
+    vm.runInNewContext(read('frontend', 'js', 'vox-speakers.js'), { window, document, localStorage: { getItem: () => null, setItem() {} }, console });
+    return window.voxSpeakers;
+}
+
+test('a series is the video\'s folder, past the folders Dub Whole Series makes', () => {
+    const mod = loadSpeakersModule();
+    const seriesOf = (p) => ({ ...mod.seriesOf(p) }); // an object of this realm, for deepEqual
+    const ep = seriesOf('C:\\Dramas\\My Series\\E03.mp4');
+    assert.deepEqual(ep, { key: 'c:/dramas/my series', name: 'My Series' });
+    assert.deepEqual(seriesOf('C:\\Dramas\\My Series\\E17.mkv'), ep, 'every episode of the folder');
+    assert.deepEqual(seriesOf('C:/Dramas/My Series/DR Dubber Joined/DR Dubber Split/My Series_part01_a.mp4'), ep);
+    assert.deepEqual(seriesOf('/Users/me/Dramas/My Series/DR Dubber Joined/My Series_part02.mp4').name, 'My Series');
+    // a movie lying loose in Downloads is a series of its own
+    const a = seriesOf('C:\\Users\\me\\Downloads\\Movie A.mp4');
+    const b = seriesOf('C:\\Users\\me\\Downloads\\Movie B.mp4');
+    assert.equal(a.name, 'Movie A');
+    assert.notEqual(a.key, b.key);
+    assert.equal(seriesOf('D:\\Movie C.mp4').name, 'Movie C');
+});
+
+test('voicing a tab finds its speakers first, and the server speaks /api/speakers', () => {
+    const main = read('frontend', 'js', 'studio-main.js');
+    const gen = main.slice(main.indexOf('async function generateStandardAudioForProject('));
+    const hook = gen.indexOf('window.voxSpeakers.ensure(targetProject)');
+    assert.ok(hook > 0, 'generateStandardAudioForProject asks for the speakers');
+    assert.ok(hook < gen.indexOf('const processSingleAudio'), '...before any line is voiced');
+    assert.match(gen.slice(0, hook + 200), /voxCmp2Data\.cloneFromVideo/);
+    assert.match(gen.slice(hook, hook + 200), /voxCmp2Data = voxCmp2Load\(\)/, 'reloads the new profiles');
+
+    const html = read('frontend', 'index.html');
+    assert.ok(html.indexOf('<script src="js/vox-speakers.js">') > html.indexOf('<script src="js/studio-main.js">'), 'loaded after studio-main.js');
+    for (const id of ['btn-vox-speakers', 'voxcmp2-clone-toggle', 'voxcmp2-clone-knob']) assert.ok(html.includes(`id="${id}"`), id);
+
+    const page = read('frontend', 'js', 'vox-speakers.js');
+    assert.match(page, /\/api\/voice-capture\/speakers/);
+    const route = read('backend', 'routes', 'voice-capture.js');
+    assert.match(route, /router\.post\('\/voice-capture\/speakers'/);
+    assert.match(route, /\$\{base\}\/api\/speakers/);
+
+    const py = read('backend', 'python', 'voxcpm2_server.py');
+    assert.match(py, /route == "\/api\/speakers"/);
+    assert.ok(py.indexOf('route == "/api/speakers"') < py.indexOf('Loading the model back after another GPU job'), 'answers while the model loads');
+    assert.match(py, /import voxcpm2_speakers/);
+    assert.match(read('backend', 'python', 'voxcpm2_speakers.py'), /def find_speakers\(wav, lines, known=None/);
+});
+
+test('voxcpm2_speakers.py ships beside app.py: on install and on every Start Server', () => {
+    assert.match(read('backend', 'lib', 'voxcpm-installer.js'), /copyFileSync\(path\.join\(scriptsDir, 'voxcpm2_speakers\.py'\), path\.join\(dir, 'voxcpm2_speakers\.py'\)\)/);
+    assert.match(read('main.js'), /\['voxcpm2_speakers\.py', path\.join\(scriptDir, 'voxcpm2_speakers\.py'\)\]/);
+});

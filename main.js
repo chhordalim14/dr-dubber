@@ -900,8 +900,11 @@ handle('voxcpm2:startServer', async (event, opts = {}) => {
     // made on install day; bring it up to this version so server fixes reach it.
     if (path.basename(scriptPath) === 'app.py' && fs.existsSync(path.join(scriptDir, 'drdubber-voxcpm2.json'))) {
         try {
-            const bundled = fs.readFileSync(path.join(voxScriptsDir(), 'voxcpm2_server.py'));
-            if (!bundled.equals(fs.readFileSync(scriptPath))) fs.writeFileSync(scriptPath, bundled);
+            // app.py imports voxcpm2_speakers.py (Clone Voices from Video) from beside it.
+            for (const [from, to] of [['voxcpm2_server.py', scriptPath], ['voxcpm2_speakers.py', path.join(scriptDir, 'voxcpm2_speakers.py')]]) {
+                const bundled = fs.readFileSync(path.join(voxScriptsDir(), from));
+                if (!fs.existsSync(to) || !bundled.equals(fs.readFileSync(to))) fs.writeFileSync(to, bundled);
+            }
         } catch (e) {
             console.warn('[VoxCPM2] Could not refresh app.py:', e.message);
         }

@@ -80,6 +80,7 @@ storage/audio_repair/
 storage/text_detect/
 storage/batch_results/
 storage/character_sheets/
+storage/VoiceCaptures/
 
 # Local experiments
 scratch/

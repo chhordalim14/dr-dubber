@@ -21626,7 +21626,7 @@
       }
 
       // Retrieve local storage configuration
-      const voxCmp2Data =
+      let voxCmp2Data =
         typeof voxCmp2Load === "function"
           ? voxCmp2Load()
           : JSON.parse(localStorage.getItem("voxcmp2_settings")) || {
@@ -21662,6 +21662,16 @@
       }
 
       const concurrentLimit = isVoxCmp2Enabled ? 1 : parseInt(localStorage.getItem("aiDubberConcurrentAudio") || "3", 10);
+
+      // Clone Voices from Video (js/vox-speakers.js): lines no one has given a speaker yet get
+      // one, with a voice cloned from the video, before any of them is voiced.
+      if (isVoxCmp2Enabled && voxCmp2Data.cloneFromVideo && window.voxSpeakers) {
+        try {
+          if (await window.voxSpeakers.ensure(targetProject)) voxCmp2Data = voxCmp2Load();
+        } catch (e) {
+          console.warn("[Speakers] Voicing with the picked voices:", e);
+        }
+      }
 
       let renderTimeout = null;
       const batchedRenderSubtitles = (sub) => {

@@ -2345,6 +2345,9 @@
               <button id="btn-voice-capture" type="button" class="vox-capture-btn bounce-on-click" title="Capture Voice from Movie — clone a voice for VoxCPM2">
                 <i data-lucide="mic-vocal" class="w-3.5 h-3.5"></i><span>Capture voice</span>
               </button>
+              <button id="btn-vox-speakers" type="button" class="vox-capture-btn bounce-on-click" title="Speakers — who speaks each line, each with a voice cloned from the video">
+                <i data-lucide="users" class="w-3.5 h-3.5"></i><span>Speakers</span>
+              </button>
             </div>
             <!-- Right: Voice Quick Selector -->
             <div class="flex items-center gap-2.5 ml-auto shrink-0 flex-nowrap">
@@ -5590,6 +5593,21 @@
               </button>
             </div>
 
+            <!-- Clone Voices from Video (js/vox-speakers.js) -->
+            <div
+              class="flex items-center justify-between gap-3 p-3 rounded-xl bg-[var(--bg-base)] border border-[var(--border-light)] voxcmp2-content">
+              <div class="flex flex-col gap-0.5">
+                <span class="text-sm font-semibold text-[var(--text-bright)]">Clone Voices from the Video</span>
+                <span class="text-xs text-[var(--text-muted)]">Before voicing, find who speaks each line and clone every
+                  speaker's voice from the video, so each character keeps the voice of their actor.</span>
+              </div>
+              <button id="voxcmp2-clone-toggle" type="button" role="switch" aria-checked="false" aria-label="Clone Voices from the Video"
+                class="relative w-11 h-6 rounded-full border transition-all duration-300 focus:outline-none shrink-0">
+                <span id="voxcmp2-clone-knob"
+                  class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-300"></span>
+              </button>
+            </div>
+
             <!-- One-click install: Python env + PyTorch + VoxCPM2 + the model + our server
                  (js/vox-install.js, backend/lib/voxcpm-installer.js) -->
             <div id="vox-install-card" class="vox-install voxcmp2-content" data-state="checking">
@@ -6811,6 +6829,7 @@
 <script src="js/studio-main.js"></script>
 <script src="js/vox-gallery.js"></script>
 <script src="js/voice-capture.js"></script>
+<script src="js/vox-speakers.js"></script>
 <script src="js/vox-install.js"></script>
   <!-- ═══════════════ RENDER QUEUE DRAWER ═══════════════ -->
   <div id="queue-drawer-backdrop"

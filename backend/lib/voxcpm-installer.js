@@ -268,6 +268,7 @@ function createVoxcpmInstaller({ scriptsDir, killProcessTree, approveProgram }) 
             step('finish');
             const appPy = path.join(dir, 'app.py');
             fs.copyFileSync(path.join(scriptsDir, 'voxcpm2_server.py'), appPy);
+            fs.copyFileSync(path.join(scriptsDir, 'voxcpm2_speakers.py'), path.join(dir, 'voxcpm2_speakers.py'));
             const marker = { complete: true, model: MODEL_ID, device: useCuda ? 'cuda' : 'cpu', gpu: gpu ? gpu.name : null, python: py.version, installedAt: new Date().toISOString() };
             fs.writeFileSync(path.join(dir, MARKER), JSON.stringify(marker, null, 2));
             // We wrote app.py ourselves: Start Server need not ask whether to allow it.
