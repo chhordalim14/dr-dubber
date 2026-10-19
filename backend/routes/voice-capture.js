@@ -179,7 +179,58 @@ function planClips(refLines, have) {
     return plans;
 }
 
-module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobeBinary, audioRepair, trackProcess }) {
+// ── A line's own voice, for VoxCPM2 to take its feeling from ─────────────
+// A shorter line is too little to clone from: measured on 21 lines under 1.6 s, cloning from the
+// line itself misheard more of the Khmer (+3 points, worse on 29% of them by over 10) and lost some
+// of the voice, where on 56 longer lines it misheard less (-2.5 points). The page then uses the
+// actor's clip of the line's feeling.
+const LINE_MIN = 1.6;
+const LINE_MAX = 12;     // VoxCPM2 cuts a longer reference to 12 s anyway
+const LINE_EDGE = 0.05;  // kept around the line's times: its first and last sounds
+const LEVEL_RATE = 8000; // enough to hear how loud speech is
+
+// How loud speech is (dB), from the power of its 50 ms frames: the mean of those within 30 dB of
+// the loudest ones, so the pauses between words and the quiet between lines do not count.
+function speechLevelDb(frames) {
+    const sorted = frames.filter((p) => p > 1e-10).sort((a, b) => a - b);
+    if (!sorted.length) return null;
+    const top = sorted[Math.floor((sorted.length - 1) * 0.99)];
+    const speech = sorted.filter((p) => p >= top / 1000);
+    return 10 * Math.log10(speech.reduce((s, p) => s + p, 0) / speech.length);
+}
+
+// Collects the power of each 50 ms frame of 16-bit mono PCM fed to it in pieces of any size.
+function framePowers(rate) {
+    const hop = Math.max(1, Math.round(rate * 0.05));
+    const frames = [];
+    let sum = 0, n = 0, odd = null;
+    return {
+        frames,
+        push(buf) {
+            if (odd) { buf = Buffer.concat([odd, buf]); odd = null; }
+            const even = buf.length - (buf.length % 2);
+            for (let i = 0; i < even; i += 2) {
+                const v = buf.readInt16LE(i);
+                sum += v * v;
+                if (++n === hop) { frames.push(sum / hop / (32768 * 32768)); sum = 0; n = 0; }
+            }
+            if (even < buf.length) odd = buf.subarray(even);
+        },
+    };
+}
+
+// The data chunk of a 16-bit wav file.
+function wavData(buf) {
+    let at = 12;
+    while (at + 8 <= buf.length) {
+        const size = buf.readUInt32LE(at + 4);
+        if (buf.toString('ascii', at, at + 4) === 'data') return buf.subarray(at + 8, Math.min(buf.length, at + 8 + size));
+        at += 8 + size + (size % 2);
+    }
+    return Buffer.alloc(0);
+}
+
+module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobeBinary, audioRepair, trackProcess, findVocalStem }) {
     const router = express.Router();
     const probeCache = new Map(); // file key -> Promise<{ duration, stream }>
 
@@ -466,6 +517,84 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
         }
     });
 
+    // One line as the actor said it (wav, base64), for VoxCPM2 to speak the dub line the same
+    // way: from this file's separated vocals once an ML engine has isolated it (Isolate BGM
+    // runs beside the voicing in a series), else the dialogue of the original track (the
+    // VoxCPM2 server cleans a noisy clip). Body: { filePath, start, end } in the video's time.
+    // How loud the dialogue of a whole file is (dB, speechLevelDb), measured once per file.
+    const levelCache = new Map(); // src|size|mtime|filters -> Promise<dB | null>
+    function dialogueLevel(src, map, filters) {
+        let key;
+        try {
+            const st = fs.statSync(src);
+            key = `${src}|${st.size}|${st.mtimeMs}|${map}|${filters.join(',')}`;
+        } catch (e) { return Promise.resolve(null); }
+        if (levelCache.has(key)) return levelCache.get(key);
+        const job = new Promise((resolve) => {
+            const fp = framePowers(LEVEL_RATE);
+            const ff = spawn(getFFmpegBinary(), ['-hide_banner', '-nostdin', '-i', src, ...(map ? ['-map', map] : []), '-vn',
+                ...(filters.length ? ['-af', filters.join(',')] : []), '-ac', '1', '-ar', String(LEVEL_RATE), '-f', 's16le', 'pipe:1'],
+            { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+            if (trackProcess) trackProcess(ff);
+            ff.stdout.on('data', (d) => fp.push(d));
+            ff.on('error', () => resolve(null));
+            ff.on('close', (code) => resolve(code === 0 ? speechLevelDb(fp.frames) : null));
+        });
+        levelCache.set(key, job);
+        if (levelCache.size > 32) levelCache.delete(levelCache.keys().next().value);
+        job.then((v) => { if (v == null) levelCache.delete(key); });
+        return job;
+    }
+
+    router.post('/voice-capture/line', async (req, res) => {
+        let tmp = null;
+        try {
+            const body = req.body || {};
+            const start = Number(body.start);
+            const end = Number(body.end);
+            if (!Number.isFinite(start) || !Number.isFinite(end) || end - start < LINE_MIN) {
+                return res.json({ success: false, error: 'The line is too short to take its delivery from.' });
+            }
+            const { resolved, hasCenter, map } = await source(req);
+            const stem = findVocalStem ? findVocalStem(resolved) : null;
+            const a = Math.max(0, start - LINE_EDGE);
+            const dur = Math.min(LINE_MAX, end - start + 2 * LINE_EDGE);
+            const fade = Math.min(0.02, dur / 10).toFixed(3);
+            const pick = stem ? [] : cleanFilters({ center: true, hasCenter, denoise: false });
+            const filters = [
+                ...pick,
+                'aformat=channel_layouts=mono',
+                `afade=t=in:st=0:d=${fade}`,
+                `afade=t=out:st=${Math.max(0, dur - Number(fade)).toFixed(3)}:d=${fade}`,
+            ];
+            fs.mkdirSync(SEPARATED_DIR, { recursive: true });
+            tmp = path.join(SEPARATED_DIR, `line_${crypto.randomUUID()}.wav`);
+            await runFfmpeg(['-hide_banner', '-nostdin', '-y', '-ss', a.toFixed(3), '-t', dur.toFixed(3),
+                '-i', stem || resolved, ...(!stem && map ? ['-map', map] : []), '-vn', '-af', filters.join(','),
+                '-ac', '1', '-ar', String(SAVE_RATE), '-c:a', 'pcm_s16le', tmp]);
+            const wav = fs.readFileSync(tmp);
+            // How loud the actor said it against the film's dialogue as a whole (+ a shout, - a
+            // whisper), so the dub line can be as loud: the voice server levels every line alike.
+            const lineFp = framePowers(SAVE_RATE);
+            lineFp.push(wavData(wav));
+            const lineDb = speechLevelDb(lineFp.frames);
+            const filmDb = lineDb == null ? null : await dialogueLevel(stem || resolved, stem ? null : map, pick);
+            // source: 'vocals' (separated), 'center' (a 5.1 track's dialogue channel) or 'mix' (the
+            // music under it too: the page does not clone a line's delivery from that).
+            res.json({
+                success: true,
+                audio_base64: wav.toString('base64'),
+                source: stem ? 'vocals' : hasCenter ? 'center' : 'mix',
+                seconds: +dur.toFixed(2),
+                level_db: lineDb != null && filmDb != null ? +(lineDb - filmDb).toFixed(1) : null,
+            });
+        } catch (e) {
+            res.status(e.status || 500).json({ success: false, error: e.message });
+        } finally {
+            try { if (tmp && fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch (e) { }
+        }
+    });
+
     router.get('/voice-capture/default-dir', (req, res) => {
         res.json({ success: true, dir: DEFAULT_CAPTURE_DIR });
     });
@@ -478,3 +607,6 @@ module.exports.eqFilters = eqFilters;
 module.exports.linesWav = linesWav;
 module.exports.refPieces = refPieces;
 module.exports.planClips = planClips;
+module.exports.speechLevelDb = speechLevelDb;
+module.exports.framePowers = framePowers;
+module.exports.wavData = wavData;

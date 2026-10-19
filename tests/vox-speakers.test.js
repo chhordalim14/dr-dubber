@@ -78,14 +78,19 @@ test('planClips: a calm main clip, and a clip of each feeling the actor speaks e
     assert.deepEqual(planClips([at(0, 3, 'Angry')], new Set()).map((p) => p.emotion), ['Angry'], 'never a non-calm main clip for a known voice');
 });
 
-test('a line is cloned from its speaker\'s clip of its feeling', () => {
+test('a line takes its feeling from the actor saying it, else their clip of that feeling; the voice stays the voice\'s own clip', () => {
     const main = read('frontend', 'js', 'studio-main.js');
     const fn = main.slice(main.indexOf('async function executeVoxCpm2Synthesis('));
-    const swap = fn.indexOf('profile = { ...profile, audioPath: feeling.path');
-    assert.ok(swap > 0 && swap < fn.indexOf('let refBase64'), 'before the clip is read');
-    assert.match(fn.slice(0, swap), /profile\?\.emotionClips/);
-    assert.doesNotMatch(fn.slice(0, swap), /checkPathExists\?*\.?\(/, 'app:checkPathExists makes a folder of a missing path');
+    const head = fn.slice(0, fn.indexOf('let refBase64'));
+    // One voice in every feeling: the feeling clip goes beside the voice's clip, never in its place.
+    assert.doesNotMatch(head, /profile = \{ \.\.\.profile, audioPath/);
+    const own = head.indexOf('/api/voice-capture/line');
+    const clip = head.indexOf('feeling = feelingKey && profile.emotionClips[feelingKey]');
+    assert.ok(own > 0 && clip > own, 'the line\'s own delivery first, the feeling clip after');
+    assert.match(head.slice(clip), /if \(!feelingBase64 && feeling\?\.path/);
+    assert.doesNotMatch(head, /checkPathExists\?*\.?\(/, 'app:checkPathExists makes a folder of a missing path');
     assert.match(fn, /refBase64 = rRes\.base64 \|\| rRes\.data/, 'app:readFileAsBase64 answers base64');
+    assert.match(fn, /feeling_audio_base64: feelingBase64/);
     const page = read('frontend', 'js', 'vox-speakers.js');
     assert.match(page, /emotion: s\.emotion \|\| "Neutral"/, 'each line\'s feeling goes to the backend');
     assert.match(page, /emotions: clipsHave\(p\)/, 'with what each earlier voice already has');

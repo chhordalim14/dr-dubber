@@ -4415,6 +4415,12 @@ app.post('/api/generate-voxcmp2', async (req, res) => {
             speed: parseFloat(speed) || 1.0,
             emotion: emotion || 'Neutral',
             cfg_value: parseFloat(req.body.cfg_value) || 2.0,
+            // The line's room: a take that fits it is kept over one that would play rushed.
+            fit_seconds: parseFloat(req.body.fit_seconds) || null,
+            // How the line is said (the actor's own line, or their clip of this feeling).
+            feeling_audio_base64: typeof req.body.feeling_audio_base64 === 'string' ? req.body.feeling_audio_base64 : null,
+            feeling_from: String(req.body.feeling_from || ''),
+            line_level_db: Number.isFinite(req.body.line_level_db) ? req.body.line_level_db : null,
             output_path: outFile,
             profile: profile || null
         };
@@ -4567,7 +4573,16 @@ const videoSplitter = createVideoSplitter({ getFFmpegBinary, getFFprobeBinary, t
 app.use('/api', require('./routes/system')({ detectAvailableEncoders }));
 app.use('/api', require('./routes/preview')({ previewService }));
 app.use('/api', require('./routes/waveform')({ getFFmpegBinary }));
-app.use('/api', require('./routes/voice-capture')({ getFFmpegBinary, getFFprobeBinary, audioRepair, trackProcess }));
+// The separated vocals of a video, when an ML engine has already isolated it (FFmpeg's
+// phase-cancel "vocals" are band-limited, no better than the original for a voice).
+function findVocalStem(videoPath) {
+    for (const engine of BGM_ENGINES.filter((e) => e !== 'ffmpeg')) {
+        const hit = lookupCachedStems(SEPARATED_DIR, cacheKeyForFile(videoPath, engine, bgmEngineModel(engine)));
+        if (hit) return hit.vocal;
+    }
+    return null;
+}
+app.use('/api', require('./routes/voice-capture')({ getFFmpegBinary, getFFprobeBinary, audioRepair, trackProcess, findVocalStem }));
 app.use('/api/episodes', require('./routes/episodes')({ episodeJoiner }));
 app.use('/api/split', require('./routes/split')({ videoSplitter }));
 app.use('/api', require('./routes/render')({ upload, renderVideo, cancelRender, getRenderProgress, audioRepair }));

@@ -92,3 +92,46 @@ test('the voice-capture page script loads after studio-main, the groups script b
     assert.match(html, /id="btn-voice-capture"/);
     assert.match(html, /id="modal-vox-groups"/);
 });
+
+test('every VoxCPM2 line is sent with its emotion, its room and where the actor said it', () => {
+    const page = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'js', 'studio-main.js'), 'utf8');
+    // Generate All / Dub Whole Series once sent no emotion: every line came out Neutral.
+    const calls = page.split('await executeVoxCpm2Synthesis({').slice(1).map((c) => c.slice(0, c.indexOf('});')));
+    assert.ok(calls.length >= 2, 'both generate paths call it');
+    for (const c of calls) {
+        assert.match(c, /emotion: sub\.emotion/);
+        assert.match(c, /fitSeconds: voiceSlot\(sub\)/);
+        assert.match(c, /line: voxLineSource\(/);
+    }
+    // Generate All / Dub Whole Series find the speakers before voicing a tab, like Generate does.
+    const queue = page.slice(page.indexOf('async function voxCmp2RunQueueLoop()'));
+    assert.ok(queue.indexOf('voxSpeakers.ensure(proj)') > 0 && queue.indexOf('voxSpeakers.ensure(proj)') < queue.indexOf('for (const sub of pendingSubs)'));
+    // The original actor's audio only for a voice cloned from this video.
+    assert.match(page, /if \(line && profile\?\.autoClip && profile\?\.audioPath\)/);
+    const server = fs.readFileSync(path.join(__dirname, '..', 'backend', 'server.js'), 'utf8');
+    assert.match(server, /require\('\.\/routes\/voice-capture'\)\(\{[^}]*findVocalStem/);
+    for (const f of ['fit_seconds', 'feeling_audio_base64', 'feeling_from', 'line_level_db']) assert.match(server, new RegExp(`${f}:`), f);
+});
+
+test('a line\'s loudness is measured on its speech, not its pauses; wav data is found past other chunks', () => {
+    const { speechLevelDb, framePowers, wavData } = require('../backend/routes/voice-capture');
+    const rate = 8000;
+    const tone = (amp, sec) => {
+        const b = Buffer.alloc(Math.round(rate * sec) * 2);
+        for (let i = 0; i < b.length / 2; i++) b.writeInt16LE(Math.round(amp * 32767 * Math.sin(i / 3)), i * 2);
+        return b;
+    };
+    const level = (...parts) => {
+        const fp = framePowers(rate);
+        for (const p of parts) for (let i = 0; i < p.length; i += 333) fp.push(p.subarray(i, i + 333)); // odd pieces
+        return speechLevelDb(fp.frames);
+    };
+    const loud = level(tone(0.5, 1));
+    assert.ok(Math.abs(loud - level(tone(0.5, 1), Buffer.alloc(rate * 4))) < 0.01, 'silence between lines does not count');
+    assert.ok(Math.abs(level(tone(0.05, 1)) - loud + 20) < 0.1, 'a tenth of the amplitude is 20 dB under');
+    assert.equal(level(Buffer.alloc(rate * 2)), null, 'no speech, no level');
+    const head = Buffer.alloc(12); head.write('RIFF', 0); head.write('WAVE', 8);
+    const chunk = (id, data) => { const h = Buffer.alloc(8); h.write(id, 0); h.writeUInt32LE(data.length, 4); return Buffer.concat([h, data]); };
+    const data = tone(0.3, 0.1);
+    assert.deepEqual(wavData(Buffer.concat([head, chunk('fmt ', Buffer.alloc(16)), chunk('LIST', Buffer.alloc(5)), Buffer.alloc(1), chunk('data', data)])), data);
+});

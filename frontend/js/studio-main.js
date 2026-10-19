@@ -21462,19 +21462,54 @@
       await generateStandardAudioForProject(targetProject, idsToProcess, false);
     });
 
-    async function executeVoxCpm2Synthesis({ text, serverUrl, tempPath, profile, index, speed = 1.0, emotion = 'Neutral', signal }) {
+    // Where a line was spoken in its video, for VoxCPM2 to take the actor's delivery from.
+    function voxLineSource(proj, sub) {
+      const filePath = (proj && (proj.videoFilePath || (proj.file && proj.file.path))) || "";
+      const start = parseFloat(sub?.textStart);
+      const end = parseFloat(sub?.textEnd);
+      return filePath && Number.isFinite(start) && end > start ? { filePath, start, end } : null;
+    }
+
+    async function executeVoxCpm2Synthesis({ text, serverUrl, tempPath, profile, index, speed = 1.0, emotion = 'Neutral', fitSeconds = null, line = null, signal }) {
       const srvUrl = (serverUrl || "http://127.0.0.1:8808").trim();
       const isRemote = srvUrl && !srvUrl.includes("localhost") && !srvUrl.includes("127.0.0.1");
 
-      // Clone Voices from Video (js/vox-speakers.js): a speaker found in the video has a clip of
-      // each feeling they speak enough of, so an angry line is cloned from the actor's own angry
-      // lines. Without one (or if its file is gone), the calm clip and the written emotion.
+      // The voice is always the profile's own clip, so the actor keeps one voice in every
+      // feeling. How the line is said comes from a second clip: for a voice cloned from this
+      // video (Clone Voices, js/vox-speakers.js), the actor saying this very line; else their
+      // clip of this feeling; else only the written emotion. A voice picked from elsewhere never
+      // gets the original actor's audio: it would pull the voice towards them.
+      let feelingBase64 = null;
+      let feelingFrom = "";
+      let lineLevelDb = null; // how loud the actor said it against the film's dialogue
+      if (line && profile?.autoClip && profile?.audioPath) {
+        try {
+          const r = await fetch("http://localhost:3001/api/voice-capture/line", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(line),
+            signal
+          });
+          const d = await r.json().catch(() => ({}));
+          // Not from a stereo mix: the music under the line would be cloned into the dub (and
+          // cleaning every line costs more than the line). Isolate BGM gives the vocals.
+          if (d.success && d.audio_base64 && (d.source === "vocals" || d.source === "center")) {
+            feelingBase64 = d.audio_base64;
+            feelingFrom = d.source === "vocals" ? "line" : "line-center";
+            if (Number.isFinite(d.level_db)) lineLevelDb = d.level_db;
+          }
+        } catch (e) {
+          if (e.name === "AbortError") throw e;
+        }
+      }
       const feelingKey = Object.keys(profile?.emotionClips || {}).find((k) => k.toLowerCase() === String(emotion || "").toLowerCase());
       const feeling = feelingKey && profile.emotionClips[feelingKey];
-      if (feeling?.path) {
-        // Read-only check (app:checkPathExists would make a folder of a missing path).
-        const found = window.electronAPI?.readFileAsBase64 ? await window.electronAPI.readFileAsBase64(feeling.path).catch(() => null) : { success: true };
-        if (found?.success) profile = { ...profile, audioPath: feeling.path, audioName: feeling.name };
+      if (!feelingBase64 && feeling?.path && window.electronAPI?.readFileAsBase64) {
+        const f = await window.electronAPI.readFileAsBase64(feeling.path).catch(() => null);
+        if (f?.success && (f.base64 || f.data)) {
+          feelingBase64 = f.base64 || f.data;
+          feelingFrom = "emotion";
+        }
       }
 
       let refBase64 = null;
@@ -21552,7 +21587,11 @@
               reference_audio_base64: refBase64,
               speed: parseFloat(speed) || 1.0,
               emotion: emotion || "Neutral",
-              cfg_value: 2.0
+              cfg_value: 2.0,
+              fit_seconds: fitSeconds,
+              feeling_audio_base64: feelingBase64,
+              feeling_from: feelingFrom,
+              line_level_db: lineLevelDb
             }),
             signal
           });
@@ -21595,7 +21634,11 @@
           index,
           speed: parseFloat(speed) || 1.0,
           emotion: emotion || "Neutral",
-          cfg_value: 2.0
+          cfg_value: 2.0,
+          fit_seconds: fitSeconds,
+          feeling_audio_base64: feelingBase64,
+          feeling_from: feelingFrom,
+          line_level_db: lineLevelDb
         }),
         signal
       });
@@ -21616,7 +21659,11 @@
                 reference_audio_base64: refBase64,
                 speed: parseFloat(speed) || 1.0,
                 emotion: emotion || "Neutral",
-                cfg_value: 2.0
+                cfg_value: 2.0,
+                fit_seconds: fitSeconds,
+                feeling_audio_base64: feelingBase64,
+                feeling_from: feelingFrom,
+                line_level_db: lineLevelDb
               }),
               signal
             });
@@ -21799,6 +21846,8 @@
                 index: sub.id,
                 speed: 1.0, // synthesize at natural pace; clip speed is applied via playbackRate/atempo
                 emotion: sub.emotion || "Neutral",
+                fitSeconds: voiceSlot(sub), // takes that fit the line's room are kept
+                line: voxLineSource(targetProject, sub), // the actor's own delivery of it
                 signal: jobAbortController.signal,
               });
             } else {
@@ -22351,7 +22400,7 @@
     async function voxCmp2RunQueueLoop() {
       if (voxQueueRunning) return;
 
-      const voxCmp2Data =
+      let voxCmp2Data =
         typeof voxCmp2Load === "function"
           ? voxCmp2Load()
           : JSON.parse(localStorage.getItem("voxcmp2_settings")) || {
@@ -22396,6 +22445,18 @@
           updateGenerateButtonState();
         }
 
+        // Clone Voices from Video (js/vox-speakers.js): lines no one has given a speaker yet get
+        // one before any is voiced, as generateStandardAudioForProject does. The search after
+        // Transcribe runs only when the VoxCPM2 server was up then; without it these lines were
+        // voiced by the picked voices, and without the actor's own delivery.
+        if (voxCmp2Data.cloneFromVideo && window.voxSpeakers) {
+          try {
+            if (await window.voxSpeakers.ensure(proj)) voxCmp2Data = voxCmp2Load();
+          } catch (e) {
+            console.warn("[Speakers] Voicing with the picked voices:", e);
+          }
+        }
+
         // Process subtitles 1-by-1 (VoxCPM2 is always concurrency=1)
         const voxMetaPromises = [];
         for (const sub of pendingSubs) {
@@ -22432,6 +22493,9 @@
                 profile: matchedProfile || null,
                 index: sub.id,
                 speed: 1.0, // synthesize at natural pace; clip speed is applied via playbackRate/atempo
+                emotion: sub.emotion || "Neutral",
+                fitSeconds: voiceSlot(sub), // takes that fit the line's room are kept
+                line: voxLineSource(proj, sub), // the actor's own delivery of it
                 signal: jobAbortController.signal,
               });
 

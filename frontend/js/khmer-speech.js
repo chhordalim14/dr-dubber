@@ -2,9 +2,11 @@
 // written one way and said another is written the way it is said.
 //
 //   numbers      ១៨ម៉ឺន -> ដប់ប្រាំបីម៉ឺន, អាយុ ៣៣ -> អាយុ សាមសិបបី, 2,500 -> ពីរពាន់ប្រាំរយ, 3.5 -> បីក្បៀសប្រាំ,
-//                50% -> ហាសិបភាគរយ, $20 -> ម្ភៃដុល្លារ; a code with a leading 0 (0927) digit by digit
+//                50% -> ហាសិបភាគរយ, $20 -> ម្ភៃដុល្លារ, ¥500 -> ប្រាំរយយ័ន, -5°C -> ដកប្រាំអង្សាសេ, dates
+//                (15/5/2026, 2026-05-15); a code with a leading 0 (0927) digit by digit
 //   ៗ            the word before it said twice: មែនៗ -> មែនមែន, ផ្សេងៗ -> ផ្សេងផ្សេង
-//   acronyms     VIP -> វីអាយភី (letter names, the way Khmer speakers say them)
+//   marks        ។ល។ -> ជាដើម, ៖ a pause, ព.ស. -> ពុទ្ធសករាជ, គ.ម. -> គីឡូម៉ែត្រ
+//   acronyms     VIP -> វីអាយភី, 5G -> ប្រាំជី (letter names, the way Khmer speakers say them)
 //   punctuation  ... and dashes are pauses, quotes and brackets are not read, a closing ? or !
 //                is kept (it carries the question / the shout), anything else closes with ។
 //   tags         [Female:female-default] and the like are dropped
@@ -66,14 +68,26 @@
   const NUM = '\\d[\\d,]*(?:\\.\\d+)?';
   const UNIT_RE = new RegExp(`(${NUM})\\s?(km\\/h|km|cm|mm|kg|ml|°C|m|g)(?![A-Za-z])`, 'g');
 
+  const sayDate = (all, d, m, y) => (+m >= 1 && +m <= 12 && +d >= 1 && +d <= 31
+    ? `ថ្ងៃទី${numberToWords(+d)} ខែ${MONTHS[+m - 1]} ឆ្នាំ${numberToWords(+y)}`
+    : all);
+  // Money after a number (or $ € £ ¥ ฿ before it). ¥ / 元 are yuan: the films are Chinese.
+  const CURRENCY = { $: 'ដុល្លារ', USD: 'ដុល្លារ', '៛': 'រៀល', KHR: 'រៀល', '€': 'អឺរ៉ូ', '£': 'ផោន', '¥': 'យ័ន', '元': 'យ័ន', '฿': 'បាត' };
+  const MONEY_BEFORE = new RegExp(`([$€£¥฿])\\s?(${NUM})`, 'g');
+  const MONEY_AFTER = new RegExp(`(${NUM})\\s?([$៛€£¥฿元]|USD|KHR)(?![A-Za-z])`, 'g');
+
   function sayNumbers(text) {
     return toAsciiDigits(text)
+      // A date d/m/yyyy, d-m-yyyy, d.m.yyyy or yyyy-mm-dd: ថ្ងៃទីដប់ប្រាំ ខែឧសភា ឆ្នាំ... (before
+      // the phone numbers: 05-10-2026 has their leading 0 and dashes).
+      .replace(/(?:ថ្ងៃទី\s?)?\b(\d{1,2})([/.-])(\d{1,2})\2(\d{4})\b/g, (all, d, sep, m, y) => sayDate(all, d, m, y))
+      .replace(/(?:ថ្ងៃទី\s?)?\b(\d{4})-(\d{1,2})-(\d{1,2})\b/g, (all, y, m, d) => sayDate(all, d, m, y))
       // A phone number in groups (012 345 678, 012-345-678): digit by digit, not 3 numbers.
       .replace(/(?<![\d.,])0\d{1,3}(?:[ -]\d{2,4}){1,3}(?![\d.,])/g, digitByDigit)
-      // A date d/m/yyyy: ថ្ងៃទីដប់ប្រាំ ខែឧសភា ឆ្នាំ...
-      .replace(/(ថ្ងៃទី\s?)?\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/g, (all, pre, d, m, y) => (+m >= 1 && +m <= 12 && +d >= 1 && +d <= 31
-        ? `ថ្ងៃទី${numberToWords(+d)} ខែ${MONTHS[+m - 1]} ឆ្នាំ${numberToWords(+y)}`
-        : all))
+      // A minus sign (not a range: nothing counted before it): -5°C -> ដកប្រាំអង្សាសេ.
+      .replace(/(^|[\s(=])[-−](?=\d)/g, '$1ដក')
+      // Times: 3×4 -> បី គុណ បួន.
+      .replace(/(\d)\s?[×x]\s?(?=\d)/g, '$1 គុណ ')
       // A time of day: ម៉ោង 10:30 -> ម៉ោងដប់កន្លះ, 7:15 -> ម៉ោងប្រាំពីរ ដប់ប្រាំនាទី.
       .replace(/(ម៉ោង\s?)?\b(\d{1,2}):(\d{2})\b/g, (all, pre, h, m) => {
         if (+h > 24 || +m > 59) return all;
@@ -87,9 +101,9 @@
       // A range: 20-30 -> ម្ភៃ ទៅ សាមសិប (a dash elsewhere is a pause).
       .replace(new RegExp(`(${NUM})\\s?[-–~]\\s?(?=\\d)`, 'g'), '$1 ទៅ ')
       .replace(UNIT_RE, (_, n, u) => `${sayNumber(n)}${UNIT_WORDS[u]}`)
-      .replace(/\$\s?(\d[\d,]*(?:\.\d+)?)/g, (_, n) => `${sayNumber(n)}ដុល្លារ`)
+      .replace(MONEY_BEFORE, (_, c, n) => `${sayNumber(n)}${CURRENCY[c]}`)
       .replace(/(\d[\d,]*(?:\.\d+)?)\s?%/g, (_, n) => `${sayNumber(n)}ភាគរយ`)
-      .replace(/(\d[\d,]*(?:\.\d+)?)\s?([$៛])/g, (_, n, c) => `${sayNumber(n)}${c === '$' ? 'ដុល្លារ' : 'រៀល'}`)
+      .replace(MONEY_AFTER, (_, n, c) => `${sayNumber(n)}${CURRENCY[c]}`)
       .replace(/\d[\d,]*(?:\.\d+)?/g, (n) => sayNumber(n.replace(/,$/, '')) + (n.endsWith(',') ? ',' : ''));
   }
 
@@ -190,8 +204,24 @@
     return text.replace(new RegExp(userWords.map(([from]) => esc(from)).join('|'), 'g'), (w) => map.get(w));
   }
 
-  // Acronyms (2 to 5 capitals, maybe with a digit: VIP, BE, CEO) by their Khmer letter names.
-  const spellAcronyms = (text) => text.replace(/\b[A-Z]{2,5}\b/g, (w) => Array.from(w, (c) => LETTERS[c] || c).join(''));
+  // Acronyms (1 to 5 capitals: VIP, CEO, the G of 5G, plan A) by their Khmer letter names.
+  // A capital starting a word (Wen, Ting'an) is a name and is left as written.
+  const spellAcronyms = (text) => text
+    .replace(/(?<![A-Za-z])(?:ok|okay|Ok|Okay|OKAY)(?![A-Za-z])/g, 'OK')
+    .replace(/(?<![A-Za-z'])[A-Z]{1,5}(?![A-Za-z'])/g, (w) => Array.from(w, (c) => LETTERS[c] || c).join(''));
+
+  // Khmer marks and abbreviations read out as words: ។ល។ and ៘ "and so on", ៖ a pause before
+  // what follows, ព.ស. / គ.ស. the eras, គ.ម. / គ.ក្រ. km / kg, ល.រ. "number".
+  const ABBREVIATIONS = [
+    [/\s*(?:។ល។|៘)/g, ' ជាដើម'],
+    [/\s*៖\s*/g, ', '],
+    [/(?<![ក-៓])ព\.\s?ស\.?/g, 'ពុទ្ធសករាជ'],
+    [/(?<![ក-៓])គ\.\s?ស\.?/g, 'គ្រិស្តសករាជ'],
+    [/(?<![ក-៓])គ\.\s?ម\.?/g, 'គីឡូម៉ែត្រ'],
+    [/(?<![ក-៓])គ\.\s?ក្រ\.?/g, 'គីឡូក្រាម'],
+    [/(?<![ក-៓])ល\.\s?រ\.?/g, 'លេខរៀង'],
+  ];
+  const sayAbbreviations = (text) => ABBREVIATIONS.reduce((s, [re, to]) => s.replace(re, to), text);
 
   // Subtitle text -> what the voice is given. Text without Khmer is only tidied.
   function normalizeForSpeech(text) {
@@ -203,6 +233,7 @@
     if (!KHMER_RE.test(s)) return s.replace(/\s+/g, ' ').trim();
     s = expandRepeat(s);
     s = applyUserWords(s);
+    s = sayAbbreviations(s);
     s = fixPronunciation(s);
     s = sayNumbers(s);
     s = sayTitles(s);

@@ -7,7 +7,9 @@ uses (backend/server.js /api/generate-voxcmp2 and the page's direct call):
   GET  /              200 {"status": "ready"} once the model is loaded,
                       503 {"status": "loading"} while it loads, 500 if it failed
   POST /api/generate  {"text", "instruction", "emotion", "seed",
-                       "reference_audio_base64", "reference_audio", "cfg_value"}
+                       "reference_audio_base64", "reference_audio", "cfg_value",
+                       "fit_seconds" (the line's room), "feeling_audio_base64" (how the
+                       line is said: the actor's own line or feeling clip), "feeling_from"}
                       -> {"success": true, "audio_base64": <wav>, "duration": s,
                           "sample_rate": hz}
   POST /api/speakers  {"audio_path" | "audio_base64": 16 kHz mono wav of the lines,
@@ -75,10 +77,20 @@ PACE_TARGET = 7.0
 PACE_BAND = (4.8, 9.6)
 PACE_MIN_UNITS = 7  # short exclamations are slow by nature and too short to measure
 PACE_TRIES = max(1, int(os.environ.get("VOXCPM_PACE_TRIES", "3")))
+# The page sends the line's room (fit_seconds: its slot, or up to the next line). A take longer
+# than that is played faster to fit (studio-main.js refitFastSubSpeed), and from 1.15x on it
+# sounds rushed. So a take that fits its room is kept over one that does not: with the pace
+# swinging this much between seeds, another draw often fits where the first did not.
+FIT_SLACK = 1.12  # played up to this much faster still sounds natural
 
 # Every line leaves as a dub line: no dead air or clicks at its ends, and all at one level
 # (raw takes ranged from -23 to -38 dB, so lines jumped in volume like pasted clips).
 LINE_LEVEL_DB = -24.0  # mean loudness of the speech
+# ...as loud as the actor said it, though: a whisper under, a shout over (line_level_db: the
+# line's speech against the film's dialogue as a whole). Part of it, within limits, as a
+# dialogue mixer rides it: whispers still heard, shouts not blasting.
+LINE_LEVEL_FOLLOW = 0.6
+LINE_LEVEL_RANGE = (-9.0, 6.0)
 LINE_PAD = (0.08, 0.15)  # seconds of room kept before / after the speech
 LINE_FADE = (0.01, 0.04)
 
@@ -103,6 +115,9 @@ denoiser = {"model": None, "failed": False}
 denoiser_lock = threading.Lock()
 ref_cache = {}  # sha1 of the clip -> wav bytes of the clip made ready to clone from, or None
 REF_PREP = "clean1"  # changes when the way a clip is made ready changes (anchors follow it)
+# A voice's clip made ready is kept on disk: one cleaning per clip, not per session (the cleaner
+# runs on the CPU, see get_denoiser).
+CLEAN_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "clean_clips")
 
 # Cloned from the clip alone, each line drew the voice afresh and one profile could sound
 # like two people. So each voice (and style) first says one fixed Khmer line, its anchor,
@@ -114,6 +129,19 @@ REF_PREP = "clean1"  # changes when the way a clip is made ready changes (anchor
 ANCHOR_TEXT = ("ខ្ញុំនៅទីនេះហើយ ហើយខ្ញុំកំពុងស្ដាប់អ្នកនិយាយ។ តើមានរឿងអ្វីកើតឡើង? "
                "ប្រាប់ខ្ញុំមកចុះ យើងនឹងរកផ្លូវដោះស្រាយជាមួយគ្នា។")
 ANCHOR_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "voice_anchors")
+
+# How a line is said comes from a second clip the page sends (feeling_audio_base64): the actor
+# saying this very line in the film, or their clip of this feeling. It is the line's reference on
+# its own, while the voice's seed and anchor stay those of its own clip: the anchor holds the voice
+# (one voice in every feeling), the reference brings the delivery. Measured on 96 lines of a
+# C-drama, each spoken with its real Khmer translation (median pitch of each dub line against the
+# actor's, across lines; 90% interval): the voice's clip with the written emotion did not follow
+# the actor (r 0.00, -0.13..+0.23); the line's own clip, cleaned, did (0.19, +0.10..+0.39), with
+# the voice as close to the actor's and the Khmer as clear. Joined after the voice's clip, or
+# with no anchor, the line's clip did not help.
+FEELING_MIN_SECONDS = 0.6  # less is too little to hear how it was said
+FEELING_MAX_SECONDS = 10.0
+FEELING_SOURCES = {"line": "film (vocals)", "line-center": "film (dialogue channel)", "emotion": "actor's clip of this feeling"}
 anchor_lock = threading.Lock()
 takes = {}  # (seed, text) -> times asked, so asking again gives a new take
 takes_lock = threading.Lock()
@@ -188,8 +216,19 @@ def voice_over(wav, sr):
     return (wav * gain).astype(np.float32)
 
 
-def finish_line(wav, sr):
-    """Trim the silence around the speech, fade its ends and bring it to the line level."""
+def line_level(payload):
+    """The level (dB) this line is brought to: LINE_LEVEL_DB, moved with how loud it was said."""
+    try:
+        said = float(payload.get("line_level_db"))
+    except (TypeError, ValueError):
+        return LINE_LEVEL_DB
+    if not -40.0 < said < 40.0:
+        return LINE_LEVEL_DB
+    return LINE_LEVEL_DB + max(LINE_LEVEL_RANGE[0], min(LINE_LEVEL_RANGE[1], said * LINE_LEVEL_FOLLOW))
+
+
+def finish_line(wav, sr, level_db=LINE_LEVEL_DB):
+    """Trim the silence around the speech, fade its ends and bring it to level_db."""
     import numpy as np
 
     wav = voice_over(wav, sr)
@@ -208,7 +247,7 @@ def finish_line(wav, sr):
     speech = db[db > db.max() - 35]
     if len(speech):
         level = 20 * np.log10(np.mean(10 ** (speech / 20)))
-        wav = wav * 10 ** (max(-10.0, min(14.0, LINE_LEVEL_DB - level)) / 20)
+        wav = wav * 10 ** (max(-16.0, min(20.0, level_db - level)) / 20)
     peak = float(np.abs(wav).max()) if len(wav) else 0.0
     if peak > 0.95:
         wav = wav * (0.95 / peak)
@@ -228,14 +267,25 @@ def noise_db(wav, sr):
 
 
 def get_denoiser():
-    """VoxCPM2's ZipEnhancer, loaded the first time a noisy clip comes in (None if it can't be)."""
+    """VoxCPM2's ZipEnhancer, loaded the first time a noisy clip comes in (None if it can't be).
+
+    On the CPU: run on the GPU beside VoxCPM2, a 6 GB laptop card overflowed and every line
+    after the first cleaning spoke 6x slower (2.2 s a step instead of 2.6 steps a second), freed
+    or not. On the CPU a clip takes about 2 s per second of it, once: cleaned clips are kept.
+    """
     with denoiser_lock:
         if denoiser["model"] is None and not denoiser["failed"]:
             try:
+                from modelscope.pipelines import pipeline
+                from modelscope.utils.constant import Tasks
                 from voxcpm.zipenhancer import ZipEnhancer
 
                 t0 = time.time()
-                denoiser["model"] = ZipEnhancer(DENOISER_ID)
+                # ZipEnhancer() builds its pipeline on the default device (the GPU); same object, on the CPU.
+                enhancer = ZipEnhancer.__new__(ZipEnhancer)
+                enhancer.model_path = DENOISER_ID
+                enhancer._pipeline = pipeline(Tasks.acoustic_noise_suppression, model=DENOISER_ID, device="cpu")
+                denoiser["model"] = enhancer
                 log(f"Loaded the clip cleaner in {time.time() - t0:.0f}s")
             except Exception:  # noqa: BLE001 - offline on first use, or an install without modelscope
                 denoiser["failed"] = True
@@ -269,14 +319,24 @@ def clean_clip(wav, sr):
                 pass
 
 
-def prepared_reference(ref_bytes):
+def prepared_reference(ref_bytes, keep=True):
     """The clip made ready to clone from (wav bytes), or None to use it as it came.
 
     A clip longer than REF_MAX_SECONDS is cut to its clearest stretch, and a noisy one cleaned.
+    keep=False for a clip used once (a line's own delivery): not kept in memory or on disk.
     """
     key = hashlib.sha1(ref_bytes).hexdigest()
-    if key in ref_cache:
-        return ref_cache[key]
+    disk = os.path.join(CLEAN_DIR, hashlib.sha1(ref_bytes + REF_PREP.encode()).hexdigest()[:20])
+    if keep:
+        if key in ref_cache:
+            return ref_cache[key]
+        if os.path.exists(disk + ".wav"):
+            with open(disk + ".wav", "rb") as f:
+                ref_cache[key] = f.read()
+            return ref_cache[key]
+        if os.path.exists(disk + ".same"):
+            ref_cache[key] = None
+            return None
     import numpy as np
     import soundfile as sf
 
@@ -308,13 +368,27 @@ def prepared_reference(ref_bytes):
         sf.write(buf, part, sr, format="WAV", subtype="PCM_16")
         cut = buf.getvalue()
     noise = noise_db(wav, sr)
+    settled = True  # False while a noisy clip could not be cleaned: try again another time
     if noise > REF_NOISY_DB:
         t0 = time.time()
         clean = clean_clip(wav, sr)
         if clean:
             log(f"Reference clip has noise {-noise:.0f} dB under the voice: cleaned it ({time.time() - t0:.1f}s)")
             cut = clean
+        else:
+            settled = False
+    if not keep:
+        return cut
     ref_cache[key] = cut
+    if settled:
+        try:
+            os.makedirs(CLEAN_DIR, exist_ok=True)
+            tmp = f"{disk}.{os.getpid()}.tmp"
+            with open(tmp, "wb") as f:
+                f.write(cut or b"")
+            os.replace(tmp, disk + (".wav" if cut else ".same"))
+        except OSError:
+            pass
     return cut
 
 
@@ -333,6 +407,17 @@ def pace_miss(pace):
     if pace is None or PACE_BAND[0] <= pace <= PACE_BAND[1]:
         return 0.0
     return abs(math.log(pace / PACE_TARGET))
+
+
+def fit_miss(wav, sr, fit):
+    """How much faster than natural a take must play to fit its room (0 when it fits)."""
+    import math
+
+    if not fit:
+        return 0.0
+    # The line as it leaves finish_line: its speech plus the room kept around it.
+    length = speech_seconds(wav, sr) + sum(LINE_PAD)
+    return max(0.0, math.log(length / (fit * FIT_SLACK)))
 
 
 def seed_everything(seed):
@@ -436,8 +521,9 @@ def wake_model():
             load_model()
 
 
-def best_take(model, kwargs, seed, spoken, sr):
-    """Speak once, and again with other seeds while the pace is off; the most natural take."""
+def best_take(model, kwargs, seed, spoken, sr, fit=None):
+    """Speak once, and again with other seeds while the pace is off or the take overruns its
+    room (fit, seconds); the most natural take that fits."""
     import numpy as np
 
     best = None  # (miss, wav)
@@ -446,13 +532,15 @@ def best_take(model, kwargs, seed, spoken, sr):
             seed_everything(seed + take * 7919)
             wav = np.asarray(model.generate(**kwargs), dtype=np.float32).reshape(-1)
         pace = speech_pace(spoken, wav, sr)
-        miss = pace_miss(pace)
+        over = fit_miss(wav, sr, fit)
+        miss = pace_miss(pace) + over
         if best is None or miss < best[0]:
             best = (miss, wav)
         if miss == 0.0:
             break
-        log(f"Take {take + 1}: {pace:.1f} letters/s, outside a natural "
-            f"{PACE_BAND[0]}-{PACE_BAND[1]}{'; trying again' if take + 1 < PACE_TRIES else '; keeping the closest'}")
+        why = (f"needs {np.exp(over) * FIT_SLACK:.2f}x to fit its {fit:.1f}s" if over
+               else f"{pace:.1f} letters/s, outside a natural {PACE_BAND[0]}-{PACE_BAND[1]}")
+        log(f"Take {take + 1}: {why}{'; trying again' if take + 1 < PACE_TRIES else '; keeping the closest'}")
     return best[1]
 
 
@@ -479,6 +567,48 @@ def voice_anchor(model, base, ref_bytes, style, seed, sr):
         return path
 
 
+def feeling_clip(voice_wav, feeling_bytes):
+    """The clip of how this line is said, brought to the voice clip's level (wav bytes), or None
+    when it is too short or unreadable. How loud the film's mix had the line says nothing about
+    how it was said; the effort is in the voice itself.
+    """
+    import numpy as np
+    import soundfile as sf
+
+    def read(b):
+        try:
+            w, r = sf.read(io.BytesIO(b), dtype="float32", always_2d=True)
+        except Exception:  # noqa: BLE001 - an mp3 older libsndfile builds cannot read
+            import librosa
+
+            w, r = librosa.load(io.BytesIO(b), sr=None, mono=False)
+            w = np.atleast_2d(w).T
+        return w.mean(axis=1), r
+
+    try:
+        feel, sr = read(feeling_bytes)
+    except Exception:  # noqa: BLE001
+        log("Could not read the line's own clip; speaking from the voice clip alone.")
+        return None
+    if speech_seconds(feel, sr) < FEELING_MIN_SECONDS:
+        return None
+    feel = feel[: int(FEELING_MAX_SECONDS * sr)]
+    voice, vsr = read(voice_wav)
+
+    def level(w, r):
+        _, db = frame_db(w, r)
+        speech = db[db > db.max() - 35]
+        return 20 * np.log10(np.mean(10 ** (speech / 20))) if len(speech) else -120.0
+
+    feel = feel * 10 ** (max(-20.0, min(20.0, level(voice, vsr) - level(feel, sr))) / 20)
+    peak = float(np.abs(feel).max()) if len(feel) else 0.0
+    if peak > 0.98:
+        feel = feel * (0.98 / peak)
+    buf = io.BytesIO()
+    sf.write(buf, feel.astype(np.float32), sr, format="WAV", subtype="PCM_16")
+    return buf.getvalue()
+
+
 def synthesize(payload):
     model = state["model"]
     text = str(payload.get("text") or "").strip()
@@ -503,8 +633,32 @@ def synthesize(payload):
             f.write(clip or ref_bytes)
         ref_path = tmp
 
+    # How this line is said: the line's own clip (see FEELING_MIN_SECONDS).
+    feeling_path = None
+    feeling_from = str(payload.get("feeling_from") or "")
+    fb64 = payload.get("feeling_audio_base64")
+    if ref_path and fb64:
+        try:
+            feel_bytes = base64.b64decode(fb64)
+            # Cleaned like a voice clip: what is left under separated vocals blurred the actor's
+            # pitch (on 96 lines the dub followed it at r 0.19 cleaned, 0.12 not; its range 0.46
+            # against -0.04), though not the Khmer. A line's own clip is used once: not kept.
+            own_line = feeling_from in ("line", "line-center")
+            felt = feeling_clip(open(ref_path, "rb").read(),
+                                prepared_reference(feel_bytes, keep=not own_line) or feel_bytes)
+        except Exception:  # noqa: BLE001 - the line is still spoken from the voice's clip alone
+            log("Could not use the line's own clip:\n" + traceback.format_exc())
+            felt = None
+        if felt:
+            fd, feeling_path = tempfile.mkstemp(prefix="drd_feel_", suffix=".wav")
+            with os.fdopen(fd, "wb") as f:
+                f.write(felt)
+
     spoken = text
-    style = style_instruction(payload.get("emotion"), payload.get("instruction"), text, bool(ref_path))
+    # With the line's own delivery to copy, the voice speaks from its calm anchor and the
+    # feeling comes from that clip; a written emotion would pull against what the actor did.
+    emotion = "neutral" if feeling_path else payload.get("emotion")
+    style = style_instruction(emotion, payload.get("instruction"), text, bool(ref_path))
     voice = voice_seed(payload, ref_bytes)
     # The first take of a line is the voice's own seed; asking for the line again (Regenerate)
     # moves on to a new take instead of handing back the same audio.
@@ -538,26 +692,36 @@ def synthesize(payload):
         if (ref_path and "reference_wav_path" in base and "prompt_text" in params
                 and payload.get("anchor", True) is not False):
             anchor = voice_anchor(model, base, ref_bytes, style, voice, sr)
+        if feeling_path and "reference_wav_path" in base:
+            base = {**base, "reference_wav_path": feeling_path}
         if anchor:
             # Continue from the anchor: it already carries the voice and the style.
             kwargs = {**base, "text": spoken, "prompt_wav_path": anchor, "prompt_text": ANCHOR_TEXT}
         else:
             # VoxCPM2 takes a voice / style description in brackets before the text.
             kwargs = {**base, "text": f"({style}){spoken}" if style else spoken}
-        wav = finish_line(best_take(model, kwargs, seed, spoken, sr), sr)
+        try:
+            fit = float(payload.get("fit_seconds") or 0) or None
+        except (TypeError, ValueError):
+            fit = None
+        if fit is not None and not 0.3 <= fit <= 60:
+            fit = None
+        wav = finish_line(best_take(model, kwargs, seed, spoken, sr, fit), sr, line_level(payload))
         buf = io.BytesIO()
         sf.write(buf, wav, sr, format="WAV", subtype="PCM_16")
         dur = len(wav) / float(sr)
         log(f"Spoke {len(spoken)} chars -> {dur:.1f}s audio in {time.time() - t0:.1f}s"
-            f"{' (cloned)' if ref_path else ''}{' from its anchor' if anchor else ''}{f' [{style}]' if style else ''}")
+            f"{' (cloned)' if ref_path else ''}{' from its anchor' if anchor else ''}{f' [{style}]' if style else ''}"
+            f"{f' as said in the {FEELING_SOURCES.get(feeling_from, feeling_from)}' if feeling_path else ''}")
         return {"success": True, "audio_base64": base64.b64encode(buf.getvalue()).decode("ascii"),
                 "duration": dur, "sample_rate": sr}
     finally:
-        if tmp:
-            try:
-                os.remove(tmp)
-            except OSError:
-                pass
+        for p in (tmp, feeling_path):
+            if p:
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
 
 
 def find_speakers(payload):

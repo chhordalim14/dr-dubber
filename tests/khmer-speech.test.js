@@ -95,6 +95,29 @@ describe('Khmer text for the voice', () => {
         assert.equal(say('Mrs. Li ទៅណា'), 'លោកស្រី Li ទៅណា។');
     });
 
+    test('other date forms, minus, times and other money', () => {
+        assert.equal(say('ថ្ងៃទី 2026-10-19'), 'ថ្ងៃទីដប់ប្រាំបួន ខែតុលា ឆ្នាំពីរពាន់ម្ភៃប្រាំមួយ។');
+        assert.equal(say('មកវិញ 05-10-2026'), 'មកវិញ ថ្ងៃទីប្រាំ ខែតុលា ឆ្នាំពីរពាន់ម្ភៃប្រាំមួយ។', 'not a phone number');
+        assert.equal(say('ថ្ងៃ 19.10.2026'), 'ថ្ងៃ ថ្ងៃទីដប់ប្រាំបួន ខែតុលា ឆ្នាំពីរពាន់ម្ភៃប្រាំមួយ។');
+        assert.equal(say('ត្រជាក់ -5°C'), 'ត្រជាក់ ដកប្រាំអង្សាសេ។');
+        assert.equal(say('បន្ទប់ 3×4 ម៉ែត្រ'), 'បន្ទប់ បី គុណ បួន ម៉ែត្រ។');
+        assert.equal(say('ថ្លៃ ¥500'), 'ថ្លៃ ប្រាំរយយ័ន។');
+        assert.equal(say('ថ្លៃ 500元 និង €20'), 'ថ្លៃ ប្រាំរយយ័ន និង ម្ភៃអឺរ៉ូ។');
+        assert.equal(say('ខ្ញុំមាន 100 USD និង 4000 KHR'), 'ខ្ញុំមាន មួយរយដុល្លារ និង បួនពាន់រៀល។');
+        assert.equal(say('អាយុ 20-30 ឆ្នាំ'), 'អាយុ ម្ភៃ ទៅ សាមសិប ឆ្នាំ។', 'a range is not a minus');
+    });
+
+    test('Khmer marks and abbreviations read out; single capitals and ok spelled', () => {
+        assert.equal(say('ផ្លែឈើ ចេក ក្រូច ។ល។'), 'ផ្លែឈើ ចេក ក្រូច ជាដើម។');
+        assert.equal(say('គាត់និយាយថា៖ ទៅ!'), 'គាត់និយាយថា, ទៅ!');
+        assert.equal(say('ឆ្នាំ ២៥៦៨ ព.ស.'), 'ឆ្នាំ ពីរពាន់ប្រាំរយហុកសិបប្រាំបី ពុទ្ធសករាជ។');
+        assert.equal(say('ចម្ងាយ ១០ គ.ម.'), 'ចម្ងាយ ដប់ គីឡូម៉ែត្រ។');
+        assert.equal(say('ទូរស័ព្ទ 5G'), 'ទូរស័ព្ទ ប្រាំជី។');
+        assert.equal(say('ផែនការ A'), 'ផែនការ អេ។');
+        assert.equal(say('ok ទៅ'), 'អូខេ ទៅ។');
+        assert.equal(say("តែ Wen Ting'an និង Facebook"), "តែ Wen Ting'an និង Facebook។", 'words and names left as written');
+    });
+
     test("the user's pronunciation list: longest written form first, a said form never respelled again", () => {
         K.setPronunciations([['ស៊ូ', 'ស៊ូវ'], ['ស៊ូហ៊ាង', 'ស៊ូ ហ៊ាង'], ['', 'x'], ['ទៅ', 'ទៅ']]);
         try {
