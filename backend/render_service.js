@@ -148,6 +148,36 @@ async function getVideoDimensions(videoPath) {
     }
 }
 
+// Frames per second of the first video stream (avg_frame_rate, else r_frame_rate); null if unknown.
+const _videoFrameRateCache = new Map();
+async function getVideoFrameRate(videoPath) {
+    let cacheKey = videoPath;
+    try {
+        cacheKey = `${videoPath}:${fs.statSync(videoPath).mtimeMs}`;
+        if (_videoFrameRateCache.has(cacheKey)) return _videoFrameRateCache.get(cacheKey);
+    } catch (e) { }
+
+    try {
+        const { stdout } = await execFileAsync(getFFprobeBinary(), [
+            '-v', 'error',
+            '-select_streams', 'v:0',
+            '-show_entries', 'stream=avg_frame_rate,r_frame_rate',
+            '-of', 'default=noprint_wrappers=1',
+            videoPath
+        ], { timeout: 5000 });
+        const rate = (key) => {
+            const m = stdout.match(new RegExp(`^${key}=(\\d+)(?:/(\\d+))?`, 'm'));
+            const v = m ? (m[2] ? Number(m[1]) / Number(m[2]) : Number(m[1])) : NaN;
+            return Number.isFinite(v) && v > 0 && v <= 240 ? v : null;
+        };
+        const result = rate('avg_frame_rate') || rate('r_frame_rate');
+        _videoFrameRateCache.set(cacheKey, result);
+        return result;
+    } catch (e) {
+        return null;
+    }
+}
+
 const _videoHasAudioCache = new Map();
 async function videoHasAudio(videoPath) {
     if (!videoPath) return false;
@@ -1935,6 +1965,8 @@ async function renderVideo(options, onProgress, onComplete, onError) {
 
         // Apply Video Overlays (picture-in-picture clips, optional chroma key)
         if (validVideoOverlays.length > 0) {
+            const outFps = videoPath ? await getVideoFrameRate(videoPath) : null;
+            const ovFps = await Promise.all(validVideoOverlays.map(ov => getVideoFrameRate(ov.path)));
             validVideoOverlays.forEach((ov, ovIdx) => {
                 const ovW = Math.max(2, Math.round((canvasW * (parseFloat(ov.w) || 20)) / 100 / 2) * 2);
                 const ovH = Math.max(2, Math.round((canvasH * (parseFloat(ov.h) || 20)) / 100 / 2) * 2);
@@ -1961,19 +1993,31 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                 // frame), not part-way through.
                 const win = overlayTimeWindow(ov);
                 const delay = win.start ? `,setpts=PTS-STARTPTS+${win.start.toFixed(3)}/TB` : '';
-                // Keyed at the video's own size, then fitted to the box, as the preview does.
-                let ovSource = `${ov.inputIndex}:v`;
+                // Only the frames the export shows are worked on (keying a 1080p banner every frame is
+                // most of a render's time): a banner faster than the video brought down to the video's
+                // frame rate (the overlay would drop the rest), one shown for a while cut to that while
+                // (the looped input runs on to the end of the video otherwise), and fitted to the box
+                // before it is keyed.
+                const fpsCap = outFps && ovFps[ovIdx] && ovFps[ovIdx] > outFps + 0.01 ? `fps=${Number(outFps.toFixed(6))},` : '';
+                const trim = win.end !== null ? `trim=duration=${(win.end - win.start).toFixed(3)},` : '';
+                const fit = `${fpsCap}${trim}scale=${ovW}:${ovH}:force_original_aspect_ratio=increase,crop=${ovW}:${ovH}`;
                 if (keyed) {
-                    ovSource = `vov_keyed_${ovIdx}`;
-                    filterComplex.push(...chromaKeyFilters(`${ov.inputIndex}:v`, ovSource, ov.chromaKey, `ck${ovIdx}`));
+                    const fitTag = `vov_fit_${ovIdx}`;
+                    const keyedTag = `vov_keyed_${ovIdx}`;
+                    filterComplex.push(`[${ov.inputIndex}:v]${fit}[${fitTag}]`);
+                    filterComplex.push(...chromaKeyFilters(fitTag, keyedTag, ov.chromaKey, `ck${ovIdx}`));
+                    filterComplex.push(`[${keyedTag}]format=rgba${radiusFilter}${alphaFilter}${delay}[${ovProcTag}]`);
+                } else {
+                    filterComplex.push(`[${ov.inputIndex}:v]${fit},format=rgba${radiusFilter}${alphaFilter}${delay}[${ovProcTag}]`);
                 }
-                filterComplex.push(`[${ovSource}]scale=${ovW}:${ovH}:force_original_aspect_ratio=increase,crop=${ovW}:${ovH},format=rgba${radiusFilter}${alphaFilter}${delay}[${ovProcTag}]`);
 
                 const baseX = Math.round((canvasW * (parseFloat(ov.x) || 0)) / 100);
                 const baseY = Math.round((canvasH * (parseFloat(ov.y) || 0)) / 100);
 
+                // A trimmed banner has ended once its while is over: nothing left to hold on screen.
+                const eofAction = trim ? 'pass' : 'repeat';
                 const nextVideoTag = `vov_out_${ovIdx}`;
-                filterComplex.push(`[${currentVideoTag}][${ovProcTag}]overlay=x=${baseX}:y=${baseY}:eof_action=repeat${overlayEnableOption(win)}[${nextVideoTag}]`);
+                filterComplex.push(`[${currentVideoTag}][${ovProcTag}]overlay=x=${baseX}:y=${baseY}:eof_action=${eofAction}${overlayEnableOption(win)}[${nextVideoTag}]`);
                 currentVideoTag = nextVideoTag;
             });
         }

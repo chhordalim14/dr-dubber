@@ -117,7 +117,16 @@ describe('overlay shown for a while', () => {
   test('the image and video overlay filters use it; a late video starts playing at its start', () => {
     const service = fs.readFileSync(path.join(__dirname, '..', 'backend', 'render_service.js'), 'utf8');
     assert.match(service, /overlay=x='\$\{xExpr\}':y='\$\{yExpr\}'\$\{evalParam\}:eof_action=repeat\$\{overlayEnableOption\(overlayTimeWindow\(ov\)\)\}/);
-    assert.match(service, /overlay=x=\$\{baseX\}:y=\$\{baseY\}:eof_action=repeat\$\{overlayEnableOption\(win\)\}/);
+    assert.match(service, /overlay=x=\$\{baseX\}:y=\$\{baseY\}:eof_action=\$\{eofAction\}\$\{overlayEnableOption\(win\)\}/);
     assert.match(service, /setpts=PTS-STARTPTS\+\$\{win\.start\.toFixed\(3\)\}\/TB/);
+  });
+
+  test('a video overlay is only worked on while it shows: cut to its while, at the video frame rate', () => {
+    const service = fs.readFileSync(path.join(__dirname, '..', 'backend', 'render_service.js'), 'utf8');
+    assert.match(service, /const trim = win\.end !== null \? `trim=duration=\$\{\(win\.end - win\.start\)\.toFixed\(3\)\},` : '';/);
+    assert.match(service, /const eofAction = trim \? 'pass' : 'repeat';/);
+    assert.match(service, /ovFps\[ovIdx\] > outFps \+ 0\.01 \? `fps=/);
+    // Fitted to the box first, then keyed.
+    assert.match(service, /filterComplex\.push\(\.\.\.chromaKeyFilters\(fitTag, keyedTag,/);
   });
 });
