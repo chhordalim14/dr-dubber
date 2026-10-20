@@ -518,7 +518,9 @@ function detectGpuName() {
     return new Promise((resolve) => {
         let cmd;
         if (process.platform === 'win32') {
-            cmd = 'powershell -NoProfile -Command "(Get-CimInstance Win32_VideoController | Select-Object -First 1 -ExpandProperty Name)"';
+            // The GPU that renders, not the first one listed: a laptop lists its integrated GPU
+            // (AMD Radeon / Intel) before the NVIDIA one that NVENC uses.
+            cmd = 'powershell -NoProfile -Command "$n = @(Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name }); ($n | Where-Object { $_ -match \'NVIDIA|GeForce|RTX|Quadro\' } | Select-Object -First 1), $n[0] | Where-Object { $_ } | Select-Object -First 1"';
         } else if (process.platform === 'darwin') {
             cmd = "system_profiler SPDisplaysDataType | grep 'Chipset Model' | head -1 | sed 's/.*: //'";
         } else {

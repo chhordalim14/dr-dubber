@@ -70,7 +70,10 @@ function canEncodeWith(codec) {
         }
         p.on('error', () => finish(false));
         p.on('close', (code) => finish(code === 0));
-        setTimeout(() => { try { p.kill(); } catch (e) { } finish(false); }, 4000);
+        // A laptop's NVIDIA GPU asleep (switched off while the integrated one drives the screen)
+        // takes seconds to wake: 4 s let NVENC fail the test on an RTX 3060 laptop, and every
+        // render of the session went to the slower integrated AMD encoder instead.
+        setTimeout(() => { try { p.kill(); } catch (e) { } finish(false); }, 15000);
     });
 }
 
@@ -1188,18 +1191,29 @@ function keyedOverlayFilters(src, out, w, h, ck) {
     ];
 }
 
+// An unkeyed video overlay from [src] to [out]: fitted to its w x h box (rgba), as the render
+// fits a plain banner.
+function fittedOverlayFilters(src, out, w, h) {
+    return [`[${src}]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},format=rgba[${out}]`];
+}
+
 // Keyed video overlays are keyed and fitted once and kept (lossless FFV1 with alpha, at the box's
 // size): every tab of a series shows the same sponsor banner, and keying it in each render meant
 // decoding and keying every frame of it again - a 3626x1080 banner took longer than the episode's
 // own picture. The copy loops and is timed like the original. Bump the version when
 // keyedOverlayFilters or chromaKeyFilters changes what they make.
+// A plain (unkeyed) banner bigger than its box is fitted once the same way (ck null): decoding and
+// shrinking a 3626x1080 strip every frame made a 1080x1920 episode's render 1.6 times as long.
 const KEYED_OVERLAY_VERSION = 1;
 const KEYED_OVERLAY_DIR = path.join(SEPARATED_DIR, 'keyed-overlays');
 const KEYED_OVERLAY_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000; // not used for this long: removed
+// A plain overlay longer than this is read as it is: its lossless copy would be gigabytes (a
+// picture-in-picture clip, not a banner).
+const PLAIN_OVERLAY_MAX_PREPARE_SEC = 120;
 
 function keyedOverlayCachePath(srcPath, w, h, ck) {
     const st = fs.statSync(srcPath);
-    const keying = ['color', 'tolerance', 'smooth', 'spill'].map((k) => String(ck && ck[k] !== undefined ? ck[k] : '')).join('|');
+    const keying = !ck ? 'plain' : ['color', 'tolerance', 'smooth', 'spill'].map((k) => String(ck[k] !== undefined ? ck[k] : '')).join('|');
     const id = crypto.createHash('sha1')
         .update(`${KEYED_OVERLAY_VERSION}|${path.resolve(srcPath)}|${st.size}|${st.mtimeMs}|${w}x${h}|${keying}`)
         .digest('hex').slice(0, 20);
@@ -1215,7 +1229,7 @@ function pruneKeyedOverlays() {
     }
 }
 
-async function preparedKeyedOverlay(srcPath, w, h, ck) {
+async function preparedOverlay(srcPath, w, h, ck) {
     const out = keyedOverlayCachePath(srcPath, w, h, ck);
     if (fs.existsSync(out)) {
         try { const now = new Date(); fs.utimesSync(out, now, now); } catch (e) { } // in use: kept
@@ -1228,7 +1242,7 @@ async function preparedKeyedOverlay(srcPath, w, h, ck) {
     try {
         await new Promise((resolve, reject) => {
             const ff = spawn(getFFmpegBinary(), ['-hide_banner', '-nostdin', '-y', '-i', srcPath,
-                '-filter_complex', keyedOverlayFilters('0:v', 'k', w, h, ck).join(';'), '-map', '[k]', '-an', '-sn',
+                '-filter_complex', (ck ? keyedOverlayFilters('0:v', 'k', w, h, ck) : fittedOverlayFilters('0:v', 'k', w, h)).join(';'), '-map', '[k]', '-an', '-sn',
                 '-c:v', 'ffv1', '-level', '3', '-slices', '4', '-pix_fmt', 'bgra', tmp], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
             let tail = '';
             ff.stderr.on('data', (d) => { tail = (tail + d).slice(-2000); });
@@ -1244,6 +1258,13 @@ async function preparedKeyedOverlay(srcPath, w, h, ck) {
     } finally {
         try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch (e) { }
     }
+}
+
+// A plain overlay is worth a fitted copy when it is bigger than its box (each frame decoded and
+// shrunk otherwise) and short enough for the copy to stay small.
+async function plainOverlayWorthPreparing(srcPath, w, h) {
+    const [dims, dur] = await Promise.all([getVideoDimensions(srcPath), getVideoDuration(srcPath)]);
+    return !!(dims && dur && dur <= PLAIN_OVERLAY_MAX_PREPARE_SEC && dims.width * dims.height > w * h);
 }
 
 // Rounded corners for a video overlay ([src] rgba, w x h, radius r) to [out]: the corners cut
@@ -1709,7 +1730,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                 ...ov,
                 path: p,
                 inputIndex,
-                pathArg: args.length - 1, // a keyed one is swapped for its prepared copy (preparedKeyedOverlay)
+                pathArg: args.length - 1, // swapped for its prepared copy (preparedOverlay)
             };
         });
 
@@ -2095,19 +2116,19 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                 const trim = win.end !== null ? `trim=duration=${(win.end - win.start).toFixed(3)},` : '';
                 let shown = `${fpsCap}${trim}`; // still to apply to the source below
                 let ovSource = `${ov.inputIndex}:v`;
-                if (keyed) {
-                    // Keyed and fitted once, then the render only reads the small prepared copy (timed
-                    // like the original, so the frame rate and the while above still apply to it);
-                    // keyed here as before when that could not be made.
+                // Keyed (or, plain, just fitted) once, then the render only reads the small prepared copy
+                // (timed like the original, so the frame rate and the while above still apply to it);
+                // keyed / fitted here as before when that could not be made.
+                if (keyed || await plainOverlayWorthPreparing(ov.path, ovW, ovH)) {
                     let prepared = null;
                     try {
-                        prepared = await preparedKeyedOverlay(ov.path, ovW, ovH, ov.chromaKey);
+                        prepared = await preparedOverlay(ov.path, ovW, ovH, keyed ? ov.chromaKey : null);
                     } catch (e) {
-                        console.warn(`[Render] Keying "${path.basename(ov.path)}" in the render instead: ${e.message}`);
+                        console.warn(`[Render] ${keyed ? 'Keying' : 'Fitting'} "${path.basename(ov.path)}" in the render instead: ${e.message}`);
                     }
                     if (prepared) {
                         args[ov.pathArg] = prepared;
-                    } else {
+                    } else if (keyed) {
                         if (shown) { // fewer frames to key
                             filterComplex.push(`[${ovSource}]${shown.slice(0, -1)}[vov_shown_${ovIdx}]`);
                             ovSource = `vov_shown_${ovIdx}`;
@@ -2385,7 +2406,8 @@ module.exports = {
     _overlayEnableOption: overlayEnableOption,
     _roundedCornerFilters: roundedCornerFilters,
     _keyedOverlayFilters: keyedOverlayFilters,
-    _preparedKeyedOverlay: preparedKeyedOverlay,
+    _preparedOverlay: preparedOverlay,
+    _plainOverlayWorthPreparing: plainOverlayWorthPreparing,
     _textMotionSegments: textMotionSegments,
     _buildFreeTextAssFile: buildFreeTextAssFile,
     _richTextToAss: richTextToAss,

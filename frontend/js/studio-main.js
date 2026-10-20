@@ -19087,6 +19087,7 @@
                 delete plan.fullMerged; // a part exported again: the whole-series video is out of date
                 savePlan();
               }
+              prepareClipsLike(r.outputs);
               mergePartExport(i, r.outputs);
             }
             return r;
@@ -19131,6 +19132,15 @@
         return currentClips()
           .filter((c) => (i === 0 && c.pos === 0) || (c.pos > first && c.pos <= first + eps.length))
           .map((c) => ({ at: eps.slice(0, c.pos - first).reduce((s, e) => s + e.duration, 0), path: c.path }));
+      }
+
+      // The ads encoded in the background as soon as a part's tabs are exported (their size and
+      // frame rate), while the next part is dubbed: every join after it - each part's and the
+      // whole-series video - finds them ready instead of encoding them again.
+      function prepareClipsLike(outputs) {
+        const clips = [...new Set(currentClips().map((c) => c.path).filter(Boolean))];
+        if (!clips.length || !mergeWanted() || !outputs?.[0]) return;
+        postJson(`${API}/episodes/prepare-clips`, { like: outputs[0], clips }).catch(() => { });
       }
 
       function mergePartExport(i, outputs) {
@@ -22898,6 +22908,32 @@
       return out;
     };
 
+    // A line's voice element, made (and loading) when it has none or a dead one.
+    const voiceAudioFor = (sub) => {
+      let audio = activeAudios[sub.id];
+      const isDead = audio && (!audio.src || audio.src === "" || audio.src === window.location.href || audio.networkState === HTMLMediaElement.NETWORK_NO_SOURCE || audio.error != null);
+      if (audio && !isDead) return audio;
+      if (audio && typeof window.releaseAudioChain === "function") window.releaseAudioChain(audio);
+      const baseUrl = sub.audioUrl.split("&t=")[0];
+      const cacheBust = Date.now();
+      const isLocalFile = baseUrl.startsWith("file:") || baseUrl.startsWith("blob:");
+      const fullUrl = isLocalFile ? diskPathToMediaUrl(baseUrl) : (baseUrl.startsWith("http") ? baseUrl : `http://localhost:3001${baseUrl}`) + `&_play=${cacheBust}`;
+      audio = new Audio();
+      audio.preload = "auto";
+      audio.src = fullUrl;
+      audio.load();
+      activeAudios[sub.id] = audio;
+      attachPitchNode(audio).catch((e) => console.warn("[Pitch] routing failed:", e.message));
+      return audio;
+    };
+    // Voices are loaded this far ahead of the playhead. A voice first loaded when its line
+    // starts (every line of a tab just opened) only plays once it has loaded - after the
+    // actor has started talking.
+    const VOICE_PRELOAD_AHEAD = 3.0;
+    // A voice starting this far from where the video is gets moved there first. (0.2s let a
+    // voice that started late play from its beginning: a fifth of a second behind the mouth.)
+    const VOICE_START_SLACK = 0.08;
+
     const smoothVisualLoop = () => {
       if (document.hidden) {
         requestAnimationFrame(smoothVisualLoop);
@@ -22974,6 +23010,11 @@
           // Only lines under the playhead can start a voice; any voice still playing for a
           // line the playhead has left is paused (what the per-line else-branch did).
           const _aIdx = timeIndex();
+          if (!isA1Muted) {
+            entriesAt(_aIdx.audio, currentTime, VOICE_PRELOAD_AHEAD, 0).forEach(({ s }) => {
+              if (s.audioStatus === "ready" && s.audioUrl) voiceAudioFor(s);
+            });
+          }
           const _activeEntries = entriesAt(_aIdx.audio, currentTime, 0.05, 0.15);
           const _activeIds = new Set(_activeEntries.map((e) => String(e.s.id)));
           for (const id in activeAudios) {
@@ -22988,21 +23029,7 @@
             const isActive = currentTime >= (start - 0.05) && currentTime <= (end + 0.15);
 
             if (isActive && sub.audioStatus === "ready" && sub.audioUrl && !isA1Muted) {
-              let audio = activeAudios[sub.id];
-              const isDead = audio && (!audio.src || audio.src === "" || audio.src === window.location.href || audio.networkState === HTMLMediaElement.NETWORK_NO_SOURCE || audio.error != null);
-              if (!audio || isDead) {
-                if (audio && typeof window.releaseAudioChain === "function") window.releaseAudioChain(audio);
-                const baseUrl = sub.audioUrl.split("&t=")[0];
-                const cacheBust = Date.now();
-                const isLocalFile = baseUrl.startsWith("file:") || baseUrl.startsWith("blob:");
-                const fullUrl = isLocalFile ? diskPathToMediaUrl(baseUrl) : (baseUrl.startsWith("http") ? baseUrl : `http://localhost:3001${baseUrl}`) + `&_play=${cacheBust}`;
-                audio = new Audio();
-                audio.preload = "auto";
-                audio.src = fullUrl;
-                audio.load();
-                activeAudios[sub.id] = audio;
-                attachPitchNode(audio).catch((e) => console.warn("[Pitch] routing failed:", e.message));
-              }
+              const audio = voiceAudioFor(sub);
 
               if (audio.playbackRate !== (sub.speed || 1.0)) audio.playbackRate = sub.speed || 1.0;
               const targetSubVol = Math.min(1.0, sub.volume ?? 1.0);
@@ -23020,7 +23047,7 @@
                   const liveSeekTo = liveOffset * actualSpeed;
                   if (liveOffset < 0 || liveOffset > (end - start + 0.2)) return;
                   if (voiceClipFinishedAt(audio, liveSeekTo)) return;
-                  if (Math.abs(audio.currentTime - liveSeekTo) > 0.2) {
+                  if (Math.abs(audio.currentTime - liveSeekTo) > VOICE_START_SLACK) {
                     audio.currentTime = liveSeekTo;
                   }
                   audio.play().catch((e) => console.log("A1 play delayed:", e));
@@ -23032,7 +23059,7 @@
                 if (voiceClipFinishedAt(audio, seekTo)) {
                   // This line's voice already played to the end: don't restart it.
                 } else if (audio.readyState >= 3) {
-                  if (Math.abs(audio.currentTime - seekTo) > 0.2) {
+                  if (Math.abs(audio.currentTime - seekTo) > VOICE_START_SLACK) {
                     audio.currentTime = seekTo;
                   }
                   audio.play().catch((e) => console.log("A1 play delayed:", e));
@@ -23111,7 +23138,7 @@
                   const liveSeekTo = liveOffset * actualSpeed + fileOffset;
                   if (liveOffset < 0 || liveOffset > end - start) return;
                   if (voiceClipFinishedAt(audio, liveSeekTo)) return;
-                  if (Math.abs(audio.currentTime - liveSeekTo) > 0.2) {
+                  if (Math.abs(audio.currentTime - liveSeekTo) > VOICE_START_SLACK) {
                     audio.currentTime = liveSeekTo;
                   }
                   audio.play().catch((e) => console.log("Detached A1 play delayed:", e));
@@ -23120,7 +23147,7 @@
                 if (voiceClipFinishedAt(audio, seekTo)) {
                   // This clip already played to the end: don't restart it.
                 } else if (audio.readyState >= 3) {
-                  if (Math.abs(audio.currentTime - seekTo) > 0.2) {
+                  if (Math.abs(audio.currentTime - seekTo) > VOICE_START_SLACK) {
                     audio.currentTime = seekTo;
                   }
                   audio.play().catch((e) => console.log("Detached A1 play delayed:", e));

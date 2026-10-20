@@ -167,6 +167,51 @@ describe('episode joiner', { skip }, () => {
         assert.deepEqual(r.joinedParts.map((p) => p.number), [1, 2]);
     });
 
+    test('ads in the middle of exported tabs: only the frames by the cut are encoded, each ad once', async () => {
+        // An exported tab: H.264 with B-frames, a closed GOP every 2 s (the app's tabs: every 10 s).
+        const tab = path.join(root, 'tab.mp4'), ad = path.join(root, 'ad.mp4');
+        ff(['-f', 'lavfi', '-i', 'testsrc2=s=320x240:r=25:d=8', '-f', 'lavfi', '-i', 'sine=f=440:d=8', '-shortest',
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-bf', '2', '-g', '50', '-keyint_min', '50', '-sc_threshold', '0', '-c:a', 'aac', tab]);
+        ff(['-f', 'lavfi', '-i', 'testsrc=s=640x360:r=30:d=1', '-f', 'lavfi', '-i', 'sine=f=880:d=1', '-shortest', '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', ad]);
+        const cache = path.join(root, 'clip-cache');
+        const opts = { getFFmpegBinary: () => FF, getFFprobeBinary: () => FP, trackProcess: null, detectAvailableEncoders: async () => ({}), audioRepair: null };
+        const j = createEpisodeJoiner({ ...opts, clipCacheDir: cache });
+        // tab | tab with the ad at 4.6 s (inside the third GOP) | the ad again at the end.
+        const id = await j.start({ parts: [{ files: [tab, tab], inserts: [{ at: 8 + 4.6, path: ad }, { at: 16, path: ad }] }], partNumbers: [1], outDir: path.join(root, 'cutout'), seriesName: 'Cut' });
+        const st = await waitJob(() => j.status(id));
+        assert.equal(st.parts[0].status, 'done', st.parts[0].error);
+        assert.equal(st.parts[0].videoMode, 'mixed');
+        assert.equal(fs.readdirSync(cache).filter((n) => n.endsWith('.mp4')).length, 1, 'the ad encoded once for both breaks');
+        const md5 = (f) => execFileSync(FF, ['-v', 'error', '-i', f, '-map', '0:v:0', '-f', 'framemd5', '-'], { maxBuffer: 1 << 26 }).toString()
+            .split('\n').filter((l) => l && !l.startsWith('#')).map((l) => l.split(',').pop().trim());
+        const T = md5(tab), O = md5(st.parts[0].outPath);
+        assert.equal(T.length, 200);
+        assert.equal(O.length, 200 + 200 + 25 + 25, 'two tabs + two 1 s ads at 25 fps: no frame lost or doubled');
+        // Frame by frame where each tab frame should be: identical when copied.
+        const expected = [...T, ...T.slice(0, 115), ...Array(25).fill(null), ...T.slice(115), ...Array(25).fill(null)];
+        const differ = expected.map((h, p) => (h && h !== O[p] ? p : -1)).filter((p) => p >= 0);
+        // Encoded: the cut's GOP - from its keyframe at 4 s to the cut (15 frames), and from the cut to
+        // the next keyframe at 6 s (35 frames, after the ad).
+        assert.deepEqual(differ, [...Array.from({ length: 15 }, (_, k) => 300 + k), ...Array.from({ length: 35 }, (_, k) => 340 + k)],
+            'everything else copied as it is');
+        const decoded = execFileSync(FF, ['-v', 'error', '-i', st.parts[0].outPath, '-map', '0:v:0', '-f', 'null', '-'], { stdio: ['ignore', 'pipe', 'pipe'] });
+        assert.equal(String(decoded).trim(), '');
+    });
+
+    test('the cut plan: copied keyframe to keyframe, encoded only by the cuts', () => {
+        const { _cutPlan } = require('../backend/episode_joiner');
+        const kf = [0, 10, 20, 30].map((t) => ({ pts: t + 0.04, dts: t - 0.08 })); // a tab's: first frame at 0.04
+        // A piece in the middle: up to the first keyframe, keyframes 10-20 copied, then to the cut.
+        assert.deepEqual(_cutPlan(5, 20, false, kf, 25), [
+            { start: 5, frames: 126 }, { copy: true, inpoint: 10.04, outpoint: 19.92, duration: 10 }, { start: 20.04, frames: 124 }]);
+        // From the file's start: copied from its first frame, no frame encoded twice.
+        assert.deepEqual(_cutPlan(0, 25, false, kf, 25), [{ copy: true, inpoint: null, outpoint: 19.92, duration: 20.04 }, { start: 20.04, frames: 124 }]);
+        // To the file's end: copied to the end.
+        assert.deepEqual(_cutPlan(25, 15, true, kf, 25), [{ start: 25, frames: 126 }, { copy: true, inpoint: 30.04, outpoint: null, duration: 9.96 }]);
+        // No two keyframes inside it: encoded whole.
+        assert.equal(_cutPlan(12, 5, false, kf, 25), null);
+    });
+
     test('the splitter cuts audio-only files (WMA is converted to .m4a)', async () => {
         const id = await splitter.start({ file: path.join(adir, 'E03.wma'), outDir: path.join(root, 'split'), partCount: 1, baseName: 'W' });
         const st = await waitJob(() => splitter.status(id));

@@ -24,7 +24,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // merge: "Join into one video" is on; joinError: the join of every part fails with it.
 // clips: "Clips between episodes" ({ pos, path }; pos k = after the series' k-th episode).
 function makeSeries({ parts = 3, outcome = () => 'done', renderMs = 10, dubMs = 15, plan = null, merge = false, joinError = null, clips = [], scope = 'part' } = {}) {
-  const env = { log: [], toasts: [], saves: 0, renderQueue: [], joins: [] };
+  const env = { log: [], toasts: [], saves: 0, renderQueue: [], joins: [], prepares: [] };
   const tabsOf = (k) => [1, 2, 3].map((t) => ({ name: `part${k + 1}_tab${t}` }));
   plan = plan || {
     outDir: 'D:\\out',
@@ -59,6 +59,7 @@ function makeSeries({ parts = 3, outcome = () => 'done', renderMs = 10, dubMs = 
     const mergeScope = () => scope;
     const currentClips = () => clips;
     const postJson = async (url, body) => {
+      if (url.endsWith('/episodes/prepare-clips')) { env.prepares.push(body); return { success: true }; }
       env.joins.push(body);
       env.log.push('join part' + body.partNumbers[0]);
       return { success: true, jobId: String(env.joins.length - 1) };
@@ -199,6 +200,8 @@ describe('Dub Whole Series hands-free export', () => {
     assert.deepEqual(env.joins[0].parts[0].inserts, [{ at: 0, path: 'intro.mp4' }, { at: 300, path: 'mid.mp4' }, { at: 600, path: 'outro.mp4' }]);
     assert.deepEqual(env.joins[0].parts[0].files, ['D:/out/part1_tab1.mp4', 'D:/out/part1_tab2.mp4', 'D:/out/part1_tab3.mp4']);
     assert.deepEqual(env.joins[1].parts[0].inserts, [{ at: 50, path: 'p2.mp4' }]);
+    // Once a part is exported, its clips are encoded ahead to its tabs' size, for the joins after it.
+    assert.deepEqual(env.prepares[0], { like: 'D:/out/part1_tab1.mp4', clips: ['intro.mp4', 'mid.mp4', 'outro.mp4', 'p2.mp4'] });
   });
 
   test('Join into one video fails: a warning, the part stays exported and the series goes on', async () => {

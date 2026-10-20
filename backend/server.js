@@ -4565,7 +4565,8 @@ const previewService = createPreviewService({
 });
 
 // Join Episodes: many short downloaded episodes -> a few ~1 hour parts to dub.
-const episodeJoiner = createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailableEncoders, trackProcess, audioRepair });
+// Ads put in are encoded once and kept here for every part and the whole-series video.
+const episodeJoiner = createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailableEncoders, trackProcess, audioRepair, clipCacheDir: path.join(SEPARATED_DIR, 'encoded-clips') });
 
 // Split Movie: one long movie -> ~30 minute parts, each dubbed as its own project.
 const videoSplitter = createVideoSplitter({ getFFmpegBinary, getFFprobeBinary, trackProcess });

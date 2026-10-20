@@ -30,6 +30,16 @@ module.exports = function createEpisodesRouter({ episodeJoiner }) {
         }
     });
 
+    // Ads encoded ahead, in the background, to the size and frame rate of `like` (an exported tab):
+    // the joins then find them ready.
+    router.post('/prepare-clips', (req, res) => {
+        const { like, clips } = req.body || {};
+        const local = (p) => (typeof p === 'string' && p && !isNetworkPath(p) ? resolveLocalFilePath(p) || p : null);
+        const paths = (Array.isArray(clips) ? clips : []).map(local).filter((p) => p && fs.existsSync(p));
+        const ref = local(like);
+        res.json({ success: !!ref && fs.existsSync(ref) && episodeJoiner.prepareClips({ like: ref, clips: paths }) });
+    });
+
     router.get('/status', (req, res) => {
         const st = episodeJoiner.status(String(req.query.jobId || ''));
         res.json(st ? { success: true, ...st } : { success: false, error: 'Unknown job' });
