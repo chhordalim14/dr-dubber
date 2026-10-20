@@ -251,17 +251,18 @@ A release is a version bump, a Windows installer on GitHub Releases, and an edit
 
 | Field | Meaning | Today |
 | --- | --- | --- |
-| `version` | Latest version, compared as semver | `1.6.0` |
-| `link` | Windows installer URL | `DR.Dubber.Pro.Setup.1.6.0.exe` on the v1.6.0 release |
+| `version` | Latest version, compared as semver | `1.11.0` |
+| `link` | Windows installer URL | `DR.Dubber.Pro.Setup.1.11.0.exe` on the v1.11.0 release |
 | `mac_link` | macOS `.dmg` URL | Still the v1.2.1 arm64 `.dmg` |
-| `notes` | Release notes shown in the dialog and the app's release notes | v1.6.0 notes |
+| `notes` | Release notes shown in the dialog and the app's release notes | v1.11.0 notes |
 
 ### Cutting a release
 
-1. Bump `version` in `package.json`.
-2. On Windows, run `setup_python_env.bat` (it fetches the MDX-Net model; `npm run dist:win` refuses to build without it), then `npm run dist:win`.
-3. Upload the installer from `release/` to a new GitHub release tagged `vX.Y.Z`.
-4. Update `update.json` with the new `version`, `link` and `notes`, and push it to `main`. Apps see the update from that moment.
+1. Bump `version` in `package.json` and update `update.json` with the new `version`, `link` and `notes`. Commit, and tag the commit `vX.Y.Z`.
+2. Push only the tag (`git push origin vX.Y.Z`). The Release workflow (`.github/workflows/release.yml`, on `windows-latest`) checks the tag matches `package.json`, runs `setup_python_env.bat` (portable Python, text detector and the MDX-Net model), puts FFmpeg essentials in `backend/bin`, runs `npm run dist:win`, and uploads `DR Dubber Pro Setup X.Y.Z.exe` to the release `vX.Y.Z`. If the release doesn't exist yet it is made with `update.json`'s notes. It can also be run by hand from the Actions tab with a tag.
+3. When the installer is on the release, push `main`. Apps see the update from that moment; pushing `main` first would offer a link that isn't there yet.
+
+To build by hand instead: on Windows, run `setup_python_env.bat` (`npm run dist:win` refuses to build without the MDX-Net model), then `npm run dist:win`, and upload the installer from `release/`.
 
 CI (`.github/workflows/test.yml`) runs on every push and pull request on Windows with Node 22: `npm ci`, a syntax check of `main.js`, `backend/server.js` and `preload.js`, then `npm test`. It never launches Electron, so check the UI by hand before tagging.
 

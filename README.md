@@ -117,10 +117,11 @@ See [backend/lib/security.js](backend/lib/security.js). API keys stay in the app
 
 ## Releasing
 
-1. Bump `version` in [package.json](package.json).
-2. On Windows, run `setup_python_env.bat`, then `npm run dist:win`.
-3. Upload the installer from `release/` to a GitHub release.
-4. Update [update.json](update.json) with the new version, download link and notes. Installed apps read this file to offer the update.
+1. Bump `version` in [package.json](package.json) and update [update.json](update.json) with the new version, download link and notes. Commit.
+2. Push only the tag `vX.Y.Z`. [.github/workflows/release.yml](.github/workflows/release.yml) builds the Windows installer (bundled Python, the Isolate BGM model and FFmpeg) and puts it on the GitHub release, using `update.json`'s notes.
+3. When the installer is on the release, push `main`. Installed apps read `update.json` from `main` to offer the update.
+
+To build by hand instead: on Windows, run `setup_python_env.bat`, then `npm run dist:win`.
 
 ## License
 

@@ -1,0 +1,85 @@
+name: Release
+
+# Pushing a tag vX.Y.Z builds the Windows installer and puts it on the GitHub
+# release of that tag (made from update.json's notes if it doesn't exist yet).
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build and release (e.g. v1.11.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      # The installer bundles FFmpeg in backend/bin (the app finds it there first).
+      FFMPEG_VERSION: "7.1.1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Check the tag matches package.json
+        shell: bash
+        run: |
+          v="v$(node -p "require('./package.json').version")"
+          [ "$v" = "$TAG" ] || { echo "package.json is $v but the tag is $TAG"; exit 1; }
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Portable Python + edge-tts + text detector, and the Isolate BGM model.
+      # Its closing `pause` reads the empty stdin and goes on.
+      - name: Bundled Python environment
+        shell: cmd
+        run: setup_python_env.bat < NUL
+
+      - name: Check the bundled environment
+        shell: bash
+        run: |
+          backend/python_env/python.exe -c "import edge_tts, rapidocr_onnxruntime, cv2, onnxruntime"
+          test -s backend/models/UVR-MDX-NET-Voc_FT.onnx
+
+      - name: Bundled FFmpeg
+        shell: pwsh
+        run: |
+          $zip = "$env:RUNNER_TEMP\ffmpeg.zip"
+          Invoke-WebRequest -Uri "https://github.com/GyanD/codexffmpeg/releases/download/$env:FFMPEG_VERSION/ffmpeg-$env:FFMPEG_VERSION-essentials_build.zip" -OutFile $zip
+          Expand-Archive $zip -DestinationPath "$env:RUNNER_TEMP\ffmpeg"
+          New-Item -ItemType Directory -Force backend\bin | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\ffmpeg\*\bin\ffmpeg.exe", "$env:RUNNER_TEMP\ffmpeg\*\bin\ffprobe.exe" backend\bin
+          backend\bin\ffmpeg.exe -hide_banner -version | Select-Object -First 1
+
+      - name: Build the installer
+        shell: bash
+        run: |
+          npm run build:css
+          npm run dist:win -- --publish never
+
+      - name: Upload to the GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          setup="release/DR Dubber Pro Setup ${TAG#v}.exe"
+          test -f "$setup"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$setup" --clobber
+          else
+            node -p "require('./update.json').notes" > "$RUNNER_TEMP/notes.md"
+            gh release create "$TAG" "$setup" --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md" --latest
+          fi
