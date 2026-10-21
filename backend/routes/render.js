@@ -1,5 +1,5 @@
 // Video rendering pipeline (color adjustments, flips, audio tracks,
-// overlays, subtitles, BGM ducking). Thin HTTP wrapper around
+// subtitles, BGM ducking). Thin HTTP wrapper around
 // render_service.js's renderVideo/cancelRender/getRenderProgress.
 // Extracted verbatim out of server.js. Mounted at /api.
 const express = require('express');
@@ -79,84 +79,6 @@ module.exports = function createRenderRouter({ upload, renderVideo, cancelRender
             };
         });
 
-        // 3.5 Resolve overlay images from multipart uploads and local paths
-        const uploadedOverlayFiles = (req.files || []).filter(f => f.fieldname === 'overlayImages');
-        const overlayFileByIndex = new Map();
-        uploadedOverlayFiles.forEach((f, idx) => {
-            const match = (f.originalname || '').match(/overlay_(\d+)/);
-            if (match) {
-                overlayFileByIndex.set(parseInt(match[1], 10), f.path);
-            } else {
-                overlayFileByIndex.set(idx, f.path);
-            }
-        });
-
-        const rawOverlayImages = Array.isArray(renderOpts.overlayImages) ? renderOpts.overlayImages : [];
-        const resolvedOverlayImages = rawOverlayImages.map((img, idx) => {
-            let imagePath = null;
-            if (img.filePath && fs.existsSync(img.filePath)) {
-                imagePath = img.filePath;
-            } else if (img.path && fs.existsSync(img.path)) {
-                imagePath = img.path;
-            } else if (overlayFileByIndex.has(idx)) {
-                imagePath = overlayFileByIndex.get(idx);
-            } else if (uploadedOverlayFiles[idx]) {
-                imagePath = uploadedOverlayFiles[idx].path;
-            }
-
-            return {
-                ...img,
-                path: imagePath,
-                x: img.x !== undefined ? parseFloat(img.x) : 0,
-                y: img.y !== undefined ? parseFloat(img.y) : 0,
-                w: img.w !== undefined ? parseFloat(img.w) : 30,
-                h: img.h !== undefined ? parseFloat(img.h) : 30,
-                opacity: img.opacity !== undefined ? (parseFloat(img.opacity) > 1 ? parseFloat(img.opacity) / 100 : parseFloat(img.opacity)) : 1.0,
-                radius: img.radius !== undefined ? parseFloat(img.radius) : 0,
-                motion: img.motion || 'none',
-                speed: img.speed !== undefined ? parseFloat(img.speed) : 1.0
-            };
-        }).filter(img => img.path && fs.existsSync(img.path));
-
-        // 3.6 Resolve overlay videos from multipart uploads and local paths
-        const uploadedVideoOverlayFiles = (req.files || []).filter(f => f.fieldname === 'overlayVideos');
-        const videoOverlayFileByIndex = new Map();
-        uploadedVideoOverlayFiles.forEach((f, idx) => {
-            const match = (f.originalname || '').match(/overvid_(\d+)/);
-            if (match) {
-                videoOverlayFileByIndex.set(parseInt(match[1], 10), f.path);
-            } else {
-                videoOverlayFileByIndex.set(idx, f.path);
-            }
-        });
-
-        const rawVideoOverlays = Array.isArray(renderOpts.videoOverlays) ? renderOpts.videoOverlays : [];
-        const resolvedVideoOverlays = rawVideoOverlays.map((vid, idx) => {
-            let videoOverlayPath = null;
-            if (vid.filePath && fs.existsSync(vid.filePath)) {
-                videoOverlayPath = vid.filePath;
-            } else if (vid.path && fs.existsSync(vid.path)) {
-                videoOverlayPath = vid.path;
-            } else if (vid.videoPath && fs.existsSync(vid.videoPath)) {
-                videoOverlayPath = vid.videoPath;
-            } else if (videoOverlayFileByIndex.has(idx)) {
-                videoOverlayPath = videoOverlayFileByIndex.get(idx);
-            } else if (uploadedVideoOverlayFiles[idx]) {
-                videoOverlayPath = uploadedVideoOverlayFiles[idx].path;
-            }
-
-            return {
-                ...vid,
-                path: videoOverlayPath,
-                x: vid.x !== undefined ? parseFloat(vid.x) : 0,
-                y: vid.y !== undefined ? parseFloat(vid.y) : 0,
-                w: vid.w !== undefined ? parseFloat(vid.w) : 30,
-                h: vid.h !== undefined ? parseFloat(vid.h) : 30,
-                opacity: vid.opacity !== undefined ? (parseFloat(vid.opacity) > 1 ? parseFloat(vid.opacity) / 100 : parseFloat(vid.opacity)) : 1.0,
-                radius: vid.radius !== undefined ? parseFloat(vid.radius) : 0
-            };
-        }).filter(vid => vid.path && fs.existsSync(vid.path));
-
         // 4. Resolve output folder and file name
         renderOpts.audioFormat = renderOpts.audioFormat === 'wav' ? 'wav' : 'mp3';
         const ext = isAudioOnly ? renderOpts.audioFormat : 'mp4';
@@ -200,8 +122,6 @@ module.exports = function createRenderRouter({ upload, renderVideo, cancelRender
             bgmFadeOut,
             duration: renderOpts.duration || renderOpts.videoDuration,
             videoDuration: renderOpts.videoDuration || renderOpts.duration,
-            overlayImages: resolvedOverlayImages,
-            videoOverlays: resolvedVideoOverlays,
             blurBoxes: Array.isArray(renderOpts.blurBoxes) ? renderOpts.blurBoxes : [],
             freeTexts: Array.isArray(renderOpts.freeTexts) ? renderOpts.freeTexts : [],
             videoPan: renderOpts.videoPan,
