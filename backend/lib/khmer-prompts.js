@@ -60,7 +60,8 @@ const KHMER_FORMS_OF_ADDRESS = `2. FORMS OF ADDRESS (របៀបហៅគ្ន
    - "ឯង" / "អញ" / "ហ្អែង" ONLY for anger, fights, villains or very close same-age friends - never between lovers or from a parent to a child in a normal scene.
    TALKING ABOUT SOMEONE (he / she / they):
    - "គាត់" for a parent, an elder or anyone respected; "គេ" for other people; "នាង" for a young woman; "វា" ONLY for a child, an animal, a thing or in contempt - never for one's own parent or an elder.
-   - The examples below write "បង" / "អូន" as a lover would say them: change the pronoun to fit the real speaker and listener.
+   - Between lovers the word for "you" depends on WHO SPEAKS: she says "បង" to him, he says "អូន" to her. Check the line's speaker gender before writing it: a man asking his lover "你怎么回来了?" says "ម៉េចក៏អូនត្រឡប់មកវិញ?" (never "ម៉េចក៏បង..." - that is her asking him, or him asking himself).
+   - The examples below give both directions where it matters; for any other pair, change the pronoun to fit the real speaker and listener.
    - Keep each pair's choice for the whole scene unless their relationship changes.`;
 
 const KHMER_DUBBING_RULES = `💎 NATURAL & READABLE KHMER DUBBING RULES (ខ្លឹម ងាយអាន ឥតទាក់ ដូចរឿងភាគទូរទស្សន៍):
@@ -81,10 +82,10 @@ ${KHMER_FORMS_OF_ADDRESS}
    - 🚫 BAN word-for-word translation ("ចំពោះរឿងនេះ", "គឺជារឿងដែល", "ដើម្បីធ្វើការ", "មានការ...").
 
 4. GOLDEN DUBBING REPLACEMENTS (គំរូពាក្យសន្ទនាភាពយន្ត):
-   - ❌ "តើអ្នកកំពុងតែធ្វើអ្វីនៅទីនេះ?" -> ✅ "បងធ្វើអីនៅនេះ?" / parent to child: "កូនធ្វើអីនៅនេះ?" / angry: "ឯងធ្វើអីនៅនេះ?!"
+   - ❌ "តើអ្នកកំពុងតែធ្វើអ្វីនៅទីនេះ?" -> ✅ she to him "បងធ្វើអីនៅនេះ?" / he to her "អូនធ្វើអីនៅនេះ?" / parent to child: "កូនធ្វើអីនៅនេះ?" / angry: "ឯងធ្វើអីនៅនេះ?!"
    - ❌ "តើមានរឿងអ្វីបានកើតឡើងចំពោះអ្នក?" -> ✅ "មានរឿងអីកើតឡើង?"
    - ❌ "តើនេះជាការពិតមែនទេ?" -> ✅ "ពិតមែនហ្អេស?!" / "មែនអត់?"
-   - ❌ "ខ្ញុំសូមអភ័យទោសដែលបានមកយឺត" -> ✅ "សុំទោស ខ្ញុំមកយឺត" / to a lover: "សុំទោស បងមកយឺត"
+   - ❌ "ខ្ញុំសូមអភ័យទោសដែលបានមកយឺត" -> ✅ "សុំទោស ខ្ញុំមកយឺត" / he to his lover: "សុំទោស បងមកយឺត" / she to hers: "សុំទោស អូនមកយឺត"
    - ❌ "កុំមានការព្រួយបារម្ភចំពោះខ្ញុំអី" -> ✅ "កុំបារម្ភពីខ្ញុំអី"
    - ❌ "តើអ្នកអាចប្រាប់ការពិតដល់ខ្ញុំបានទេ?" -> ✅ "ប្រាប់ការពិតមកបានទេ?"
    - ❌ "ខ្ញុំមិនអាចយល់ស្របនឹងរឿងនេះបានឡើយ" -> ✅ "រឿងនេះ ខ្ញុំមិនព្រមទេ!"
@@ -96,7 +97,7 @@ ${KHMER_FORMS_OF_ADDRESS}
    - ❌ "តើពួកយើងគួរតែធ្វើបែបណាទៅ?" -> ✅ "យើងគួរធ្វើម៉េចទៅ?"
    - ❌ "សូមបិទមាត់របស់អ្នកភ្លាមទៅ" -> ✅ "បិទមាត់ទៅ!"
    - ❌ "ខ្ញុំមិនដែលគិតថាអ្នកជាមនុស្សបែបនេះសោះ" -> ✅ angry: "ស្មានមិនដល់ថាឯងជាមនុស្សចឹងសោះ!"
-   - ❌ "តើអ្នកទៅណា?" -> ✅ "បងទៅណា?" / parent to child: "កូនទៅណា?" / child to father: "ប៉ាទៅណា?"
+   - ❌ "តើអ្នកទៅណា?" -> ✅ she to him "បងទៅណា?" / he to her "អូនទៅណា?" / parent to child: "កូនទៅណា?" / child to father: "ប៉ាទៅណា?"
    - ❌ "ខ្ញុំស្រឡាញ់អ្នកខ្លាំងណាស់" -> ✅ lovers: "បងស្រឡាញ់អូនខ្លាំងណាស់" / "អូនស្រឡាញ់បងខ្លាំងណាស់" / mother to child: "ម៉ាក់ស្រឡាញ់កូនណាស់"
    - ❌ "ហេតុអ្វីបានជាអ្នកធ្វើបែបនេះ?" -> ✅ "ហេតុអីធ្វើចឹង?"
    - ❌ "តើអ្នកសុខសប្បាយជាទេ?" -> ✅ "សុខសប្បាយទេ?" / "មិនអីទេហី?"
@@ -175,10 +176,10 @@ REGISTER - Modern Romance, CEO & Urban (រឿងសម័យ/ស្នេហា
    - Use natural, fluid, modern conversational Khmer, with pronouns chosen by FORMS OF ADDRESS:
      * Lovers "បង" / "អូន"; boss "លោកប្រធាន" / "អ្នកនាង" with self "ខ្ញុំ"; parents "ម៉ាក់" / "ប៉ា".
      * Real conversational dialogue:
-       - "你在干什么？" -> to a lover or older person "បងធ្វើអីហ្នឹង?" / to a younger one "ប្អូនធ្វើអីហ្នឹង?" / parent to child "កូនធ្វើអីហ្នឹង?"
-       - "你没事吧？" -> "អូនមិនអីទេ?" / to a boss "លោកប្រធានមិនអីទេ?"
+       - "你在干什么？" -> she to her lover, or to an older person "បងធ្វើអីហ្នឹង?" / he to his lover "អូនធ្វើអីហ្នឹង?" / to a younger one "ប្អូនធ្វើអីហ្នឹង?" / parent to child "កូនធ្វើអីហ្នឹង?"
+       - "你没事吧？" -> he to her "អូនមិនអីទេ?" / she to him "បងមិនអីទេ?" / to a boss "លោកប្រធានមិនអីទេ?"
        - "别管我！" -> "កុំរវល់នឹងខ្ញុំ!"
-       - "对不起，我来晚了" -> to a lover "សុំទោស បងមកយឺត"
+       - "对不起，我来晚了" -> he to his lover "សុំទោស បងមកយឺត" / she to hers "សុំទោស អូនមកយឺត"
        - "我喜欢你" -> "បងស្រឡាញ់អូន" / "អូនស្រឡាញ់បង"
        - "怎么办？" -> "ធ្វើម៉េចទៅ?"`;
 }

@@ -56,8 +56,12 @@
   // Its main clip is still the one found for it (profiles from before autoClip: the backend's name).
   const ownClip = (p) => (p.autoClip ? p.audioPath === p.autoClip : / - S\d+( \(\d+\))?\.wav$/i.test(p.audioName || ""));
 
-  // A profile's voice prints (several once another speaker was merged into it).
-  const printsOf = (pr, id) => (Array.isArray(pr[id]) ? pr[id] : []).filter((e) => Array.isArray(e) && e.length === 192);
+  // A profile's voice prints (several once another speaker was merged into it), each { model, e }:
+  // the speaker server compares a print only with prints of the model that made it. A bare array
+  // is a print from before the server said its model (CAM++).
+  const printsOf = (pr, id) => (Array.isArray(pr[id]) ? pr[id] : [])
+    .map((x) => (Array.isArray(x) ? { model: "campplus", e: x } : x))
+    .filter((x) => x && Array.isArray(x.e) && x.e.length === 192);
 
   function savePrints(p) {
     try {
@@ -155,6 +159,20 @@
     }, 2000));
   }
 
+  // Match Subtitles to Video moved the lines onto the video's own subtitles: their tighter times
+  // give steadier voice prints (E60, 23 transcripts: its 2 actors found in 19 with Transcribe's
+  // times, in all 23 with the matched ones), so a tab whose speakers were found is searched
+  // again. Resolves once done (or skipped: speakers not found yet, server off, tab voicing).
+  function refind(proj) {
+    if (!proj || !isOn(load()) || !proj.voxSpeakersAt) return Promise.resolve();
+    queued = queued.then(async () => {
+      if (jobs.has(proj)) await jobs.get(proj);
+      if (!tabs().includes(proj) || proj.isGeneratingAudio || busy(proj) || !sourcePath(proj)) return;
+      if (await serverUp(load().serverUrl)) await find(proj, { auto: true, quiet: true });
+    }).catch(() => {});
+    return queued;
+  }
+
   async function background(proj) {
     if (!tabs().includes(proj) || !isOn(load()) || jobs.has(proj) || proj.isGeneratingAudio) return;
     if (!sourcePath(proj) || !pending(proj).length) return;
@@ -195,7 +213,7 @@
     // A voice merged into another keeps its print there, so it is not found as a new speaker.
     const known = (data.profiles || [])
       .filter((p) => inGroup.has(p.id) && p.source === "speakers" && p.audioPath)
-      .flatMap((p) => printsOf(pr, p.id).map((embedding) => ({ id: p.id, gender: p.gender, embedding, emotions: clipsHave(p) })));
+      .flatMap((p) => printsOf(pr, p.id).map(({ model, e }) => ({ id: p.id, gender: p.gender, embedding: e, model, emotions: clipsHave(p) })));
 
     toast(`Finding who speaks in "${tabName}"…`, "info");
     const res = await fetch(`${API}/api/voice-capture/speakers`, {
@@ -228,6 +246,7 @@
     let number = (data.profiles || []).filter((p) => (group.profileIds || []).includes(p.id) && p.source === "speakers").length;
     const profileOf = new Map(); // speaker key -> profile id
     let made = 0;
+    const madeIds = [];
     let feelings = 0;
     const knownIds = new Set();
     for (const s of out.speakers || []) {
@@ -266,14 +285,16 @@
       feelings += Object.keys(profile.emotionClips).length;
       data.profiles = [...(data.profiles || []), profile];
       group.profileIds = [...new Set([...(group.profileIds || []), profile.id])];
-      if (Array.isArray(s.embedding)) pr2[profile.id] = [s.embedding];
+      if (Array.isArray(s.embedding)) pr2[profile.id] = [{ model: out.printModel || "campplus", e: s.embedding }];
       profileOf.set(s.key, profile.id);
+      madeIds.push(profile.id);
       made++;
     }
 
     // Each line's speaker; a speaker with no clip (too little clear speech) borrows the voice of
     // the speaker of their gender with the most lines.
     const lineTo = new Map();
+    const heard = new Map(); // line id -> the gender of the speaker found saying it (by their voice)
     const byGender = {};
     for (const s of out.speakers || []) {
       const pid = profileOf.get(s.key);
@@ -281,12 +302,16 @@
     }
     for (const s of out.speakers || []) {
       const pid = profileOf.get(s.key) || byGender[s.gender] || byGender.Male || byGender.Female || null;
-      (s.lines || []).forEach((id) => lineTo.set(String(id), pid));
+      (s.lines || []).forEach((id) => {
+        lineTo.set(String(id), pid);
+        if (/^(Male|Female)$/.test(s.gender || "")) heard.set(String(id), s.gender);
+      });
     }
 
     const active = proj === activeTab();
     if (active && !auto && typeof saveStateToPast === "function") saveStateToPast();
     let changedVoiced = 0;
+    const regendered = new Set();
     const apply = (list) => {
       list.forEach((s) => {
         if (!lineTo.has(String(s.id))) {
@@ -300,10 +325,31 @@
         if (pid && s.gender !== pid && (s.file || s.audioUrl) && list === liveSubs(proj)) changedVoiced++;
         if (pid) s.gender = pid;
         s.voxSpeaker = pid;
+        // The Male/Female tag Transcribe gave the line is often wrong (E60: 6 of 21), and Translate
+        // picks បង / អូន from it: the speaker's gender comes from their voice, so the tag follows.
+        const g = heard.get(String(s.id));
+        const tagged = window.CHARACTER_PRESETS?.[String(s.character || s.speaker || "").trim()]?.gender;
+        if (g && tagged !== g) {
+          s.speaker = g;
+          s.character = g;
+          regendered.add(String(s.id));
+        }
       });
     };
     apply(liveSubs(proj));
     if (active && proj.subtitles && proj.subtitles !== liveSubs(proj)) apply(proj.subtitles);
+
+    // A voice this tab's previous search made that no line of any open tab speaks with now
+    // (one actor split in two by looser times) goes: searched again, its lines found their
+    // actor's voice. Voices made by other tabs, or picked by hand on some line, stay.
+    const spoken = new Set(tabs().flatMap((p) => [...liveSubs(p), ...(p.subtitles || [])]).map((s) => s.gender));
+    const gone = new Set((proj.voxFoundIds || []).filter((id) => !spoken.has(id) && ![...profileOf.values()].includes(id)));
+    if (gone.size) {
+      data.profiles = (data.profiles || []).filter((p) => !gone.has(p.id));
+      (data.groups || []).forEach((g) => { g.profileIds = (g.profileIds || []).filter((id) => !gone.has(id)); });
+      gone.forEach((id) => delete pr2[id]);
+    }
+    proj.voxFoundIds = [...madeIds, ...(proj.voxFoundIds || []).filter((id) => !gone.has(id))];
 
     save(data);
     savePrints(pr2);
@@ -317,7 +363,8 @@
     if (made) bits.push(`${made} new voice${made === 1 ? "" : "s"}`);
     if (matched) bits.push(`${matched} already in ${group.name}`);
     if (feelings) bits.push(`${feelings} feeling${feelings === 1 ? "" : "s"} cloned`);
-    toast(`Found ${total} speaker${total === 1 ? "" : "s"} in "${tabName}"${bits.length ? ` (${bits.join(", ")})` : ""}.${changedVoiced ? ` ${changedVoiced} voiced line(s) now have another voice: generate them again to hear it.` : ""}`, "success");
+    if (gone.size) bits.push(`${gone.size} extra voice${gone.size === 1 ? "" : "s"} from the last search removed`);
+    toast(`Found ${total} speaker${total === 1 ? "" : "s"} in "${tabName}"${bits.length ? ` (${bits.join(", ")})` : ""}.${changedVoiced ? ` ${changedVoiced} voiced line(s) now have another voice: generate them again to hear it.` : ""}${regendered.size ? ` ${regendered.size} line(s) were tagged with the wrong gender and now follow their speaker: translate them again for the right បង / អូន.` : ""}`, "success");
     if (dlg.open && dlg.proj === proj) renderDialog();
     return { ok: true, speakers: total, made, matched };
   }
@@ -587,5 +634,5 @@
   });
   document.addEventListener("voxcpm2-settings-changed", syncSwitch);
 
-  window.voxSpeakers = { ensure, find, open, soon, seriesOf };
+  window.voxSpeakers = { ensure, find, open, soon, refind, seriesOf };
 })();

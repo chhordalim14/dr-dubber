@@ -6900,6 +6900,8 @@
         updateSubtitleDisplay();
         updateDetectTextButton();
       }
+      // The speakers, found from Transcribe's looser times, are found again from these.
+      if (matched && window.voxSpeakers?.refind) await window.voxSpeakers.refind(proj);
       if (!quiet) {
         showToast(`Match Subtitles: ${matched} of ${subs.length} subtitle(s) now show exactly with the video's own lines${parts ? ` (${parts} split over two screens)` : ""}${matched < subs.length ? `; ${subs.length - matched} have no line on screen and keep their time` : ""}.`, matched ? "success" : "warning");
       }

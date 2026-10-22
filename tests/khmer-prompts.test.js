@@ -54,7 +54,7 @@ describe('forms of address', () => {
         }
         assert.match(KHMER_DUBBING_RULES, /"វា" ONLY for a child, an animal, a thing or in contempt/);
         assert.match(KHMER_DUBBING_RULES, /"បង" is NOT a default/);
-        assert.match(KHMER_DUBBING_RULES, /"បងទៅណា\?" \/ parent to child: "កូនទៅណា\?"/);
+        assert.match(KHMER_DUBBING_RULES, /she to him "បងទៅណា\?" \/ he to her "អូនទៅណា\?" \/ parent to child: "កូនទៅណា\?"/);
         assert.match(getKhmerDramaRegisterGuidance('modern'), /parent to child "កូនធ្វើអីហ្នឹង\?"/);
         assert.ok(!serverSource.includes('-> ✅ "បងធ្វើអីនៅនេះ?"\n'), 'refactor example still maps អ្នក to បង');
     });
@@ -64,6 +64,15 @@ describe('forms of address', () => {
         assert.ok(!modern.includes('ឯង'), 'modern register offers ឯង');
         assert.ok(!KHMER_DUBBING_RULES.includes('ខ្ញុំស្រឡាញ់ឯង'));
         assert.match(modern, /"បងស្រឡាញ់អូន" \/ "អូនស្រឡាញ់បង"/);
+    });
+
+    // E60: a man asking his lover "你怎么回来了?" came out "ម៉េចក៏បង..." - the examples only showed her side.
+    test('a lover\'s "you" follows the speaker: she says បង, he says អូន', () => {
+        assert.match(KHMER_DUBBING_RULES, /she says "បង" to him, he says "អូន" to her/);
+        assert.match(KHMER_DUBBING_RULES, /"ម៉េចក៏អូនត្រឡប់មកវិញ\?"/);
+        assert.match(KHMER_DUBBING_RULES, /she to him "បងធ្វើអីនៅនេះ\?" \/ he to her "អូនធ្វើអីនៅនេះ\?"/);
+        assert.match(getKhmerDramaRegisterGuidance('modern'), /he to his lover "អូនធ្វើអីហ្នឹង\?"/);
+        assert.match(getKhmerDramaRegisterGuidance('modern'), /he to her "អូនមិនអីទេ\?" \/ she to him "បងមិនអីទេ\?"/);
     });
 });
 
