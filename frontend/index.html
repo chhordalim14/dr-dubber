@@ -1673,23 +1673,6 @@
                 <i data-lucide="type"></i>
                 <span class="tool-label">Text</span>
               </button>
-
-              <input type="file" id="image-upload-input" accept="image/png, image/jpeg, image/webp, image/gif"
-                class="hidden" multiple />
-              <button id="btn-add-image" style="--tile: var(--tile-mint)"
-                class="p-1.5 hover:text-emerald-500 hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)] shrink-0"
-                title="Add Image Overlay">
-                <i data-lucide="image-plus"></i>
-                <span class="tool-label">Image</span>
-              </button>
-              <input type="file" id="video-overlay-input" accept="video/mp4,video/webm,video/mov,video/mp2t" class="hidden"
-                multiple />
-              <button id="btn-add-video-overlay" style="--tile: var(--tile-mint)"
-                class="p-1.5 hover:text-sky-400 hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)] shrink-0"
-                title="Add Video Overlay">
-                <i data-lucide="picture-in-picture-2"></i>
-                <span class="tool-label">Video</span>
-              </button>
               <div class="w-px h-3 bg-[var(--border-color)] mx-1 shrink-0"></div>
               <span
                 class="text-[9px] font-bold uppercase tracking-wide text-[var(--text-muted)] leading-none shrink-0 select-none">Look</span>
@@ -1973,9 +1956,6 @@
                 <div id="blur-layer" class="absolute inset-0 w-full h-full pointer-events-none z-[80]"></div>
                 <div id="vignette-layer" class="absolute inset-0 w-full h-full pointer-events-none z-[81]"
                   style="opacity: 0"></div>
-
-                <div id="image-overlay-container" class="absolute inset-0 pointer-events-none overflow-hidden"></div>
-                <div id="video-overlay-container" class="absolute inset-0 pointer-events-none overflow-hidden"></div>
 
                 <div id="crop-box"
                   class="absolute hidden border-2 border-orange-500 shadow-[0_0_0_9999px_rgba(0,0,0,0.85)] z-50 cursor-move"
@@ -2786,55 +2766,7 @@
           value="#000000" />
       </div>
 
-      <div id="ctx-img-controls" class="hidden flex-col gap-4 mt-3 pt-3 border-t border-[var(--border-light)] w-full">
-        <div class="flex flex-col gap-2 w-full">
-          <div class="flex justify-between items-center w-full">
-            <label class="text-xs font-medium text-[var(--text-primary)] flex items-center gap-1.5">
-              <i data-lucide="sun" class="w-3.5 h-3.5 text-[var(--text-secondary)]"></i>
-              Opacity
-            </label>
-            <span id="lbl-img-opacity"
-              class="text-[10px] font-mono bg-[var(--bg-hover)] px-1.5 py-0.5 rounded text-[var(--text-secondary)]">100%</span>
-          </div>
-          <input type="range" id="ctx-img-opacity" min="0" max="100" value="100"
-            class="w-full accent-emerald-500 h-1.5 bg-[var(--border-light)] rounded-lg appearance-none cursor-pointer hover:accent-emerald-400 transition-all" />
-        </div>
-
-        <div class="flex flex-col gap-2 w-full">
-          <div class="flex justify-between items-center w-full">
-            <label class="text-xs font-medium text-[var(--text-primary)] flex items-center gap-1.5">
-              <i data-lucide="square" class="w-3.5 h-3.5 text-[var(--text-secondary)]"></i>
-              Rounded
-            </label>
-            <span id="lbl-img-radius"
-              class="text-[10px] font-mono bg-[var(--bg-hover)] px-1.5 py-0.5 rounded text-[var(--text-secondary)]">0px</span>
-          </div>
-          <input type="range" id="ctx-img-radius" min="0" max="100" value="0"
-            class="w-full accent-emerald-500 h-1.5 bg-[var(--border-light)] rounded-lg appearance-none cursor-pointer hover:accent-emerald-400 transition-all" />
-        </div>
-
-        <div class="flex flex-col gap-1.5 w-full" title="When it is on the video: from the first time to the second (m:ss or seconds). Leave the first empty to start with the video, the second to stay to the end.">
-          <label class="text-xs font-medium text-[var(--text-primary)] flex items-center gap-1.5"><i data-lucide="clock" class="w-3.5 h-3.5 text-[var(--text-secondary)]"></i> Show</label>
-          <div class="flex items-center gap-1.5">
-            <input type="text" id="ctx-img-start" inputmode="decimal" placeholder="start" class="w-full min-w-0 bg-[var(--bg-base)] border border-[var(--border-light)] rounded px-1.5 py-1 text-[11px] font-mono text-[var(--text-primary)] outline-none focus:border-emerald-500" />
-            <span class="text-[10px] text-[var(--text-muted)]">to</span>
-            <input type="text" id="ctx-img-end" inputmode="decimal" placeholder="end" class="w-full min-w-0 bg-[var(--bg-base)] border border-[var(--border-light)] rounded px-1.5 py-1 text-[11px] font-mono text-[var(--text-primary)] outline-none focus:border-emerald-500" />
-          </div>
-        </div>
-
-        <div class="pt-2 border-t border-[var(--border-light)] w-full">
-          <button id="btn-img-apply-all"
-            class="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 hover:text-amber-300 border border-amber-500/25 transition-all text-xs font-medium active:scale-95"
-            title="Apply current image overlays to all project tabs">
-            <span class="flex items-center gap-1.5">
-              <i data-lucide="layers" class="w-3.5 h-3.5"></i> Apply to All
-            </span>
-            <span class="text-[10px] text-amber-400/80 bg-amber-400/10 px-1 py-0.5 rounded font-mono">Tabs</span>
-          </button>
-        </div>
-      </div>
-
-      <!-- MOTION ANIMATION SECTION (shared by text + image) -->
+      <!-- MOTION ANIMATION SECTION -->
       <div id="ctx-motion-controls" class="px-4 py-3 border-t border-[var(--border-color)]">
         <label class="text-xs font-medium text-[var(--text-secondary)] block mb-2 flex items-center gap-1.5"> <i
             data-lucide="move" class="w-3.5 h-3.5"></i> Motion </label>
@@ -2904,70 +2836,6 @@
       <button id="ctx-send-back"
         class="w-full text-left px-4 py-2 hover:bg-[var(--bg-hover)] transition-colors flex items-center gap-2"><i
           data-lucide="send-to-back" class="w-4 h-4"></i> Send to Back</button>
-    </div>
-  </div>
-
-  <!-- VIDEO OVERLAY CONTEXT MENU -->
-  <div id="vid-context-menu"
-    class="hidden absolute bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-lg shadow-2xl z-[9999] text-sm text-[var(--text-primary)] w-52 flex flex-col overflow-hidden">
-    <div class="px-3 py-2 border-b border-[var(--border-color)] bg-[var(--bg-hover)] flex items-center gap-2">
-      <i data-lucide="film" class="w-3.5 h-3.5 text-sky-400"></i>
-      <span class="text-[11px] font-semibold text-[var(--text-bright)] uppercase tracking-wide">Video Overlay</span>
-    </div>
-    <div class="px-3 py-3 border-b border-[var(--border-color)] flex flex-col gap-3">
-      <div class="flex flex-col gap-1.5">
-        <div class="flex justify-between items-center">
-          <label class="text-[11px] font-medium text-[var(--text-primary)] flex items-center gap-1.5">
-            <i data-lucide="sun" class="w-3 h-3 text-[var(--text-secondary)]"></i>
-            Opacity
-          </label>
-          <span id="lbl-vid-opacity"
-            class="text-[10px] font-mono bg-[var(--bg-base)] px-1.5 py-0.5 rounded text-[var(--text-secondary)]">100%</span>
-        </div>
-        <input type="range" id="ctx-vid-opacity" min="0" max="100" value="100"
-          class="w-full accent-sky-400 h-1.5 bg-[var(--border-light)] rounded-lg appearance-none cursor-pointer" />
-      </div>
-      <div class="flex flex-col gap-1.5">
-        <div class="flex justify-between items-center">
-          <label class="text-[11px] font-medium text-[var(--text-primary)] flex items-center gap-1.5">
-            <i data-lucide="square" class="w-3 h-3 text-[var(--text-secondary)]"></i>
-            Rounded
-          </label>
-          <span id="lbl-vid-radius"
-            class="text-[10px] font-mono bg-[var(--bg-base)] px-1.5 py-0.5 rounded text-[var(--text-secondary)]">0px</span>
-        </div>
-        <input type="range" id="ctx-vid-radius" min="0" max="100" value="0"
-          class="w-full accent-sky-400 h-1.5 bg-[var(--border-light)] rounded-lg appearance-none cursor-pointer" />
-      </div>
-      <div class="flex flex-col gap-1.5 w-full" title="When it is on the video: from the first time to the second (m:ss or seconds). Leave the first empty to start with the video, the second to stay to the end.">
-        <label class="text-[11px] font-medium text-[var(--text-primary)] flex items-center gap-1.5"><i data-lucide="clock" class="w-3 h-3 text-[var(--text-secondary)]"></i> Show</label>
-        <div class="flex items-center gap-1.5">
-          <input type="text" id="ctx-vid-start" inputmode="decimal" placeholder="start" class="w-full min-w-0 bg-[var(--bg-base)] border border-[var(--border-light)] rounded px-1.5 py-1 text-[11px] font-mono text-[var(--text-primary)] outline-none focus:border-sky-400" />
-          <span class="text-[10px] text-[var(--text-muted)]">to</span>
-          <input type="text" id="ctx-vid-end" inputmode="decimal" placeholder="end" class="w-full min-w-0 bg-[var(--bg-base)] border border-[var(--border-light)] rounded px-1.5 py-1 text-[11px] font-mono text-[var(--text-primary)] outline-none focus:border-sky-400" />
-        </div>
-      </div>
-    </div>
-    <button id="vid-ctx-chroma-key"
-      class="w-full text-left px-3 py-2 hover:bg-[var(--bg-hover)] transition-colors flex items-center gap-2 text-[12px] text-emerald-400"><i
-        data-lucide="scissors" class="w-3.5 h-3.5"></i> Chroma Key…</button>
-    <div class="border-t border-[var(--border-color)] my-1"></div>
-    <button id="vid-ctx-bring-front"
-      class="w-full text-left px-3 py-2 hover:bg-[var(--bg-hover)] transition-colors flex items-center gap-2 text-[12px]"><i
-        data-lucide="bring-to-front" class="w-3.5 h-3.5"></i> Bring to Front</button>
-    <button id="vid-ctx-send-back"
-      class="w-full text-left px-3 py-2 hover:bg-[var(--bg-hover)] transition-colors flex items-center gap-2 text-[12px]"><i
-        data-lucide="send-to-back" class="w-3.5 h-3.5"></i> Send to Back</button>
-    <div class="border-t border-[var(--border-color)] my-1"></div>
-    <div class="p-2">
-      <button id="btn-vid-apply-all"
-        class="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 hover:text-amber-300 border border-amber-500/25 transition-all text-xs font-medium active:scale-95"
-        title="Apply current video overlays to all project tabs">
-        <span class="flex items-center gap-1.5">
-          <i data-lucide="layers" class="w-3.5 h-3.5"></i> Apply to All
-        </span>
-        <span class="text-[10px] text-amber-400/80 bg-amber-400/10 px-1 py-0.5 rounded font-mono">Tabs</span>
-      </button>
     </div>
   </div>
 
@@ -3064,140 +2932,6 @@
             class="px-4 py-1.5 rounded-lg text-xs border border-[var(--border-light)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-all">Cancel</button>
           <button id="reverb-apply-btn"
             class="px-5 py-1.5 rounded-lg text-xs font-semibold bg-purple-500 hover:bg-purple-400 text-white transition-all hover:-translate-y-0.5 active:scale-95">Apply</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- CHROMA KEY MODAL -->
-  <div id="chroma-key-modal" class="hidden fixed inset-0 z-[10000] flex items-center justify-center">
-    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="chroma-key-backdrop"></div>
-    <div
-      class="relative bg-[var(--bg-panel)] border border-[var(--border-light)] rounded-xl shadow-2xl w-[420px] mx-4 overflow-hidden">
-      <!-- Header -->
-      <div
-        class="flex items-center justify-between px-4 py-3 border-b border-[var(--border-color)] bg-[var(--bg-base)]">
-        <div class="flex items-center gap-2">
-          <i data-lucide="scissors" class="w-4 h-4 text-emerald-400"></i>
-          <span class="text-sm font-semibold text-[var(--text-bright)]">Chroma Key</span>
-          <span
-            class="text-[10px] text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded border border-emerald-400/20">Preview</span>
-        </div>
-        <button id="chroma-key-close"
-          class="text-[var(--text-secondary)] hover:text-red-400 transition-all hover:rotate-90 hover:scale-110">
-          <i data-lucide="x" class="w-4 h-4"></i>
-        </button>
-      </div>
-
-      <!-- Canvas Preview -->
-      <div class="bg-[#111] flex items-center justify-center relative overflow-hidden" style="height: 180px">
-        <canvas id="chroma-preview-canvas" class="max-w-full max-h-full"
-          style="object-fit: contain; cursor: crosshair"></canvas>
-        <!-- Eyedropper cursor overlay -->
-        <div id="chroma-eyedropper-cursor"
-          style="display: none; position: fixed; pointer-events: none; z-index: 99999; transform: translate(-50%, -100%) translateY(-8px)">
-          <div style="position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px">
-            <div id="chroma-eyedropper-preview" style="
-                  width: 28px;
-                  height: 28px;
-                  border-radius: 50%;
-                  border: 2.5px solid #fff;
-                  box-shadow:
-                    0 0 0 1.5px rgba(0, 0, 0, 0.5),
-                    0 2px 8px rgba(0, 0, 0, 0.5);
-                  background: #00ff00;
-                "></div>
-            <div id="chroma-eyedropper-label"
-              style="font-size: 9px; font-family: monospace; background: rgba(0, 0, 0, 0.75); color: #fff; padding: 2px 5px; border-radius: 4px; white-space: nowrap; letter-spacing: 0.5px">
-              #00ff00</div>
-          </div>
-        </div>
-        <!-- Eyedropper mode toggle button -->
-        <button id="chroma-eyedropper-btn" title="Pick color from video"
-          style="position: absolute; top: 6px; right: 6px; background: rgba(0, 0, 0, 0.55); border: 1.5px solid rgba(255, 255, 255, 0.15); border-radius: 7px; padding: 4px 8px; display: flex; align-items: center; gap: 5px; cursor: pointer; transition: all 0.15s">
-          <i data-lucide="pipette" style="width: 12px; height: 12px; color: #34d399"></i>
-          <span style="font-size: 10px; color: #a3a3a3; font-weight: 500">Pick</span>
-        </button>
-      </div>
-
-      <!-- Controls -->
-      <div class="px-4 py-4 flex flex-col gap-4">
-        <!-- Color Picker Row -->
-        <div class="flex items-center justify-between gap-3">
-          <label class="text-xs font-medium text-[var(--text-primary)] flex items-center gap-1.5">
-            <i data-lucide="pipette" class="w-3.5 h-3.5 text-[var(--text-secondary)]"></i>
-            Key Color
-          </label>
-          <div class="flex items-center gap-2">
-            <!-- Hidden input still holds the value for JS reads — no UI shown -->
-            <input type="color" id="chroma-color-picker" value="#00ff00"
-              style="position: absolute; opacity: 0; pointer-events: none; width: 0; height: 0" tabindex="-1" />
-            <!-- Visual swatch — updated by JS, not clickable -->
-            <div id="chroma-color-swatch"
-              style="width: 28px; height: 28px; border-radius: 6px; background: #00ff00; border: 1.5px solid rgba(255, 255, 255, 0.15); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3); flex-shrink: 0; transition: background 0.1s">
-            </div>
-            <span id="chroma-color-label" class="text-[11px] font-mono text-[var(--text-muted)]">#00ff00</span>
-          </div>
-        </div>
-
-        <!-- Tolerance Slider -->
-        <div class="flex flex-col gap-1.5">
-          <div class="flex justify-between items-center">
-            <label class="text-[11px] font-medium text-[var(--text-primary)] flex items-center gap-1.5">
-              <i data-lucide="sliders-horizontal" class="w-3 h-3 text-[var(--text-secondary)]"></i>
-              Tolerance
-              <span
-                class="text-[9px] text-amber-400 bg-amber-400/10 px-1 py-0.5 rounded border border-amber-400/20">Keep
-                below 150 for clean edges</span>
-            </label>
-            <span id="lbl-chroma-tolerance"
-              class="text-[10px] font-mono bg-[var(--bg-base)] px-1.5 py-0.5 rounded text-[var(--text-secondary)]">80</span>
-          </div>
-          <input type="range" id="chroma-tolerance" min="0" max="255" value="80"
-            class="w-full accent-emerald-400 h-1.5 bg-[var(--border-light)] rounded-lg appearance-none cursor-pointer" />
-        </div>
-
-        <!-- Smoothing Slider -->
-        <div class="flex flex-col gap-1.5">
-          <div class="flex justify-between items-center">
-            <label class="text-[11px] font-medium text-[var(--text-primary)] flex items-center gap-1.5">
-              <i data-lucide="blend" class="w-3 h-3 text-[var(--text-secondary)]"></i>
-              Smoothing
-            </label>
-            <span id="lbl-chroma-smooth"
-              class="text-[10px] font-mono bg-[var(--bg-base)] px-1.5 py-0.5 rounded text-[var(--text-secondary)]">20</span>
-          </div>
-          <input type="range" id="chroma-smooth" min="0" max="100" value="20"
-            class="w-full accent-emerald-400 h-1.5 bg-[var(--border-light)] rounded-lg appearance-none cursor-pointer" />
-        </div>
-
-        <!-- Spill Removal (Despill) Slider -->
-        <div class="flex flex-col gap-1.5">
-          <div class="flex justify-between items-center">
-            <label class="text-[11px] font-medium text-[var(--text-primary)] flex items-center gap-1.5">
-              <i data-lucide="sparkles" class="w-3 h-3 text-emerald-400"></i>
-              Spill Removal
-              <span
-                class="text-[9px] text-emerald-400 bg-emerald-400/10 px-1 py-0.5 rounded border border-emerald-400/20">Cleans
-                edges</span>
-            </label>
-            <span id="lbl-chroma-spill"
-              class="text-[10px] font-mono bg-[var(--bg-base)] px-1.5 py-0.5 rounded text-[var(--text-secondary)]">80</span>
-          </div>
-          <input type="range" id="chroma-spill" min="0" max="100" value="80"
-            class="w-full accent-emerald-400 h-1.5 bg-[var(--border-light)] rounded-lg appearance-none cursor-pointer" />
-        </div>
-      </div>
-
-      <!-- Footer Buttons -->
-      <div class="px-4 py-3 border-t border-[var(--border-color)] bg-[var(--bg-base)] flex items-center gap-3">
-        <button id="chroma-reset-btn"
-          class="px-3 py-1.5 rounded-lg text-xs border border-[var(--border-light)] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-all">Reset</button>
-        <div class="ml-auto flex items-center gap-2">
-          <button id="chroma-cancel-btn"
-            class="px-4 py-1.5 rounded-lg text-xs border border-[var(--border-light)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-all">Cancel</button>
-          <button id="chroma-apply-btn"
-            class="px-5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-500 hover:bg-emerald-400 text-white transition-all hover:-translate-y-0.5 active:scale-95">Apply</button>
         </div>
       </div>
     </div>
@@ -3756,7 +3490,7 @@
           <!-- ③ Look -->
           <div class="ds-sec-head">
             <span class="ds-sec-num">3</span>
-            <div class="ds-sec-text"><div class="ds-sec-title">Look</div><div class="ds-sec-hint">Voice style, colors and images for every tab</div></div>
+            <div class="ds-sec-text"><div class="ds-sec-title">Look</div><div class="ds-sec-hint">Voice style and colors for every tab</div></div>
           </div>
           <div class="ds-grid2">
             <label class="ds-field" title="The Khmer register Transcribe uses. Same setting as the genre button and the DAI window.">
@@ -3777,60 +3511,6 @@
               <span>Color filter</span>
               <select id="ds-color"></select>
             </label>
-          </div>
-          <div class="ds-field">
-            <span>Overlays</span>
-            <div class="ds-fieldbox">
-              <span id="ds-images-info" class="ds-images-info"></span>
-              <button id="ds-images-clear" class="hidden ds-icon-btn ds-icon-btn--sm" title="No overlay: tabs open as they are"><i data-lucide="x"></i></button>
-              <button id="ds-images-add" class="ds-btn ds-btn--ghost ds-btn--sm ml-auto" title="Pick a logo (PNG / JPG) or a video banner and place it on a frame of the series — no video needs to be open. Each one can be shown only for a while."><i data-lucide="image-plus"></i> <span id="ds-images-add-label">Add overlay…</span></button>
-              <button id="ds-images-use" class="ds-btn ds-btn--ghost ds-btn--sm" title="Add the images and videos to a tab with the Image and Video tools (place, size, opacity, motion, when they show), then press this: every tab of each part gets the same overlays in the same place. Pressed while a part is open, that part's tabs get them too. The clips between episodes never get them."><i data-lucide="copy"></i> Use this tab's overlays</button>
-            </div>
-          </div>
-          <!-- Place images and video overlays without opening a video: a frame of the series' first
-               episode, the overlays on it (drag to move), a corner grid, size, opacity and when they show. -->
-          <div id="ds-img-editor" class="ds-img-editor hidden">
-            <div id="ds-img-stage" class="ds-img-stage">
-              <canvas id="ds-img-frame"></canvas>
-              <button type="button" id="ds-img-full" class="ds-img-full" title="Full screen (Esc to go back)"><i data-lucide="maximize-2"></i></button>
-              <div id="ds-img-guide-v" class="ds-img-guide ds-img-guide--v"></div>
-              <div id="ds-img-guide-h" class="ds-img-guide ds-img-guide--h"></div>
-              <span id="ds-img-frame-note" class="ds-img-frame-note">Loading a frame of the series…</span>
-            </div>
-            <div class="ds-img-side">
-              <div id="ds-img-list" class="ds-img-list"></div>
-              <div class="ds-img-row">
-                <span class="ds-img-lbl">Place</span>
-                <div id="ds-img-pos" class="ds-img-pos" role="group" aria-label="Place the image">
-                  <button type="button" data-pos="tl" title="Top left"></button><button type="button" data-pos="tc" title="Top"></button><button type="button" data-pos="tr" title="Top right"></button>
-                  <button type="button" data-pos="ml" title="Left"></button><button type="button" data-pos="mc" title="Centre"></button><button type="button" data-pos="mr" title="Right"></button>
-                  <button type="button" data-pos="bl" title="Bottom left"></button><button type="button" data-pos="bc" title="Bottom"></button><button type="button" data-pos="br" title="Bottom right"></button>
-                </div>
-              </div>
-              <label class="ds-img-row"><span class="ds-img-lbl">Size</span><input id="ds-img-size" type="range" min="4" max="80" step="1" /><span id="ds-img-size-v" class="ds-img-val"></span></label>
-              <label class="ds-img-row"><span class="ds-img-lbl">Opacity</span><input id="ds-img-op" type="range" min="10" max="100" step="5" /><span id="ds-img-op-v" class="ds-img-val"></span></label>
-              <div class="ds-img-row" title="When it is on the video: from the first time to the second (m:ss or seconds). Empty: from the start / to the end. The times count from the start of each tab, so it comes back on every tab.">
-                <span class="ds-img-lbl">Show</span><input id="ds-img-start" type="text" inputmode="decimal" placeholder="start" class="ds-img-time" /><span>to</span><input id="ds-img-end" type="text" inputmode="decimal" placeholder="end" class="ds-img-time" />
-              </div>
-              <!-- Chroma key, for a video overlay shot on a green / blue screen: removes that colour. -->
-              <div id="ds-ck" class="ds-ck hidden">
-                <div class="ds-img-row" title="Remove the background colour of this video (a banner shot on green or blue). The export removes it exactly as shown here.">
-                  <span class="ds-img-lbl">Key out</span>
-                  <input id="ds-ck-on" type="checkbox" class="ds-switch ds-switch--sm" />
-                  <input id="ds-ck-color" type="color" value="#00ff00" class="ds-ck-color" title="The colour to remove" />
-                  <button type="button" id="ds-ck-pick" class="ds-btn ds-btn--ghost ds-btn--sm ml-auto" title="Then click the video on the frame where its background is"><i data-lucide="pipette"></i> Pick</button>
-                </div>
-                <label class="ds-img-row" title="How much of the colour is removed: higher removes more shades of it"><span class="ds-img-lbl">Tolerance</span><input id="ds-ck-tol" type="range" min="0" max="255" step="1" /><span id="ds-ck-tol-v" class="ds-img-val"></span></label>
-                <label class="ds-img-row" title="Softens the edge between what stays and what is removed"><span class="ds-img-lbl">Smooth</span><input id="ds-ck-smooth" type="range" min="0" max="100" step="1" /><span id="ds-ck-smooth-v" class="ds-img-val"></span></label>
-                <label class="ds-img-row" title="Takes the green / blue tint off the edges that stay"><span class="ds-img-lbl">Spill</span><input id="ds-ck-spill" type="range" min="0" max="100" step="1" /><span id="ds-ck-spill-v" class="ds-img-val"></span></label>
-              </div>
-              <div class="ds-img-actions">
-                <button type="button" id="ds-img-remove" class="ds-btn ds-btn--ghost ds-btn--sm"><i data-lucide="trash-2"></i> Remove</button>
-                <span class="flex-1"></span>
-                <button type="button" id="ds-img-cancel" class="ds-btn ds-btn--ghost ds-btn--sm">Cancel</button>
-                <button type="button" id="ds-img-done" class="ds-btn ds-btn--primary ds-btn--sm"><i data-lucide="check"></i> Use for every tab</button>
-              </div>
-            </div>
           </div>
 
           <!-- ④ Export -->
@@ -3856,32 +3536,6 @@
                 <option value="part">one video per part</option>
                 <option value="series">one video for the whole series</option>
               </select>
-            </div>
-            <div id="ds-clips-box" class="hidden ds-hf-sub flex-col" title="Video clips put into the joined video, each at the place you pick. A clip after a part's last episode ends that part. Joining with clips encodes the part's video again, so it takes a few minutes.">
-              <div class="flex items-center gap-2">
-                <span class="ds-row-label">Clips between episodes</span>
-                <span id="ds-clips-note" class="text-[var(--text-muted)]"></span>
-                <button id="ds-clip-add" class="ds-btn ds-btn--ghost ds-btn--sm ml-auto"><i data-lucide="plus"></i> Add clip</button>
-              </div>
-              <div id="ds-clips" class="flex flex-col gap-1.5 max-h-[140px] overflow-y-auto custom-scrollbar pr-1"></div>
-              <div class="flex items-center gap-2 min-w-0 pt-1.5 border-t border-[var(--border-light)]" title="Your sponsors' ads, played a few times spread evenly through the video: after every few episodes and once more at the very end. Auto plays them 3 to 5 times by the running time: 3 under 1h30, 4 under 3h, 5 for longer. With several ads: one ad each time (the ads take turns), or all the ads each time.">
-                <span class="ds-row-label shrink-0">Ads (spread evenly)</span>
-                <span id="ds-repeat-none" class="text-[var(--text-muted)]">None</span>
-                <span class="flex-1"></span>
-                <select id="ds-repeat-mode" class="ds-select-sm shrink-0 hidden">
-                  <option value="turns">One ad each time (take turns)</option>
-                  <option value="all">All ads each time</option>
-                </select>
-                <select id="ds-repeat-count" class="ds-select-sm shrink-0">
-                  <option value="auto">auto (3–5 times)</option>
-                  <option value="3">3 times</option>
-                  <option value="4">4 times</option>
-                  <option value="5">5 times</option>
-                </select>
-                <button id="ds-repeat-pick" class="ds-btn ds-btn--ghost ds-btn--sm shrink-0" title="Add one or more ad videos"><i data-lucide="plus"></i> Add ads</button>
-              </div>
-              <div id="ds-repeat-list" class="flex flex-col gap-1 max-h-[120px] overflow-y-auto custom-scrollbar pr-1"></div>
-              <div id="ds-repeat-note" class="text-[var(--text-muted)]"></div>
             </div>
           </section>
 

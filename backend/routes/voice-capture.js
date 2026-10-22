@@ -282,13 +282,14 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
         if (!info.stream) throw Object.assign(new Error('This video has no audio track.'), { status: 400 });
         const hasCenter = layoutHasCenter(info.stream.channel_layout, info.stream.channels || 0);
         const map = audioRepair ? await audioRepair.defaultAudioMap(resolved) : null;
-        return { resolved, info, hasCenter, map };
+        const vocalStem = findVocalStem ? findVocalStem(resolved) : null;
+        return { resolved, info, hasCenter, map, vocalStem };
     }
 
     router.post('/voice-capture/window', async (req, res) => {
         try {
             const body = req.body || {};
-            const { resolved, info, hasCenter, map } = await source(req);
+            const { resolved, info, hasCenter, map, vocalStem } = await source(req);
             const span = num(body.span, 5, MAX_WINDOW, 60);
             const total = info.duration || 0;
             const center = num(body.center, 0, total || 1e9, 0);
@@ -297,9 +298,11 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
             const dur = total ? Math.min(span, total - start) : span;
             if (!(dur > 0.2)) return res.json({ success: false, error: 'The playhead is past the end of the movie.' });
 
-            const opts = { center: !!body.center_only, hasCenter, denoise: !!body.denoise };
+            const audioInput = vocalStem || resolved;
+            const inputMap = vocalStem ? [] : (map ? ['-map', map] : []);
+            const opts = { center: !vocalStem && !!body.center_only, hasCenter: !vocalStem && hasCenter, denoise: !!body.denoise };
             const id = crypto.createHash('sha1')
-                .update(`${resolved}|${start.toFixed(2)}|${dur.toFixed(2)}|${opts.center && hasCenter}|${opts.denoise}`)
+                .update(`${audioInput}|${start.toFixed(2)}|${dur.toFixed(2)}|${opts.center && hasCenter}|${opts.denoise}`)
                 .digest('hex').slice(0, 16);
             const fileName = `vcap_${id}.wav`;
             const out = path.join(SEPARATED_DIR, fileName);
@@ -308,7 +311,7 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
                 const filters = cleanFilters(opts);
                 const tmp = `${out}.${process.pid}.tmp.wav`;
                 await runFfmpeg(['-hide_banner', '-nostdin', '-y', '-ss', start.toFixed(3), '-t', dur.toFixed(3),
-                    '-i', resolved, ...(map ? ['-map', map] : []), '-vn',
+                    '-i', audioInput, ...inputMap, '-vn',
                     ...(filters.length ? ['-af', filters.join(',')] : []),
                     '-ac', '1', '-ar', String(WINDOW_RATE), '-c:a', 'pcm_s16le', tmp]);
                 fs.renameSync(tmp, out);
@@ -331,7 +334,7 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
     router.post('/voice-capture/save', async (req, res) => {
         try {
             const body = req.body || {};
-            const { resolved, info, hasCenter, map } = await source(req);
+            const { resolved, info, hasCenter, map, vocalStem } = await source(req);
             const start = num(body.start, 0, info.duration || 1e9, 0);
             const end = num(body.end, start, (info.duration || 1e9), start);
             const dur = Math.min(MAX_CLIP, end - start);
@@ -342,8 +345,11 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
             const out = path.join(dir, name);
 
             const fade = Math.min(0.02, dur / 10).toFixed(3);
+            const audioInput = vocalStem || resolved;
+            const inputMap = vocalStem ? [] : (map ? ['-map', map] : []);
+            // The separated vocals when the movie has them: no music under the voice to clone.
             const filters = [
-                ...cleanFilters({ center: !!body.center_only, hasCenter, denoise: !!body.denoise }),
+                ...cleanFilters({ center: !vocalStem && !!body.center_only, hasCenter: !vocalStem && hasCenter, denoise: !!body.denoise }),
                 ...eqFilters(body.eq),
                 // A steady level: VoxCPM2 copies loudness as well as timbre.
                 'loudnorm=I=-18:TP=-2:LRA=11',
@@ -353,7 +359,7 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
             const tmp = path.join(dir, `.${name}.${process.pid}.tmp.wav`);
             try {
                 await runFfmpeg(['-hide_banner', '-nostdin', '-y', '-ss', start.toFixed(3), '-t', dur.toFixed(3),
-                    '-i', resolved, ...(map ? ['-map', map] : []), '-vn', '-af', filters.join(','),
+                    '-i', audioInput, ...inputMap, '-vn', '-af', filters.join(','),
                     '-ac', '1', '-ar', String(SAVE_RATE), '-c:a', 'pcm_s16le', tmp]);
                 fs.renameSync(tmp, out);
             } finally {
@@ -367,16 +373,17 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
 
     // The movie's audio as raw 16 kHz mono s16le (the dialogue channel of a 5.1 track: less
     // music under the voices), cached beside the other separated audio.
-    async function dialoguePcm(resolved, hasCenter, map) {
-        const st = fs.statSync(resolved);
-        const id = crypto.createHash('sha1').update(`${resolved}|${st.size}|${st.mtimeMs}|${map}|${hasCenter}`).digest('hex').slice(0, 16);
+    async function dialoguePcm(resolved, hasCenter, map, vocalStem) {
+        const audioInput = vocalStem || resolved;
+        const st = fs.statSync(audioInput);
+        const id = crypto.createHash('sha1').update(`${audioInput}|${st.size}|${st.mtimeMs}|${map}|${hasCenter}`).digest('hex').slice(0, 16);
         const out = path.join(SEPARATED_DIR, `spk_${id}.pcm`);
         if (!fs.existsSync(out)) {
             fs.mkdirSync(SEPARATED_DIR, { recursive: true });
             const tmp = `${out}.${process.pid}.tmp`;
             try {
-                await runFfmpeg(['-hide_banner', '-nostdin', '-y', '-i', resolved, ...(map ? ['-map', map] : []), '-vn',
-                    ...(hasCenter ? ['-af', 'pan=mono|c0=FC'] : []),
+                await runFfmpeg(['-hide_banner', '-nostdin', '-y', '-i', audioInput, ...(!vocalStem && map ? ['-map', map] : []), '-vn',
+                    ...(!vocalStem && hasCenter ? ['-af', 'pan=mono|c0=FC'] : []),
                     '-ac', '1', '-ar', String(SPEAKER_RATE), '-f', 's16le', '-c:a', 'pcm_s16le', tmp]);
                 fs.renameSync(tmp, out);
             } finally {
@@ -386,18 +393,19 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
         return out;
     }
 
-    // One speaker's reference clip: their clearest lines cut from the original file, joined
-    // with a short pause, cleaned and levelled like a capture.
-    async function cutReference({ resolved, hasCenter, map, pieces, out }) {
+    // One speaker's reference clip: their clearest lines cut from the isolated vocals or file,
+    // joined with a short pause, cleaned and levelled like a capture.
+    async function cutReference({ resolved, hasCenter, map, pieces, out, vocalStem }) {
+        const audioInput = vocalStem || resolved;
         const args = ['-hide_banner', '-nostdin', '-y'];
-        pieces.forEach((p) => args.push('-ss', p.start.toFixed(3), '-t', (p.end - p.start).toFixed(3), '-i', resolved));
-        const stream = map ? map.split(':')[1] : 'a:0';
-        const clean = cleanFilters({ center: true, hasCenter, denoise: false });
+        pieces.forEach((p) => args.push('-ss', p.start.toFixed(3), '-t', (p.end - p.start).toFixed(3), '-i', audioInput));
+        const stream = vocalStem || !map ? 'a:0' : map.split(':')[1];
+        const clean = vocalStem ? [] : cleanFilters({ center: true, hasCenter, denoise: false });
         const chains = pieces.map((p, i) => {
             const fade = Math.min(0.02, (p.end - p.start) / 10).toFixed(3);
             return `[${i}:${stream}]${[...clean, 'aformat=channel_layouts=mono', `afade=t=in:st=0:d=${fade}`,
-                `afade=t=out:st=${Math.max(0, p.end - p.start - Number(fade)).toFixed(3)}:d=${fade}`,
-                ...(i < pieces.length - 1 ? ['apad=pad_dur=0.15'] : [])].join(',')}[p${i}]`;
+            `afade=t=out:st=${Math.max(0, p.end - p.start - Number(fade)).toFixed(3)}:d=${fade}`,
+            ...(i < pieces.length - 1 ? ['apad=pad_dur=0.15'] : [])].join(',')}[p${i}]`;
         });
         const graph = `${chains.join(';')};${pieces.map((p, i) => `[p${i}]`).join('')}concat=n=${pieces.length}:v=0:a=1,loudnorm=I=-18:TP=-2:LRA=11[out]`;
         const tmp = path.join(path.dirname(out), `.${path.basename(out)}.${process.pid}.tmp.wav`);
@@ -427,14 +435,14 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
                 }))
                 .filter((l) => Number.isFinite(l.start) && Number.isFinite(l.end) && l.end > l.start);
             if (!lines.length) return res.status(400).json({ success: false, error: 'There are no timed lines to listen to.' });
-            const { resolved, hasCenter, map } = await source(req);
+            const { resolved, hasCenter, map, vocalStem } = await source(req);
 
             // Same host rule as /api/generate-voxcmp2 (Node 18+ resolves localhost to ::1 first).
             let base = String(body.serverUrl || 'http://127.0.0.1:8808').trim().replace(/\/+$/, '').replace('localhost', '127.0.0.1');
             if (!/^https?:\/\//i.test(base)) base = `http://${base}`;
             const local = /^https?:\/\/127\.0\.0\.1(:\d+)?$/i.test(base);
 
-            const pcm = await dialoguePcm(resolved, hasCenter, map);
+            const pcm = await dialoguePcm(resolved, hasCenter, map, vocalStem);
             const fd = fs.openSync(pcm, 'r');
             let packed;
             try {
@@ -456,7 +464,7 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
                 (Array.isArray(k.emotions) ? k.emotions : []).forEach((e) => have.add(emotionOf(e)));
                 haveOf.set(k.id, have);
             });
-            const payload = { lines: packed.sent, known: known.map((k) => ({ id: k && k.id, gender: k && k.gender, embedding: k && k.embedding })) };
+            const payload = { lines: packed.sent, known: known.map((k) => ({ id: k && k.id, gender: k && k.gender, embedding: k && k.embedding, model: k && k.model })) };
             if (local) {
                 // A local server reads the file itself instead of a JSON body hundreds of MB long.
                 sentFile = path.join(SEPARATED_DIR, `spk_lines_${crypto.randomUUID()}.wav`);
@@ -502,14 +510,15 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
                 for (const plan of planClips(refLines, have)) {
                     const name = freeName(dir, `${stem} - ${s.key}${plan.emotion ? ` - ${plan.emotion}` : ''}`);
                     const out = path.join(dir, name);
-                    await cutReference({ resolved, hasCenter, map, pieces: plan.pieces, out });
+                    await cutReference({ resolved, hasCenter, map, pieces: plan.pieces, out, vocalStem });
                     const seconds = +span(plan.pieces).toFixed(1);
                     if (plan.emotion) sp.emotionClips[plan.emotion] = { filePath: out, fileName: name, seconds };
                     else Object.assign(sp, { filePath: out, fileName: name, clipSeconds: seconds, calm: plan.calm });
                 }
                 speakers.push(sp);
             }
-            res.json({ success: true, speakers, dir });
+            // The model that made the embeddings: prints of different models are never compared.
+            res.json({ success: true, speakers, dir, printModel: data.print_model || 'campplus' });
         } catch (e) {
             res.status(e.status || 500).json({ success: false, error: e.message });
         } finally {
@@ -534,7 +543,7 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
             const fp = framePowers(LEVEL_RATE);
             const ff = spawn(getFFmpegBinary(), ['-hide_banner', '-nostdin', '-i', src, ...(map ? ['-map', map] : []), '-vn',
                 ...(filters.length ? ['-af', filters.join(',')] : []), '-ac', '1', '-ar', String(LEVEL_RATE), '-f', 's16le', 'pipe:1'],
-            { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+                { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
             if (trackProcess) trackProcess(ff);
             ff.stdout.on('data', (d) => fp.push(d));
             ff.on('error', () => resolve(null));
@@ -555,8 +564,8 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
             if (!Number.isFinite(start) || !Number.isFinite(end) || end - start < LINE_MIN) {
                 return res.json({ success: false, error: 'The line is too short to take its delivery from.' });
             }
-            const { resolved, hasCenter, map } = await source(req);
-            const stem = findVocalStem ? findVocalStem(resolved) : null;
+            const { resolved, hasCenter, map, vocalStem } = await source(req);
+            const stem = vocalStem;
             const a = Math.max(0, start - LINE_EDGE);
             const dur = Math.min(LINE_MAX, end - start + 2 * LINE_EDGE);
             const fade = Math.min(0.02, dur / 10).toFixed(3);

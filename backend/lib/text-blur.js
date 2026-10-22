@@ -5,6 +5,11 @@
 // stays on the text whatever the export settings. Segments with the same box share one chain:
 // crop the box, blur it, feather its edges (a hard-edged blurred box shows), and overlay it
 // back only during that box's times (FFmpeg timeline `enable`, so it costs nothing in between).
+//
+// Boxes on the same rows are blurred on a strip cut out of the frame, and the strip goes back
+// with one overlay: every overlay copies the picture it draws on, so 30 boxes overlaid on the
+// whole frame made the export about 4x slower. The frame stays yuv420p (no alpha plane): FFmpeg
+// would otherwise give the whole picture the blurred boxes' alpha, which is slower to overlay.
 const fs = require('fs');
 const { execFile } = require('child_process');
 
@@ -54,27 +59,57 @@ function groupBoxes(segments, width, height) {
 
 const enableExpr = (ranges) => ranges.map(([a, b]) => `between(t,${a.toFixed(2)},${b.toFixed(2)})`).join('+');
 
+// Boxes whose rows overlap or nearly touch (2% of the height) share one strip: the smallest
+// rectangle around them. All sides stay even, as the boxes' are.
+function groupStrips(groups, height) {
+    const gap = even(height * 0.02);
+    const strips = [];
+    for (const g of [...groups].sort((p, q) => p.y - q.y)) {
+        const last = strips[strips.length - 1];
+        if (last && g.y <= last.y1 + gap) {
+            last.boxes.push(g);
+            last.y1 = Math.max(last.y1, g.y + g.h);
+        } else {
+            strips.push({ y0: g.y, y1: g.y + g.h, boxes: [g] });
+        }
+    }
+    return strips.map((s) => {
+        const x = Math.min(...s.boxes.map((g) => g.x));
+        const w = Math.max(...s.boxes.map((g) => g.x + g.w)) - x;
+        return { x, y: s.y0, w, h: s.y1 - s.y0, boxes: s.boxes, ranges: mergeRanges(s.boxes.flatMap((g) => g.ranges)) };
+    });
+}
+
 // Filter-graph parts that blur the segments on [inTag] and output [outTag], or null (nothing
 // to blur). width/height: the frame size [inTag] has (after FFmpeg's auto-rotation).
 function buildTextBlurFilters(segments, { width, height, inTag = '0:v', outTag = 'v_textblur' }) {
     if (!(width > 0 && height > 0)) return null;
     const groups = groupBoxes(segments, width, height);
     if (!groups.length) return null;
+    const strips = groupStrips(groups, height);
     const parts = [];
-    parts.push(`[${inTag}]split=${groups.length + 1}[tb_main]${groups.map((g, i) => `[tb_src${i}]`).join('')}`);
+    parts.push(`[${inTag}]format=yuv420p,split=${strips.length + 1}[tb_main]${strips.map((s, k) => `[tb_full${k}]`).join('')}`);
     let cur = 'tb_main';
-    groups.forEach((g, i) => {
-        const minSide = Math.min(g.w, g.h);
-        const luma = Math.max(1, Math.min(Math.round(g.h * BLUR_OF_HEIGHT), Math.floor(minSide / 2) - 1));
-        const chroma = Math.max(1, Math.min(Math.round(luma / 2), Math.floor(minSide / 4) - 1));
-        const feather = Math.max(2, Math.min(Math.round(g.h * FEATHER_OF_HEIGHT), Math.floor(minSide / 2) - 1));
-        const enable = enableExpr(g.ranges);
-        const next = i === groups.length - 1 ? outTag : `tb_out${i}`;
-        // One frame of mask is enough: the merge keeps using the last mask frame.
-        parts.push(`nullsrc=s=${g.w}x${g.h}:r=1:d=1,format=gray,geq=lum='255*min(1\\,min(X\\,W-1-X)/${feather})*min(1\\,min(Y\\,H-1-Y)/${feather})'[tb_mask${i}]`);
-        parts.push(`[tb_src${i}]crop=${g.w}:${g.h}:${g.x}:${g.y},boxblur=${luma}:2:${chroma}:2:enable='${enable}',format=yuva420p[tb_blur${i}]`);
-        parts.push(`[tb_blur${i}][tb_mask${i}]alphamerge[tb_soft${i}]`);
-        parts.push(`[${cur}][tb_soft${i}]overlay=${g.x}:${g.y}:enable='${enable}'[${next}]`);
+    let i = 0;
+    strips.forEach((s, k) => {
+        parts.push(`[tb_full${k}]crop=${s.w}:${s.h}:${s.x}:${s.y},split=${s.boxes.length + 1}[tb_strip${k}]${s.boxes.map((g, j) => `[tb_src${i + j}]`).join('')}`);
+        let strip = `tb_strip${k}`;
+        for (const g of s.boxes) {
+            const minSide = Math.min(g.w, g.h);
+            const luma = Math.max(1, Math.min(Math.round(g.h * BLUR_OF_HEIGHT), Math.floor(minSide / 2) - 1));
+            const chroma = Math.max(1, Math.min(Math.round(luma / 2), Math.floor(minSide / 4) - 1));
+            const feather = Math.max(2, Math.min(Math.round(g.h * FEATHER_OF_HEIGHT), Math.floor(minSide / 2) - 1));
+            const enable = enableExpr(g.ranges);
+            // One frame of mask is enough: the merge keeps using the last mask frame.
+            parts.push(`nullsrc=s=${g.w}x${g.h}:r=1:d=1,format=gray,geq=lum='255*min(1\\,min(X\\,W-1-X)/${feather})*min(1\\,min(Y\\,H-1-Y)/${feather})'[tb_mask${i}]`);
+            parts.push(`[tb_src${i}]crop=${g.w}:${g.h}:${g.x - s.x}:${g.y - s.y},boxblur=${luma}:2:${chroma}:2:enable='${enable}',format=yuva420p[tb_blur${i}]`);
+            parts.push(`[tb_blur${i}][tb_mask${i}]alphamerge[tb_soft${i}]`);
+            parts.push(`[${strip}][tb_soft${i}]overlay=${g.x - s.x}:${g.y - s.y}:enable='${enable}'[tb_s${i}]`);
+            strip = `tb_s${i}`;
+            i++;
+        }
+        const next = k === strips.length - 1 ? outTag : `tb_out${k}`;
+        parts.push(`[${cur}][${strip}]overlay=${s.x}:${s.y}:enable='${enableExpr(s.ranges)}'[${next}]`);
         cur = next;
     });
     return { parts, outTag, boxes: groups.length, segments: groups.reduce((n, g) => n + g.ranges.length, 0) };
@@ -104,4 +139,4 @@ function probeDisplaySize(videoPath, ffprobePath) {
     });
 }
 
-module.exports = { buildTextBlurFilters, groupBoxes, mergeRanges, cleanSegments, probeDisplaySize };
+module.exports = { buildTextBlurFilters, groupBoxes, groupStrips, mergeRanges, cleanSegments, probeDisplaySize };

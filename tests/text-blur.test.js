@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { buildTextBlurFilters, groupBoxes, mergeRanges, cleanSegments } = require('../backend/lib/text-blur');
+const { buildTextBlurFilters, groupBoxes, groupStrips, mergeRanges, cleanSegments } = require('../backend/lib/text-blur');
 
 const seg = (start, end, x, w, y = 66, h = 7) => ({ start, end, x, y, w, h });
 
@@ -44,11 +44,28 @@ describe('text blur filter graph', () => {
         const graph = tb.parts.join(';');
         assert.equal(tb.boxes, 2);
         assert.equal(tb.segments, 3);
-        assert.match(graph, /^\[v_in\]split=3\[tb_main\]\[tb_src0\]\[tb_src1\]/);
+        assert.match(graph, /^\[v_in\]format=yuv420p,split=2\[tb_main\]\[tb_full0\];\[tb_full0\]crop=[^,]+,split=3\[tb_strip0\]\[tb_src0\]\[tb_src1\]/);
         assert.match(graph, /enable='between\(t,1\.00,2\.00\)\+between\(t,4\.50,6\.25\)'/);
         assert.match(graph, /enable='between\(t,3\.00,4\.00\)'/);
-        assert.match(graph, /overlay=\d+:\d+:enable='[^']+'\[v_out\]$/, 'the last box writes the output tag');
+        assert.match(graph, /\[tb_main\]\[tb_s1\]overlay=\d+:\d+:enable='between\(t,1\.00,2\.00\)\+between\(t,3\.00,4\.00\)\+between\(t,4\.50,6\.25\)'\[v_out\]$/,
+            'the strip goes back once, while any of its boxes shows, and writes the output tag');
         assert.equal((graph.match(/alphamerge/g) || []).length, 2, 'soft edges on every box');
+        assert.equal((graph.match(/\[(tb_main|tb_out\d+)\]\[[^\]]+\]overlay/g) || []).length, 1, 'the whole frame is overlaid once');
+    });
+
+    test('boxes on the same rows share a strip; boxes far apart get their own', () => {
+        const groups = groupBoxes([seg(1, 2, 30, 40), seg(3, 4, 10, 80, 67, 7), seg(5, 6, 20, 60, 5, 6)], 1080, 1920);
+        const strips = groupStrips(groups, 1920);
+        assert.equal(strips.length, 2);
+        const bottom = strips.find((s) => s.boxes.length === 2);
+        assert.ok(bottom, 'the two bottom lines share a strip');
+        for (const g of bottom.boxes) {
+            assert.ok(g.x >= bottom.x && g.y >= bottom.y && g.x + g.w <= bottom.x + bottom.w && g.y + g.h <= bottom.y + bottom.h, 'the strip holds its boxes');
+        }
+        for (const s of strips) for (const v of [s.x, s.y, s.w, s.h]) assert.equal(v % 2, 0, JSON.stringify(s));
+        const tb = buildTextBlurFilters([seg(1, 2, 30, 40), seg(3, 4, 10, 80, 67, 7), seg(5, 6, 20, 60, 5, 6)], { width: 1080, height: 1920, outTag: 'o' });
+        assert.match(tb.parts[0], /split=3\[tb_main\]\[tb_full0\]\[tb_full1\]$/);
+        assert.match(tb.parts.join(';'), /\[tb_out0\]\[tb_s\d+\]overlay=\d+:\d+:enable='[^']+'\[o\]$/);
     });
 
     test('the blur radius fits FFmpeg limits even for a tiny box', () => {

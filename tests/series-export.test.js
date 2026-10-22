@@ -22,9 +22,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // app start, so not marked autoExport: that would be an export lost when the app closed).
 // outcome(item): 'done' or 'error' for one render of a queue item ({ tab, tries }).
 // merge: "Join into one video" is on; joinError: the join of every part fails with it.
-// clips: "Clips between episodes" ({ pos, path }; pos k = after the series' k-th episode).
-function makeSeries({ parts = 3, outcome = () => 'done', renderMs = 10, dubMs = 15, plan = null, merge = false, joinError = null, clips = [], scope = 'part' } = {}) {
-  const env = { log: [], toasts: [], saves: 0, renderQueue: [], joins: [], prepares: [] };
+function makeSeries({ parts = 3, outcome = () => 'done', renderMs = 10, dubMs = 15, plan = null, merge = false, joinError = null, scope = 'part' } = {}) {
+  const env = { log: [], toasts: [], saves: 0, renderQueue: [], joins: [] };
   const tabsOf = (k) => [1, 2, 3].map((t) => ({ name: `part${k + 1}_tab${t}` }));
   plan = plan || {
     outDir: 'D:\\out',
@@ -33,7 +32,7 @@ function makeSeries({ parts = 3, outcome = () => 'done', renderMs = 10, dubMs = 
     lastDone: { index: 0 },
   };
   const projects = plan.lastDone ? tabsOf(plan.lastDone.index) : [];
-  const factory = new Function('env', 'plan', 'projects', 'tabsOf', 'outcome', 'renderMs', 'dubMs', 'sleep', 'merge', 'joinError', 'clips', 'scope', `
+  const factory = new Function('env', 'plan', 'projects', 'tabsOf', 'outcome', 'renderMs', 'dubMs', 'sleep', 'merge', 'joinError', 'scope', `
     const savePlan = () => { env.saves++; env.saved = JSON.parse(JSON.stringify(plan)); };
     const render = () => { };
     const setLabel = () => { };
@@ -57,9 +56,7 @@ function makeSeries({ parts = 3, outcome = () => 'done', renderMs = 10, dubMs = 
     const pathJoin = (...p) => p.join('/');
     const mergeWanted = () => merge;
     const mergeScope = () => scope;
-    const currentClips = () => clips;
     const postJson = async (url, body) => {
-      if (url.endsWith('/episodes/prepare-clips')) { env.prepares.push(body); return { success: true }; }
       env.joins.push(body);
       env.log.push('join part' + body.partNumbers[0]);
       return { success: true, jobId: String(env.joins.length - 1) };
@@ -138,7 +135,7 @@ function makeSeries({ parts = 3, outcome = () => 'done', renderMs = 10, dubMs = 
       newRun: () => { seriesRun = { stopped: false }; },
     };
   `);
-  const api = factory(env, plan, projects, tabsOf, outcome, renderMs, dubMs, sleep, merge, joinError, clips, scope);
+  const api = factory(env, plan, projects, tabsOf, outcome, renderMs, dubMs, sleep, merge, joinError, scope);
   return { env, plan, projects, api };
 }
 
@@ -182,28 +179,6 @@ describe('Dub Whole Series hands-free export', () => {
     assert.ok(env.toasts.some((t) => /All 2 parts are dubbed and exported \(2 joined into one video each\)/.test(t.m)));
   });
 
-  test('clips between episodes go into the right part, at the second their episode ends', async () => {
-    const eps = (...d) => d.map((duration, k) => ({ label: 'EP' + k, duration }));
-    const plan = {
-      outDir: 'D:\\out', seriesName: 'Show',
-      parts: [{ status: 'done', eps: eps(100, 200, 300) }, { status: 'joined', eps: eps(50, 60) }],
-      lastDone: { index: 0 },
-    };
-    const clips = [
-      { pos: 0, path: 'intro.mp4' }, // before EP1: start of part 1
-      { pos: 2, path: 'mid.mp4' }, // after the 2nd episode: 300s into part 1
-      { pos: 3, path: 'outro.mp4' }, // after part 1's last episode: its end
-      { pos: 4, path: 'p2.mp4' }, // after the 4th: 50s into part 2
-    ];
-    const { env, api } = makeSeries({ plan, merge: true, clips });
-    await api.exportAndContinue();
-    assert.deepEqual(env.joins[0].parts[0].inserts, [{ at: 0, path: 'intro.mp4' }, { at: 300, path: 'mid.mp4' }, { at: 600, path: 'outro.mp4' }]);
-    assert.deepEqual(env.joins[0].parts[0].files, ['D:/out/part1_tab1.mp4', 'D:/out/part1_tab2.mp4', 'D:/out/part1_tab3.mp4']);
-    assert.deepEqual(env.joins[1].parts[0].inserts, [{ at: 50, path: 'p2.mp4' }]);
-    // Once a part is exported, its clips are encoded ahead to its tabs' size, for the joins after it.
-    assert.deepEqual(env.prepares[0], { like: 'D:/out/part1_tab1.mp4', clips: ['intro.mp4', 'mid.mp4', 'outro.mp4', 'p2.mp4'] });
-  });
-
   test('Join into one video fails: a warning, the part stays exported and the series goes on', async () => {
     const { env, plan, api } = makeSeries({ parts: 2, merge: true, joinError: 'disk full' });
     await api.exportAndContinue();
@@ -225,21 +200,6 @@ describe('Dub Whole Series hands-free export', () => {
     assert.deepEqual(env.saved.parts.map((p) => p.outputs.length), [3, 3, 3], "each part's videos kept in the plan (an app restart)");
     assert.ok(env.toasts.some((t) => /All 3 parts are dubbed and exported, joined into one video: Show_Dubbed_full\.mp4 ✓ in 1:00 of work$/.test(t.m)));
     // ^ how long the whole series took to make, in the last message
-  });
-
-  test('whole series with clips: each clip at the second its episode ends, counted over the whole series', async () => {
-    const eps = (...d) => d.map((duration, k) => ({ label: 'EP' + k, duration }));
-    const plan = {
-      outDir: 'D:\\out', seriesName: 'Show',
-      parts: [{ status: 'done', eps: eps(100, 200) }, { status: 'joined', eps: eps(50, 60) }],
-      lastDone: { index: 0 },
-    };
-    const clips = [{ pos: 0, path: 'intro.mp4' }, { pos: 3, path: 'mid.mp4' }, { pos: 4, path: 'outro.mp4' }];
-    const { env, api } = makeSeries({ plan, merge: true, clips, scope: 'series' });
-    await api.exportAndContinue();
-    assert.equal(env.joins.length, 1);
-    assert.deepEqual(env.joins[0].parts[0].inserts, [{ at: 0, path: 'intro.mp4' }, { at: 350, path: 'mid.mp4' }, { at: 410, path: 'outro.mp4' }]);
-    assert.equal(env.joins[0].parts[0].files.length, 6);
   });
 
   test('whole series: a failed join warns, and Continue joins it again without rendering', async () => {

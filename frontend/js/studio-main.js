@@ -1087,8 +1087,6 @@
         videoVignette: { ...videoVignette },
         pastStates: [],
         freeTexts: [],
-        imageOverlays: [],
-        videoOverlays: [],
         bgmTrack: {
           src: null,
           file: null,
@@ -1169,34 +1167,6 @@
       // project that is tens of thousands of objects cloned per click.
       p.pastStates = pastStates.slice();
       p.freeTexts = JSON.parse(JSON.stringify(freeTexts));
-      document.querySelectorAll(".image-overlay-item").forEach((wrapper) => {
-        const id = wrapper.dataset.id;
-        if (id && typeof updateImageState === "function") updateImageState(id, wrapper);
-      });
-      p.imageOverlays = (window.imageOverlays || []).map((i) => {
-        const { file, _file, ...rest } = i;
-        const actualFile = file || _file || null;
-        // Ensure blobUrl is preserved; if missing but file exists, recreate it
-        if (!rest.blobUrl && actualFile) {
-          try { rest.blobUrl = URL.createObjectURL(actualFile); } catch (e) {}
-        }
-        return {
-          ...rest,
-          file: actualFile,
-          _file: actualFile,
-          filePath: i.filePath || actualFile?.path || null,
-        };
-      });
-      // Pause all video overlays only when switching tabs, not during render save
-      if (!window._isSavingForRender) {
-        document.querySelectorAll(".video-overlay-item video").forEach((vidEl) => {
-          const wrapperId = vidEl.closest(".video-overlay-item")?.dataset.id;
-          const item = (window.videoOverlays || []).find((v) => v.id === wrapperId);
-          if (item) item._paused = vidEl.paused;
-          vidEl.pause();
-        });
-      }
-      p.videoOverlays = (window.videoOverlays || []).map((v) => ({ ...v }));
       p.bgmTrack = { ...bgmTrack };
       p.duration = duration;
       p.targetLanguage = targetLanguage;
@@ -1656,47 +1626,8 @@
       }
     });
 
-    // ── VIDEO PRESETS (full: flip, crop, stretch, overlays, color) ──
+    // ── VIDEO PRESETS (full: flip, crop, stretch, text, color) ──
     const VP_KEY = "aiDubber_videoPresets";
-
-    // Converts a blobUrl or File to a persistent base64 data URL
-    async function imageOverlayToDataUrl(item) {
-      try {
-        // Already a data URL (from a previously saved preset) — reuse it
-        if (item.dataUrl && item.dataUrl.startsWith("data:")) return item.dataUrl;
-        // Has a live blobUrl — fetch the blob and encode it
-        const url = item.blobUrl || (item.file ? URL.createObjectURL(item.file) : null);
-        if (!url) return null;
-        const blob = await fetch(url).then((r) => r.blob());
-        return await new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result);
-          reader.onerror = reject;
-          reader.readAsDataURL(blob);
-        });
-      } catch {
-        return null;
-      }
-    }
-
-    // A saved image overlay (base64 dataUrl, no File) made ready for a tab: the image as an
-    // in-memory Blob so it loads on screen at once.
-    function hydrateImageOverlay(i) {
-      const { file, ...rest } = i;
-      if (rest.dataUrl && rest.dataUrl.startsWith("data:")) {
-        try {
-          const byteString = atob(rest.dataUrl.split(",")[1]);
-          const mimeMatch = rest.dataUrl.match(/data:([^;]+);/);
-          const mime = mimeMatch ? mimeMatch[1] : "image/png";
-          const ab = new ArrayBuffer(byteString.length);
-          const ia = new Uint8Array(ab);
-          for (let j = 0; j < byteString.length; j++) ia[j] = byteString.charCodeAt(j);
-          const blob = new Blob([ab], { type: mime });
-          rest.blobUrl = URL.createObjectURL(blob);
-        } catch { }
-      }
-      return { ...rest };
-    }
 
     function vpLoad() {
       try {
@@ -1710,15 +1641,6 @@
     }
 
     async function vpCollect() {
-      // Encode every image overlay to a persistent base64 data URL
-      const imageOverlays = await Promise.all(
-        (window.imageOverlays || []).map(async (i) => {
-          const { file, blobUrl, dataUrl, ...rest } = i;
-          const encodedDataUrl = await imageOverlayToDataUrl(i);
-          return encodedDataUrl ? { ...rest, dataUrl: encodedDataUrl } : { ...rest };
-        }),
-      );
-
       return {
         isFlippedH: isFlippedH,
         isFlippedV: isFlippedV,
@@ -1729,14 +1651,6 @@
         cropConfig: { ...cropConfig },
         blurBoxes: JSON.parse(JSON.stringify(blurBoxes || [])),
         freeTexts: JSON.parse(JSON.stringify(freeTexts)),
-        imageOverlays,
-        videoOverlays: (window.videoOverlays || []).map((v) => {
-          const { file, blobUrl, ...rest } = v;
-          return {
-            ...rest,
-            videoPath: v.videoPath || (file && file.path ? file.path : null),
-          };
-        }),
         videoColorAdj: { ...videoColorAdj },
         videoVignette: { ...videoVignette },
         subtitleStyle: {
@@ -1778,8 +1692,6 @@
           scaleY: p.videoScaleY || 1,
           texts: JSON.parse(JSON.stringify(p.freeTexts || [])),
           blurBoxes: JSON.parse(JSON.stringify(p.blurBoxes || [])),
-          imageOverlays: JSON.parse(JSON.stringify(p.imageOverlays || [])),
-          videoOverlays: JSON.parse(JSON.stringify(p.videoOverlays || [])),
           videoColorAdj: { ...(p.videoColorAdj || {}) },
           videoVignette: { ...(p.videoVignette || {}) },
         });
@@ -1795,23 +1707,6 @@
         };
         p.blurBoxes = JSON.parse(JSON.stringify(settings.blurBoxes || []));
         p.freeTexts = JSON.parse(JSON.stringify(settings.freeTexts || []));
-        p.imageOverlays = (settings.imageOverlays || []).map((i) => {
-          const { file, ...rest } = i;
-          if (rest.dataUrl && rest.dataUrl.startsWith("data:")) {
-            try {
-              const byteString = atob(rest.dataUrl.split(",")[1]);
-              const mimeMatch = rest.dataUrl.match(/data:([^;]+);/);
-              const mime = mimeMatch ? mimeMatch[1] : "image/png";
-              const ab = new ArrayBuffer(byteString.length);
-              const ia = new Uint8Array(ab);
-              for (let j = 0; j < byteString.length; j++) ia[j] = byteString.charCodeAt(j);
-              const blob = new Blob([ab], { type: mime });
-              rest.blobUrl = URL.createObjectURL(blob);
-            } catch { }
-          }
-          return { ...rest };
-        });
-        p.videoOverlays = JSON.parse(JSON.stringify(settings.videoOverlays || []));
         p.videoColorAdj = { ...(settings.videoColorAdj || colorDefaults) };
         p.videoVignette = { ...(settings.videoVignette || vignetteDefaults) };
         if (settings.subtitleStyle) {
@@ -1834,15 +1729,10 @@
 
       // Save undo snapshot into pastStates BEFORE applying
       if (typeof saveStateToPast === "function") saveStateToPast();
-      // Also push blurBoxes + imageOverlays into the snapshot (extend it in-place)
+      // Also push blurBoxes into the snapshot (extend it in-place)
       if (pastStates.length > 0) {
         const snap = pastStates[pastStates.length - 1];
         snap.blurBoxes = JSON.parse(JSON.stringify(blurBoxes || []));
-        snap.imageOverlays = (window.imageOverlays || []).map((i) => {
-          const { file, ...r } = i;
-          return { ...r };
-        });
-        snap.videoOverlays = JSON.parse(JSON.stringify(window.videoOverlays || []));
         snap.videoColorAdj = { ...videoColorAdj };
         snap.videoVignette = { ...videoVignette };
       }
@@ -1876,85 +1766,8 @@
       blurBoxes = JSON.parse(JSON.stringify(settings.blurBoxes || []));
       if (typeof renderBlurBoxes === "function") renderBlurBoxes();
 
-      // Overlays
+      // Free text
       freeTexts = JSON.parse(JSON.stringify(settings.freeTexts || []));
-      window.imageOverlays = (settings.imageOverlays || []).map((i) => {
-        const { file, ...rest } = i;
-        // If we have a persisted dataUrl, create a fresh blobUrl from it for this session
-        if (rest.dataUrl && rest.dataUrl.startsWith("data:")) {
-          try {
-            const byteString = atob(rest.dataUrl.split(",")[1]);
-            const mimeMatch = rest.dataUrl.match(/data:([^;]+);/);
-            const mime = mimeMatch ? mimeMatch[1] : "image/png";
-            const ab = new ArrayBuffer(byteString.length);
-            const ia = new Uint8Array(ab);
-            for (let j = 0; j < byteString.length; j++) ia[j] = byteString.charCodeAt(j);
-            const blob = new Blob([ab], { type: mime });
-            rest.blobUrl = URL.createObjectURL(blob);
-          } catch {
-            // dataUrl malformed — blobUrl stays undefined, overlay won't render (safe failure)
-          }
-        }
-        return { ...rest };
-      });
-      // Snapshot current live play/pause state before wiping overlays
-      const _livePlayState = {};
-      (window.videoOverlays || []).forEach((v) => {
-        const el = document.querySelector(`.video-overlay-item[data-id="${v.id}"] video`);
-        if (el) _livePlayState[v.id] = !el.paused;
-      });
-
-      window.videoOverlays = JSON.parse(JSON.stringify(settings.videoOverlays || []));
-
-      // Carry live play state forward — override whatever _paused the preset stored
-      window.videoOverlays.forEach((v) => {
-        if (_livePlayState.hasOwnProperty(v.id)) {
-          v._paused = !_livePlayState[v.id];
-        }
-      });
-
-      // ── Restore chromaSettings from the preset's videoOverlays ──
-      if (window.chromaSettings) {
-        (window.videoOverlays || []).forEach((v) => {
-          if (v.chromaKey && v.chromaKey.enabled) {
-            window.chromaSettings[v.id] = { ...v.chromaKey };
-          } else {
-            delete window.chromaSettings[v.id];
-          }
-        });
-        // Defer chroma start until each video is ready
-        if (typeof window.applyLiveChromaToOverlay === "function") {
-          (window.videoOverlays || []).forEach((v) => {
-            if (!v.chromaKey?.enabled) return;
-            const wrapper = document.querySelector(`.video-overlay-item[data-id="${v.id}"]`);
-            const vidEl = wrapper ? wrapper.querySelector("video") : null;
-            if (!vidEl) return;
-            // Pre-hide immediately to prevent flash
-            vidEl.style.opacity = "0";
-            vidEl.style.position = "absolute";
-            let liveCanvas = wrapper.querySelector(".chroma-live-canvas");
-            if (!liveCanvas) {
-              liveCanvas = document.createElement("canvas");
-              liveCanvas.className = "chroma-live-canvas";
-              liveCanvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none;";
-              wrapper.appendChild(liveCanvas);
-            }
-            if (vidEl.readyState >= 2) {
-              window.applyLiveChromaToOverlay(v.id);
-            } else {
-              vidEl.addEventListener(
-                "loadeddata",
-                () => {
-                  if (window.chromaSettings && window.chromaSettings[v.id]?.enabled) {
-                    window.applyLiveChromaToOverlay(v.id);
-                  }
-                },
-                { once: true },
-              );
-            }
-          });
-        }
-      }
 
       // Color
       videoColorAdj = { ...(settings.videoColorAdj || colorDefaults) };
@@ -1987,8 +1800,6 @@
       // Apply transforms & re-render overlays
       if (typeof updateVideoTransforms === "function") updateVideoTransforms();
       if (typeof renderFreeTexts === "function") renderFreeTexts();
-      if (typeof renderImageOverlaysFromState === "function") renderImageOverlaysFromState();
-      if (typeof renderVideoOverlaysFromState === "function") renderVideoOverlaysFromState();
 
       // Save into active project
       if (projects.length > 0) saveCurrentProjectState();
@@ -2321,13 +2132,6 @@
       if (!preset || !preset.settings) return;
       const count = projects.length;
 
-      // Snapshot live play state of active tab's overlays BEFORE anything changes
-      const _livePlayState = {};
-      (window.videoOverlays || []).forEach((v) => {
-        const el = document.querySelector(`.video-overlay-item[data-id="${v.id}"] video`);
-        if (el) _livePlayState[v.id] = !el.paused;
-      });
-
       // Apply to background tabs only — skip active tab to avoid overwriting live state
       projects.forEach((proj, idx) => {
         proj.appliedVideoPreset = preset.name;
@@ -2337,15 +2141,6 @@
       const p = projects[activeProjectIndex];
       if (p) {
         vpApply(preset.settings);
-      }
-
-      // Re-stamp the active project's videoOverlays with correct _paused values
-      // so tab switches later also remember the right state
-      if (projects[activeProjectIndex]) {
-        projects[activeProjectIndex].videoOverlays = (window.videoOverlays || []).map((v) => ({
-          ...v,
-          _paused: _livePlayState.hasOwnProperty(v.id) ? !_livePlayState[v.id] : (v._paused ?? true),
-        }));
       }
 
       showToast(`Preset "${preset.name}" applied to all ${count} tab${count !== 1 ? "s" : ""}!`, "success");
@@ -2867,18 +2662,6 @@
       p.detachedAudios = detachedAudios.map((a) => ({ ...a }));
       pastStates = (p.pastStates || []).slice();
       freeTexts = p.freeTexts.map((t) => ({ ...t }));
-      window.imageOverlays = p.imageOverlays.map((i) => ({ ...i }));
-      window.videoOverlays = (p.videoOverlays || []).map((v) => ({ ...v }));
-
-      // ── Sync chromaSettings from restored project overlays ──
-      if (window.chromaSettings) {
-        Object.keys(window.chromaSettings).forEach((k) => delete window.chromaSettings[k]);
-        window.videoOverlays.forEach((v) => {
-          if (v.chromaKey && v.chromaKey.enabled) {
-            window.chromaSettings[v.id] = { ...v.chromaKey };
-          }
-        });
-      }
       bgmTrack = { ...p.bgmTrack };
       duration = p.duration;
       videoFile = p.file;
@@ -3057,8 +2840,6 @@
         renderSubtitles();
       }
       renderFreeTexts();
-      if (typeof renderImageOverlaysFromState === "function") renderImageOverlaysFromState();
-      if (typeof renderVideoOverlaysFromState === "function") renderVideoOverlaysFromState();
       if (typeof updateWorkspaceToolbar === "function") updateWorkspaceToolbar(!!p.blobUrl && !p.isAudioOnly);
       if (!p.blobUrl && typeof closeCropMode === "function") closeCropMode();
       if (p.isAudioOnly && typeof closeCropMode === "function") closeCropMode();
@@ -7119,6 +6900,8 @@
         updateSubtitleDisplay();
         updateDetectTextButton();
       }
+      // The speakers, found from Transcribe's looser times, are found again from these.
+      if (matched && window.voxSpeakers?.refind) await window.voxSpeakers.refind(proj);
       if (!quiet) {
         showToast(`Match Subtitles: ${matched} of ${subs.length} subtitle(s) now show exactly with the video's own lines${parts ? ` (${parts} split over two screens)` : ""}${matched < subs.length ? `; ${subs.length - matched} have no line on screen and keep their time` : ""}.`, matched ? "success" : "warning");
       }
@@ -7506,9 +7289,6 @@
           if (txtFontSection) txtFontSection.style.display = "block";
           const txtStyleSection = document.getElementById("ctx-text-style-section");
           if (txtStyleSection) txtStyleSection.style.display = "block";
-          // Hide image controls
-          const imgControls = document.getElementById("ctx-img-controls");
-          if (imgControls) imgControls.style.display = "none";
 
           const idleControls = document.getElementById("ctx-idle-style-controls");
           if (idleControls) idleControls.style.display = "";
@@ -7921,35 +7701,8 @@
             if (el) el.style.zIndex = 100 + i;
           });
         }
-      } else if (typeof activeImageItem !== "undefined" && activeImageItem) {
-        const id = activeImageItem.dataset.id;
-        const idx = window.imageOverlays.findIndex((t) => t.id === id);
-        if (idx > -1) {
-          const item = window.imageOverlays.splice(idx, 1)[0];
-          window.imageOverlays.push(item);
-          window.imageOverlays.forEach((img, i) => {
-            const el = document.querySelector(`.image-overlay-item[data-id="${img.id}"]`);
-            if (el) el.style.zIndex = 100 + i;
-          });
-        }
       }
       document.getElementById("text-context-menu").classList.add("hidden");
-    });
-
-    document.getElementById("vid-ctx-bring-front").addEventListener("click", () => {
-      if (typeof activeVideoItem !== "undefined" && activeVideoItem) {
-        const id = activeVideoItem.dataset.id;
-        const idx = window.videoOverlays.findIndex((v) => v.id === id);
-        if (idx > -1) {
-          const item = window.videoOverlays.splice(idx, 1)[0];
-          window.videoOverlays.push(item);
-          window.videoOverlays.forEach((v, i) => {
-            const el = document.querySelector(`.video-overlay-item[data-id="${v.id}"]`);
-            if (el) el.style.zIndex = 110 + i;
-          });
-        }
-      }
-      document.getElementById("vid-context-menu").classList.add("hidden");
     });
 
     document.getElementById("ctx-send-back").addEventListener("click", () => {
@@ -7966,601 +7719,14 @@
             if (el) el.style.zIndex = 100 + i;
           });
         }
-      } else if (typeof activeImageItem !== "undefined" && activeImageItem) {
-        const id = activeImageItem.dataset.id;
-        const idx = window.imageOverlays.findIndex((t) => t.id === id);
-        if (idx > -1) {
-          const item = window.imageOverlays.splice(idx, 1)[0];
-          window.imageOverlays.unshift(item); // Push to bottom layer
-          window.imageOverlays.forEach((img, i) => {
-            const el = document.querySelector(`.image-overlay-item[data-id="${img.id}"]`);
-            if (el) el.style.zIndex = 100 + i;
-          });
-        }
       }
       document.getElementById("text-context-menu").classList.add("hidden");
-    });
-
-    document.getElementById("vid-ctx-send-back").addEventListener("click", () => {
-      if (typeof activeVideoItem !== "undefined" && activeVideoItem) {
-        const id = activeVideoItem.dataset.id;
-        const idx = window.videoOverlays.findIndex((v) => v.id === id);
-        if (idx > -1) {
-          const item = window.videoOverlays.splice(idx, 1)[0];
-          window.videoOverlays.unshift(item);
-          window.videoOverlays.forEach((v, i) => {
-            const el = document.querySelector(`.video-overlay-item[data-id="${v.id}"]`);
-            if (el) el.style.zIndex = 110 + i;
-          });
-        }
-      }
-      document.getElementById("text-context-menu").classList.add("hidden");
-    });
-
-    // ── Chroma Key Feature ──────────────────────────────────────────────────────
-    (() => {
-      let chromaTargetId = null;
-      let chromaAnimFrame = null;
-      let chromaSettings = {}; // stores per-overlay settings: { color, tolerance, smooth, enabled }
-
-      const modal = document.getElementById("chroma-key-modal");
-      const canvas = document.getElementById("chroma-preview-canvas");
-      const ctx2d = canvas.getContext("2d", { willReadFrequently: true });
-      const colorPick = document.getElementById("chroma-color-picker");
-      const colorLbl = document.getElementById("chroma-color-label");
-      const tolSlider = document.getElementById("chroma-tolerance");
-      const tolLbl = document.getElementById("lbl-chroma-tolerance");
-      const smoSlider = document.getElementById("chroma-smooth");
-      const smoLbl = document.getElementById("lbl-chroma-smooth");
-      const spillSlider = document.getElementById("chroma-spill");
-      const spillLbl = document.getElementById("lbl-chroma-spill");
-
-      // Helper: hex → {r,g,b}
-      const hexToRgb = (hex) => ({
-        r: parseInt(hex.slice(1, 3), 16) || 0,
-        g: parseInt(hex.slice(3, 5), 16) || 0,
-        b: parseInt(hex.slice(5, 7), 16) || 0,
-      });
-
-      // Core pixel loop — runs on every animation frame while modal is open
-      const renderFrame = () => {
-        if (!chromaTargetId) return;
-        const wrapper = document.querySelector(`.video-overlay-item[data-id="${chromaTargetId}"]`);
-        const vid = wrapper?.querySelector("video");
-        if (!vid || vid.readyState < 2) {
-          chromaAnimFrame = requestAnimationFrame(renderFrame);
-          return;
-        }
-
-        canvas.width = vid.videoWidth || 320;
-        canvas.height = vid.videoHeight || 180;
-
-        // Draw raw frame
-        ctx2d.drawImage(vid, 0, 0, canvas.width, canvas.height);
-
-        const { r: kr, g: kg, b: kb } = hexToRgb(colorPick.value);
-        const tolerance = parseInt(tolSlider.value) || 80;
-        const smoothing = parseInt(smoSlider.value) || 20;
-        const spill = spillSlider ? parseInt(spillSlider.value) : 80;
-
-        const imgData = ctx2d.getImageData(0, 0, canvas.width, canvas.height);
-        const data = imgData.data;
-
-        const isGreenKey = (kg > kr * 1.15 && kg > kb * 1.15) || (kg >= 170 && kr < 110 && kb < 110);
-        const isBlueKey = kb > kr * 1.15 && kb > kg * 1.15;
-        const despillFactor = Math.min(1, Math.max(0, spill / 100));
-
-        const tNorm = Math.min(1, Math.max(0, tolerance / 255));
-        const cutoff = Math.max(1, Math.round(28 * (1 - tNorm) + 2));
-        const feather = Math.max(1, Math.round(smoothing * 0.35));
-
-        if (isGreenKey) {
-          for (let i = 0; i < data.length; i += 4) {
-            const r = data[i];
-            const g = data[i + 1];
-            const b = data[i + 2];
-            const maxRB = r > b ? r : b;
-            const greenDiff = g - maxRB;
-
-            if (greenDiff >= cutoff + feather) {
-              data[i + 3] = 0; // fully transparent
-            } else {
-              if (greenDiff > cutoff) {
-                const frac = (greenDiff - cutoff) / feather;
-                data[i + 3] = Math.round((1 - frac * frac * (3 - 2 * frac)) * 255);
-              }
-              // Despill excess green on visible foreground and edge pixels
-              if (despillFactor > 0 && g > maxRB) {
-                data[i + 1] = Math.round(g * (1 - despillFactor) + maxRB * despillFactor);
-              }
-            }
-          }
-        } else if (isBlueKey) {
-          for (let i = 0; i < data.length; i += 4) {
-            const r = data[i];
-            const g = data[i + 1];
-            const b = data[i + 2];
-            const maxRG = r > g ? r : g;
-            const blueDiff = b - maxRG;
-
-            if (blueDiff >= cutoff + feather) {
-              data[i + 3] = 0;
-            } else {
-              if (blueDiff > cutoff) {
-                const frac = (blueDiff - cutoff) / feather;
-                data[i + 3] = Math.round((1 - frac * frac * (3 - 2 * frac)) * 255);
-              }
-              if (despillFactor > 0 && b > maxRG) {
-                data[i + 2] = Math.round(b * (1 - despillFactor) + maxRG * despillFactor);
-              }
-            }
-          }
-        } else {
-          // General color key in YUV space
-          const ky = 0.299 * kr + 0.587 * kg + 0.114 * kb;
-          const ku = -0.168736 * kr - 0.331264 * kg + 0.5 * kb;
-          const kv = 0.5 * kr - 0.418688 * kg - 0.081312 * kb;
-          const tolMapped = tolerance * 0.65;
-          const smoMapped = Math.max(1, smoothing * 0.45);
-
-          for (let i = 0; i < data.length; i += 4) {
-            const r = data[i];
-            const g = data[i + 1];
-            const b = data[i + 2];
-            const y = 0.299 * r + 0.587 * g + 0.114 * b;
-            const u = -0.168736 * r - 0.331264 * g + 0.5 * b;
-            const v = 0.5 * r - 0.418688 * g - 0.081312 * b;
-
-            const du = u - ku;
-            const dv = v - kv;
-            const dy = (y - ky) * 0.25;
-            const dist = Math.sqrt(du * du + dv * dv + dy * dy);
-
-            if (dist <= tolMapped) {
-              data[i + 3] = 0;
-            } else if (dist < tolMapped + smoMapped) {
-              const frac = (dist - tolMapped) / smoMapped;
-              data[i + 3] = Math.round(frac * frac * (3 - 2 * frac) * 255);
-            }
-          }
-        }
-
-        ctx2d.putImageData(imgData, 0, 0);
-        chromaAnimFrame = requestAnimationFrame(renderFrame);
-      };
-
-      const openModal = () => {
-        if (!activeVideoItem) return;
-        chromaTargetId = activeVideoItem.dataset.id;
-
-        // Load saved settings for this overlay if any
-        const saved = chromaSettings[chromaTargetId] || {};
-        colorPick.value = saved.color || "#00ff00";
-        syncSwatch(colorPick.value);
-        tolSlider.value = saved.tolerance ?? 80;
-        smoSlider.value = saved.smooth ?? 20;
-        if (spillSlider) spillSlider.value = saved.spill ?? 80;
-        tolLbl.textContent = tolSlider.value;
-        smoLbl.textContent = smoSlider.value;
-        if (spillLbl) spillLbl.textContent = spillSlider ? spillSlider.value : "80";
-
-        modal.classList.remove("hidden");
-        _lucideCreateIcons({ root: modal });
-        setEyedropperActive(false); // always start in normal mode
-        document.getElementById("vid-context-menu").classList.add("hidden");
-
-        // Start live preview loop
-        cancelAnimationFrame(chromaAnimFrame);
-        chromaAnimFrame = requestAnimationFrame(renderFrame);
-      };
-
-      const closeModal = () => {
-        modal.classList.add("hidden");
-        cancelAnimationFrame(chromaAnimFrame);
-        chromaTargetId = null;
-        setEyedropperActive(false);
-      };
-
-      // Apply: store settings + inject CSS mix-blend or store for FFmpeg export
-      document.getElementById("chroma-apply-btn").addEventListener("click", () => {
-        if (!chromaTargetId) return;
-        chromaSettings[chromaTargetId] = {
-          enabled: true,
-          color: colorPick.value,
-          tolerance: parseInt(tolSlider.value),
-          smooth: parseInt(smoSlider.value),
-          spill: spillSlider ? parseInt(spillSlider.value) : 80,
-        };
-        // Persist into videoOverlays state so it survives preset save
-        const item = (window.videoOverlays || []).find((v) => v.id === chromaTargetId);
-        if (item) item.chromaKey = chromaSettings[chromaTargetId];
-
-        showToast("Chroma Key applied", "success");
-        const appliedId = chromaTargetId;
-        closeModal();
-        applyLiveChromaToOverlay(appliedId);
-      });
-
-      // Reset
-      document.getElementById("chroma-reset-btn").addEventListener("click", () => {
-        colorPick.value = "#00ff00";
-        syncSwatch("#00ff00");
-        tolSlider.value = 80;
-        smoSlider.value = 20;
-        if (spillSlider) spillSlider.value = 80;
-        tolLbl.textContent = "80";
-        smoLbl.textContent = "20";
-        if (spillLbl) spillLbl.textContent = "80";
-        if (chromaTargetId) {
-          const wrapper = document.querySelector(`.video-overlay-item[data-id="${chromaTargetId}"]`);
-          const vid = wrapper?.querySelector("video");
-          const liveCanvas = wrapper?.querySelector(".chroma-live-canvas");
-          if (liveCanvas) liveCanvas.remove();
-          if (vid) vid.style.display = "";
-        }
-      });
-
-      document.getElementById("chroma-cancel-btn").addEventListener("click", closeModal);
-      document.getElementById("chroma-key-close").addEventListener("click", closeModal);
-      document.getElementById("chroma-key-backdrop").addEventListener("click", closeModal);
-
-      const chromaSwatch = document.getElementById("chroma-color-swatch");
-      const syncSwatch = (hex) => {
-        if (chromaSwatch) chromaSwatch.style.background = hex;
-        colorLbl.textContent = hex;
-      };
-
-      // Live slider/color updates
-      colorPick.addEventListener("input", () => syncSwatch(colorPick.value));
-      tolSlider.addEventListener("input", () => {
-        tolLbl.textContent = tolSlider.value;
-      });
-      smoSlider.addEventListener("input", () => {
-        smoLbl.textContent = smoSlider.value;
-      });
-      if (spillSlider && spillLbl) {
-        spillSlider.addEventListener("input", () => {
-          spillLbl.textContent = spillSlider.value;
-        });
-      }
-
-      // ── Eyedropper: pick color from preview canvas ──────────────
-      let eyedropperActive = false;
-      const eyedropperBtn = document.getElementById("chroma-eyedropper-btn");
-      const eyedropperCursor = document.getElementById("chroma-eyedropper-cursor");
-      const eyedropperPreview = document.getElementById("chroma-eyedropper-preview");
-      const eyedropperLabel = document.getElementById("chroma-eyedropper-label");
-
-      const rgbToHex = (r, g, b) => "#" + [r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("");
-
-      const setEyedropperActive = (on) => {
-        eyedropperActive = on;
-        canvas.style.cursor = on
-          ? `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='4' fill='none' stroke='white' stroke-width='1.5'/%3E%3Ccircle cx='12' cy='12' r='1.5' fill='white'/%3E%3Cline x1='12' y1='2' x2='12' y2='8' stroke='white' stroke-width='1.5' stroke-linecap='round'/%3E%3Cline x1='12' y1='16' x2='12' y2='22' stroke='white' stroke-width='1.5' stroke-linecap='round'/%3E%3Cline x1='2' y1='12' x2='8' y2='12' stroke='white' stroke-width='1.5' stroke-linecap='round'/%3E%3Cline x1='16' y1='12' x2='22' y2='12' stroke='white' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E") 12 12, crosshair`
-          : "crosshair";
-        eyedropperBtn.style.background = on ? "rgba(52,211,153,0.25)" : "rgba(0,0,0,0.55)";
-        eyedropperBtn.style.borderColor = on ? "rgba(52,211,153,0.6)" : "rgba(255,255,255,0.15)";
-        eyedropperBtn.querySelector("span").style.color = on ? "#34d399" : "#a3a3a3";
-        if (!on) eyedropperCursor.style.display = "none";
-      };
-
-      eyedropperBtn.addEventListener("click", () => setEyedropperActive(!eyedropperActive));
-
-      // Persistent scratch canvas — reused every frame, no alloc on mousemove
-      const scratch = document.createElement("canvas");
-      const sCtx = scratch.getContext("2d", { willReadFrequently: true });
-
-      let _mouseX = 0,
-        _mouseY = 0,
-        _rafPending = false;
-
-      const _samplePixel = () => {
-        _rafPending = false;
-        if (!eyedropperActive) return;
-
-        const rect = canvas.getBoundingClientRect();
-        const scaleX = canvas.width / rect.width;
-        const scaleY = canvas.height / rect.height;
-        const px = Math.floor((_mouseX - rect.left) * scaleX);
-        const py = Math.floor((_mouseY - rect.top) * scaleY);
-        if (px < 0 || py < 0 || px >= canvas.width || py >= canvas.height) return;
-
-        const wrapper = document.querySelector(`.video-overlay-item[data-id="${chromaTargetId}"]`);
-        const vid = wrapper?.querySelector("video");
-        if (!vid || vid.readyState < 2) return;
-
-        // Sync scratch size only when video dimensions change
-        if (scratch.width !== canvas.width || scratch.height !== canvas.height) {
-          scratch.width = canvas.width;
-          scratch.height = canvas.height;
-        }
-        sCtx.drawImage(vid, 0, 0, scratch.width, scratch.height);
-        const [r, g, b] = sCtx.getImageData(px, py, 1, 1).data;
-
-        const hex = rgbToHex(r, g, b);
-        eyedropperPreview.style.background = hex;
-        eyedropperLabel.textContent = hex;
-        // Mirror live color into the swatch while hovering
-        syncSwatch(hex);
-        colorPick.value = hex;
-      };
-
-      canvas.addEventListener("mousemove", (e) => {
-        if (!eyedropperActive) return;
-
-        _mouseX = e.clientX;
-        _mouseY = e.clientY;
-
-        // Move the floating cursor immediately — feels instant
-        eyedropperCursor.style.display = "block";
-        eyedropperCursor.style.left = e.clientX + "px";
-        eyedropperCursor.style.top = e.clientY + "px";
-
-        // Throttle pixel sampling to one rAF per frame
-        if (!_rafPending) {
-          _rafPending = true;
-          requestAnimationFrame(_samplePixel);
-        }
-      });
-
-      canvas.addEventListener("mouseleave", () => {
-        eyedropperCursor.style.display = "none";
-        _rafPending = false;
-      });
-
-      // On click: commit the picked color
-      canvas.addEventListener("click", (e) => {
-        if (!eyedropperActive) return;
-
-        const rect = canvas.getBoundingClientRect();
-        const scaleX = canvas.width / rect.width;
-        const scaleY = canvas.height / rect.height;
-        const px = Math.floor((e.clientX - rect.left) * scaleX);
-        const py = Math.floor((e.clientY - rect.top) * scaleY);
-
-        if (px < 0 || py < 0 || px >= canvas.width || py >= canvas.height) return;
-
-        const wrapper = document.querySelector(`.video-overlay-item[data-id="${chromaTargetId}"]`);
-        const vid = wrapper?.querySelector("video");
-        if (!vid || vid.readyState < 2) return;
-
-        const scratch = document.createElement("canvas");
-        scratch.width = canvas.width;
-        scratch.height = canvas.height;
-        const sCtx = scratch.getContext("2d", { willReadFrequently: true });
-        sCtx.drawImage(vid, 0, 0, scratch.width, scratch.height);
-        const [r, g, b] = sCtx.getImageData(px, py, 1, 1).data;
-
-        const hex = rgbToHex(r, g, b);
-        colorPick.value = hex;
-        syncSwatch(hex);
-
-        // Deactivate eyedropper after picking
-        setEyedropperActive(false);
-      });
-
-      // Also deactivate if modal closes mid-pick
-      const _origClose = closeModal;
-
-      // Open from context menu button
-      document.getElementById("vid-ctx-chroma-key").addEventListener("click", openModal);
-
-      // Continuously render chroma-keyed frames onto a canvas replacing the video visually
-      // ── Shared worker pool for chroma key processing ──────────────────────────
-      const CHROMA_WORKER_COUNT = 3;
-      const chromaWorkerPool = Array.from({ length: CHROMA_WORKER_COUNT }, () => ({
-        worker: new Worker("chroma-worker.js", {
-          name: `chroma-worker-${Math.random()}`,
-        }),
-        busy: false,
-        pendingResult: null,
-      }));
-
-      // Per-overlay state
-      const chromaLoopState = {}; // overlayId → { animFrame, lastTime, cachedW, cachedH }
-
-      const getIdleWorker = () => chromaWorkerPool.find((w) => !w.busy) || chromaWorkerPool[0];
-
-      const applyLiveChromaToOverlay = (overlayId) => {
-        const wrapper = document.querySelector(`.video-overlay-item[data-id="${overlayId}"]`);
-        if (!wrapper) return;
-        const vid = wrapper.querySelector("video");
-        if (!vid) return;
-
-        const settings = chromaSettings[overlayId];
-
-        // Cancel any existing loop for this overlay
-        if (chromaLoopState[overlayId]) {
-          cancelAnimationFrame(chromaLoopState[overlayId].animFrame);
-          delete chromaLoopState[overlayId];
-        }
-
-        if (!settings?.enabled) {
-          const oldCanvas = wrapper.querySelector(".chroma-live-canvas");
-          if (oldCanvas) oldCanvas.remove();
-          vid.style.display = "";
-          return;
-        }
-
-        // Create or reuse canvas
-        let liveCanvas = wrapper.querySelector(".chroma-live-canvas");
-        if (!liveCanvas) {
-          liveCanvas = document.createElement("canvas");
-          liveCanvas.className = "chroma-live-canvas";
-          liveCanvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none;";
-          wrapper.appendChild(liveCanvas);
-        }
-        vid.style.opacity = "0";
-        vid.style.position = "absolute";
-        const lCtx = liveCanvas.getContext("2d");
-
-        const { r: kr, g: kg, b: kb } = hexToRgb(settings.color);
-        const tolerance = settings.tolerance ?? 80;
-        const smoothing = settings.smooth ?? 20;
-        const spill = settings.spill ?? 80;
-
-        const TARGET_FPS = 20; // Lower FPS per overlay — still smooth visually
-        const FRAME_MS = 1000 / TARGET_FPS;
-
-        const state = {
-          animFrame: null,
-          lastTime: 0,
-          cachedW: 0,
-          cachedH: 0,
-          workerBusy: false,
-        };
-        chromaLoopState[overlayId] = state;
-
-        const captureAndProcess = () => {
-          if (!wrapper.isConnected || !chromaSettings[overlayId]?.enabled) return;
-          if (state.workerBusy) return;
-
-          const nw = vid.videoWidth || wrapper.offsetWidth;
-          const nh = vid.videoHeight || wrapper.offsetHeight;
-          if (!nw || !nh) return;
-          // Keyed at the size it is shown (cover, in device pixels), never more than the video's own:
-          // a 3626 x 1080 banner keyed at full size 20 times a second kept a core busy beside exports.
-          const dpr = window.devicePixelRatio || 1;
-          const fit = Math.min(1, Math.max((wrapper.offsetWidth * dpr) / nw, (wrapper.offsetHeight * dpr) / nh)) || 1;
-          const vw = Math.max(1, Math.round(nw * fit));
-          const vh = Math.max(1, Math.round(nh * fit));
-
-          if (vw !== state.cachedW || vh !== state.cachedH) {
-            liveCanvas.width = vw;
-            liveCanvas.height = vh;
-            state.cachedW = vw;
-            state.cachedH = vh;
-          }
-
-          createImageBitmap(vid, { resizeWidth: vw, resizeHeight: vh })
-            .then((bitmap) => {
-              const w = getIdleWorker();
-              w.busy = true;
-              state.workerBusy = true;
-
-              w.worker.onmessage = (e) => {
-                w.busy = false;
-                state.workerBusy = false;
-                if (!wrapper.isConnected) {
-                  if (e.data.bitmap && typeof e.data.bitmap.close === "function") e.data.bitmap.close();
-                  return;
-                }
-                lCtx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
-                lCtx.drawImage(e.data.bitmap, 0, 0, liveCanvas.width, liveCanvas.height);
-                if (e.data.bitmap && typeof e.data.bitmap.close === "function") e.data.bitmap.close();
-              };
-
-              w.worker.postMessage(
-                {
-                  bitmap,
-                  kr,
-                  kg,
-                  kb,
-                  tolerance,
-                  smoothing,
-                  spill,
-                  width: vw,
-                  height: vh,
-                  overlayId,
-                },
-                [bitmap],
-              );
-            })
-            .catch(() => { });
-        };
-
-        const loop = (timestamp) => {
-          if (!wrapper.isConnected) return;
-          if (!chromaSettings[overlayId]?.enabled) {
-            vid.style.opacity = "";
-            vid.style.position = "";
-            liveCanvas.remove();
-            delete chromaLoopState[overlayId];
-            return;
-          }
-
-          if (vid.paused) {
-            state.animFrame = null;
-            return;
-          }
-
-          if (vid.readyState < 2) {
-            state.animFrame = requestAnimationFrame(loop);
-            return;
-          }
-
-          if (timestamp - state.lastTime >= FRAME_MS && !state.workerBusy) {
-            state.lastTime = timestamp;
-            captureAndProcess();
-          }
-
-          state.animFrame = requestAnimationFrame(loop);
-        };
-
-        const startLoop = () => {
-          if (!state.animFrame && !vid.paused && chromaSettings[overlayId]?.enabled) {
-            state.animFrame = requestAnimationFrame(loop);
-          }
-        };
-
-        vid.addEventListener("play", startLoop);
-        vid.addEventListener("seeked", captureAndProcess);
-        vid.addEventListener("timeupdate", () => {
-          if (vid.paused) captureAndProcess();
-        });
-
-        captureAndProcess();
-        if (!vid.paused) {
-          state.animFrame = requestAnimationFrame(loop);
-        }
-      };
-
-      // Expose to window so preset/tab-switch code can access them
-      window.chromaSettings = chromaSettings;
-      window.applyLiveChromaToOverlay = applyLiveChromaToOverlay;
-    })();
-
-    // ── Video overlay: Bring to Front ──
-    document.getElementById("vid-ctx-bring-front").addEventListener("click", () => {
-      if (typeof activeVideoItem !== "undefined" && activeVideoItem) {
-        const id = activeVideoItem.dataset.id;
-        const idx = window.videoOverlays.findIndex((v) => v.id === id);
-        if (idx > -1) {
-          const item = window.videoOverlays.splice(idx, 1)[0];
-          window.videoOverlays.push(item);
-          window.videoOverlays.forEach((v, i) => {
-            const el = document.querySelector(`.video-overlay-item[data-id="${v.id}"]`);
-            if (el) el.style.zIndex = 110 + i;
-          });
-        }
-      }
-      document.getElementById("vid-context-menu").classList.add("hidden");
-    });
-
-    // ── Video overlay: Send to Back ──
-    document.getElementById("vid-ctx-send-back").addEventListener("click", () => {
-      if (typeof activeVideoItem !== "undefined" && activeVideoItem) {
-        const id = activeVideoItem.dataset.id;
-        const idx = window.videoOverlays.findIndex((v) => v.id === id);
-        if (idx > -1) {
-          const item = window.videoOverlays.splice(idx, 1)[0];
-          window.videoOverlays.unshift(item);
-          window.videoOverlays.forEach((v, i) => {
-            const el = document.querySelector(`.video-overlay-item[data-id="${v.id}"]`);
-            if (el) el.style.zIndex = 110 + i;
-          });
-        }
-      }
-      document.getElementById("vid-context-menu").classList.add("hidden");
     });
 
     // --- Hide context menu on click outside it (mousedown only, no deselect here) ---
     window.addEventListener("mousedown", (e) => {
       if (!e.target.closest("#text-context-menu")) {
         document.getElementById("text-context-menu").classList.add("hidden");
-      }
-      if (!e.target.closest("#vid-context-menu") && !e.target.closest(".video-overlay-item")) {
-        document.getElementById("vid-context-menu").classList.add("hidden");
       }
     });
 
@@ -11981,8 +11147,6 @@
         scaleY: window.videoScaleY || videoZoom || 1,
         texts: JSON.parse(JSON.stringify(freeTexts)),
         blurBoxes: JSON.parse(JSON.stringify(blurBoxes || [])),
-        imageOverlays: JSON.parse(JSON.stringify(window.imageOverlays || [])),
-        videoOverlays: JSON.parse(JSON.stringify(window.videoOverlays || [])),
         subtitleStyle: {
           subtitleColor: globalSubtitleColor,
           subtitleFont: globalSubtitleFont,
@@ -16782,7 +15946,7 @@
           const row = document.createElement("div");
           row.className = "flex items-center gap-3 px-3 py-2 rounded-lg bg-[var(--bg-base)] border border-[var(--border-color)] text-xs";
           const pct = st ? st.percent || 0 : 0;
-          const state = !st ? "" : st.status === "done" ? `<span class="text-emerald-400">✓ done${st.videoMode === "converted" ? " (video converted)" : st.videoMode === "mixed" ? " (clips converted)" : ""}</span>` : st.status === "error" ? `<span class="text-red-400" title="${esc(st.error)}">failed</span>` : st.status === "running" ? `<span class="text-sky-400">${pct}%</span>` : st.status === "cancelled" ? `<span class="text-[var(--text-muted)]">stopped</span>` : `<span class="text-[var(--text-muted)]">waiting</span>`;
+          const state = !st ? "" : st.status === "done" ? `<span class="text-emerald-400">✓ done${st.videoMode === "converted" ? " (video converted)" : ""}</span>` : st.status === "error" ? `<span class="text-red-400" title="${esc(st.error)}">failed</span>` : st.status === "running" ? `<span class="text-sky-400">${pct}%</span>` : st.status === "cancelled" ? `<span class="text-[var(--text-muted)]">stopped</span>` : `<span class="text-[var(--text-muted)]">waiting</span>`;
           row.innerHTML = `<span class="font-semibold w-14 shrink-0">Part ${i + 1}</span>
             <span class="truncate flex-1">${epLabel(p[0])} – ${epLabel(p[p.length - 1])} · ${p.length} episodes</span>
             <span class="font-mono text-[var(--text-secondary)] shrink-0">${fmtDur(dur)}</span>
@@ -16939,35 +16103,6 @@
         if (lastDur < target * 0.35 && prev.length + last.length <= 80) out.splice(out.length - 2, 2, prev.concat(last));
       }
       return out;
-    }
-
-    // A clip repeated evenly through the joined video (a sponsor's promo): `count` times, "auto"
-    // = 3 to 5 by the running time (under 1h30 3, under 3h 4, else 5), never more than there are
-    // episodes. It goes after every round(episodes / count) episodes and once more at the very
-    // end: 15 episodes, 3 times -> after EP5, EP10, EP15. Returns the episode counts it goes
-    // after (k = after the k-th episode), as a clip's pos.
-    function evenClipPositions(epCount, totalSeconds, count = "auto") {
-      if (!(epCount > 0)) return [];
-      const wanted = count === "auto" || !count
-        ? (totalSeconds < 90 * 60 ? 3 : totalSeconds < 180 * 60 ? 4 : 5)
-        : Math.max(1, Math.round(Number(count)) || 1);
-      const target = Math.min(epCount, wanted);
-      const step = Math.max(1, Math.round(epCount / target));
-      const out = [];
-      for (let k = 1; k < target && k * step < epCount; k++) out.push(k * step);
-      out.push(epCount);
-      return out;
-    }
-
-    // The repeated clips (several sponsors' ads) at those places, as clips with a pos:
-    // "turns" - one a break, the first clip at the first break, the next at the next, round
-    // again; "all" - every clip at every break, one after the other in their order.
-    function repeatClipInserts(positions, clips, mode = "turns") {
-      if (!clips?.length) return [];
-      const at = (pos, c) => ({ pos, path: c.path, name: c.name });
-      return mode === "all"
-        ? positions.flatMap((pos) => clips.map((c) => at(pos, c)))
-        : positions.map((pos, k) => at(pos, clips[k % clips.length]));
     }
 
     // ── Split Movie ────────────────────────────────────────────────────────
@@ -17270,737 +16405,6 @@
       const colorPreset = () => (colorSel.value ? caLoadPresets().find((p) => p.name === colorSel.value) || null : null);
       fillColorOptions("");
 
-      // Image overlay: the image overlays of a tab (as placed there with the Image tool, the images
-      // kept as dataUrl) that every tab of each part opens with. None: tabs open as they are.
-      const SERIES_IMAGES_KEY = "aiDubberSeriesImages";
-      let seriesImages = null;
-      try { seriesImages = JSON.parse(localStorage.getItem(SERIES_IMAGES_KEY) || "null"); } catch (e) { }
-      // Video overlays (an animated sponsor banner) the same way: kept as the video's path on
-      // disk ({ kind: "video", videoPath, name, x, y, w, h, opacity, loop, start, end, ... }).
-      const SERIES_VIDEOS_KEY = "aiDubberSeriesVideos";
-      let seriesVideos = null;
-      try { seriesVideos = JSON.parse(localStorage.getItem(SERIES_VIDEOS_KEY) || "null"); } catch (e) { }
-      const keepSeriesVideos = (list) => {
-        seriesVideos = list?.length ? list : null;
-        try {
-          if (seriesVideos) localStorage.setItem(SERIES_VIDEOS_KEY, JSON.stringify(seriesVideos));
-          else localStorage.removeItem(SERIES_VIDEOS_KEY);
-        } catch (e) { }
-      };
-      const showSeriesImages = () => {
-        const n = seriesImages?.length || 0;
-        const nv = seriesVideos?.length || 0;
-        const counts = [n && `${n} image${n !== 1 ? "s" : ""}`, nv && `${nv} video${nv !== 1 ? "s" : ""}`].filter(Boolean).join(" + ");
-        $("ds-images-info").innerHTML = n || nv
-          ? (seriesImages || []).slice(0, 4).map((i) => `<img src="${esc(i.dataUrl)}" class="h-5 max-w-[40px] rounded object-contain bg-black/30">`).join("") + `<span>${counts}</span>`
-          : "None";
-        $("ds-images-clear").classList.toggle("hidden", !(n || nv));
-        $("ds-images-add-label").textContent = n || nv ? "Edit overlays…" : "Add overlay…";
-      };
-      showSeriesImages();
-      // A tab's video overlay as kept for the series; null when it isn't a file on disk.
-      const seriesVideoOf = (v) => {
-        const path = v.videoPath || v.file?.path || "";
-        if (!/[\\/]/.test(path) || /^(blob|https?):/i.test(path)) return null;
-        const { file, _file, blobUrl, _paused, ...rest } = v;
-        const chromaKey = v.chromaKey || window.chromaSettings?.[v.id] || null;
-        return { ...rest, kind: "video", videoPath: path, name: path.split(/[\\/]/).pop(), chromaKey: chromaKey ? { ...chromaKey } : null };
-      };
-      $("ds-images-use").addEventListener("click", async () => {
-        if (!projects.length) return showToast("Open a video and add the overlays with the Image or Video tool first.", "error");
-        // The geometry dragged on screen, into window.imageOverlays / window.videoOverlays.
-        document.querySelectorAll(".image-overlay-item").forEach((w) => { if (w.dataset.id) updateImageState(w.dataset.id, w); });
-        document.querySelectorAll(".video-overlay-item").forEach((w) => {
-          const v = (window.videoOverlays || []).find((o) => o.id === w.dataset.id);
-          if (v) Object.assign(v, { x: parseFloat(w.style.left) || 0, y: parseFloat(w.style.top) || 0, w: parseFloat(w.style.width) || 0, h: parseFloat(w.style.height) || 0 });
-        });
-        const tabVideos = window.videoOverlays || [];
-        if (!window.imageOverlays?.length && !tabVideos.length) return showToast("This tab has no image or video overlay. Add one with the Image or Video tool first.", "error");
-        const imgs = await Promise.all((window.imageOverlays || []).map(async (i) => {
-          const { file, _file, blobUrl, dataUrl, ...rest } = i;
-          const encoded = await imageOverlayToDataUrl(i);
-          const kept = encoded && (await keepableImage(await (await fetch(encoded)).blob()));
-          return kept ? { ...rest, dataUrl: kept } : null;
-        }));
-        if (imgs.some((i) => !i)) return showToast("Could not read an image of this tab. Add it again and retry.", "error");
-        const vids = tabVideos.map(seriesVideoOf);
-        if (vids.some((v) => !v)) return showToast("A video overlay of this tab isn't a file on disk. Add it again with the Video tool and retry.", "error");
-        try {
-          if (imgs.length) localStorage.setItem(SERIES_IMAGES_KEY, JSON.stringify(imgs));
-          else localStorage.removeItem(SERIES_IMAGES_KEY);
-        } catch (e) {
-          return showToast("The images are too large to keep. Use a smaller image (a PNG logo of a few hundred KB).", "error");
-        }
-        seriesImages = imgs.length ? imgs : null;
-        keepSeriesVideos(vids);
-        showSeriesImages();
-        if (piecesOpen()) {
-          if (imgs.length) applyImageOverlaysToAllProjects();
-          if (vids.length) applyVideoOverlaysToAllProjects();
-        } else {
-          showToast(`${imgs.length + vids.length} overlay${imgs.length + vids.length !== 1 ? "s" : ""} will be added to every tab of each part.`, "success");
-        }
-      });
-      $("ds-images-clear").addEventListener("click", () => {
-        seriesImages = null;
-        try { localStorage.removeItem(SERIES_IMAGES_KEY); } catch (e) { }
-        keepSeriesVideos(null);
-        showSeriesImages();
-        closeImageEditor();
-      });
-
-      // ── Add image… : place a logo / watermark without opening a video ──
-      // Shown on a frame of the series' first episode, sized for the series' frame shape, so
-      // the box keeps the image's own proportions (the export fills the box and crops).
-      const IMG_MARGIN = 3; // % from the frame edge for the corner places
-      const imgEd = { list: [], sel: 0, frameAR: 16 / 9 };
-      const seriesVideo = () => (scan?.files || []).find((f) => !f.error && f.video && f.video.width && f.video.height) || null;
-      const frameAspect = () => {
-        const v = seriesVideo();
-        return v ? v.video.width / v.video.height : 16 / 9;
-      };
-      const clampImg = (im) => {
-        im.w = Math.min(100, Math.max(1, im.w));
-        im.h = Math.min(100, Math.max(1, im.h));
-        im.x = Math.min(100 - im.w, Math.max(0, im.x));
-        im.y = Math.min(100 - im.h, Math.max(0, im.y));
-      };
-      // Width in % of the frame width; the height follows the image's own shape.
-      const sizeImg = (im, w) => {
-        const ar = im.ar || 1;
-        let h = (w * imgEd.frameAR) / ar;
-        if (h > 100) { w = (100 * ar) / imgEd.frameAR; h = 100; }
-        const cx = im.x + im.w / 2;
-        const cy = im.y + im.h / 2;
-        im.w = w;
-        im.h = h;
-        im.x = cx - w / 2;
-        im.y = cy - h / 2;
-        clampImg(im);
-      };
-      const placeImg = (im, pos) => {
-        const [v, hpos] = pos.split("");
-        im.x = hpos === "l" ? IMG_MARGIN : hpos === "r" ? 100 - im.w - IMG_MARGIN : (100 - im.w) / 2;
-        im.y = v === "t" ? IMG_MARGIN * imgEd.frameAR : v === "b" ? 100 - im.h - IMG_MARGIN * imgEd.frameAR : (100 - im.h) / 2;
-        clampImg(im);
-        im._pos = pos;
-      };
-      const imgNatural = (src) => new Promise((resolve) => {
-        const el = new Image();
-        el.onload = () => resolve(el.naturalWidth && el.naturalHeight ? el.naturalWidth / el.naturalHeight : 1);
-        el.onerror = () => resolve(1);
-        el.src = src;
-      });
-      // The copy of an image kept with the series (localStorage holds only a few MB in all): a
-      // big image is scaled down for it. Export still uses the original file (filePath) while
-      // it is there; this copy is the preview, and what is exported if the file was moved.
-      // null: not an image Chromium can read.
-      const SERIES_IMG_MAX_BYTES = 1024 * 1024;
-      const blobDataUrl = (blob) => new Promise((res) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = () => res(null); fr.readAsDataURL(blob); });
-      async function keepableImage(blob) {
-        if (blob.size <= SERIES_IMG_MAX_BYTES) return blobDataUrl(blob);
-        let bmp;
-        try { bmp = await createImageBitmap(blob); } catch (e) { return null; }
-        try {
-          for (const side of [1920, 1280, 960, 640]) {
-            const s = Math.min(1, side / Math.max(bmp.width, bmp.height));
-            const c = document.createElement("canvas");
-            c.width = Math.max(1, Math.round(bmp.width * s));
-            c.height = Math.max(1, Math.round(bmp.height * s));
-            c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
-            // PNG first (a logo stays sharp), WebP when that is still too big; both keep transparency.
-            for (const type of ["image/png", "image/webp"]) {
-              const out = await new Promise((res) => c.toBlob(res, type, 0.9));
-              if (out && out.size <= SERIES_IMG_MAX_BYTES) return blobDataUrl(out);
-            }
-          }
-          return null;
-        } finally {
-          bmp.close();
-        }
-      }
-
-      const isVideoItem = (im) => im.kind === "video";
-      // A video overlay on the stage is a canvas showing its frames while the <video> plays out of
-      // sight; with chroma key on, each frame is keyed by the editor's own chroma-worker.js first,
-      // so the stage shows what the export will (render_service.js chromaKeyFilters keys alike).
-      const CK_DEFAULTS = { enabled: false, color: "#00ff00", tolerance: 80, smooth: 20, spill: 80 };
-      const STAGE_VIDEO_MAX_W = 640; // keyed at most this wide: the stage is small
-      const stageVideos = new Map(); // overlay id -> { video, canvas, raf, busy }
-      let stageKeyWorker = null;
-      const keyWorker = () => {
-        if (stageKeyWorker) return stageKeyWorker;
-        stageKeyWorker = new Worker("chroma-worker.js");
-        stageKeyWorker.onmessage = (e) => {
-          const entry = stageVideos.get(e.data.overlayId);
-          if (entry) {
-            const ctx = entry.canvas.getContext("2d");
-            ctx.clearRect(0, 0, entry.canvas.width, entry.canvas.height);
-            ctx.drawImage(e.data.bitmap, 0, 0, entry.canvas.width, entry.canvas.height);
-            entry.busy = false;
-          }
-          e.data.bitmap?.close?.();
-        };
-        return stageKeyWorker;
-      };
-      function startStageVideo(im, canvas) {
-        const video = document.createElement("video");
-        Object.assign(video, { muted: true, loop: true, autoplay: true, playsInline: true });
-        video.src = diskPathToMediaUrl(im.videoPath);
-        const entry = { video, canvas, raf: 0, busy: false };
-        stageVideos.set(im.id, entry);
-        const ctx = canvas.getContext("2d");
-        const draw = () => {
-          entry.raf = requestAnimationFrame(draw);
-          if (video.readyState < 2 || entry.busy || !video.videoWidth) return;
-          const s = Math.min(1, STAGE_VIDEO_MAX_W / video.videoWidth);
-          const w = Math.max(1, Math.round(video.videoWidth * s)), h = Math.max(1, Math.round(video.videoHeight * s));
-          if (canvas.width !== w || canvas.height !== h) Object.assign(canvas, { width: w, height: h });
-          const ck = imgEd.list.find((x) => x.id === im.id)?.chromaKey;
-          if (!ck?.enabled) {
-            ctx.drawImage(video, 0, 0, w, h);
-            return;
-          }
-          entry.busy = true;
-          const hex = String(ck.color || CK_DEFAULTS.color).replace("#", "");
-          createImageBitmap(video, { resizeWidth: w, resizeHeight: h })
-            .then((bitmap) => keyWorker().postMessage({
-              bitmap, width: w, height: h, overlayId: im.id,
-              kr: parseInt(hex.slice(0, 2), 16) || 0, kg: parseInt(hex.slice(2, 4), 16) || 0, kb: parseInt(hex.slice(4, 6), 16) || 0,
-              tolerance: ck.tolerance ?? CK_DEFAULTS.tolerance, smoothing: ck.smooth ?? CK_DEFAULTS.smooth, spill: ck.spill ?? CK_DEFAULTS.spill,
-            }, [bitmap]))
-            .catch(() => { entry.busy = false; });
-        };
-        entry.raf = requestAnimationFrame(draw);
-      }
-      const stopStageVideo = (id) => {
-        const entry = stageVideos.get(id);
-        if (!entry) return;
-        cancelAnimationFrame(entry.raf);
-        entry.video.pause();
-        entry.video.removeAttribute("src");
-        entry.video.load();
-        stageVideos.delete(id);
-      };
-      function renderImageEditor() {
-        const stage = $("ds-img-stage");
-        stage.style.aspectRatio = String(imgEd.frameAR);
-        stage.style.setProperty("--ar", String(imgEd.frameAR)); // full screen sizes the frame by it
-        stage.classList.toggle("is-portrait", imgEd.frameAR < 1);
-        // Kept between renders: a video overlay plays on in place while it is moved or resized.
-        const ids = new Set(imgEd.list.map((im) => im.id));
-        stage.querySelectorAll(".ds-img-item").forEach((n) => {
-          if (!ids.has(n.dataset.id)) {
-            stopStageVideo(n.dataset.id);
-            n.remove();
-          }
-        });
-        imgEd.list.forEach((im, k) => {
-          let el = [...stage.querySelectorAll(".ds-img-item")].find((n) => n.dataset.id === im.id);
-          if (!el) {
-            if (isVideoItem(im)) {
-              el = document.createElement("canvas");
-              startStageVideo(im, el);
-            } else {
-              el = document.createElement("img");
-              el.src = im.dataUrl;
-            }
-            el.dataset.id = im.id;
-            el.draggable = false;
-            stage.appendChild(el);
-          }
-          el.className = `ds-img-item${k === imgEd.sel ? " is-sel" : ""}`;
-          el.dataset.k = String(k);
-          Object.assign(el.style, { left: `${im.x}%`, top: `${im.y}%`, width: `${im.w}%`, height: `${im.h}%`, opacity: String((im.opacity ?? 100) / 100) });
-        });
-        $("ds-img-list").innerHTML =
-          imgEd.list.map((im, k) => `<button type="button" class="ds-img-thumb${k === imgEd.sel ? " is-sel" : ""}" data-k="${k}" title="${isVideoItem(im) ? esc(im.name || "Video") : `Image ${k + 1}`}">${isVideoItem(im) ? `<i data-lucide="film"></i>` : `<img src="${esc(im.dataUrl)}">`}</button>`).join("") +
-          `<button type="button" class="ds-img-thumb ds-img-thumb--add" data-add="image" title="Add an image"><i data-lucide="image-plus"></i></button>` +
-          `<button type="button" class="ds-img-thumb ds-img-thumb--add" data-add="video" title="Add a video overlay (an animated banner)"><i data-lucide="film"></i></button>`;
-        const im = imgEd.list[imgEd.sel];
-        const has = !!im;
-        ["ds-img-size", "ds-img-op", "ds-img-remove", "ds-img-start", "ds-img-end"].forEach((id) => ($(id).disabled = !has));
-        $("ds-img-done").disabled = !imgEd.list.length;
-        if (has) {
-          $("ds-img-size").value = String(Math.round(im.w));
-          $("ds-img-size-v").textContent = `${Math.round(im.w)}%`;
-          $("ds-img-op").value = String(im.opacity ?? 100);
-          $("ds-img-op-v").textContent = `${im.opacity ?? 100}%`;
-          $("ds-img-start").value = fmtOverlayClock(im.start || null);
-          $("ds-img-end").value = fmtOverlayClock(im.end ?? null);
-        }
-        // Chroma key: for a video overlay (a banner shot on green / blue).
-        const keyable = has && isVideoItem(im);
-        $("ds-ck").classList.toggle("hidden", !keyable);
-        if (keyable) {
-          const ck = { ...CK_DEFAULTS, ...(im.chromaKey || {}) };
-          $("ds-ck-on").checked = !!ck.enabled;
-          $("ds-ck-color").value = ck.color;
-          [["tol", ck.tolerance], ["smooth", ck.smooth], ["spill", ck.spill]].forEach(([key, v]) => {
-            $(`ds-ck-${key}`).value = String(v);
-            $(`ds-ck-${key}-v`).textContent = String(v);
-          });
-        }
-        if (!keyable) imgEd.picking = false;
-        $("ds-img-stage").classList.toggle("is-picking", !!imgEd.picking);
-        $("ds-ck-pick").classList.toggle("is-on", !!imgEd.picking);
-        $("ds-img-pos").querySelectorAll("[data-pos]").forEach((b) => b.classList.toggle("is-on", !!has && im._pos === b.dataset.pos));
-        if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: $("ds-img-editor") });
-      }
-
-      // A frame from 10% into the first episode (if Chromium can decode it; else a plain frame).
-      async function loadEditorFrame() {
-        const canvas = $("ds-img-frame");
-        const note = $("ds-img-frame-note");
-        const v = seriesVideo();
-        const ctx = canvas.getContext("2d");
-        canvas.width = 1280; // sharp enough full screen
-        canvas.height = Math.round(1280 / imgEd.frameAR);
-        ctx.fillStyle = "#111";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        if (!v) {
-          note.textContent = "Choose the series folder to see one of its frames here.";
-          note.classList.remove("hidden");
-          return;
-        }
-        note.textContent = "Loading a frame of the series…";
-        note.classList.remove("hidden");
-        const vid = document.createElement("video");
-        vid.muted = true;
-        vid.preload = "auto";
-        vid.src = `http://localhost:3001/api/audio?path=${encodeURIComponent(v.path)}`;
-        const done = () => { vid.removeAttribute("src"); vid.load(); };
-        vid.addEventListener("loadedmetadata", () => { vid.currentTime = Math.min(Math.max(1, (vid.duration || 10) * 0.1), 60); }, { once: true });
-        vid.addEventListener("seeked", () => {
-          try {
-            ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
-            note.classList.add("hidden");
-          } catch (e) { }
-          done();
-        }, { once: true });
-        vid.addEventListener("error", () => { note.textContent = "This video's picture can't be previewed here — the image still goes where you place it."; done(); }, { once: true });
-      }
-
-      async function addEditorImages() {
-        const api = window.electronAPI;
-        if (!api?.openMultiFile) return showToast("Picking an image only works in the desktop app.", "error");
-        const r = await api.openMultiFile({ title: "Choose a logo or image", defaultPath: localStorage.getItem("lastImageDir") || "", filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }] });
-        if (!r || r.canceled || !r.files?.length) return;
-        if (r.dirPath) localStorage.setItem("lastImageDir", r.dirPath);
-        for (const f of r.files) {
-          const blob = await (await fetch(f.fileUrl)).blob();
-          const dataUrl = await keepableImage(blob);
-          if (!dataUrl) {
-            showToast(`"${f.fileName}" could not be read as an image. Use a PNG or JPG.`, "error");
-            continue;
-          }
-          const ar = await imgNatural(dataUrl);
-          const im = { id: crypto.randomUUID(), dataUrl, filePath: f.filePath || null, ar, x: 0, y: 0, w: 1, h: 1, opacity: 100, radius: 0, motion: "none", speed: 2, idleStyle: "none", idleStrength: 5 };
-          sizeImg(im, 15);
-          placeImg(im, "tr"); // a logo's usual place
-          imgEd.list.push(im);
-          imgEd.sel = imgEd.list.length - 1;
-        }
-        renderImageEditor();
-      }
-
-      const videoNatural = (src) => new Promise((resolve) => {
-        const v = document.createElement("video");
-        const done = (ar) => { v.removeAttribute("src"); v.load(); resolve(ar); };
-        v.muted = true;
-        v.preload = "metadata";
-        v.onloadedmetadata = () => done(v.videoWidth && v.videoHeight ? v.videoWidth / v.videoHeight : 16 / 9);
-        v.onerror = () => done(16 / 9);
-        v.src = src;
-      });
-      async function addEditorVideos() {
-        const api = window.electronAPI;
-        if (!api?.openMultiFile) return showToast("Picking a video only works in the desktop app.", "error");
-        const r = await api.openMultiFile({ title: "Choose a video overlay", defaultPath: localStorage.getItem("lastVideoDir") || "", filters: [{ name: "Videos", extensions: ["mp4", "mov", "webm", "mkv", "avi", "m4v"] }] });
-        if (!r || r.canceled || !r.files?.length) return;
-        if (r.dirPath) localStorage.setItem("lastVideoDir", r.dirPath);
-        for (const f of r.files) {
-          if (!f.filePath) continue;
-          const ar = await videoNatural(diskPathToMediaUrl(f.filePath));
-          const im = { id: crypto.randomUUID(), kind: "video", videoPath: f.filePath, name: f.fileName, ar, x: 0, y: 0, w: 1, h: 1, opacity: 100, radius: 0, loop: true, chromaKey: null };
-          sizeImg(im, 25);
-          placeImg(im, "bl"); // a banner's usual place, away from a logo top right
-          imgEd.list.push(im);
-          imgEd.sel = imgEd.list.length - 1;
-        }
-        renderImageEditor();
-      }
-
-      async function openImageEditor() {
-        imgEd.frameAR = frameAspect();
-        imgEd.list = [...(seriesImages || []), ...(seriesVideos || [])].map((i) => ({ ...i, id: i.id || crypto.randomUUID() }));
-        for (const im of imgEd.list) if (!im.ar) im.ar = isVideoItem(im) ? await videoNatural(diskPathToMediaUrl(im.videoPath)) : await imgNatural(im.dataUrl);
-        imgEd.sel = 0;
-        $("ds-img-editor").classList.remove("hidden");
-        renderImageEditor();
-        loadEditorFrame();
-        if (!imgEd.list.length) await addEditorImages();
-        $("ds-img-editor").scrollIntoView({ block: "nearest", behavior: "smooth" });
-      }
-
-      function closeImageEditor() {
-        $("ds-img-editor")?.classList.add("hidden");
-        imgEd.picking = false;
-        if (document.fullscreenElement === $("ds-img-editor")) document.exitFullscreen().catch(() => { });
-        $("ds-img-stage")?.classList.remove("is-picking");
-        $("ds-img-stage")?.querySelectorAll(".ds-img-item").forEach((n) => {
-          stopStageVideo(n.dataset.id);
-          n.remove();
-        });
-      }
-
-      $("ds-images-add").addEventListener("click", () => ($("ds-img-editor").classList.contains("hidden") ? openImageEditor() : closeImageEditor()));
-      $("ds-img-cancel").addEventListener("click", closeImageEditor);
-      $("ds-img-list").addEventListener("click", (e) => {
-        const b = e.target.closest("button");
-        if (!b) return;
-        if (b.dataset.add) return b.dataset.add === "video" ? addEditorVideos() : addEditorImages();
-        imgEd.sel = Number(b.dataset.k);
-        renderImageEditor();
-      });
-      // Chroma key of the selected video overlay. Choosing a colour turns the key on.
-      const selectedCk = () => {
-        const im = imgEd.list[imgEd.sel];
-        if (!im || !isVideoItem(im)) return null;
-        im.chromaKey = { ...CK_DEFAULTS, ...(im.chromaKey || {}) };
-        return im.chromaKey;
-      };
-      $("ds-ck-on").addEventListener("change", (e) => {
-        const ck = selectedCk();
-        if (ck) ck.enabled = e.target.checked;
-        renderImageEditor();
-      });
-      $("ds-ck-color").addEventListener("input", (e) => {
-        const ck = selectedCk();
-        if (!ck) return;
-        Object.assign(ck, { color: e.target.value, enabled: true });
-        renderImageEditor();
-      });
-      [["tol", "tolerance"], ["smooth", "smooth"], ["spill", "spill"]].forEach(([key, field]) => {
-        $(`ds-ck-${key}`).addEventListener("input", (e) => {
-          const ck = selectedCk();
-          if (!ck) return;
-          ck[field] = Number(e.target.value);
-          $(`ds-ck-${key}-v`).textContent = e.target.value;
-        });
-      });
-      // Full screen: the editor fills the screen (Esc or the button again to go back).
-      $("ds-img-full").addEventListener("mousedown", (e) => e.stopPropagation()); // not a drag or a pick
-      $("ds-img-full").addEventListener("click", async () => {
-        const ed = $("ds-img-editor");
-        try {
-          if (document.fullscreenElement === ed) await document.exitFullscreen();
-          else await ed.requestFullscreen();
-        } catch (e) {
-          showToast("Full screen isn't available here.", "error");
-        }
-      });
-      document.addEventListener("fullscreenchange", () => {
-        const on = document.fullscreenElement === $("ds-img-editor");
-        const btn = $("ds-img-full");
-        btn.title = on ? "Leave full screen (Esc)" : "Full screen (Esc to go back)";
-        btn.innerHTML = `<i data-lucide="${on ? "minimize-2" : "maximize-2"}"></i>`;
-        if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: btn });
-      });
-
-      $("ds-ck-pick").addEventListener("click", () => {
-        imgEd.picking = !imgEd.picking;
-        renderImageEditor();
-      });
-      // Picking: the colour of the video itself (not the keyed picture) where it is clicked.
-      function pickKeyColor(e) {
-        const el = e.target.closest(".ds-img-item");
-        const im = el && imgEd.list[Number(el.dataset.k)];
-        const entry = im && isVideoItem(im) && stageVideos.get(im.id);
-        imgEd.picking = false;
-        if (!entry || entry.video.readyState < 2) return renderImageEditor();
-        const { video } = entry;
-        const rect = el.getBoundingClientRect();
-        // The video fills its box and is cropped (object-fit: cover).
-        const scale = Math.max(rect.width / video.videoWidth, rect.height / video.videoHeight);
-        const vx = Math.min(video.videoWidth - 1, Math.max(0, (e.clientX - rect.left - (rect.width - video.videoWidth * scale) / 2) / scale));
-        const vy = Math.min(video.videoHeight - 1, Math.max(0, (e.clientY - rect.top - (rect.height - video.videoHeight * scale) / 2) / scale));
-        const probe = document.createElement("canvas");
-        probe.width = probe.height = 1;
-        const pctx = probe.getContext("2d", { willReadFrequently: true });
-        pctx.drawImage(video, Math.floor(vx), Math.floor(vy), 1, 1, 0, 0, 1, 1);
-        const [r, g, b] = pctx.getImageData(0, 0, 1, 1).data;
-        imgEd.sel = Number(el.dataset.k);
-        Object.assign(selectedCk(), { color: `#${[r, g, b].map((c) => c.toString(16).padStart(2, "0")).join("")}`, enabled: true });
-        renderImageEditor();
-      }
-
-      ["start", "end"].forEach((key) => {
-        $(`ds-img-${key}`).addEventListener("change", (e) => {
-          const im = imgEd.list[imgEd.sel];
-          if (im) setOverlayTime(im, key, e.target.value);
-          renderImageEditor();
-        });
-        $(`ds-img-${key}`).addEventListener("keydown", (e) => {
-          if (e.key === "Enter") e.target.blur();
-        });
-      });
-      $("ds-img-pos").addEventListener("click", (e) => {
-        const b = e.target.closest("[data-pos]");
-        const im = imgEd.list[imgEd.sel];
-        if (!b || !im) return;
-        placeImg(im, b.dataset.pos);
-        renderImageEditor();
-      });
-      $("ds-img-size").addEventListener("input", (e) => {
-        const im = imgEd.list[imgEd.sel];
-        if (!im) return;
-        sizeImg(im, Number(e.target.value));
-        if (im._pos) placeImg(im, im._pos); // a corner image stays in its corner
-        renderImageEditor();
-      });
-      $("ds-img-op").addEventListener("input", (e) => {
-        const im = imgEd.list[imgEd.sel];
-        if (!im) return;
-        im.opacity = Number(e.target.value);
-        renderImageEditor();
-      });
-      $("ds-img-remove").addEventListener("click", () => {
-        imgEd.list.splice(imgEd.sel, 1);
-        imgEd.sel = Math.max(0, imgEd.sel - 1);
-        renderImageEditor();
-      });
-      // Drag an image on the frame.
-      $("ds-img-stage").addEventListener("mousedown", (e) => {
-        if (imgEd.picking) {
-          e.preventDefault();
-          return pickKeyColor(e);
-        }
-        const el = e.target.closest(".ds-img-item");
-        if (!el) return;
-        e.preventDefault();
-        imgEd.sel = Number(el.dataset.k);
-        const im = imgEd.list[imgEd.sel];
-        const rect = $("ds-img-stage").getBoundingClientRect();
-        const sx = e.clientX, sy = e.clientY, x0 = im.x, y0 = im.y;
-        renderImageEditor();
-        // Centre snapping: within SNAP_PX of the frame's centre line, the overlay's centre goes
-        // exactly on it and a guide line shows (Alt held: placed freely).
-        const SNAP_PX = 8;
-        const guides = (v, h) => {
-          $("ds-img-guide-v").classList.toggle("is-on", v);
-          $("ds-img-guide-h").classList.toggle("is-on", h);
-        };
-        const move = (ev) => {
-          // The button let go where no mouseup reached the page (outside the window): the drag ends.
-          if (!(ev.buttons & 1)) return up();
-          im.x = x0 + ((ev.clientX - sx) / rect.width) * 100;
-          im.y = y0 + ((ev.clientY - sy) / rect.height) * 100;
-          im._pos = null;
-          clampImg(im);
-          const snapX = !ev.altKey && Math.abs(im.x + im.w / 2 - 50) * rect.width / 100 <= SNAP_PX;
-          const snapY = !ev.altKey && Math.abs(im.y + im.h / 2 - 50) * rect.height / 100 <= SNAP_PX;
-          if (snapX) im.x = 50 - im.w / 2;
-          if (snapY) im.y = 50 - im.h / 2;
-          guides(snapX, snapY);
-          const node = $("ds-img-stage").querySelector(`.ds-img-item[data-k="${imgEd.sel}"]`);
-          if (node) Object.assign(node.style, { left: `${im.x}%`, top: `${im.y}%` });
-        };
-        const up = () => {
-          window.removeEventListener("mousemove", move);
-          window.removeEventListener("mouseup", up);
-          guides(false, false);
-          renderImageEditor();
-        };
-        window.addEventListener("mousemove", move);
-        window.addEventListener("mouseup", up);
-      });
-      $("ds-img-done").addEventListener("click", () => {
-        const all = imgEd.list.map(({ _pos, ...rest }) => ({ ...rest, x: +rest.x.toFixed(2), y: +rest.y.toFixed(2), w: +rest.w.toFixed(2), h: +rest.h.toFixed(2) }));
-        const imgs = all.filter((im) => !isVideoItem(im));
-        const vids = all.filter(isVideoItem);
-        try {
-          if (imgs.length) localStorage.setItem(SERIES_IMAGES_KEY, JSON.stringify(imgs));
-          else localStorage.removeItem(SERIES_IMAGES_KEY);
-        } catch (e) {
-          return showToast("The images are too large to keep. Use a smaller image (a PNG logo of a few hundred KB).", "error");
-        }
-        seriesImages = imgs.length ? imgs : null;
-        keepSeriesVideos(vids);
-        showSeriesImages();
-        closeImageEditor();
-        if ((seriesImages || seriesVideos) && piecesOpen()) {
-          // A part is open: its tabs get the overlays now too.
-          if (seriesImages) {
-            window.imageOverlays = seriesImages.map((i) => ({ ...hydrateImageOverlay(i), id: crypto.randomUUID() }));
-            renderImageOverlaysFromState();
-            applyImageOverlaysToAllProjects();
-          }
-          if (seriesVideos) {
-            window.videoOverlays = seriesVideos.map((v) => ({ ...v, id: crypto.randomUUID(), file: null, blobUrl: null }));
-            renderVideoOverlaysFromState();
-            applyVideoOverlaysToAllProjects();
-          }
-        } else if (all.length) {
-          showToast(`${all.length} overlay${all.length !== 1 ? "s" : ""} will be added to every tab of each part.`, "success");
-        }
-      });
-
-      // Clips between episodes: video files put into the joined video of a part ("Join into one
-      // video"), each at its own place: pos k = after the series' k-th episode (0 = before the
-      // first). Plus clips repeated evenly - several sponsors' ads (repeat: { clips: [{ path, name }],
-      // count, mode }, see evenClipPositions and repeatClipInserts). Kept for the folder they were
-      // chosen for. The clips go in as they are: the image and video overlays are on the tabs' own
-      // videos, not on the clips.
-      const SERIES_CLIPS_KEY = "aiDubberSeriesClips";
-      let clipsState = { folder: "", clips: [], repeat: null };
-      try { clipsState = JSON.parse(localStorage.getItem(SERIES_CLIPS_KEY) || "null") || clipsState; } catch (e) { }
-      const seriesFolder = () => plan?.folder || scan?.folder || "";
-      const clipsForSeries = () => clipsState.folder && clipsState.folder === seriesFolder();
-      const placedClips = () => (clipsForSeries() ? clipsState.clips : []);
-      // The repeated clips, or null without any. One clip kept by an older version ({ path, name })
-      // is read as a list of one.
-      const repeatClip = () => {
-        const r = clipsForSeries() ? clipsState.repeat : null;
-        if (!r) return null;
-        if (!r.clips) Object.assign(r, { clips: r.path ? [{ path: r.path, name: r.name }] : [] });
-        return r.clips.length ? r : null;
-      };
-      // The breaks the repeated clips go in at (pos as for a placed clip); [] without any.
-      const repeatPositions = () => {
-        const eps = repeatClip() && seriesEpisodes();
-        return eps ? evenClipPositions(eps.length, eps.reduce((s, e) => s + (e.duration || 0), 0), repeatClip().count) : [];
-      };
-      const repeatInserts = () => (repeatClip() ? repeatClipInserts(repeatPositions(), repeatClip().clips, repeatClip().mode) : []);
-      const currentClips = () => [...placedClips(), ...repeatInserts()];
-      const saveClips = () => { try { localStorage.setItem(SERIES_CLIPS_KEY, JSON.stringify(clipsState)); } catch (e) { } };
-      const clipsForThisFolder = () => {
-        if (!clipsForSeries()) clipsState = { folder: seriesFolder(), clips: [], repeat: null };
-      };
-      // The series' episodes in order, { label, duration } (null: unknown - a plan from before clips).
-      const seriesEpisodes = () => {
-        if (plan) return plan.parts.every((p) => p.eps) ? plan.parts.flatMap((p) => p.eps) : null;
-        if (!scan) return null;
-        const ready = readyParts();
-        return ready
-          ? ready.map((jp) => ({ label: jp.label, duration: jp.duration }))
-          : planEpisodeParts(scan.files, joinMinutes()).flat().map((f) => ({ label: epLabel(f), duration: f.duration }));
-      };
-      const seriesEpisodeLabels = () => seriesEpisodes()?.map((e) => e.label) || null;
-      let clipsShown = "";
-      function renderClips() {
-        const labels = seriesEpisodeLabels();
-        const clips = placedClips();
-        const repeat = repeatClip();
-        const box = $("ds-clips-box");
-        const show = !!seriesFolder() && mergeWanted(); // clips only go into a joined video
-        box.classList.toggle("hidden", !show);
-        box.classList.toggle("flex", show);
-        $("ds-clip-add").disabled = !labels;
-        $("ds-repeat-pick").disabled = !labels;
-        $("ds-clips-note").textContent = !labels ? "Start the series again to add clips." : clips.length ? "" : "None";
-        $("ds-repeat-none").classList.toggle("hidden", !!repeat);
-        $("ds-repeat-count").value = String(repeat?.count || "auto");
-        $("ds-repeat-mode").value = repeat?.mode === "all" ? "all" : "turns";
-        $("ds-repeat-count").disabled = $("ds-repeat-mode").disabled = !repeat;
-        $("ds-repeat-mode").classList.toggle("hidden", !repeat || repeat.clips.length < 2);
-        const list = repeat ? repeat.clips : [];
-        $("ds-repeat-list").innerHTML = list.map((c, k) => `<div class="flex items-center gap-2 min-w-0">
-            <span class="shrink-0 w-4 text-right text-[var(--text-muted)]">${k + 1}.</span>
-            <span class="truncate font-mono text-[var(--text-secondary)]" title="${esc(c.path)}">${esc(c.name)}</span>
-            ${k ? `<button data-repeat-up="${k}" class="shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)]" title="Play this one earlier">↑</button>` : ""}
-            <button data-repeat-del="${k}" class="shrink-0 ml-auto text-[var(--text-muted)] hover:text-rose-400" title="Remove this clip">✕</button>
-          </div>`).join("");
-        // Where each goes: "Ads play 3 times: after EP5: Ad A · after EP10: Ad B · after EP15 (the end): Ad A".
-        const at = repeatPositions();
-        const inserts = repeatInserts();
-        const last = at[at.length - 1];
-        $("ds-repeat-note").textContent = repeat && labels && at.length
-          ? `Ads play ${at.length} time${at.length !== 1 ? "s" : ""}: ` + at.map((p) => `after ${labels[p - 1]}${p === last ? " (the end)" : ""}: ${inserts.filter((c) => c.pos === p).map((c) => c.name).join(" + ")}`).join(" · ")
-          : "";
-        const sig = JSON.stringify([labels, clips]);
-        if (sig === clipsShown) return;
-        clipsShown = sig;
-        const opts = labels ? [`Before ${labels[0]}`, ...labels.map((l) => `After ${l}`)] : [];
-        $("ds-clips").innerHTML = clips.map((c, k) => `<div class="flex items-center gap-2 min-w-0">
-            <select data-k="${k}" class="bg-[var(--bg-base)] border border-[var(--border-light)] rounded-md px-1.5 py-0.5 outline-none focus:border-violet-500 cursor-pointer">${opts.map((o, pos) => `<option value="${pos}"${pos === c.pos ? " selected" : ""}>${esc(o)}</option>`).join("")}</select>
-            <span class="truncate font-mono text-[var(--text-secondary)]" title="${esc(c.path)}">${esc(c.name)}</span>
-            <button data-del="${k}" class="shrink-0 text-[var(--text-muted)] hover:text-rose-400" title="Remove this clip">✕</button>
-          </div>`).join("");
-      }
-      const pickClipFiles = async () => {
-        if (!window.electronAPI?.openMultiFile) {
-          showToast("Choosing a clip needs the desktop app.", "error");
-          return null;
-        }
-        const r = await window.electronAPI.openMultiFile({
-          defaultPath: localStorage.getItem("lastClipDir") || "",
-          filters: [{ name: "Video Files", extensions: ["mp4", "mov", "mkv", "webm", "avi", "m4v", "ts"] }],
-        });
-        if (!r || r.canceled || !r.files?.length) return null;
-        localStorage.setItem("lastClipDir", r.dirPath);
-        return r.files;
-      };
-      $("ds-clip-add").addEventListener("click", async () => {
-        const labels = seriesEpisodeLabels();
-        if (!labels || !seriesFolder()) return;
-        const files = await pickClipFiles();
-        if (!files) return;
-        clipsForThisFolder();
-        files.forEach((f) => clipsState.clips.push({ pos: Math.min(1, labels.length), path: f.filePath, name: f.fileName }));
-        saveClips();
-        renderClips();
-      });
-      $("ds-repeat-pick").addEventListener("click", async () => {
-        if (!seriesEpisodeLabels() || !seriesFolder()) return;
-        const files = await pickClipFiles();
-        if (!files) return;
-        clipsForThisFolder();
-        const r = repeatClip() || { clips: [], count: clipsState.repeat?.count || "auto", mode: "turns" };
-        files.forEach((f) => r.clips.push({ path: f.filePath, name: f.fileName }));
-        clipsState.repeat = { clips: r.clips, count: r.count || "auto", mode: r.mode === "all" ? "all" : "turns" };
-        saveClips();
-        renderClips();
-      });
-      $("ds-repeat-mode").addEventListener("change", (e) => {
-        if (!repeatClip()) return;
-        clipsState.repeat.mode = e.target.value === "all" ? "all" : "turns";
-        saveClips();
-        renderClips();
-      });
-      $("ds-repeat-list").addEventListener("click", (e) => {
-        const r = repeatClip();
-        if (!r) return;
-        const del = e.target.closest("[data-repeat-del]")?.dataset.repeatDel;
-        const up = e.target.closest("[data-repeat-up]")?.dataset.repeatUp;
-        if (del !== undefined) r.clips.splice(Number(del), 1);
-        else if (up !== undefined) r.clips.splice(Number(up) - 1, 0, ...r.clips.splice(Number(up), 1));
-        else return;
-        if (!r.clips.length) clipsState.repeat = null;
-        saveClips();
-        renderClips();
-      });
-      $("ds-repeat-count").addEventListener("change", (e) => {
-        if (!repeatClip()) return;
-        clipsState.repeat.count = e.target.value === "auto" ? "auto" : parseInt(e.target.value, 10);
-        saveClips();
-        renderClips();
-      });
-      $("ds-clips").addEventListener("change", (e) => {
-        const k = e.target.dataset.k;
-        if (k === undefined) return;
-        clipsState.clips[k].pos = parseInt(e.target.value, 10);
-        saveClips();
-        clipsShown = JSON.stringify([seriesEpisodeLabels(), placedClips()]); // the select shows it already
-      });
-      $("ds-clips").addEventListener("click", (e) => {
-        const k = e.target.closest("[data-del]")?.dataset.del;
-        if (k === undefined) return;
-        clipsState.clips.splice(k, 1);
-        saveClips();
-        renderClips();
-      });
-
       // Hands-free exports of this session: part (its plan object) -> { items, run, rendering, result }.
       // A part's queue items (and so its export) only live in this session's render queue.
       const seriesExports = new Map();
@@ -18188,7 +16592,6 @@
         $("ds-merge").disabled = !handsFree();
         $("ds-merge-scope").disabled = !mergeWanted();
         $("ds-merge-row").classList.toggle("hidden", !handsFree()); // joining needs hands-free
-        renderClips();
         const folder = plan?.folder || scan?.folder || "";
         $("ds-folder").textContent = folder || "No folder selected";
         $("ds-folder").title = folder;
@@ -18636,7 +17039,7 @@
         }
         const preset = colorPreset();
         await loadVideoFiles(plan.pieces.map((p) => ({ name: p.split(/[\\/]/).pop(), path: p, url: `${API}/audio?path=${encodeURIComponent(p)}` })),
-          { videoColorAdj: preset?.adj, imageOverlays: seriesImages, videoOverlays: seriesVideos });
+          { videoColorAdj: preset?.adj });
         if (preset) {
           window.activeColorPresetName = preset.name;
           caUpdateActiveCards();
@@ -19087,7 +17490,6 @@
                 delete plan.fullMerged; // a part exported again: the whole-series video is out of date
                 savePlan();
               }
-              prepareClipsLike(r.outputs);
               mergePartExport(i, r.outputs);
             }
             return r;
@@ -19122,27 +17524,8 @@
       }
 
       // Joins exported part i's tab videos into one video (the Join Episodes code: the video is
-      // copied as it is - encoded when clips go in - the sound joined without a gap), next to them. In the background; a
+      // copied as it is, the sound joined without a gap), next to them. In the background; a
       // failure only warns - the tabs' own videos are there.
-      // Part i's clips as join inserts: { at: seconds into the part, path }.
-      function clipInserts(i) {
-        if (!plan.parts.every((p) => p.eps)) return [];
-        const first = plan.parts.slice(0, i).reduce((n, p) => n + p.eps.length, 0);
-        const eps = plan.parts[i].eps;
-        return currentClips()
-          .filter((c) => (i === 0 && c.pos === 0) || (c.pos > first && c.pos <= first + eps.length))
-          .map((c) => ({ at: eps.slice(0, c.pos - first).reduce((s, e) => s + e.duration, 0), path: c.path }));
-      }
-
-      // The ads encoded in the background as soon as a part's tabs are exported (their size and
-      // frame rate), while the next part is dubbed: every join after it - each part's and the
-      // whole-series video - finds them ready instead of encoding them again.
-      function prepareClipsLike(outputs) {
-        const clips = [...new Set(currentClips().map((c) => c.path).filter(Boolean))];
-        if (!clips.length || !mergeWanted() || !outputs?.[0]) return;
-        postJson(`${API}/episodes/prepare-clips`, { like: outputs[0], clips }).catch(() => { });
-      }
-
       function mergePartExport(i, outputs) {
         const part = plan.parts[i];
         const job = seriesExports.get(part);
@@ -19150,8 +17533,7 @@
         job.mergePercent = 0;
         delete part.mergeError;
         job.merging = (async () => {
-          const inserts = clipInserts(i);
-          const r = await postJson(`${API}/episodes/join`, { parts: [inserts.length ? { files: outputs, inserts } : outputs], partNumbers: [i + 1], outDir: dirOf(outputs[0]), seriesName: `${plan.seriesName}_Dubbed` });
+          const r = await postJson(`${API}/episodes/join`, { parts: [outputs], partNumbers: [i + 1], outDir: dirOf(outputs[0]), seriesName: `${plan.seriesName}_Dubbed` });
           if (!r.success) throw new Error(r.error);
           job.mergeJobId = r.jobId;
           for (;;) {
@@ -19215,18 +17597,11 @@
       }
 
       // "One video for the whole series": every part's exported tabs in order, joined once after
-      // the last part (the clips at their episodes) into Name_Dubbed_full.mp4 next to them. Joined
-      // from the tabs, not from per-part videos: a part with clips is encoded and one without is
-      // copied, and joining those two would encode the whole series again. Copied as it is when
-      // no clip goes in. A failure only warns - each tab's own video is there.
+      // the last part into Name_Dubbed_full.mp4 next to them, copied as it is. A failure only
+      // warns - each tab's own video is there.
       function wholeSeriesFiles() {
         if (!plan?.parts.length || !plan.parts.every((p) => p.exported && p.outputs?.length && p.outputs.every(Boolean))) return null;
         return plan.parts.flatMap((p) => p.outputs);
-      }
-      function wholeSeriesInserts() {
-        if (!plan.parts.every((p) => p.eps)) return [];
-        const eps = plan.parts.flatMap((p) => p.eps);
-        return currentClips().map((c) => ({ at: eps.slice(0, c.pos).reduce((s, e) => s + e.duration, 0), path: c.path }));
       }
       // Every part exported, but the whole-series video not made (stopped, failed, or chosen after).
       // Not for a series exported before each part's videos were kept: nothing to join them from.
@@ -19247,8 +17622,7 @@
         wholeJoin = { jobId: null, percent: 0 };
         setLabel("Joining the whole series into one video");
         try {
-          const inserts = wholeSeriesInserts();
-          const r = await postJson(`${API}/episodes/join`, { parts: [inserts.length ? { files, inserts } : files], partNumbers: [1], outDir: dirOf(files[0]), seriesName: `${plan.seriesName}_Dubbed`, fileName: `${plan.seriesName}_Dubbed_full` });
+          const r = await postJson(`${API}/episodes/join`, { parts: [files], partNumbers: [1], outDir: dirOf(files[0]), seriesName: `${plan.seriesName}_Dubbed`, fileName: `${plan.seriesName}_Dubbed_full` });
           if (!r.success) throw new Error(r.error);
           wholeJoin.jobId = r.jobId;
           if (seriesRun?.stopped) postJson(`${API}/episodes/cancel`, { jobId: r.jobId }).catch(() => { }); // Stop came while it started
@@ -19414,14 +17788,12 @@
             outPath: jp.path,
             prejoined: true,
             status: "joined",
-            eps: [{ label: jp.label, duration: jp.duration }],
           })) : groups.map((g) => ({
             label: `${epLabel(g[0])} – ${epLabel(g[g.length - 1])}`,
             episodes: g.length,
             duration: g.reduce((s, f) => s + f.duration, 0),
             files: g.map((f) => f.path),
             status: "planned",
-            eps: g.map((f) => ({ label: epLabel(f), duration: f.duration })), // where clips go
           })),
           current: null,
           stepState: null,
@@ -19636,7 +18008,7 @@
     })();
 
     // opts (Dub Whole Series), over the auto-apply preset's: videoColorAdj, the new tabs' color
-    // filter; imageOverlays, their image overlays (saved ones, with dataUrl).
+    // filter.
     async function loadVideoFiles(files, opts = {}) {
       const remaining = MAX_PROJECT_TABS - projects.length;
       if (remaining <= 0) {
@@ -19656,7 +18028,6 @@
       const autoPresetName = localStorage.getItem("aiDubber_autoPreset");
       const allPresets = vpLoad();
       const autoPreset = allPresets.find((p) => p.name === autoPresetName);
-      const optImages = opts.imageOverlays ? opts.imageOverlays.map(hydrateImageOverlay) : null;
 
       for (const f of files) {
         const isElectronFile = !(f instanceof File);
@@ -19706,12 +18077,6 @@
           };
           proj.blurBoxes = JSON.parse(JSON.stringify(s.blurBoxes || []));
           proj.freeTexts = JSON.parse(JSON.stringify(s.freeTexts || []));
-          // Pre-hydrate Base64 images into memory Blobs so they instantly load on screen!
-          proj.imageOverlays = (s.imageOverlays || []).map(hydrateImageOverlay);
-
-          // 🟢 THE FIX: Inject Video Overlays from the Auto-Preset into the new video tab memory
-          proj.videoOverlays = JSON.parse(JSON.stringify(s.videoOverlays || []));
-
           proj.videoColorAdj = { ...(s.videoColorAdj || colorDefaults) };
 
           // Inject subtitle style from the Auto-Preset too — falls back to
@@ -19731,9 +18096,6 @@
           }
         }
         if (opts.videoColorAdj) proj.videoColorAdj = { ...colorDefaults, ...opts.videoColorAdj };
-        if (optImages) proj.imageOverlays = optImages.map((i) => ({ ...i, id: crypto.randomUUID() }));
-        // Shown from their path on disk (renderVideoOverlaysFromState).
-        if (opts.videoOverlays) proj.videoOverlays = opts.videoOverlays.map((v) => ({ ...v, id: crypto.randomUUID(), file: null, blobUrl: null }));
 
         projects.push(proj);
       }
@@ -23610,22 +21972,6 @@
             if (typeof renderBlurBoxes === "function") renderBlurBoxes();
           }
 
-          // Restore image overlays if snapshot has them
-          if (Array.isArray(previousState.imageOverlays)) {
-            window.imageOverlays = previousState.imageOverlays.map((i) => ({
-              ...i,
-            }));
-            if (typeof renderImageOverlaysFromState === "function") renderImageOverlaysFromState();
-          }
-
-          // Restore video overlays if snapshot has them
-          if (Array.isArray(previousState.videoOverlays)) {
-            window.videoOverlays = previousState.videoOverlays.map((i) => ({
-              ...i,
-            }));
-            if (typeof renderVideoOverlaysFromState === "function") renderVideoOverlaysFromState();
-          }
-
           // Restore color adjustment if snapshot has it
           if (previousState.videoColorAdj) {
             videoColorAdj = { ...previousState.videoColorAdj };
@@ -25070,8 +23416,6 @@
           pastStates = [];
           freeTexts = [];
           detachedAudios = [];
-          window.imageOverlays = [];
-          window.videoOverlays = [];
           isA1Muted = false;
           isPlaying = false;
           duration = 0;
@@ -25121,9 +23465,6 @@
             vignettePanel.classList.add("hidden");
           }
           document.getElementById("btn-vignette")?.classList.remove("text-fuchsia-400");
-
-          const imgContainer = document.getElementById("image-overlay-container");
-          if (imgContainer) imgContainer.innerHTML = "";
 
           videoUploadInput.value = "";
           bgmUploadInput.value = "";
@@ -25561,10 +23902,8 @@
 
             closeRenderConfigModal();
 
-            // Flush state for render — flag prevents pausing video overlays
-            window._isSavingForRender = true;
+            // Flush state for render
             saveCurrentProjectState();
-            window._isSavingForRender = false;
 
             const isMac = navigator.platform.toUpperCase().includes("MAC") || navigator.userAgent.includes("Mac");
             const activeRenderExportPath = localStorage.getItem("aiDubberExportPath") || (isMac ? "" : "C:\\Export\\AIDubber");
@@ -25727,38 +24066,6 @@
                 idleStyle: t.idleStyle || "none",
                 idleStrength: t.idleStrength ?? 5,
               })),
-              overlayImages: (targetProject.imageOverlays || []).map((img) => ({
-                x: img.x,
-                y: img.y,
-                w: img.w,
-                h: img.h,
-                opacity: img.opacity,
-                radius: img.radius,
-                motion: img.motion || "none",
-                speed: img.speed ?? 2,
-                idleStyle: img.idleStyle || "none",
-                start: img.start ?? null,
-                end: img.end ?? null,
-                filePath: img.filePath || (img.file && img.file.path ? img.file.path : (img._file && img._file.path ? img._file.path : null)),
-              })),
-
-              videoOverlays: (targetProject.videoOverlays || []).map((v) => {
-                const localPath = v.videoPath || v.filePath || (v.file && v.file.path ? v.file.path : (v._file && v._file.path ? v._file.path : null));
-                return {
-                  x: v.x,
-                  y: v.y,
-                  w: v.w,
-                  h: v.h,
-                  opacity: v.opacity ?? 100,
-                  radius: v.radius ?? 0,
-                  loop: v.loop !== false,
-                  start: v.start ?? null,
-                  end: v.end ?? null,
-                  chromaKey: v.chromaKey || null,
-                  filePath: localPath,
-                  videoPath: localPath,
-                };
-              }),
               subtitleColor: targetProject.subtitleColor,
               subtitleFont: targetProject.subtitleFont,
               subtitleOutlineColor: targetProject.subtitleOutlineColor,
@@ -25821,43 +24128,6 @@
             configData.audioTracks = patchedAudioTracks;
 
             formData.append("data", JSON.stringify(configData));
-            // Re-fetch each overlay as a Blob from its blobUrl (file ref is lost after project switch)
-            const overlayBlobs = await Promise.all(
-              (targetProject.imageOverlays || []).map(async (img) => {
-                const actualFile = (img.file instanceof File) ? img.file : ((img._file instanceof File) ? img._file : null);
-                if (actualFile) return actualFile;
-                const src = img.blobUrl || (img.dataUrl ? img.dataUrl : null);
-                if (!src) return null;
-                try {
-                  const r = await fetch(src);
-                  return await r.blob();
-                } catch {
-                  return null;
-                }
-              }),
-            );
-            overlayBlobs.forEach((blob, idx) => {
-              if (blob) formData.append("overlayImages", blob, `overlay_${idx}.png`);
-            });
-
-            // Video overlay blobs
-            const videoOverlayBlobs = await Promise.all(
-              (targetProject.videoOverlays || []).map(async (v) => {
-                const localPath = v.videoPath || v.filePath || (v.file && v.file.path ? v.file.path : (v._file && v._file.path ? v._file.path : null));
-                if (localPath) return null; // Server reads directly from local file path
-                const actualFile = (v.file instanceof File) ? v.file : ((v._file instanceof File) ? v._file : null);
-                if (actualFile) return actualFile;
-                if (!v.blobUrl || v.blobUrl.startsWith("file:")) return null;
-                try {
-                  return await (await fetch(v.blobUrl)).blob();
-                } catch {
-                  return null;
-                }
-              }),
-            );
-            videoOverlayBlobs.forEach((blob, idx) => {
-              if (blob) formData.append("overlayVideos", blob, `overvid_${idx}.mp4`);
-            });
 
             // Lock render state on this project
             targetProject.isRendering = true;
@@ -26287,38 +24557,6 @@
                 idleStyle: t.idleStyle || "none",
                 idleStrength: t.idleStrength ?? 5,
               })),
-              overlayImages: (proj.imageOverlays || []).map((img) => ({
-                x: img.x,
-                y: img.y,
-                w: img.w,
-                h: img.h,
-                opacity: img.opacity,
-                radius: img.radius,
-                motion: img.motion || "none",
-                speed: img.speed ?? 2,
-                idleStyle: img.idleStyle || "none",
-                start: img.start ?? null,
-                end: img.end ?? null,
-                filePath: img.filePath || (img.file && img.file.path ? img.file.path : (img._file && img._file.path ? img._file.path : null)),
-              })),
-
-              videoOverlays: (proj.videoOverlays || []).map((v) => {
-                const localPath = v.videoPath || v.filePath || (v.file && v.file.path ? v.file.path : (v._file && v._file.path ? v._file.path : null));
-                return {
-                  x: v.x,
-                  y: v.y,
-                  w: v.w,
-                  h: v.h,
-                  opacity: v.opacity ?? 100,
-                  radius: v.radius ?? 0,
-                  loop: v.loop !== false,
-                  start: v.start ?? null,
-                  end: v.end ?? null,
-                  chromaKey: v.chromaKey || null,
-                  filePath: localPath,
-                  videoPath: localPath,
-                };
-              }),
               subtitleColor: proj.subtitleColor,
               subtitleFont: proj.subtitleFont,
               subtitleOutlineColor: proj.subtitleOutlineColor,
@@ -26346,8 +24584,6 @@
             bgmFileObj,
             blobUrl: proj.blobUrl,
             fileName: proj.file?.name || "video.mp4",
-            imageOverlays: proj.imageOverlays || [],
-            videoOverlays: proj.videoOverlays || [],
           };
         };
 
@@ -26358,9 +24594,7 @@
             const proj = projects[activeProjectIndex];
             if (!proj) return showToast("No active project.", "error");
             if (!proj.file) return showToast("Please load a video first.", "error");
-            window._isSavingForRender = true;
             saveCurrentProjectState();
-            window._isSavingForRender = false;
             const finalFileName = document.getElementById("render-filename-input")?.value.trim();
             if (!finalFileName) return showToast("Filename cannot be empty.", "error");
             const _isAudioQueue = window._renderMode === "audio";
@@ -26409,9 +24643,7 @@
           btnAllToQueue.addEventListener("click", () => {
             if (projects.length === 0) return showToast("No projects loaded.", "error");
 
-            window._isSavingForRender = true;
             saveCurrentProjectState();
-            window._isSavingForRender = false;
 
             let addedCount = 0;
             let skippedCount = 0;
@@ -27176,44 +25408,6 @@
               queueConfig.audioTracks = patchedQueueTracks;
 
               formData.append("data", JSON.stringify(queueConfig));
-              const queueOverlayBlobs = await Promise.all(
-                (item.imageOverlays || []).map(async (img) => {
-                  const actualFile = (img.file instanceof File) ? img.file : ((img._file instanceof File) ? img._file : null);
-                  if (actualFile) return actualFile;
-                  const src = img.blobUrl || (img.dataUrl ? img.dataUrl : null);
-                  if (!src) return null;
-                  try {
-                    const r = await fetch(src);
-                    return await r.blob();
-                  } catch {
-                    return null;
-                  }
-                }),
-              );
-              queueOverlayBlobs.forEach((blob, idx) => {
-                if (blob) formData.append("overlayImages", blob, `overlay_${idx}.png`);
-              });
-
-              const queueVideoOverlayBlobs = await Promise.all(
-                (item.videoOverlays || []).map(async (v) => {
-                  const localPath = v.videoPath || v.filePath || (v.file && v.file.path ? v.file.path : (v._file && v._file.path ? v._file.path : null));
-                  if (localPath) return null; // Server reads directly from local file path
-                  const actualFile = (v.file instanceof File) ? v.file : ((v._file instanceof File) ? v._file : null);
-                  if (actualFile) return actualFile;
-                  if (!v.blobUrl || v.blobUrl.startsWith("file:")) return null;
-                  const src = v.blobUrl || null;
-                  if (!src) return null;
-                  try {
-                    const r = await fetch(src);
-                    return await r.blob();
-                  } catch {
-                    return null;
-                  }
-                }),
-              );
-              queueVideoOverlayBlobs.forEach((blob, idx) => {
-                if (blob) formData.append("overlayVideos", blob, `overvid_${idx}.mp4`);
-              });
 
               // Per-item abort controller
               const abortCtrl = new AbortController();
@@ -27300,9 +25494,7 @@
         // files) - a tab opened for something else is never exported as part of the series.
         // exportDir: the series' own export folder (made when the first video is written there).
         const queueAllTabsForSeries = (tag = null, onlyPaths = null, exportDir = null) => {
-          window._isSavingForRender = true;
           saveCurrentProjectState();
-          window._isSavingForRender = false;
           const items = new Set();
           projects.forEach((proj) => {
             if (!proj.file) return;
@@ -27373,9 +25565,7 @@
         // it is now, so a fix made after the failure (a voice generated again, BGM isolated again)
         // is what gets rendered - not the snapshot taken before it.
         const refreshSeriesItems = (items) => {
-          window._isSavingForRender = true;
           saveCurrentProjectState();
-          window._isSavingForRender = false;
           let refreshed = 0;
           items.forEach((item) => {
             if (item.status !== "error" && item.status !== "cancelled") return;
@@ -27972,7 +26162,7 @@
 
     // --- WORKSPACE TOOLBAR CONTROLLER ---
     const updateWorkspaceToolbar = (hasVideo) => {
-      const tools = ["btn-flip-h", "btn-flip-v", "btn-crop-mode", "btn-reset-crop", "btn-add-free-text", "btn-add-image", "btn-add-video-overlay", "btn-add-blur", "btn-apply-blur-all", "btn-color-adjust", "btn-vignette", "btn-video-preset", "btn-aspect-ratio"];
+      const tools = ["btn-flip-h", "btn-flip-v", "btn-crop-mode", "btn-reset-crop", "btn-add-free-text", "btn-add-blur", "btn-apply-blur-all", "btn-color-adjust", "btn-vignette", "btn-video-preset", "btn-aspect-ratio"];
 
       tools.forEach((id) => {
         const btn = document.getElementById(id);
@@ -28228,8 +26418,6 @@
         pastStates = [];
         freeTexts = [];
         detachedAudios = [];
-        window.imageOverlays = [];
-        window.videoOverlays = [];
         blurBoxes = [];
         selectedItems = [];
         duration = 0;
@@ -28303,10 +26491,6 @@
         // Clear blur boxes from canvas
         BlurSettings.save(blurBoxes);
         if (typeof renderBlurBoxes === "function") renderBlurBoxes();
-
-        // Reset overlay UI
-        const imgContainer = document.getElementById("image-overlay-container");
-        if (imgContainer) imgContainer.innerHTML = "";
 
         // Reset all button states
         if (typeof updateTranscribeButtonState === "function") updateTranscribeButtonState();
@@ -28385,1198 +26569,6 @@
       }, 12000);
     }
 
-    // --- ADD IMAGE OVERLAY LOGIC (WITH FFmpeg TRACKING) ---
-    const btnAddImage = document.getElementById("btn-add-image");
-    const imageUploadInput = document.getElementById("image-upload-input");
-    const imageOverlayContainer = document.getElementById("image-overlay-container");
-
-    // We now store the actual File objects so we can send them to the backend!
-    window.imageOverlays = [];
-    window.videoOverlays = [];
-
-    let activeImageItem = null;
-    let imgDragState = {
-      isDragging: false,
-      isResizing: false,
-      dir: "",
-      startX: 0,
-      startY: 0,
-      startLeft: 0,
-      startTop: 0,
-      startWidth: 0,
-      startHeight: 0,
-    };
-
-    if (btnAddImage && imageUploadInput) {
-      btnAddImage.addEventListener("click", async () => {
-        if (!mainVideo.src) return showToast("Please load a video first.", "error");
-
-        const lastPath = localStorage.getItem("lastImageDir") || localStorage.getItem("lastVideoDir") || "";
-
-        // 1. CALL THE MULTI-FILE API INSTEAD OF THE SINGLE FILE API
-        if (window.electronAPI && window.electronAPI.openMultiFile) {
-          const result = await window.electronAPI.openMultiFile({
-            defaultPath: lastPath,
-            filters: [
-              {
-                name: "Image Files",
-                extensions: ["png", "jpg", "jpeg", "webp", "gif"],
-              },
-            ],
-          });
-
-          // 2. Check if files array exists and is not empty
-          if (!result || result.canceled || !result.files || result.files.length === 0) return;
-
-          localStorage.setItem("lastImageDir", result.dirPath);
-
-          const dt = new DataTransfer();
-
-          // 3. LOOP THROUGH ALL RETURNED FILES
-          for (const fileData of result.files) {
-            const response = await fetch(fileData.fileUrl);
-            const blob = await response.blob();
-            const file = new File([blob], fileData.fileName, {
-              type: blob.type,
-            });
-            dt.items.add(file);
-          }
-
-          // 4. Inject all files into the hidden input
-          imageUploadInput.files = dt.files;
-
-          // 5. Trigger the existing change listener (which already has a loop to handle multiple files!)
-          imageUploadInput.dispatchEvent(new Event("change"));
-        } else {
-          imageUploadInput.click();
-        }
-      });
-
-      imageUploadInput.addEventListener("change", (e) => {
-        const files = e.target.files;
-        if (!files) return;
-
-        Array.from(files).forEach((file) => {
-          if (file.size > 10485760) return showToast(`Image "${file.name}" is too large! Max 10MB.`, "error");
-
-          const url = URL.createObjectURL(file);
-          const id = crypto.randomUUID();
-          window.imageOverlays.push({
-            id,
-            file,
-            filePath: file.path || window.electronAPI?.getPathForFile?.(file) || null,
-            blobUrl: url,
-            x: 35,
-            y: 35,
-            w: 30,
-            h: 30,
-            opacity: 100,
-            radius: 0,
-            motion: "none",
-            speed: 2,
-            idleStyle: "none",
-            idleStrength: 5,
-          });
-          createImageOverlay(url, id, true);
-        });
-        imageUploadInput.value = "";
-      });
-    }
-
-    function updateImageState(id, wrapper) {
-      const item = window.imageOverlays.find((img) => img.id === id);
-      if (item) {
-        item.x = parseFloat(wrapper.style.left) || 0;
-        item.y = parseFloat(wrapper.style.top) || 0;
-        item.w = parseFloat(wrapper.style.width) || 0;
-        item.h = parseFloat(wrapper.style.height) || 0;
-      }
-    }
-
-    // ════════════════════════════════════════════════════
-    //  VIDEO OVERLAY ENGINE
-    // ════════════════════════════════════════════════════
-    const btnAddVideoOverlay = document.getElementById("btn-add-video-overlay");
-    const videoOverlayInput = document.getElementById("video-overlay-input");
-    const videoOverlayContainer = document.getElementById("video-overlay-container");
-
-    window.videoOverlays = [];
-    let activeVideoItem = null;
-    let vidDragState = {
-      isDragging: false,
-      isResizing: false,
-      dir: "",
-      startX: 0,
-      startY: 0,
-      startLeft: 0,
-      startTop: 0,
-      startWidth: 0,
-      startHeight: 0,
-      parentW: 1, // cached container width
-      parentH: 1, // cached container height
-      rafId: null, // rAF handle
-    };
-
-    if (btnAddVideoOverlay && videoOverlayInput) {
-      btnAddVideoOverlay.addEventListener("click", async () => {
-        if (!mainVideo.src) return showToast("Please load a video first.", "error");
-        const lastPath = localStorage.getItem("lastVideoDir") || "";
-
-        if (window.electronAPI && window.electronAPI.openMultiFile) {
-          const result = await window.electronAPI.openMultiFile({
-            defaultPath: lastPath,
-            filters: [
-              {
-                name: "Video Files",
-                extensions: ["mp4", "webm", "mov", "ts"],
-              },
-            ],
-          });
-          if (!result || result.canceled || !result.files || result.files.length === 0) return;
-          localStorage.setItem("lastVideoDir", result.dirPath);
-
-          // Skip heavy RAM conversion, inject the absolute paths immediately!
-          for (const fileData of result.files) {
-            const url = fileData.fileUrl;
-            const id = crypto.randomUUID();
-            window.videoOverlays.push({
-              id,
-              file: null,
-              blobUrl: url,
-              videoPath: fileData.filePath,
-              x: 30,
-              y: 30,
-              w: 40,
-              h: 35,
-              opacity: 100,
-              radius: 0,
-              loop: true,
-            });
-            createVideoOverlay(url, id, true);
-          }
-        } else {
-          videoOverlayInput.click();
-        }
-      });
-
-      videoOverlayInput.addEventListener("change", (e) => {
-        const files = e.target.files;
-        if (!files) return;
-        Array.from(files).forEach((file) => {
-          if (file.size > 104857600) return showToast(`Video "${file.name}" is too large! Max 100MB.`, "error");
-          const url = URL.createObjectURL(file);
-          const id = crypto.randomUUID();
-          window.videoOverlays.push({
-            id,
-            file,
-            blobUrl: url,
-            videoPath: file.path || file.name, // Electron automatically injects absolute .path natively
-            x: 30,
-            y: 30,
-            w: 40,
-            h: 35,
-            opacity: 100,
-            radius: 0,
-            loop: true,
-          });
-          createVideoOverlay(url, id, true);
-        });
-        videoOverlayInput.value = "";
-      });
-    }
-
-    // ── Overlay boxes (image + video): resize handles and resize math ──
-    // The box keeps the media's own shape and the media fills it (cover, as in
-    // the render), so the corner handles only scale it: nothing is stretched.
-    // Each handle has a 22px grab area (shell.css).
-    const OVERLAY_HANDLE_DIRS = ["nw", "ne", "se", "sw"];
-    function addOverlayHandles(wrapper, kindClass, onStart) {
-      OVERLAY_HANDLE_DIRS.forEach((dir) => {
-        const h = document.createElement("div");
-        h.className = `${kindClass} ov-handle ov-handle--${dir} hidden`;
-        h.dataset.dir = dir;
-        h.addEventListener("mousedown", (e) => {
-          e.stopPropagation();
-          onStart(dir, e);
-        });
-        wrapper.appendChild(h);
-      });
-    }
-
-    // New left/top/width/height (in % of the container) for a corner drag.
-    // st: { dir, startX, startY, startLeft, startTop, startWidth, startHeight }.
-    // The box scales with its shape kept, anchored at the opposite corner, and
-    // stops at the container's edges instead of refusing the move.
-    function resizeOverlayBox(st, e, parentW, parentH) {
-      const MIN_PX = 16;
-      const dir = st.dir;
-      const hasW = dir.includes("w"), hasN = dir.includes("n");
-      const l = (st.startLeft / 100) * parentW, t = (st.startTop / 100) * parentH;
-      const w = (st.startWidth / 100) * parentW, h = (st.startHeight / 100) * parentH;
-      const right = l + w, bottom = t + h;
-      const maxW = hasW ? right : parentW - l;
-      const maxH = hasN ? bottom : parentH - t;
-      const dx = e.clientX - st.startX, dy = e.clientY - st.startY;
-      let nw = w, nh = h;
-      if (w > 0 && h > 0) {
-        // Scale by whichever axis moved more, then fit inside the container.
-        const sw = (hasW ? w - dx : w + dx) / w, sh = (hasN ? h - dy : h + dy) / h;
-        let scale = Math.abs(sw - 1) > Math.abs(sh - 1) ? sw : sh;
-        scale = Math.max(scale, MIN_PX / w, MIN_PX / h);
-        scale = Math.min(scale, maxW / w, maxH / h);
-        nw = w * scale;
-        nh = h * scale;
-      }
-      const nl = hasW ? right - nw : l;
-      const nt = hasN ? bottom - nh : t;
-      return { left: (nl / parentW) * 100, top: (nt / parentH) * 100, width: (nw / parentW) * 100, height: (nh / parentH) * 100 };
-    }
-
-    // Give a newly added overlay box the media's own shape (same width, height
-    // from the aspect ratio), kept inside the container and centred where it
-    // was, so the media fills it without being cropped or stretched.
-    function fitOverlayBoxToMedia(wrapper, container, mediaW, mediaH) {
-      const rect = container.getBoundingClientRect();
-      if (!mediaW || !mediaH || !rect.width || !rect.height) return false;
-      const ratio = mediaW / mediaH;
-      let wPx = (parseFloat(wrapper.style.width) / 100) * rect.width;
-      let hPx = wPx / ratio;
-      const maxH = rect.height * 0.6;
-      if (hPx > maxH) {
-        hPx = maxH;
-        wPx = hPx * ratio;
-      }
-      const cx = ((parseFloat(wrapper.style.left) + parseFloat(wrapper.style.width) / 2) / 100) * rect.width;
-      const cy = ((parseFloat(wrapper.style.top) + parseFloat(wrapper.style.height) / 2) / 100) * rect.height;
-      const left = Math.min(Math.max(cx - wPx / 2, 0), rect.width - wPx);
-      const top = Math.min(Math.max(cy - hPx / 2, 0), rect.height - hPx);
-      wrapper.style.left = `${(left / rect.width) * 100}%`;
-      wrapper.style.top = `${(top / rect.height) * 100}%`;
-      wrapper.style.width = `${(wPx / rect.width) * 100}%`;
-      wrapper.style.height = `${(hPx / rect.height) * 100}%`;
-      return true;
-    }
-
-    // Delete / apply-to-all buttons sit in a small bar outside the box, so
-    // they never cover the media or the corner handles.
-    function addOverlayActions(wrapper, ...buttons) {
-      const bar = document.createElement("div");
-      bar.className = "ov-actions";
-      buttons.forEach((b) => bar.appendChild(b));
-      wrapper.appendChild(bar);
-    }
-
-    // The overlay container clips at the picture's edges, so the bar goes
-    // above the box when there is room, else below, else inside the top; and
-    // it slides sideways to stay within the picture.
-    function placeOverlayActions(wrapper) {
-      const bar = wrapper && wrapper.querySelector(".ov-actions");
-      const container = wrapper && wrapper.parentElement;
-      if (!bar || !container) return;
-      const GAP = 8;
-      const c = container.getBoundingClientRect();
-      const w = wrapper.getBoundingClientRect();
-      const barH = bar.offsetHeight || 26;
-      const barW = bar.offsetWidth || 56;
-      const side = w.top - c.top >= barH + GAP + 4 ? "above" : c.bottom - w.bottom >= barH + GAP + 4 ? "below" : "inside";
-      bar.classList.toggle("ov-actions--above", side === "above");
-      bar.classList.toggle("ov-actions--below", side === "below");
-      bar.classList.toggle("ov-actions--inside", side === "inside");
-      const centred = w.width / 2 - barW / 2;
-      const minX = c.left + 4 - w.left;
-      const maxX = c.right - 4 - barW - w.left;
-      bar.style.left = `${Math.max(minX, Math.min(maxX, centred))}px`;
-    }
-
-    function createVideoOverlay(src, id, autoSelect = false) {
-      const wrapper = document.createElement("div");
-      wrapper.className = "absolute pointer-events-auto cursor-move video-overlay-item";
-      wrapper.dataset.id = id;
-      wrapper.style.left = "30%";
-      wrapper.style.top = "30%";
-      wrapper.style.width = "40%";
-      wrapper.style.height = "35%";
-      const clipDiv = document.createElement("div");
-      clipDiv.className = "vid-clip-inner absolute inset-0 overflow-hidden w-full h-full";
-      clipDiv.style.borderRadius = "inherit";
-
-      const vid = document.createElement("video");
-      vid.src = src;
-      vid.className = "w-full h-full object-cover pointer-events-none";
-      if (autoSelect) {
-        vid.addEventListener(
-          "loadedmetadata",
-          () => {
-            if (fitOverlayBoxToMedia(wrapper, videoOverlayContainer, vid.videoWidth, vid.videoHeight)) {
-              updateVideoOverlayState(id, wrapper);
-              placeOverlayActions(wrapper);
-            }
-          },
-          { once: true },
-        );
-      }
-      vid.autoplay = true;
-      vid.loop = true;
-      vid.muted = true;
-      vid.playsInline = true;
-      // Belt-and-suspenders: force restart on ended in case loop attr is ignored
-      vid.addEventListener("ended", () => {
-        vid.currentTime = 0;
-        vid.play();
-      });
-      clipDiv.appendChild(vid);
-      wrapper.appendChild(clipDiv);
-
-      // ── Center play/pause + restart controls ──
-      const ctrlBar = document.createElement("div");
-      ctrlBar.className = "vid-ctrl-bar absolute inset-0 flex items-center justify-center gap-2 hidden pointer-events-none";
-      ctrlBar.style.background = "rgba(0,0,0,0.35)";
-
-      const playBtn = document.createElement("button");
-      playBtn.className = "pointer-events-auto w-8 h-8 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/40 border border-white/40 transition-all backdrop-blur-sm vid-play-btn";
-      playBtn.innerHTML = `<i data-lucide="pause" class="w-4 h-4 text-white vid-play-icon"></i>`;
-      playBtn.title = "Play / Pause";
-      playBtn.onclick = (e) => {
-        e.stopPropagation();
-        const icon = playBtn.querySelector(".vid-play-icon");
-        if (vid.paused) {
-          vid.play();
-          if (icon) {
-            icon.setAttribute("data-lucide", "pause");
-            _lucideCreateIcons({ root: playBtn });
-          }
-        } else {
-          vid.pause();
-          if (icon) {
-            icon.setAttribute("data-lucide", "play");
-            _lucideCreateIcons({ root: playBtn });
-          }
-        }
-        const item = window.videoOverlays.find((v) => v.id === id);
-        if (item) item._paused = vid.paused;
-      };
-
-      const rstBtn = document.createElement("button");
-      rstBtn.className = "pointer-events-auto w-8 h-8 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/40 border border-white/40 transition-all backdrop-blur-sm";
-      rstBtn.innerHTML = `<i data-lucide="rotate-ccw" class="w-4 h-4 text-white"></i>`;
-      rstBtn.title = "Restart";
-      rstBtn.onclick = (e) => {
-        e.stopPropagation();
-        vid.currentTime = 0;
-        vid.play();
-        const icon = playBtn.querySelector(".vid-play-icon");
-        if (icon) {
-          icon.setAttribute("data-lucide", "pause");
-          _lucideCreateIcons({ root: playBtn });
-        }
-        const item = window.videoOverlays.find((v) => v.id === id);
-        if (item) item._paused = false;
-      };
-
-      ctrlBar.appendChild(playBtn);
-      ctrlBar.appendChild(rstBtn);
-      clipDiv.appendChild(ctrlBar);
-
-      // ── Resize handles ──
-      addOverlayHandles(wrapper, "vid-handle", (dir, e) => {
-        selectVideoItem(wrapper);
-        vidDragState.isResizing = true;
-        const pr = videoOverlayContainer.getBoundingClientRect();
-        vidDragState.parentW = pr.width;
-        vidDragState.parentH = pr.height;
-        vidDragState.dir = dir;
-        vidDragState.startX = e.clientX;
-        vidDragState.startY = e.clientY;
-        vidDragState.startLeft = parseFloat(wrapper.style.left) || 0;
-        vidDragState.startTop = parseFloat(wrapper.style.top) || 0;
-        vidDragState.startWidth = parseFloat(wrapper.style.width) || 0;
-        vidDragState.startHeight = parseFloat(wrapper.style.height) || 0;
-      });
-
-      // ── Delete button ──
-      const delBtn = document.createElement("button");
-      delBtn.innerHTML = `<i data-lucide="x" class="w-3.5 h-3.5 text-white"></i>`;
-      delBtn.className = "bg-red-500 rounded-full p-1 hidden delete-vid-btn shadow-lg hover:scale-110 transition-transform";
-      delBtn.title = "Delete Overlay";
-      delBtn.onclick = (e) => {
-        e.stopPropagation();
-        vid.pause();
-        vid.src = "";
-        wrapper.remove();
-        window.videoOverlays = window.videoOverlays.filter((v) => v.id !== id);
-        activeVideoItem = null;
-        const menu = document.getElementById("vid-context-menu");
-        if (menu) menu.classList.add("hidden");
-      };
-
-      // ── Apply All button ──
-      const applyAllBtn = document.createElement("button");
-      applyAllBtn.innerHTML = `<i data-lucide="layers" class="w-3.5 h-3.5 text-white"></i>`;
-      applyAllBtn.className = "bg-amber-500 hover:bg-amber-400 rounded-full p-1 hidden apply-all-vid-btn shadow-lg hover:scale-110 active:scale-95 transition-transform";
-      applyAllBtn.title = "Apply all video overlays to all project tabs";
-      applyAllBtn.onclick = (e) => {
-        e.stopPropagation();
-        applyVideoOverlaysToAllProjects(applyAllBtn);
-      };
-      addOverlayActions(wrapper, applyAllBtn, delBtn);
-
-      // ── Drag ──
-      wrapper.addEventListener("mousedown", (e) => {
-        // THE FIX: Allow dragging on the darkened overlay, just ignore the buttons!
-        if (e.target.closest("button")) return;
-        if (e.target.closest(".vid-handle")) return; // handles have their own listener
-        e.stopPropagation();
-        e.preventDefault();
-        if (activeVideoItem !== wrapper) selectVideoItem(wrapper);
-        vidDragState.isDragging = true;
-        const pr = videoOverlayContainer.getBoundingClientRect();
-        vidDragState.parentW = pr.width;
-        vidDragState.parentH = pr.height;
-        vidDragState.isResizing = false;
-        vidDragState.startX = e.clientX;
-        vidDragState.startY = e.clientY;
-        vidDragState.startLeft = parseFloat(wrapper.style.left) || 0;
-        vidDragState.startTop = parseFloat(wrapper.style.top) || 0;
-      });
-
-      // ── Right-click context menu ──
-      wrapper.addEventListener("contextmenu", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        selectVideoItem(wrapper);
-        const menu = document.getElementById("vid-context-menu");
-        if (!menu) return;
-        const item = window.videoOverlays.find((v) => v.id === id);
-        if (item) {
-          const opSlider = document.getElementById("ctx-vid-opacity");
-          const opLabel = document.getElementById("lbl-vid-opacity");
-          const radSlider = document.getElementById("ctx-vid-radius");
-          const radLabel = document.getElementById("lbl-vid-radius");
-          if (opSlider) opSlider.value = item.opacity ?? 100;
-          if (opLabel) opLabel.textContent = `${item.opacity ?? 100}%`;
-          if (radSlider) radSlider.value = item.radius ?? 0;
-          if (radLabel) radLabel.textContent = `${item.radius ?? 0}px`;
-          fillOverlayTimeInputs("vid", item);
-        }
-        smartPosition(menu, e.pageX, e.pageY);
-        menu.classList.remove("hidden");
-        _lucideCreateIcons({ root: menu });
-      });
-
-      wrapper.style.zIndex = 110 + window.videoOverlays.length;
-      videoOverlayContainer.appendChild(wrapper);
-      _lucideCreateIcons({ root: wrapper });
-      if (autoSelect) selectVideoItem(wrapper);
-    }
-
-    function selectVideoItem(targetWrapper) {
-      document.querySelectorAll(".video-overlay-item").forEach((el) => {
-        el.style.outline = "none";
-        el.querySelectorAll(".vid-handle, .delete-vid-btn, .apply-all-vid-btn").forEach((h) => (h.style.display = "none"));
-        const bar = el.querySelector(".vid-ctrl-bar");
-        if (bar) {
-          bar.classList.add("hidden");
-          bar.style.pointerEvents = "none";
-        }
-      });
-      activeVideoItem = targetWrapper;
-      if (targetWrapper) {
-        targetWrapper.style.outline = "2px dashed #38bdf8";
-        targetWrapper.querySelectorAll(".vid-handle, .delete-vid-btn, .apply-all-vid-btn").forEach((h) => (h.style.display = "block"));
-        placeOverlayActions(targetWrapper);
-        const bar = targetWrapper.querySelector(".vid-ctrl-bar");
-        if (bar) {
-          bar.classList.remove("hidden");
-          bar.style.pointerEvents = "auto";
-        }
-      }
-    }
-
-    // Deselect on outside click
-    document.addEventListener("mouseup", (e) => {
-      if (!e.target.closest(".video-overlay-item") && !e.target.closest("#btn-add-video-overlay") && !e.target.closest("#vid-context-menu")) {
-        selectVideoItem(null);
-      }
-    });
-
-    // Drag / Resize mousemove — Direct DOM update for instant 60FPS smoothness
-    window.addEventListener("mousemove", (e) => {
-      if (!activeVideoItem || (!vidDragState.isDragging && !vidDragState.isResizing)) return;
-
-      const dxPct = ((e.clientX - vidDragState.startX) / vidDragState.parentW) * 100;
-      const dyPct = ((e.clientY - vidDragState.startY) / vidDragState.parentH) * 100;
-
-      if (vidDragState.isDragging) {
-        const newL = Math.max(0, Math.min(100 - parseFloat(activeVideoItem.style.width), vidDragState.startLeft + dxPct));
-        const newT = Math.max(0, Math.min(100 - parseFloat(activeVideoItem.style.height), vidDragState.startTop + dyPct));
-        activeVideoItem.style.left = `${newL}%`;
-        activeVideoItem.style.top = `${newT}%`;
-      } else if (vidDragState.isResizing) {
-        const box = resizeOverlayBox(vidDragState, e, vidDragState.parentW, vidDragState.parentH);
-        activeVideoItem.style.left = `${box.left}%`;
-        activeVideoItem.style.top = `${box.top}%`;
-        activeVideoItem.style.width = `${box.width}%`;
-        activeVideoItem.style.height = `${box.height}%`;
-      }
-      placeOverlayActions(activeVideoItem);
-    });
-
-    window.addEventListener("mouseup", () => {
-      if ((vidDragState.isDragging || vidDragState.isResizing) && activeVideoItem) {
-        updateVideoOverlayState(activeVideoItem.dataset.id, activeVideoItem);
-      }
-      vidDragState.isDragging = false;
-      vidDragState.isResizing = false;
-    });
-
-    function updateVideoOverlayState(id, wrapper) {
-      const item = window.videoOverlays.find((v) => v.id === id);
-      if (item) {
-        item.x = parseFloat(wrapper.style.left) || 0;
-        item.y = parseFloat(wrapper.style.top) || 0;
-        item.w = parseFloat(wrapper.style.width) || 0;
-        item.h = parseFloat(wrapper.style.height) || 0;
-      }
-    }
-
-    // ── Video overlay context menu: opacity + radius sliders ──
-    const vidOpacitySlider = document.getElementById("ctx-vid-opacity");
-    const vidRadiusSlider = document.getElementById("ctx-vid-radius");
-
-    if (vidOpacitySlider) {
-      vidOpacitySlider.addEventListener("input", (e) => {
-        if (!activeVideoItem) return;
-        const val = parseInt(e.target.value, 10);
-        document.getElementById("lbl-vid-opacity").textContent = `${val}%`;
-        const vidEl = activeVideoItem.querySelector("video");
-        if (vidEl) vidEl.style.opacity = val / 100;
-        const item = window.videoOverlays.find((v) => v.id === activeVideoItem.dataset.id);
-        if (item) item.opacity = val;
-      });
-    }
-
-    if (vidRadiusSlider) {
-      vidRadiusSlider.addEventListener("input", (e) => {
-        if (!activeVideoItem) return;
-        const val = parseInt(e.target.value, 10);
-        document.getElementById("lbl-vid-radius").textContent = `${val}px`;
-        // Apply radius to wrapper (overflow:hidden clips the video)
-        activeVideoItem.style.borderRadius = `${val * previewCanvasScale()}px`;
-        const item = window.videoOverlays.find((v) => v.id === activeVideoItem.dataset.id);
-        if (item) item.radius = val;
-      });
-    }
-
-    // Hide vid context menu on outside click
-    window.addEventListener("mousedown", (e) => {
-      if (!e.target.closest("#vid-context-menu") && !e.target.closest(".video-overlay-item")) {
-        document.getElementById("vid-context-menu")?.classList.add("hidden");
-      }
-    });
-
-    function renderVideoOverlaysFromState() {
-      const container = document.getElementById("video-overlay-container");
-      if (!container) return;
-      // innerHTML = "" detaches the elements but does NOT stop their decoders
-      // or network activity, so every tab switch used to orphan a live video
-      // decoder per overlay. Explicitly stop them first.
-      container.querySelectorAll("video").forEach((v) => {
-        try {
-          v.pause();
-          v.removeAttribute("src");
-          v.load();
-        } catch (e) { }
-      });
-      container.innerHTML = "";
-      (window.videoOverlays || []).forEach((item) => {
-        let url = item.blobUrl || (item.file ? URL.createObjectURL(item.file) : null);
-        // A file:// URL kept from an older session would no longer load.
-        if (url && /^file:/i.test(url)) url = diskPathToMediaUrl(url);
-
-        // Restore from full disk path if loaded from Preset: stream it through
-        // the backend (file:// is blocked); blob: and http(s) URLs are kept.
-        if (!url && item.videoPath) {
-          url = diskPathToMediaUrl(item.videoPath);
-        }
-
-        if (!url) return;
-        item.blobUrl = url;
-        createVideoOverlay(url, item.id);
-        const wrapper = container.querySelector(`[data-id="${item.id}"]`);
-        if (wrapper) {
-          wrapper.style.left = `${item.x}%`;
-          wrapper.style.top = `${item.y}%`;
-          wrapper.style.width = `${item.w}%`;
-          wrapper.style.height = `${item.h}%`;
-          if (item.radius) wrapper.style.borderRadius = `${item.radius * previewCanvasScale()}px`;
-          const vidEl = wrapper.querySelector("video");
-          if (vidEl) {
-            vidEl.style.opacity = (item.opacity ?? 100) / 100;
-            if (item._paused === false) {
-              // Was playing — resume after metadata is ready
-              if (vidEl.readyState >= 2) {
-                vidEl.play().catch(() => { });
-              } else {
-                vidEl.addEventListener(
-                  "loadeddata",
-                  () => {
-                    vidEl.play().catch(() => { });
-                  },
-                  { once: true },
-                );
-              }
-            } else {
-              vidEl.pause();
-              const icon = wrapper.querySelector(".vid-play-icon");
-              if (icon) {
-                icon.setAttribute("data-lucide", "play");
-                _lucideCreateIcons({ root: wrapper });
-              }
-            }
-          }
-        }
-
-        // ── Restore chroma key settings from saved state ──
-        if (item.chromaKey && item.chromaKey.enabled) {
-          if (window.chromaSettings) window.chromaSettings[item.id] = { ...item.chromaKey };
-          const vidEl = wrapper ? wrapper.querySelector("video") : null;
-          if (vidEl && typeof window.applyLiveChromaToOverlay === "function") {
-            // Pre-hide video immediately — prevents flash of original before canvas starts
-            vidEl.style.opacity = "0";
-            vidEl.style.position = "absolute";
-            // Pre-create the canvas placeholder so there's no layout jump
-            let liveCanvas = wrapper.querySelector(".chroma-live-canvas");
-            if (!liveCanvas) {
-              liveCanvas = document.createElement("canvas");
-              liveCanvas.className = "chroma-live-canvas";
-              liveCanvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none;";
-              wrapper.appendChild(liveCanvas);
-            }
-            if (vidEl.readyState >= 2) {
-              window.applyLiveChromaToOverlay(item.id);
-            } else {
-              vidEl.addEventListener(
-                "loadeddata",
-                () => {
-                  if (window.chromaSettings && window.chromaSettings[item.id]?.enabled) {
-                    window.applyLiveChromaToOverlay(item.id);
-                  }
-                },
-                { once: true },
-              );
-            }
-          }
-        }
-      });
-      applyOverlayTimePreview();
-    }
-
-    // --- APPLY ALL VIDEO OVERLAYS TO ALL PROJECTS ---
-    function applyVideoOverlaysToAllProjects(triggerBtn = null) {
-      if (!projects || projects.length === 0) return showToast("No project tabs open.", "error");
-
-      // Sync active DOM geometry (x, y, w, h) into window.videoOverlays
-      document.querySelectorAll(".video-overlay-item").forEach((wrapper) => {
-        const id = wrapper.dataset.id;
-        const item = window.videoOverlays.find((v) => v.id === id);
-        if (item) {
-          item.x = parseFloat(wrapper.style.left) || 0;
-          item.y = parseFloat(wrapper.style.top) || 0;
-          item.w = parseFloat(wrapper.style.width) || 0;
-          item.h = parseFloat(wrapper.style.height) || 0;
-        }
-      });
-
-      if (!window.videoOverlays || window.videoOverlays.length === 0) {
-        return showToast("No video overlays to apply.", "error");
-      }
-
-      // Snapshot all current video overlays
-      const snapshot = window.videoOverlays.map((vid) => {
-        let blobUrl = vid.blobUrl;
-        if (!blobUrl && vid.file) {
-          try {
-            blobUrl = URL.createObjectURL(vid.file);
-          } catch (e) {
-            console.warn("Could not create object URL for video overlay:", e);
-          }
-        }
-        return {
-          ...vid,
-          blobUrl,
-          file: vid.file || null,
-          videoPath: vid.videoPath || (vid.file && vid.file.path ? vid.file.path : null),
-          chromaKey: vid.chromaKey ? { ...vid.chromaKey } : (window.chromaSettings && window.chromaSettings[vid.id] ? { ...window.chromaSettings[vid.id] } : null),
-        };
-      });
-
-      // Stamp across every project tab
-      projects.forEach((proj, idx) => {
-        proj.videoOverlays = snapshot.map((vid) => {
-          const newId = idx === activeProjectIndex ? vid.id : crypto.randomUUID();
-          return {
-            ...vid,
-            id: newId,
-            chromaKey: vid.chromaKey ? { ...vid.chromaKey } : null,
-          };
-        });
-      });
-
-      if (projects[activeProjectIndex]) {
-        projects[activeProjectIndex].videoOverlays = (window.videoOverlays || []).map((v) => ({ ...v }));
-      }
-      if (typeof saveCurrentProjectState === "function") saveCurrentProjectState();
-
-      const count = projects.length;
-      showToast(`Video overlay${snapshot.length > 1 ? "s" : ""} applied to all ${count} tab${count !== 1 ? "s" : ""}!`, "success");
-
-      // Flash feedback on context menu button
-      const ctxBtn = document.getElementById("btn-vid-apply-all");
-      if (ctxBtn) {
-        const originalHTML = ctxBtn.innerHTML;
-        ctxBtn.innerHTML = `
-          <span class="flex items-center gap-1.5 text-emerald-400 font-semibold">
-            <i data-lucide="check" class="w-3.5 h-3.5"></i> Applied!
-          </span>
-          <span class="text-[10px] text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded font-mono">Done</span>
-        `;
-        if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: ctxBtn });
-        setTimeout(() => {
-          ctxBtn.innerHTML = originalHTML;
-          if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: ctxBtn });
-        }, 1500);
-      }
-
-      // Flash feedback on trigger button (e.g. on overlay item)
-      if (triggerBtn && triggerBtn !== ctxBtn) {
-        triggerBtn.innerHTML = `<i data-lucide="check" class="w-3.5 h-3.5 text-white"></i>`;
-        triggerBtn.classList.remove("bg-amber-500", "hover:bg-amber-400");
-        triggerBtn.classList.add("bg-emerald-500");
-        if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: triggerBtn });
-        setTimeout(() => {
-          triggerBtn.innerHTML = `<i data-lucide="layers" class="w-3.5 h-3.5 text-white"></i>`;
-          triggerBtn.classList.remove("bg-emerald-500");
-          triggerBtn.classList.add("bg-amber-500", "hover:bg-amber-400");
-          if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: triggerBtn });
-        }, 1500);
-      }
-    }
-    window.applyVideoOverlaysToAllProjects = applyVideoOverlaysToAllProjects;
-
-    const btnVidApplyAll = document.getElementById("btn-vid-apply-all");
-    if (btnVidApplyAll) {
-      btnVidApplyAll.addEventListener("click", (e) => {
-        e.stopPropagation();
-        applyVideoOverlaysToAllProjects(btnVidApplyAll);
-      });
-    }
-
-    function renderImageOverlaysFromState() {
-      const container = document.getElementById("image-overlay-container");
-      if (!container) return;
-      container.innerHTML = ""; // clear old DOM
-      (window.imageOverlays || []).forEach((item) => {
-        const url = item.blobUrl || (item.file ? URL.createObjectURL(item.file) : null);
-        if (!url) return;
-        item.blobUrl = url; // cache it so we don't keep creating new blobs
-        createImageOverlay(url, item.id);
-        // Restore position/size after DOM element is created
-        const wrapper = container.querySelector(`[data-id="${item.id}"]`);
-        if (wrapper) {
-          const isAnimated = item.motion && item.motion !== "none";
-          const renderX = isAnimated && item._mx !== undefined ? item._mx : item.x;
-          const renderY = isAnimated && item._my !== undefined ? item._my : item.y;
-
-          wrapper.style.left = `${renderX}%`;
-          wrapper.style.top = `${renderY}%`;
-          wrapper.style.width = `${item.w}%`;
-          wrapper.style.height = `${item.h}%`;
-          const imgEl = wrapper.querySelector("img");
-          if (imgEl) {
-            imgEl.style.opacity = (item.opacity ?? 100) / 100;
-            imgEl.style.borderRadius = `${(item.radius ?? 0) * previewCanvasScale()}px`;
-          }
-        }
-      });
-      applyOverlayTimePreview();
-    }
-
-    function createImageOverlay(src, id, autoSelect = false) {
-      const wrapper = document.createElement("div");
-      wrapper.className = "absolute pointer-events-auto cursor-move image-overlay-item";
-      wrapper.dataset.id = id;
-      wrapper.style.left = "35%";
-      wrapper.style.top = "35%";
-      wrapper.style.width = "30%";
-      wrapper.style.height = "30%";
-
-      const img = document.createElement("img");
-      img.src = src;
-      img.className = "w-full h-full object-cover pointer-events-none";
-      if (autoSelect) {
-        img.addEventListener(
-          "load",
-          () => {
-            if (fitOverlayBoxToMedia(wrapper, imageOverlayContainer, img.naturalWidth, img.naturalHeight)) {
-              updateImageState(id, wrapper);
-              placeOverlayActions(wrapper);
-            }
-          },
-          { once: true },
-        );
-      }
-      wrapper.appendChild(img);
-
-      addOverlayHandles(wrapper, "img-handle", (dir, e) => {
-        selectImageItem(wrapper);
-        imgDragState.isResizing = true;
-        imgDragState.dir = dir;
-        imgDragState.startX = e.clientX;
-        imgDragState.startY = e.clientY;
-        imgDragState.startLeft = parseFloat(wrapper.style.left) || 0;
-        imgDragState.startTop = parseFloat(wrapper.style.top) || 0;
-        imgDragState.startWidth = parseFloat(wrapper.style.width) || 0;
-        imgDragState.startHeight = parseFloat(wrapper.style.height) || 0;
-      });
-
-      const delBtn = document.createElement("button");
-      delBtn.innerHTML = `<i data-lucide="x" class="w-3.5 h-3.5 text-white"></i>`;
-      delBtn.className = "bg-red-500 rounded-full p-1 hidden delete-img-btn shadow-lg hover:scale-110 transition-transform";
-      delBtn.title = "Delete Overlay";
-      delBtn.onclick = (e) => {
-        e.stopPropagation();
-        wrapper.remove();
-        window.imageOverlays = window.imageOverlays.filter((img) => img.id !== id);
-        activeImageItem = null;
-        document.getElementById("text-context-menu").classList.add("hidden");
-      };
-
-      const applyAllBtn = document.createElement("button");
-      applyAllBtn.innerHTML = `<i data-lucide="layers" class="w-3.5 h-3.5 text-white"></i>`;
-      applyAllBtn.className = "bg-amber-500 hover:bg-amber-400 rounded-full p-1 hidden apply-all-img-btn shadow-lg hover:scale-110 active:scale-95 transition-transform";
-      applyAllBtn.title = "Apply all overlays to all project tabs";
-      applyAllBtn.onclick = (e) => {
-        e.stopPropagation();
-        applyImageOverlaysToAllProjects(applyAllBtn);
-      };
-      addOverlayActions(wrapper, applyAllBtn, delBtn);
-
-      wrapper.addEventListener("mousedown", (e) => {
-        e.stopPropagation();
-        selectImageItem(wrapper);
-        imgDragState.isDragging = true;
-        imgDragState.startX = e.clientX;
-        imgDragState.startY = e.clientY;
-        imgDragState.startLeft = parseFloat(wrapper.style.left) || 0;
-        imgDragState.startTop = parseFloat(wrapper.style.top) || 0;
-      });
-
-      wrapper.addEventListener("contextmenu", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        selectImageItem(wrapper);
-
-        // Clear text selection if active
-        if (typeof activeFreeTextId !== "undefined") {
-          activeFreeTextId = null;
-          if (typeof renderFreeTexts === "function") renderFreeTexts();
-        }
-
-        // Hide all text-only controls for images
-        ["ctx-text-color-section", "ctx-text-opacity-control", "ctx-stroke-control", "ctx-text-font-section", "ctx-text-style-section"].forEach((id) => {
-          const el = document.getElementById(id);
-          if (el) el.style.display = "none";
-        });
-
-        const idleControls = document.getElementById("ctx-idle-style-controls");
-        if (idleControls) idleControls.style.display = "none";
-
-        // Hide Idle Style — not supported for ImageOverlay
-        const idleStyleControls = document.getElementById("ctx-idle-style-controls");
-        if (idleStyleControls) idleStyleControls.style.display = "none";
-
-        // Show Image Controls & load current state
-        const imgControls = document.getElementById("ctx-img-controls");
-        if (imgControls) {
-          imgControls.style.display = "flex";
-          const imgState = window.imageOverlays.find((i) => i.id === id);
-          if (imgState) {
-            document.getElementById("ctx-img-opacity").value = imgState.opacity;
-            document.getElementById("lbl-img-opacity").innerText = `${imgState.opacity}%`;
-            document.getElementById("ctx-img-radius").value = imgState.radius;
-            document.getElementById("lbl-img-radius").innerText = `${imgState.radius}px`;
-            fillOverlayTimeInputs("img", imgState);
-          }
-        }
-
-        const _imgMotionState = window.imageOverlays.find((i) => i.id === id);
-        if (typeof syncMotionUI === "function") syncMotionUI(_imgMotionState?.motion || "none", _imgMotionState?.speed ?? 2);
-        // Sync Idle Style buttons + Strength slider
-        const currentIdle = _imgMotionState?.idleStyle || "none";
-        const currentStrength = _imgMotionState?.idleStrength ?? 5;
-        document.querySelectorAll(".ctx-idle-btn").forEach((b) => {
-          const on = b.dataset.idle === currentIdle;
-          b.classList.toggle("bg-[var(--accent-primary)]", on);
-          b.classList.toggle("text-white", on);
-          b.classList.toggle("border-[var(--accent-primary)]", on);
-        });
-        const strengthSlider = document.getElementById("ctx-idle-strength");
-        const strengthLabel = document.getElementById("lbl-idle-strength");
-        if (strengthSlider) strengthSlider.value = currentStrength;
-        if (strengthLabel) strengthLabel.textContent = currentStrength;
-        smartPosition(document.getElementById("text-context-menu"), e.pageX, e.pageY);
-      });
-
-      wrapper.style.zIndex = 100 + window.imageOverlays.length;
-
-      imageOverlayContainer.appendChild(wrapper);
-      _lucideCreateIcons({ root: wrapper });
-      if (autoSelect) selectImageItem(wrapper);
-    }
-
-    function selectImageItem(targetWrapper) {
-      document.querySelectorAll(".image-overlay-item").forEach((el) => {
-        el.style.outline = "none";
-        el.querySelectorAll(".img-handle, .delete-img-btn, .apply-all-img-btn").forEach((h) => (h.style.display = "none"));
-      });
-      activeImageItem = targetWrapper;
-      if (targetWrapper) {
-        targetWrapper.style.outline = "2px dashed #10b981";
-        targetWrapper.querySelectorAll(".img-handle, .delete-img-btn, .apply-all-img-btn").forEach((h) => (h.style.display = "block"));
-        placeOverlayActions(targetWrapper);
-      }
-    }
-
-    document.addEventListener("mousedown", (e) => {
-      if (!e.target.closest(".image-overlay-item") && !e.target.closest("#btn-add-image") && !e.target.closest("#text-context-menu")) {
-        selectImageItem(null);
-      }
-    });
-
-    window.addEventListener("mousemove", (e) => {
-      if (!activeImageItem) return;
-      const parentRect = imageOverlayContainer.getBoundingClientRect();
-      const deltaXPercent = ((e.clientX - imgDragState.startX) / parentRect.width) * 100;
-      const deltaYPercent = ((e.clientY - imgDragState.startY) / parentRect.height) * 100;
-
-      if (imgDragState.isDragging) {
-        let newL = Math.max(0, Math.min(100 - parseFloat(activeImageItem.style.width), imgDragState.startLeft + deltaXPercent));
-        let newT = Math.max(0, Math.min(100 - parseFloat(activeImageItem.style.height), imgDragState.startTop + deltaYPercent));
-        activeImageItem.style.left = `${newL}%`;
-        activeImageItem.style.top = `${newT}%`;
-      }
-
-      if (imgDragState.isResizing) {
-        const box = resizeOverlayBox(imgDragState, e, parentRect.width, parentRect.height);
-        activeImageItem.style.left = `${box.left}%`;
-        activeImageItem.style.top = `${box.top}%`;
-        activeImageItem.style.width = `${box.width}%`;
-        activeImageItem.style.height = `${box.height}%`;
-      }
-      if (imgDragState.isDragging || imgDragState.isResizing) placeOverlayActions(activeImageItem);
-    });
-
-    window.addEventListener("mouseup", () => {
-      if ((imgDragState.isDragging || imgDragState.isResizing) && activeImageItem) {
-        updateImageState(activeImageItem.dataset.id, activeImageItem);
-      }
-      imgDragState.isDragging = false;
-      imgDragState.isResizing = false;
-    });
-
-    // --- IMAGE CONTEXT MENU SLIDER CONTROLS (FIXED) ---
-    const imgOpacitySlider = document.getElementById("ctx-img-opacity");
-    const imgRadiusSlider = document.getElementById("ctx-img-radius");
-
-    if (imgOpacitySlider) {
-      imgOpacitySlider.addEventListener("input", (e) => {
-        if (!activeImageItem) return;
-        const val = e.target.value;
-        document.getElementById("lbl-img-opacity").innerText = `${val}%`;
-
-        // BUG FIX 1: Apply opacity ONLY to the img element, leaving the outline/buttons alone!
-        const imgTag = activeImageItem.querySelector("img");
-        if (imgTag) {
-          imgTag.style.opacity = val / 100;
-        }
-
-        const imgState = window.imageOverlays.find((i) => i.id === activeImageItem.dataset.id);
-        if (imgState) imgState.opacity = parseInt(val, 10);
-      });
-    }
-
-    if (imgRadiusSlider) {
-      imgRadiusSlider.addEventListener("input", (e) => {
-        if (!activeImageItem) return;
-        const val = e.target.value;
-        document.getElementById("lbl-img-radius").innerText = `${val}px`;
-
-        const imgTag = activeImageItem.querySelector("img");
-        if (imgTag) {
-          imgTag.style.borderRadius = `${val * previewCanvasScale()}px`;
-          imgTag.style.overflow = "hidden";
-        }
-
-        const imgState = window.imageOverlays.find((i) => i.id === activeImageItem.dataset.id);
-        if (imgState) imgState.radius = parseInt(val, 10);
-      });
-    }
-
-    // --- OVERLAY TIMING: when an image / video overlay is on the video ---
-    // start / end in seconds of the video (null: from the start / to the end), typed as m:ss,
-    // h:mm:ss or seconds. Exported with the overlay filter's enable= (render_service.js).
-    // (Function declarations: Dub Whole Series and the overlays drawn on a tab switch use them
-    // before this part of the file has run.)
-    function parseOverlayClock(text) {
-      const t = String(text || "").trim().replace(",", ".");
-      if (!t) return null;
-      if (!/^\d+(\.\d+)?$|^\d+(:\d{1,2}){1,2}(\.\d+)?$/.test(t)) return NaN;
-      return t.split(":").reduce((s, part) => s * 60 + parseFloat(part), 0);
-    }
-    function fmtOverlayClock(sec) {
-      if (sec === null || sec === undefined || !Number.isFinite(sec)) return "";
-      const whole = Math.floor(sec), frac = Math.round((sec - whole) * 10) / 10;
-      const h = Math.floor(whole / 3600), m = Math.floor((whole % 3600) / 60), s = whole % 60;
-      const ss = String(s).padStart(2, "0") + (frac ? String(frac).slice(1) : "");
-      return h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
-    }
-    // A time typed for an overlay's start or end, kept on the overlay (start / end in seconds,
-    // null = from the start / to the end; an end not after the start is dropped).
-    // Returns false (nothing changed) when the text isn't a time.
-    function setOverlayTime(item, key, text) {
-      const sec = parseOverlayClock(text);
-      if (Number.isNaN(sec)) {
-        showToast("Type a time as m:ss (1:30) or seconds (90).", "error");
-        return false;
-      }
-      item[key] = key === "start" ? sec || null : sec;
-      if (item.end !== null && item.end !== undefined && item.end <= (item.start || 0)) {
-        if (key === "end") showToast("The end must be after the start - the overlay stays to the end of the video.", "warning");
-        item.end = null;
-      }
-      return true;
-    }
-    function overlayOnAt(item, t) {
-      return (!item.start || t >= item.start) && (item.end === null || item.end === undefined || t <= item.end);
-    }
-    // The preview shows an overlay faintly while the video is outside its time, so it can still be moved.
-    function applyOverlayTimePreview() {
-      const t = mainVideo?.currentTime || 0;
-      document.querySelectorAll(".image-overlay-item, .video-overlay-item").forEach((w) => {
-        const list = w.classList.contains("video-overlay-item") ? window.videoOverlays : window.imageOverlays;
-        const item = (list || []).find((o) => o.id === w.dataset.id);
-        w.style.opacity = item && !overlayOnAt(item, t) ? "0.25" : "";
-      });
-    }
-    mainVideo?.addEventListener("timeupdate", applyOverlayTimePreview);
-    mainVideo?.addEventListener("seeked", applyOverlayTimePreview);
-    function fillOverlayTimeInputs(prefix, item) {
-      const a = document.getElementById(`ctx-${prefix}-start`), b = document.getElementById(`ctx-${prefix}-end`);
-      if (a) a.value = fmtOverlayClock(item?.start || null);
-      if (b) b.value = fmtOverlayClock(item?.end ?? null);
-    }
-    function bindOverlayTimeInputs(prefix, currentItem) {
-      ["start", "end"].forEach((key) => {
-        const input = document.getElementById(`ctx-${prefix}-${key}`);
-        if (!input) return;
-        input.addEventListener("change", () => {
-          const item = currentItem();
-          if (!item) return;
-          setOverlayTime(item, key, input.value);
-          fillOverlayTimeInputs(prefix, item);
-          applyOverlayTimePreview();
-        });
-        input.addEventListener("keydown", (e) => {
-          if (e.key === "Enter") input.blur();
-        });
-      });
-    }
-    bindOverlayTimeInputs("img", () => activeImageItem && window.imageOverlays.find((i) => i.id === activeImageItem.dataset.id));
-    bindOverlayTimeInputs("vid", () => activeVideoItem && window.videoOverlays.find((v) => v.id === activeVideoItem.dataset.id));
-
-    // --- APPLY ALL IMAGE OVERLAYS TO ALL PROJECTS ---
-    function applyImageOverlaysToAllProjects(triggerBtn = null) {
-      if (!projects || projects.length === 0) return showToast("No project tabs open.", "error");
-
-      // Sync active DOM geometry (x, y, w, h) into window.imageOverlays
-      document.querySelectorAll(".image-overlay-item").forEach((wrapper) => {
-        const id = wrapper.dataset.id;
-        if (id && typeof updateImageState === "function") updateImageState(id, wrapper);
-      });
-
-      if (!window.imageOverlays || window.imageOverlays.length === 0) {
-        return showToast("No image overlays to apply.", "error");
-      }
-
-      // Snapshot all current image overlays
-      const snapshot = window.imageOverlays.map((img) => {
-        let blobUrl = img.blobUrl;
-        if (!blobUrl && (img.file || img._file)) {
-          try {
-            blobUrl = URL.createObjectURL(img.file || img._file);
-          } catch (e) {
-            console.warn("Could not create object URL for overlay:", e);
-          }
-        }
-        return {
-          ...img,
-          blobUrl,
-          file: img.file || img._file || null,
-          _file: img.file || img._file || null,
-        };
-      });
-
-      // Stamp across every project tab
-      projects.forEach((proj, idx) => {
-        proj.imageOverlays = snapshot.map((img) => ({
-          ...img,
-          id: idx === activeProjectIndex ? img.id : crypto.randomUUID(),
-        }));
-      });
-
-      const count = projects.length;
-      showToast(`Image overlay${snapshot.length > 1 ? "s" : ""} applied to all ${count} tab${count !== 1 ? "s" : ""}!`, "success");
-
-      // Flash feedback on context menu button
-      const ctxBtn = document.getElementById("btn-img-apply-all");
-      if (ctxBtn) {
-        const originalHTML = ctxBtn.innerHTML;
-        ctxBtn.innerHTML = `
-          <span class="flex items-center gap-1.5 text-emerald-400 font-semibold">
-            <i data-lucide="check" class="w-3.5 h-3.5"></i> Applied!
-          </span>
-          <span class="text-[10px] text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded font-mono">Done</span>
-        `;
-        if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: ctxBtn });
-        setTimeout(() => {
-          ctxBtn.innerHTML = originalHTML;
-          if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: ctxBtn });
-        }, 1500);
-      }
-
-      // Flash feedback on trigger button (e.g. on overlay item)
-      if (triggerBtn) {
-        triggerBtn.innerHTML = `<i data-lucide="check" class="w-3.5 h-3.5 text-white"></i>`;
-        triggerBtn.classList.remove("bg-amber-500", "hover:bg-amber-400");
-        triggerBtn.classList.add("bg-emerald-500");
-        if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: triggerBtn });
-        setTimeout(() => {
-          triggerBtn.innerHTML = `<i data-lucide="layers" class="w-3.5 h-3.5 text-white"></i>`;
-          triggerBtn.classList.remove("bg-emerald-500");
-          triggerBtn.classList.add("bg-amber-500", "hover:bg-amber-400");
-          if (typeof _lucideCreateIcons === "function") _lucideCreateIcons({ root: triggerBtn });
-        }, 1500);
-      }
-    }
-
-    const btnImgApplyAll = document.getElementById("btn-img-apply-all");
-    if (btnImgApplyAll) {
-      btnImgApplyAll.addEventListener("click", (e) => {
-        e.stopPropagation();
-        applyImageOverlaysToAllProjects();
-      });
-    }
-
     // --- OVERLAY MOTION CONTROLS ---
     const motionSpeedSlider = document.getElementById("ctx-motion-speed");
     const motionSpeedLabel = document.getElementById("lbl-motion-speed");
@@ -29605,19 +26597,11 @@
     document.querySelectorAll(".ctx-motion-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
         const motionVal = btn.dataset.motion;
-        // Apply to whichever overlay is active (image or text)
-        if (activeImageItem) {
-          const imgState = window.imageOverlays.find((i) => i.id === activeImageItem.dataset.id);
-          if (imgState) {
-            imgState.motion = motionVal;
-            // Reset position to stored base so it doesn't jump
-            imgState._mx = imgState.x;
-            imgState._my = imgState.y;
-          }
-        } else if (typeof activeFreeTextId !== "undefined" && activeFreeTextId) {
+        if (typeof activeFreeTextId !== "undefined" && activeFreeTextId) {
           const textObj = freeTexts.find((t) => t.id === activeFreeTextId);
           if (textObj) {
             textObj.motion = motionVal;
+            // Reset position to stored base so it doesn't jump
             textObj._mx = textObj.x;
             textObj._my = textObj.y;
           }
@@ -29630,10 +26614,7 @@
       motionSpeedSlider.addEventListener("input", (e) => {
         const val = parseInt(e.target.value, 10);
         if (motionSpeedLabel) motionSpeedLabel.innerText = val;
-        if (activeImageItem) {
-          const imgState = window.imageOverlays.find((i) => i.id === activeImageItem.dataset.id);
-          if (imgState) imgState.speed = val;
-        } else if (typeof activeFreeTextId !== "undefined" && activeFreeTextId) {
+        if (typeof activeFreeTextId !== "undefined" && activeFreeTextId) {
           const textObj = freeTexts.find((t) => t.id === activeFreeTextId);
           if (textObj) textObj.speed = val;
         }
@@ -29679,49 +26660,6 @@
         return;
       }
       overlayAnimFrame = requestAnimationFrame(tickOverlayMotion);
-
-      const container = document.getElementById("image-overlay-container");
-      if (!container) return;
-
-      // --- Animate IMAGE overlays ---
-      (window.imageOverlays || []).forEach((item) => {
-        if (!item.motion || item.motion === "none") return;
-        if (item._mx === undefined) item._mx = item.x;
-        if (item._my === undefined) item._my = item.y;
-
-        const spd = (item.speed ?? 2) * STEP;
-
-        if (item.motion === "scroll-left") {
-          item._mx -= spd;
-          if (item._mx + item.w < 0) item._mx = 100; // re-enter from right
-        } else if (item.motion === "scroll-right") {
-          item._mx += spd;
-          if (item._mx > 100) item._mx = -item.w; // re-enter from left
-        } else if (item.motion === "scroll-up") {
-          item._my -= spd;
-          if (item._my + item.h < 0) item._my = 100;
-        } else if (item.motion === "scroll-down") {
-          item._my += spd;
-          if (item._my > 100) item._my = -item.h;
-        } else if (item.motion === "bounce-x") {
-          if (!item._dir) item._dir = 1;
-          item._mx += spd * item._dir;
-          if (item._mx + item.w >= 100) {
-            item._mx = 100 - item.w;
-            item._dir = -1;
-          }
-          if (item._mx <= 0) {
-            item._mx = 0;
-            item._dir = 1;
-          }
-        }
-
-        const el = container.querySelector(`[data-id="${item.id}"]`);
-        if (el) {
-          el.style.left = `${item._mx}%`;
-          el.style.top = `${item._my}%`;
-        }
-      });
 
       // --- Animate TEXT overlays ---
       const textLayer = document.getElementById("free-text-layer");

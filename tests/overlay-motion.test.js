@@ -1,7 +1,7 @@
-// Image and text motion in the exported video (backend/render_service.js), as the editor
-// previews it: the editor's motion names (scroll-left, scroll-right, scroll-up, scroll-down,
-// bounce-x) at the preview's speed - speed x 2.1 % of the frame a second. Before, the export
-// only knew scroll_left / scroll_right, so a moving image or text stood still in the video.
+// Text motion in the exported video (backend/render_service.js), as the editor previews it: the
+// editor's motion names (scroll-left, scroll-right, scroll-up, scroll-down, bounce-x) at the
+// preview's speed - speed x 2.1 % of the frame a second. Before, the export only knew
+// scroll_left / scroll_right, so moving text stood still in the video.
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -57,45 +57,6 @@ describe('free text motion: one pass after another, as the preview moves it', ()
     }
   });
 });
-
-describe('image overlay motion: the overlay filter moves it', () => {
-  const service = fs.readFileSync(path.join(__dirname, '..', 'backend', 'render_service.js'), 'utf8');
-  test('every motion the editor offers is handled', () => {
-    for (const m of ['scroll-left', 'scroll-right', 'scroll-up', 'scroll-down', 'bounce-x']) {
-      assert.ok(service.includes(`motion === '${m}'`), m);
-    }
-  });
-
-  const binDir = path.join(__dirname, '..', 'backend', 'bin');
-  const ffmpeg = ['ffmpeg.exe', 'ffmpeg'].map((n) => path.join(binDir, n)).find((p) => fs.existsSync(p));
-  test('a scrolling image moves in the rendered video at the preview speed', { skip: !ffmpeg && 'no ffmpeg in backend/bin' }, async () => {
-    const { execFileSync } = require('node:child_process');
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'motion-render-'));
-    try {
-      const main = path.join(dir, 'main.mp4'), red = path.join(dir, 'red.png'), out = path.join(dir, 'out.mp4');
-      execFileSync(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=black:s=320x240:d=3:r=10', '-f', 'lavfi', '-i', 'sine=d=3', '-shortest', main]);
-      execFileSync(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=red:s=32x24', '-frames:v', '1', red]);
-      await new Promise((resolve, reject) => rs.renderVideo({
-        videoPath: main, outputPath: out, encoder: 'cpu', burnSubtitles: false, normalizeLoudness: false,
-        overlayImages: [{ path: red, x: 40, y: 40, w: 10, h: 10, opacity: 1, motion: 'scroll-left', speed: 5 }],
-      }, () => { }, resolve, reject));
-      // The red box's left edge at a time: 320 px x 5 x 2.1 % = 33.6 px a second to the left of 128.
-      const leftEdge = (t) => {
-        const raw = execFileSync(ffmpeg, ['-v', 'error', '-ss', String(t), '-i', out, '-frames:v', '1', '-vf', 'format=rgb24', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], { maxBuffer: 1 << 24 });
-        for (let x = 0; x < 320; x++) {
-          const i = (108 * 320 + x) * 3;
-          if (raw[i] > 150 && raw[i + 1] < 80 && raw[i + 2] < 80) return x;
-        }
-        return null;
-      };
-      assert.ok(Math.abs(leftEdge(0) - 128) <= 2, `starts at 128: ${leftEdge(0)}`);
-      assert.ok(Math.abs(leftEdge(2) - (128 - 67.2)) <= 3, `two seconds later at about 61: ${leftEdge(2)}`);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
-});
-
 
 describe('free text: what the editor shows is what is exported', () => {
   const base = { b: false, i: false, u: false, c: '&HFFFFFF&' };

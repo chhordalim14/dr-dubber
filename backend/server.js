@@ -760,6 +760,11 @@ function pruneSeparatedFolders() {
                 try { if (Date.now() - fs.statSync(dir).mtimeMs > 24 * 60 * 60 * 1000) removeDirQuietly(dir); } catch (e) {}
             }
         }
+        // Prepared banners and ads older versions kept: nothing reads them now.
+        for (const name of ['keyed-overlays', 'encoded-clips']) {
+            const dir = path.join(SEPARATED_DIR, name);
+            if (fs.existsSync(dir)) removeDirQuietly(dir);
+        }
         for (const name of fs.readdirSync(SEPARATED_DIR)) {
             if (!/^ffmpeg_\d+_\d+$/.test(name)) continue;
             const dir = path.join(SEPARATED_DIR, name);
@@ -4565,8 +4570,7 @@ const previewService = createPreviewService({
 });
 
 // Join Episodes: many short downloaded episodes -> a few ~1 hour parts to dub.
-// Ads put in are encoded once and kept here for every part and the whole-series video.
-const episodeJoiner = createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailableEncoders, trackProcess, audioRepair, clipCacheDir: path.join(SEPARATED_DIR, 'encoded-clips') });
+const episodeJoiner = createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailableEncoders, trackProcess, audioRepair });
 
 // Split Movie: one long movie -> ~30 minute parts, each dubbed as its own project.
 const videoSplitter = createVideoSplitter({ getFFmpegBinary, getFFprobeBinary, trackProcess });

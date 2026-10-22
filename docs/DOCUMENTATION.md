@@ -98,10 +98,7 @@ Every button in the **All Tabs** menu runs that step on every open tab, so you c
 2. Set **Join: minutes per part** (default 50) and **Split: minutes per tab** (default 7). Episodes are joined into parts, and each part is split into tabs.
 3. If your videos are already one per part, tick **Videos are already merged**. It ticks itself when every video is 20 minutes or longer.
 4. Pick the steps (Transcribe, Match subtitles, Generate voices, Isolate BGM, Blur subtitles; all on by default) and a Drama Style.
-5. Optional looks applied to every tab:
-   - **Color filter**: a Color Studio preset (a Drama LUT or a saved custom one).
-   - **Image overlay**: place images on one tab with the Image tool, then press **Use this tab's images**.
-   - **Clips between episodes**: **Add clip** places an intro or bumper after episode k.
+5. Optional: a **Color filter** applied to every tab, from a Color Studio preset (a Drama LUT or a saved custom one).
 6. Turn on **Hands-free** to export each part and start the next one, and **Join into one video** to join a part's tabs after export.
 7. Press **Start**.
 
@@ -224,7 +221,7 @@ Only the backend calls Gemini; the window sends the saved keys with each request
 
 1. Build the dialogue track: each clip gets its speed and delay, then all clips are mixed in chunks.
 2. Build the audio: BGM with fades, sidechain ducking under the voices, loudness normalisation to −14 LUFS.
-3. Build the video: scale, crop and pad, chroma key, overlays, blur over detected text, and subtitles burned in as ASS through libass with the bundled fonts.
+3. Build the video: scale, crop and pad, blur over detected text, free text, and subtitles burned in as ASS through libass with the bundled fonts.
 4. Encode with the best working encoder: NVENC, then Quick Sync, then AMF, then VideoToolbox, then libx264. Each is confirmed with a test encode; if a hardware encode fails, the render retries once with libx264.
 
 On cancel, FFmpeg is killed, the temp folder is removed, and a partial output file is deleted only if this render created it.
