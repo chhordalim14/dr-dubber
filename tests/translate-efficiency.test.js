@@ -37,8 +37,8 @@ describe('low thinking for text jobs', () => {
         assert.equal(geminiThinkingConfig('gemini-3.8-flash', null), null, 'audio jobs ask for nothing');
     });
 
-    test('translate, re-translate, shorten and the sheet ask for it; a model that refuses is asked again without', () => {
-        assert.equal((serverSource.match(/, thinking: 'low' \}\)/g) || []).length, 4);
+    test('translate, re-translate, shorten, the sheet and missed subtitles ask for it; a model that refuses is asked again without', () => {
+        assert.equal((serverSource.match(/, thinking: 'low' \}\)/g) || []).length, 5);
         assert.match(serverSource, /geminiNoThinkingConfigModels\.add\(m\)/);
     });
 });

@@ -181,11 +181,11 @@ describe('Shortening engine (Shorten rushed lines, Ultra-Short, a row\'s Shorten
 });
 
 describe('short text requests time out sooner than audio', () => {
-  test('re-translate, names, shorten and the character sheet use GEMINI_TEXT_TIMEOUT_MS; it is shorter than an audio attempt', () => {
+  test('re-translate, names, shorten, the character sheet and missed subtitles use GEMINI_TEXT_TIMEOUT_MS; it is shorter than an audio attempt', () => {
     const text = Number(serverSource.match(/const GEMINI_TEXT_TIMEOUT_MS = (\d+);/)[1]);
     const audio = Number(serverSource.match(/const GEMINI_ATTEMPT_TIMEOUT_MS = (\d+);/)[1]);
     assert.ok(text < audio);
-    assert.equal((serverSource.match(/timeoutMs: GEMINI_TEXT_TIMEOUT_MS/g) || []).length, 4);
+    assert.equal((serverSource.match(/timeoutMs: GEMINI_TEXT_TIMEOUT_MS/g) || []).length, 5);
   });
 });
 

@@ -61,9 +61,9 @@
   }
 
   // How well on-screen line L is subtitle S's text (higher is better), or -Infinity.
-  function pairScore(S, L) {
+  function pairScore(S, L, maxShift = MAX_SHIFT) {
     const gap = gapBetween(S.start, S.end, L.start, L.end);
-    if (gap > MAX_SHIFT) return -Infinity;
+    if (gap > maxShift) return -Infinity;
     const near = overlapOf(S.start, S.end, L.start, L.end) / Math.max(0.1, L.end - L.start);
     if (S.text && L.text) {
       const held = commonLetters(L.counts, S.counts) / L.text.length;
@@ -78,7 +78,7 @@
 
   // Each on-screen line to at most one subtitle, in order (a later line never goes to an
   // earlier subtitle), as many good pairs as possible: lineOwner[j] = subtitle index or -1.
-  function pairLines(subs, lines) {
+  function pairLines(subs, lines, maxShift = MAX_SHIFT) {
     const n = subs.length, m = lines.length;
     // best[j][i + 1]: best total over lines < j with every owner <= i (column 0: no owner yet).
     const best = Array.from({ length: m + 1 }, () => new Float64Array(n + 1));
@@ -86,7 +86,7 @@
     for (let j = 1; j <= m; j++) {
       best[j][0] = best[j - 1][0];
       for (let i = 1; i <= n; i++) {
-        const s = pairScore(subs[i - 1], lines[j - 1]);
+        const s = pairScore(subs[i - 1], lines[j - 1], maxShift);
         let v = best[j - 1][i], h = 0;
         if (s > 0 && best[j - 1][i] + s > v) { v = best[j - 1][i] + s; h = 1; }
         if (best[j][i - 1] > v) { v = best[j][i - 1]; h = 2; }
@@ -113,12 +113,12 @@
   //   { start, end, parts }  its new times; parts (2 or more on-screen pieces) or null:
   //                          [{ start, end, share }] share = part of the translation shown there
   //   null                   no on-screen line found for it (see placeUnmatched)
-  function matchSubtitles(subs, lines) {
+  function matchSubtitles(subs, lines, { maxShift = MAX_SHIFT } = {}) {
     const S = prepare(subs || []).filter((s) => s.start !== null && s.end !== null);
     const L = prepare(lines || []).filter((l) => l.start !== null && l.end !== null && l.end > l.start);
     S.sort((a, b) => a.start - b.start);
     L.sort((a, b) => a.start - b.start);
-    const owner = pairLines(S, L);
+    const owner = pairLines(S, L, maxShift);
 
     // owners[j]: the subtitles showing during line j (in order). A subtitle left without a
     // line may share a neighbour's line, when the line holds its text.
@@ -128,7 +128,7 @@
       if (hasLine.has(i) || !s.text) return;
       let pick = -1, pickScore = 0;
       L.forEach((l, j) => {
-        if (gapBetween(s.start, s.end, l.start, l.end) > MAX_SHIFT || !l.text) return;
+        if (gapBetween(s.start, s.end, l.start, l.end) > maxShift || !l.text) return;
         // Only a line of a subtitle right next to it, or a line nobody has.
         if (owners[j].length && !owners[j].some((o) => Math.abs(o - i) === 1)) return;
         const share = commonLetters(s.counts, l.counts) / s.text.length;
@@ -172,6 +172,47 @@
     return out;
   }
 
+  // Second pass, for the subtitles the first left without a line: the transcription's times can
+  // drift several seconds over a tab (measured: 3-5 s, 14 lines of one tab kept their wrong times
+  // and 20 of its on-screen lines had no subtitle). Each is paired with a line no subtitle shows
+  // with yet, further away (maxShift) but only by its text, and only between the lines of its
+  // matched neighbours, so no subtitle moves past another. Fills `matches` (matchSubtitles'
+  // result for the same subs) in place and returns it.
+  const FAR_SHIFT = 8;
+  function matchLeftovers(subs, lines, matches, { maxShift = FAR_SHIFT } = {}) {
+    const S = prepare(subs || []);
+    const L = prepare(lines || []).filter((l) => l.start !== null && l.end !== null && l.end > l.start && l.text);
+    const free = L.filter((l) => !matches.some((m) => m && overlapOf(m.start, m.end, l.start, l.end) > 0.5 * (l.end - l.start)));
+    const left = S.filter((s) => !matches[s.i] && s.text && s.start !== null && s.end !== null);
+    if (!free.length || !left.length) return matches;
+    const far = matchSubtitles(left.map((s) => subs[s.i]), free.map((l) => lines[l.i]), { maxShift });
+    // Neighbours in time: subs are compared by their transcribed start.
+    const order = S.filter((s) => s.start !== null).sort((a, b) => a.start - b.start).map((s) => s.i);
+    far.forEach((m, k) => {
+      if (!m) return;
+      const i = left[k].i;
+      const at = order.indexOf(i);
+      const prev = order.slice(0, at).reverse().find((j) => matches[j]);
+      const next = order.slice(at + 1).find((j) => matches[j]);
+      if (prev !== undefined && m.start < matches[prev].end - 0.05) return;
+      if (next !== undefined && m.end > matches[next].start + 0.05) return;
+      matches[i] = m;
+    });
+    return matches;
+  }
+
+  // On-screen lines no matched subtitle shows over (their own text, no line of the transcription
+  // for them): [{ start, end, text }]. Only the video's subtitles: on screen at least minSeconds,
+  // with text, and centred like them - measured over 4,044 subtitles, 99% sit within 2% of the
+  // middle; what the reader also finds in that row off-centre is not said (chat bubbles on a
+  // phone, 8-14% off; signs and logos, 22-33%).
+  const MAX_OFF_CENTRE = 3; // % of the width
+  function uncoveredLines(lines, matches, { minSeconds = 0.5, maxOffCentre = MAX_OFF_CENTRE } = {}) {
+    const centred = (l) => num(l.x) === null || num(l.w) === null || Math.abs(num(l.x) + num(l.w) / 2 - 50) <= maxOffCentre;
+    return (lines || []).filter((l) => num(l.start) !== null && num(l.end) !== null && l.end - l.start >= minSeconds && normText(l.text).length >= 1
+      && centred(l) && !matches.some((m) => m && overlapOf(m.start, m.end, l.start, l.end) > 0.5 * (l.end - l.start)));
+  }
+
   // Times for the subtitles no on-screen line was found for (speech the video has no
   // subtitle for): kept where they are, moved off the matched ones. Mutates nothing.
   //   items: [{ start, end, matched }] in time order -> [{ start, end }] (same order)
@@ -197,5 +238,5 @@
     return out;
   }
 
-  return { MAX_SHIFT, MIN_HELD, MIN_SHARE, JOIN_GAP, normText, matchSubtitles, placeUnmatched, pairLines };
+  return { MAX_SHIFT, FAR_SHIFT, MIN_HELD, MIN_SHARE, JOIN_GAP, normText, matchSubtitles, matchLeftovers, uncoveredLines, placeUnmatched, pairLines };
 });

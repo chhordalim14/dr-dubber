@@ -6774,6 +6774,20 @@
       return Number.isFinite(room) && room > slot ? room : slot;
     }
 
+    // A matched subtitle's voice may run on past its line, up to shortly before the next one
+    // (sub.voiceRoom). Returns the subtitles in time order.
+    function setVoiceRooms(subs, tabDuration = 0) {
+      const byStart = (subs || []).slice().sort((a, b) => parseFloat(a.textStart) - parseFloat(b.textStart));
+      if (!byStart.length) return byStart;
+      const tabEnd = tabDuration > 0 ? tabDuration : parseFloat(byStart[byStart.length - 1].textEnd) + 10;
+      byStart.forEach((s, i) => {
+        if (!s.screenMatched) return void delete s.voiceRoom;
+        const until = byStart[i + 1] ? parseFloat(byStart[i + 1].textStart) - VOICE_GAP : tabEnd;
+        s.voiceRoom = Math.max(parseFloat(s.textEnd) - parseFloat(s.textStart), until - parseFloat(s.textStart)).toFixed(2);
+      });
+      return byStart;
+    }
+
     // A subtitle matched to the video's own line appears with that line and stays up while its
     // voice speaks (a subtitle gone while its voice still talks reads wrong): its end is the
     // later of the line's end (screenLen from its start) and its voice's end, never into the
@@ -6840,10 +6854,10 @@
         return { ok: false, error: "No subtitles yet." };
       }
 
-      const matches = window.ScreenSync.matchSubtitles(
-        subs.map((s) => ({ start: s.textStart, end: s.textEnd, text: s.originalText || "" })),
-        proj.textBlur.lines,
-      );
+      const items = subs.map((s) => ({ start: s.textStart, end: s.textEnd, text: s.originalText || "" }));
+      const matches = window.ScreenSync.matchSubtitles(items, proj.textBlur.lines);
+      // Lines whose transcribed time drifted too far: paired again by their text (no delay).
+      window.ScreenSync.matchLeftovers(items, proj.textBlur.lines, matches);
       const placed = window.ScreenSync.placeUnmatched(subs.map((s, i) => (matches[i]
         ? { start: matches[i].start, end: matches[i].end, matched: true }
         : { start: s.textStart, end: s.textEnd, matched: false })));
@@ -6872,14 +6886,7 @@
           s.audioEnd = hasVoice ? (parseFloat(s.textStart) + voiceLen).toFixed(2) : s.textEnd;
         }
       });
-      // A matched subtitle's voice may run on past its line, up to shortly before the next one.
-      const byStart = subs.slice().sort((a, b) => parseFloat(a.textStart) - parseFloat(b.textStart));
-      const tabEnd = proj.duration > 0 ? proj.duration : parseFloat(byStart[byStart.length - 1].textEnd) + 10;
-      byStart.forEach((s, i) => {
-        if (!s.screenMatched) return void delete s.voiceRoom;
-        const until = byStart[i + 1] ? parseFloat(byStart[i + 1].textStart) - VOICE_GAP : tabEnd;
-        s.voiceRoom = Math.max(parseFloat(s.textEnd) - parseFloat(s.textStart), until - parseFloat(s.textStart)).toFixed(2);
-      });
+      const byStart = setVoiceRooms(subs, proj.duration);
       // Each voice fitted to its new room: 1.0x when it fits (a speed-up made for the old,
       // shorter slot is undone), just fast enough to end before the next line when not.
       byStart.forEach((s, i) => {
@@ -16320,7 +16327,7 @@
       cancelSeriesBackgroundJoin();
       if (seriesRun.splitJobId) post("http://localhost:3001/api/split/cancel", { jobId: seriesRun.splitJobId });
       if (seriesRun.step === "generate" && (isGeneratingAudioAll || voxQueueRunning)) generateSelectedAudioAllProjects();
-      if (seriesRun.step === "generate") cancelFastCondenseRequests(); // "Shortening rushed lines"
+      if (seriesRun.step === "generate" || seriesRun.step === "match") cancelFastCondenseRequests(); // "Shortening rushed lines", "Subtitles with no line"
       if (seriesRun.step === "isolate" && isIsolatingBgmAll) isolateBgmAllProjects({ skipConfirm: true });
       else stopSeriesBackgroundIsolate(); // isolating beside the other steps
       stopDetectTextAll(); // reading the tabs for subtitles runs beside the other steps
@@ -17150,7 +17157,15 @@
         }
         if (!r.tabs) return "no tab has subtitles and a video";
         const left = failed.length ? ` · tab ${tabNumbers(failed)} kept the transcribed times (${failed[0].textDetectError || "no subtitles found"})` : "";
-        return `${r.matched} of ${r.total} subtitle(s) matched in ${r.tabs} tab(s)${left}`;
+        // Every subtitle on screen gets a voice: the ones Transcribe missed get a line of their own.
+        setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Subtitles with no line`);
+        const fill = await fillMissingScreenLinesAllTabs({
+          checkStop,
+          onProgress: (done, total) => setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Subtitles with no line ${done}/${total}`),
+        });
+        const added = (fill.added ? ` · ${fill.added} subtitle(s) Transcribe missed got a line` : "")
+          + (fill.missing > fill.added ? ` · ${fill.missing - fill.added} subtitle(s) still have no voice (Google did not answer)` : "");
+        return `${r.matched} of ${r.total} subtitle(s) matched in ${r.tabs} tab(s)${added}${left}`;
       }
 
       async function generateStep() {
@@ -17201,6 +17216,20 @@
           await voiceMissingLines();
           refitShortenedLinesAllTabs();
         }
+        let slowed = fillShortVoicesAllTabs();
+        // Edge says the lines that still need a stretch again at their own pace (natural, not
+        // stretched); what is left is a small stretch. VoxCPM2 takes its pace from the actor.
+        let paced = 0;
+        if (!voxCmp2Load().enabled) { // the engine Generate All uses (g.vox is unset on a Continue with every line voiced)
+          paced = nativePaceAllTabs();
+          if (paced) {
+            setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Voicing ${paced} line(s) at their own pace`);
+            g = await runGenerate();
+            await voiceMissingLines();
+            refitPacedLinesAllTabs();
+            slowed = fillShortVoicesAllTabs();
+          }
+        }
         const stillRushed = countRushedLinesAllTabs();
 
         const voiced = projects.reduce((n, p) => n + liveSubtitlesOf(p).filter((s) => isSpeakableText(s.text)).length, 0);
@@ -17208,6 +17237,8 @@
         if (fit.extended) note += ` · ${fit.extended} line(s) given more time`;
         if (fit.shortened) note += ` · ${fit.shortened} rushed line(s) shortened`;
         if (stillRushed) note += ` · ${stillRushed} still fast (the "N rushed" chip lists them)`;
+        if (paced) note += ` · ${paced} line(s) said at their own pace to fit the actor`;
+        if (slowed) note += ` · ${slowed} short voice(s) slowed to last as long as the actor`;
         return note;
       }
 
@@ -17293,7 +17324,27 @@
         const ffmpegOnly = noEngine.filter((p) => projects.includes(p));
         if (ffmpegOnly.length) note += ` · tab ${tabNumbers(ffmpegOnly)} used FFmpeg phase cancellation (no AI separation engine is installed)`;
         if (besideMs >= 1000) note += ` · isolated in ${fmtDur(besideMs / 1000)} beside the other steps`;
+        const louder = await boostVoicesOverMusicAllTabs();
+        checkStop();
+        if (louder) note += ` · ${louder} line(s) played louder over loud music`;
         return note;
+      }
+
+      // Each tab's voices over its music (boostVoicesOverMusic): the music's levels from the
+      // server, the lines under loud music played louder. A tab whose levels can't be read keeps
+      // its voices as they are.
+      async function boostVoicesOverMusicAllTabs() {
+        saveCurrentProjectState();
+        let louder = 0;
+        for (const proj of projects) {
+          const music = proj.bgmTrack;
+          if (!music?.file || !proj.subtitles?.length) continue;
+          const r = await postJson(`${API}/audio-peaks`, { filePath: music.file }).catch(() => null);
+          if (!r?.success || !Array.isArray(r.peaks)) continue;
+          louder += boostVoicesOverMusic(proj.subtitles, r.peaks, r.peaksPerSecond, parseFloat(music.start) || 0);
+        }
+        refreshActiveTabFromProject();
+        return louder;
       }
 
       // Burned-in subtitles: found in every tab (started when the tabs opened) and each blurred
@@ -19145,6 +19196,105 @@
       return { extended, shortened, rushed: total };
     }
 
+    // ── Dub Whole Series: every subtitle on screen has a voice ──
+    // Gemini misses about 2% of the lines a tab's burned-in subtitles show (short calls - 啊,
+    // a name called - and short lines); the export takes the actor's voice out, so they were
+    // silent. After Match, each subtitle no line covers (placed or not, so nothing is voiced twice)
+    // gets a line of its own on its exact times: Gemini translates it with the lines around it and
+    // says who speaks (/api/translate-missing-lines, lib/missing-lines.js), or skips what is not
+    // speech (a sign, a logo). A tab Gemini can't answer for keeps its lines as they are.
+    const MISSING_CONTEXT = 3; // lines before and after given with each
+    function missingScreenLinesOf(proj) {
+      const shown = (proj.textBlur && proj.textBlur.lines) || [];
+      if (!shown.length || !window.ScreenSync) return [];
+      const covered = (proj.subtitles || []).map((s) => {
+        const start = parseFloat(s.textStart) || 0;
+        const len = s.screenMatched && parseFloat(s.screenLen) > 0 ? parseFloat(s.screenLen) : (parseFloat(s.textEnd) || start) - start;
+        return { start, end: start + len };
+      });
+      return window.ScreenSync.uncoveredLines(shown, covered);
+    }
+
+    async function fillMissingScreenLinesAllTabs({ onProgress = () => { }, checkStop = () => { } } = {}) {
+      saveCurrentProjectState();
+      const todo = projects.map((proj) => [proj, missingScreenLinesOf(proj)]).filter(([, l]) => l.length);
+      const total = todo.reduce((n, [, l]) => n + l.length, 0);
+      const geminiKeys = getFastGeminiConfig().keys;
+      const keys = geminiKeys.length ? geminiKeys : (window.textAi?.ready() ? [""] : []);
+      if (!total || !keys.length) return { added: 0, missing: total };
+      const config = getFastGeminiConfig();
+      let added = 0, done = 0, next = 0, stopError = null;
+      const worker = async (w) => {
+        const apiKeys = [keys[w], ...keys.filter((k, i) => i !== w)];
+        while (next < todo.length && !stopError) {
+          const [proj, missing] = todo[next++];
+          try {
+            checkStop();
+          } catch (e) {
+            stopError = stopError || e;
+            return;
+          }
+          onProgress(done, total);
+          const subs = (proj.subtitles || []).slice().sort((a, b) => parseFloat(a.textStart) - parseFloat(b.textStart));
+          const near = (l) => {
+            const k = subs.findIndex((s) => parseFloat(s.textStart) > l.start);
+            const at = k < 0 ? subs.length : k;
+            const say = (s) => ({ onScreen: s.originalText || "", line: s.text || "", gender: s.character || s.gender || "" });
+            return { before: subs.slice(Math.max(0, at - MISSING_CONTEXT), at).map(say), after: subs.slice(at, at + MISSING_CONTEXT).map(say) };
+          };
+          const requestId = `missing_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+          fastCondenseRequestIds.add(requestId); // the series' Stop cancels it
+          let results = null;
+          try {
+            const res = await fetch("http://localhost:3001/api/translate-missing-lines", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                lines: missing.map((l, k) => ({ id: String(k), onScreen: l.text, seconds: l.end - l.start, ...near(l) })),
+                apiKey: apiKeys[0], apiKeys, model: config.model,
+                genre: activeDramaGenre || "historical",
+                targetLanguage: proj.targetLanguage || targetLanguage,
+                glossary: typeof getDramaGlossaryDict === "function" ? getDramaGlossaryDict() : null,
+                sourceFilePath: proj.videoFilePath || (proj.file && proj.file.path) || null,
+                requestId,
+              }),
+            });
+            const data = await res.json().catch(() => null);
+            results = data && data.success && Array.isArray(data.results) ? data.results : null;
+          } catch (e) {
+            console.warn("[Missing lines]", e);
+          } finally {
+            fastCondenseRequestIds.delete(requestId);
+          }
+          done += missing.length;
+          const fresh = (results || []).map((r) => {
+            const l = missing[Number(r.id)];
+            if (!l || !String(r.text || "").trim()) return null;
+            const voice = window.defaultVoiceFor(r.gender);
+            return {
+              id: crypto.randomUUID().substring(0, 8),
+              textStart: l.start.toFixed(2), textEnd: l.end.toFixed(2),
+              audioStart: l.start.toFixed(2), audioEnd: l.end.toFixed(2),
+              originalText: l.text, text: String(r.text).trim(),
+              speaker: voice, character: voice, gender: voice, emotion: r.emotion || "Neutral",
+              voice: "KH Khmer", status: "done", audioStatus: "idle", audioUrl: null, baseAudioDuration: 0, speed: 1.0, volume: 1.0,
+              screenMatched: true, screenLen: (l.end - l.start).toFixed(3), fromScreen: true,
+            };
+          }).filter(Boolean);
+          if (fresh.length) {
+            proj.subtitles = setVoiceRooms([...(proj.subtitles || []), ...fresh], proj.duration);
+            settleMatchedSubtitles(proj.subtitles, proj.duration > 0 ? proj.duration : Infinity);
+            added += fresh.length;
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(SERIES_FIT_MAX_PARALLEL, keys.length, todo.length) }, (_, w) => worker(w)));
+      onProgress(done, total);
+      refreshActiveTabFromProject();
+      if (stopError) throw stopError;
+      return { added, missing: total };
+    }
+
     function refreshActiveTabFromProject() {
       const active = projects[activeProjectIndex];
       if (active) {
@@ -19184,6 +19334,135 @@
         }
       }
       return n;
+    }
+
+    // A voice that ends well before its actor stops talking leaves the mouth moving with no sound
+    // (measured on an exported series: on long lines Edge TTS ended 1-2 s before the actor, in
+    // about 25 places a tab). Such a voice is played a little slower, at most down to
+    // FILL_MIN_SPEED, to last as long as the actor speaks: the video's own line for one matched
+    // to it, else its text slot - never into the next line. No new voice, no Gemini.
+    const FILL_MIN_SPEED = 0.85; // slower than this sounds dragged (Edge's own pace and the stretch together)
+    const FILL_MIN_GAP = 0.4; // s of silence under the actor worth filling
+    function fillShortVoicesAllTabs() {
+      saveCurrentProjectState();
+      let slowed = 0;
+      for (const proj of projects) {
+        const subs = proj.subtitles || [];
+        const tabDur = proj.duration > 0 ? proj.duration : Infinity;
+        const nextStartById = buildFastNextStartMap(subs, tabDur);
+        for (const sub of subs) {
+          const pace = analyzeSubPace(sub);
+          if (!pace.hasAudio || (parseFloat(sub.speed) || 1.0) > 1.0) continue; // sped-up voices have no time to give
+          const actorLen = sub.screenMatched && parseFloat(sub.screenLen) > 0 ? parseFloat(sub.screenLen) : pace.tEnd - pace.tStart;
+          const nextStart = nextStartById.get(String(sub.id)) ?? tabDur;
+          const want = Math.min(pace.tStart + actorLen, nextStart - VOICE_GAP) - pace.aStart;
+          if (want - pace.baseDur < FILL_MIN_GAP) continue;
+          // A voice Edge already said slower may only be stretched what is left of the limit.
+          const minSpeed = FILL_MIN_SPEED / (1 + nativeRateOf(sub) / 100);
+          const speed = Math.max(minSpeed, Math.ceil((pace.baseDur / want) * 100) / 100);
+          if (speed >= 1.0) continue;
+          sub.speed = speed;
+          sub.audioEnd = (pace.aStart + pace.baseDur / speed).toFixed(2);
+          if (activeAudios[sub.id]) activeAudios[sub.id].playbackRate = speed;
+          slowed++;
+        }
+        settleMatchedSubtitles(subs, tabDur); // a matched subtitle stays up while its voice speaks
+      }
+      refreshActiveTabFromProject();
+      return slowed;
+    }
+
+    // ── Edge's own pace ──
+    // A voice stretched to fit (atempo) sounds drawn out when slowed and rushed when sped up.
+    // Edge says the same line at another pace naturally, so after the fitting above, a line that
+    // still needs a stretch is voiced again at that pace (sub.ttsRate, in percent, sent to
+    // /api/generate-audio as fitRate) and only a small stretch is left. Kept for the text it was
+    // worked out for (ttsRateFor): an edited line is said at its normal pace again.
+    const NATIVE_MIN_RATE = -15; // Edge's slowest pace that still sounds natural
+    const NATIVE_MAX_RATE = 35;
+    const NATIVE_MIN_CHANGE = 0.04; // a stretch this small is not heard
+    function nativeRateOf(sub) {
+      return sub && sub.ttsRateFor === sub.text ? parseFloat(sub.ttsRate) || 0 : 0;
+    }
+
+    // Marks the voiced lines that need a stretch to be voiced again at their own pace (left idle
+    // for Generate). Returns how many.
+    function nativePaceAllTabs() {
+      saveCurrentProjectState();
+      let marked = 0;
+      for (const proj of projects) {
+        for (const sub of proj.subtitles || []) {
+          const speed = parseFloat(sub.speed) || 1.0;
+          if (sub.audioStatus !== "ready" || !isSpeakableText(sub.text) || Math.abs(speed - 1) < NATIVE_MIN_CHANGE) continue;
+          const was = nativeRateOf(sub);
+          const rate = Math.max(NATIVE_MIN_RATE, Math.min(NATIVE_MAX_RATE, Math.round(((1 + was / 100) * speed - 1) * 100)));
+          if (rate === was) continue; // already at the limit: the stretch stays
+          Object.assign(sub, { ttsRate: rate, ttsRateFor: sub.text, speed: 1.0, audioStatus: "idle", _nativePaced: true });
+          marked++;
+        }
+      }
+      refreshActiveTabFromProject();
+      return marked;
+    }
+
+    // After those lines are voiced again: each fitted to its slot (a small speed-up if it still
+    // runs over; one still short is filled by fillShortVoicesAllTabs).
+    function refitPacedLinesAllTabs() {
+      saveCurrentProjectState();
+      for (const proj of projects) {
+        const subs = proj.subtitles || [];
+        const nextStartById = buildFastNextStartMap(subs, proj.duration > 0 ? proj.duration : Infinity);
+        for (const sub of subs) {
+          if (!sub._nativePaced) continue;
+          delete sub._nativePaced;
+          if (sub.audioStatus === "ready") refitFastSubSpeed(sub, nextStartById.get(String(sub.id)) ?? Infinity);
+        }
+      }
+      refreshActiveTabFromProject();
+    }
+
+    // ── The voice above the music ──
+    // Measured on an exported series: every line had its voice, but where the music swells (a
+    // crying "ម៉ាក់..." on a dramatic cue, 5-8 dB louder than under the other lines) a calm Edge
+    // voice was barely above it or under it. Such a line is played louder, by how much louder the
+    // music under it is than under the tab's other lines (up to +6 dB; the export's loudness
+    // limiter keeps the peaks). A volume set by hand is left alone.
+    const MUSIC_BOOST_MAX_DB = 6;
+    const MUSIC_BOOST_OVER_DB = 0; // the voice rises as much as the music does (a sad or whispered Edge voice is quieter already)
+    // peaks: the tab's music, 0-255 per slice (/api/audio-peaks), perSec slices a second, from
+    // musicStart s. Returns how many lines are played louder.
+    function boostVoicesOverMusic(subs, peaks, perSec, musicStart = 0) {
+      const levelOf = (from, to) => {
+        const a = Math.max(0, Math.floor((from - musicStart) * perSec)), b = Math.min(peaks.length, Math.ceil((to - musicStart) * perSec));
+        if (b <= a) return null;
+        const v = peaks.slice(a, b).sort((x, y) => x - y)[Math.floor((b - a - 1) * 0.9)];
+        return 20 * Math.log10(Math.max(1, v) / 255);
+      };
+      const lines = (subs || []).map((sub) => {
+        if (sub.audioStatus !== "ready" || !(parseFloat(sub.baseAudioDuration) > 0)) return null;
+        const from = parseFloat(sub.audioStart) || parseFloat(sub.textStart) || 0;
+        const to = parseFloat(sub.audioEnd) > from ? parseFloat(sub.audioEnd) : parseFloat(sub.textEnd) || from;
+        const level = levelOf(from, to);
+        return level === null ? null : { sub, level };
+      }).filter(Boolean);
+      if (lines.length < 3) return 0;
+      const sorted = lines.map((l) => l.level).sort((x, y) => x - y);
+      const usual = sorted[Math.floor(sorted.length / 2)];
+      let boosted = 0;
+      for (const { sub, level } of lines) {
+        const own = sub.musicBoostDb ? Math.round(Math.pow(10, sub.musicBoostDb / 20) * 100) / 100 : 1;
+        if (Math.abs((sub.volume ?? 1) - own) > 0.01) continue; // set by hand
+        const db = Math.min(MUSIC_BOOST_MAX_DB, Math.max(0, level - usual - MUSIC_BOOST_OVER_DB));
+        if (db >= 1) {
+          sub.musicBoostDb = Math.round(db * 10) / 10;
+          sub.volume = Math.round(Math.pow(10, sub.musicBoostDb / 20) * 100) / 100;
+          boosted++;
+        } else if (sub.musicBoostDb) {
+          delete sub.musicBoostDb;
+          sub.volume = 1;
+        }
+      }
+      return boosted;
     }
 
     // ── Timeline changes ──
@@ -20240,6 +20519,7 @@
                   index: sub.id,
                   speed: sub.speed || 1.0,
                   emotion: sub.emotion || "Neutral",
+                  fitRate: nativeRateOf(sub), // its own pace, to last as long as the actor (Dub Whole Series)
                 }),
                 signal: jobAbortController.signal,
               });

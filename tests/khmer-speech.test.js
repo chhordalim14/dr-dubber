@@ -48,11 +48,11 @@ describe('Khmer text for the voice', () => {
         assert.equal(say('ខ្ញុំ… មិនដឹងទេ…'), 'ខ្ញុំ, មិនដឹងទេ។');
     });
 
-    test('a ហ after ំ with no vowel of its own is said (Edge-TTS drops it as written)', () => {
-        assert.equal(say('តោះ ចូលទៅក្នុងលំហ!'), 'តោះ ចូលទៅក្នុងលំហា!');
-        assert.equal(say('ទ្វារចំហ'), 'ទ្វារចំហា។');
-        assert.equal(say('ចូលទៅក្នុងលំហអាកាស'), 'ចូលទៅក្នុងលំហាអាកាស។', 'inside a compound too');
-        // ហ with its own vowel is read already: left alone.
+    test('a ហ after ំ is left as written: one syllable with a soft h ("lomh"), no vowel added', () => {
+        // ហា said a long "haa", ហៈ / ះ an added "ha" - measured against Google's voice, 2026-10-24.
+        assert.equal(say('តោះ ចូលទៅក្នុងលំហ!'), 'តោះ ចូលទៅក្នុងលំហ!');
+        assert.equal(say('ទ្វារចំហ'), 'ទ្វារចំហ។');
+        assert.equal(say('ចូលទៅក្នុងលំហអាកាស'), 'ចូលទៅក្នុងលំហអាកាស។');
         for (const w of ['លំហែកាយ', 'កំហឹង', 'កំហុស', 'ស្នេហា', 'លំហា']) assert.equal(say(w), w + '។', w);
     });
 

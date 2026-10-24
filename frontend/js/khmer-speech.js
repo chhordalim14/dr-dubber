@@ -10,7 +10,7 @@
 //   punctuation  ... and dashes are pauses, quotes and brackets are not read, a closing ? or !
 //                is kept (it carries the question / the shout), anything else closes with ។
 //   tags         [Female:female-default] and the like are dropped
-//   pronunciation  words the voice misreads as written, respelled: លំហ -> លំហា, ម្ចាស់ -> ម៉ាចាស់, ម្នាក់ -> ម៉ានាក់
+//   pronunciation  words the voice misreads as written, respelled: ម្ចាស់ -> ម៉ាចាស់, ម្នាក់ -> ម៉ានាក់
 //                (see SAY_AS, RESPELL)
 //
 // Loaded by the browser as a classic script (window.KhmerSpeech) and by Node (tests).
@@ -138,14 +138,13 @@
 
   // Words the voice says wrong as written, respelled the way they are said.
   //
-  // Edge-TTS (also the source of the cloned voices) takes a ហ right after ំ with no vowel of its
-  // own for a silent final, at a word's end and inside a compound alike: លំហ came out "លំ",
-  // លំហអាកាស "លំអាកាស", ចំហ "ចំ". It is a syllable of its own (lum-ha, cham-ha). Measured on
-  // both Khmer voices: written ហា it is spoken (+0.2 s of speech), written ហ it is not.
+  // Not ំហ: លំហ, ចំហ are one syllable with a soft final h ("lomh", as Google says it). Edge says
+  // them nearly so as written ("lom"); respelled ហា it said a long "haa", and ហៈ / ះ an added
+  // short "ha" - a vowel the word does not have. Measured with a Khmer recogniser against
+  // Google's voice, 2026-10-24: none of the respellings came closer, so they are left as written.
   const SAY_AS = new Map([
     // 'written': 'said'  (whole words; add one here when a voice misreads a word)
   ]);
-  const NIKAHIT_HA_RE = /([ក-អ]ំហ)(?![឴-៓៝])/g; // …ំហ not followed by its vowel / a subscript
   // Parts of words respelled wherever they appear, also inside a compound the segmenter splits
   // differently (ព្រះអង្គម្ចាស់, លោកម្ចាស់, ខ្ញុំម្ចាស់).
   //
@@ -171,7 +170,7 @@
       s = Array.from(words.segment(s), (seg) => (seg.isWordLike && SAY_AS.has(seg.segment) ? SAY_AS.get(seg.segment) : seg.segment)).join('');
     }
     for (const [re, to] of RESPELL) s = s.replace(re, to);
-    return s.replace(NIKAHIT_HA_RE, '$1ា');
+    return s;
   }
 
   // English titles before a name, said the Khmer way (the name after them is kept).
