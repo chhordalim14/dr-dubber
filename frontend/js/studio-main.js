@@ -3597,9 +3597,14 @@
         const textRaw = sub.text || "";
 
         const detectedChar = window.defaultVoiceFor(sub.gender || sub.voice, sub.speaker || sub.character);
+        // Who says it, as Transcribe named them from the series' character sheet (not a voice
+        // preset): one character, one voice, in every episode (js/vox-speakers.js).
+        const named = String(sub.speaker || "").trim();
+        const characterName = named && !/^[?？]+$/.test(named) && !window.CHARACTER_PRESETS?.[named] ? named.slice(0, 60) : undefined;
 
         return {
           id: crypto.randomUUID().substring(0, 8),
+          ...(characterName && { characterName }),
           textStart: parseAiTime(startRaw).toFixed(2),
           textEnd: parseAiTime(endRaw).toFixed(2),
           audioStart: parseAiTime(startRaw).toFixed(2),
@@ -23101,6 +23106,13 @@
           }
         } else if (!isBatch && data.method !== "ffmpeg_fallback") {
           showToast("Background BGM isolation finished!", "success");
+        }
+
+        // Speakers found from the film's mix are found again from the voices alone: music under
+        // the lines kept a character's prints apart between episodes (E62 -> E63: 0.77 and 0.64
+        // from the mix, 0.86 and 0.79 from the vocals). Only ML stems are used for that.
+        if (!/^ffmpeg/.test(String(targetProject.bgmMethod || "")) && targetProject.voxSpeakersFrom === "mix") {
+          window.voxSpeakers?.refind?.(targetProject);
         }
 
         return { success: true, method: targetProject.bgmMethod, fallbackReason: targetProject.bgmFallbackReason };

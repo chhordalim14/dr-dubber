@@ -26,14 +26,19 @@ ERES2NETV2 = "iic/speech_eres2netv2_sv_zh-cn_16k-common"
 # Lines shorter than this give a print too unsteady to group by; they join a speaker afterwards.
 MIN_PRINT_SECONDS = 1.2
 MAX_PRINT_SECONDS = 12.0
-# A line's gender is its pitch where that is clear (median Hz of its loud frames), else the one
-# Transcribe heard: opposite genders never group, and Transcribe's is often wrong (457 lines of 4
-# C-dramas: "Male" lines median 111 Hz but 8% at 190 or more; "Female" 224 Hz, 2.5% at 140 or
-# less), so a woman's line heard as a man's made a male voice of her own. Measured on 17
-# transcripts of E60 (2 actors, man 88-106 Hz, woman 183-231 Hz): lines grouped with the other
-# actor 21 -> 3; the 4 dramas joined: lines given another drama's actor 57 -> 60.
+# A line's gender is its pitch where that is clear, else the one Transcribe heard: opposite
+# genders never group, and Transcribe's is often wrong (457 lines of 4 C-dramas: "Male" lines
+# median 111 Hz but 8% at 190 or more), so a woman's line heard as a man's made a male voice of
+# her own. Clear means most of its loud frames (PITCH_AGREE) on one side of PITCH_SPLIT_HZ, with
+# their median below MALE_BELOW_HZ / above FEMALE_ABOVE_HZ: a line's loose times often hold the
+# end of the other actor's line (E46 "妈，你不懂就别说了": the mother at 300 Hz, then the son at
+# 120), and its median then names the wrong one. Wrong genders against the lines' text, median vs
+# this: E60 (23 transcripts, 483 lines) 36 -> 13 with Transcribe's times, 9 -> 8 matched to the
+# screen; E46 (33 lines) 6 -> 3 and 1 -> 1; Transcribe's own tags 16, 16, 0, 0.
 MALE_BELOW_HZ = 150.0
 FEMALE_ABOVE_HZ = 175.0
+PITCH_SPLIT_HZ = 162.0
+PITCH_AGREE = 0.8
 # Two groups of lines are one speaker while their prints are at least this alike (cosine, average
 # over every pair). Measured on C-drama episodes with music under the dialogue: the same actor
 # 0.55-0.85, two actors of the same gender up to about 0.45.
@@ -308,8 +313,8 @@ def _gender(g):
     return "Female" if g == "female" else "Male" if g == "male" else None
 
 
-def _pitch(clip):
-    """Median pitch (Hz) of a line's loud frames, or None when too little of it is voiced."""
+def _pitches(clip):
+    """Pitch (Hz) of each loud frame of a line, or None when too little of it is voiced."""
     import librosa
 
     if len(clip) < SR * 0.3:
@@ -318,17 +323,37 @@ def _pitch(clip):
     rms = librosa.feature.rms(y=clip, frame_length=1024, hop_length=256)[0]
     n = min(len(f0), len(rms))
     loud = rms[:n] > rms[:n].max() * 0.3
-    return float(np.median(f0[:n][loud])) if loud.sum() >= 5 else None
+    return f0[:n][loud] if loud.sum() >= 5 else None
+
+
+def _pitch(clip):
+    """Median pitch (Hz) of a line's loud frames, or None when too little of it is voiced."""
+    f = _pitches(clip)
+    return float(np.median(f)) if f is not None else None
+
+
+def _pitch_gender(clip):
+    """The gender a line's pitch says, or None when it is not clear."""
+    f = _pitches(clip)
+    if f is not None:
+        low = f[f < PITCH_SPLIT_HZ]
+        high = f[f >= PITCH_SPLIT_HZ]
+        if len(low) >= PITCH_AGREE * len(f) and np.median(low) < MALE_BELOW_HZ:
+            return "Male"
+        if len(high) >= PITCH_AGREE * len(f) and np.median(high) > FEMALE_ABOVE_HZ:
+            return "Female"
+    return None
 
 
 def _heard_gender(g, clip):
     """The line's gender by its pitch where that is clear, else the one Transcribe gave it."""
-    hz = _pitch(clip)
-    if hz and hz < MALE_BELOW_HZ:
-        return "Male"
-    if hz and hz > FEMALE_ABOVE_HZ:
-        return "Female"
-    return _gender(g)
+    return _pitch_gender(clip) or _gender(g)
+
+
+def _name(v):
+    """The character Transcribe named as a line's speaker, or None ("?", empty)."""
+    v = str(v or "").strip()
+    return None if not v or v.strip("?？ ") == "" else v[:60]
 
 
 def _group(prints, genders, same=SAME_SPEAKER):
@@ -390,15 +415,24 @@ def find_speakers(wav, lines, known=None, log=print):
     """Group the lines by who speaks them.
 
     wav    16 kHz mono float32 audio the line times refer to
-    lines  [{"id", "start", "end", "gender"}] (gender "Male"/"Female" when known)
-    known  [{"id", "gender", "embedding", "model"}] voices from earlier episodes of the same series
-           (model: the print model that made the embedding, "campplus" when missing)
+    lines  [{"id", "start", "end", "gender", "name", "exact"}] (gender "Male"/"Female" when known;
+           name the character Transcribe heard say it, from the series' character sheet; exact
+           when its times are the video's own subtitle's, not Transcribe's guess)
+    known  [{"id", "gender", "embedding", "model", "name"}] voices from earlier episodes of the same
+           series (model: the print model that made the embedding, "campplus" when missing; a
+           voice of a named character may come without an embedding)
 
-    Returns {"speakers": [{"key", "gender", "lines", "refs", "seconds", "embedding", "known"}],
-    "print_model"}: lines are the line ids that speaker says, refs their clearest lines (best
-    first) to cut reference clips from (a calm one, and one per feeling the app finds among
-    them), known the id of the earlier voice they match (or None), print_model the model the
-    embeddings come from.
+    Lines are grouped by their character's name: the same name is the same voice in every
+    episode, which voice prints alone could not promise (one actor's 1-3 s lines across episodes
+    scored as far apart as two actors). A line whose clear pitch is the other gender than its
+    character's loses the name; lines without a name are grouped by voice (as before names were
+    given) and join the named character of their gender they sound most like.
+
+    Returns {"speakers": [{"key", "gender", "lines", "refs", "seconds", "embedding", "known",
+    "name"}], "print_model"}: lines are the line ids that speaker says, refs their clearest
+    lines (best first) to cut reference clips from (a calm one, and one per feeling the app
+    finds among them), known the id of the earlier voice they match (or None), name the
+    character (or None), print_model the model the embeddings come from.
     """
     import time
 
@@ -415,11 +449,11 @@ def find_speakers(wav, lines, known=None, log=print):
             continue
         clip = wav[max(0, int(a * SR)): min(len(wav), int(b * SR))]
         rows.append({"id": str(ln["id"]), "start": a, "end": b, "dur": len(clip) / SR,
-                     "gender": _heard_gender(ln.get("gender"), clip), "clip": clip})
+                     "gender": _heard_gender(ln.get("gender"), clip), "clip": clip,
+                     "said": _pitch_gender(clip), "name": _name(ln.get("name")), "exact": bool(ln.get("exact"))})
     if not rows:
         return {"speakers": [], "print_model": model.name}
 
-    sure = [r for r in rows if r["dur"] >= MIN_PRINT_SECONDS]
     for r in rows:
         if r["dur"] >= 0.4:
             c = r["clip"]
@@ -429,19 +463,137 @@ def find_speakers(wav, lines, known=None, log=print):
             r["print"] = voice_print(model, c)
     log(f"Voice prints for {sum('print' in r for r in rows)} of {len(rows)} lines in {time.time() - t0:.1f}s")
 
-    groups = [[sure[i] for i in g] for g in _group(np.stack([r["print"] for r in sure]) if sure else np.zeros((0, 192)),
-                                                     [r["gender"] for r in sure], t["same"])]
-
     def centroid(g):
         # Only lines long enough for a steady print: a few short ones of another voice folded
         # into a speaker pulled their print towards a woman's voice (0.83 to a female speaker).
         core = [r["print"] for r in g if r["dur"] >= MIN_PRINT_SECONDS] or [r["print"] for r in g if "print" in r]
-        return _unit(np.mean(core, axis=0))
+        return _unit(np.mean(core, axis=0)) if core else None
+
+    def like(g1, g2):
+        a, b = centroid(g1), centroid(g2)
+        return float(a @ b) if a is not None and b is not None else -1.0
 
     def gender_of(g):
         m = sum(r["dur"] for r in g if r["gender"] == "Male")
         f = sum(r["dur"] for r in g if r["gender"] == "Female")
         return None if m == f else ("Male" if m > f else "Female")
+
+    # Named characters. A line keeps no name when it clearly sounds the other gender than its
+    # character AND its print is more like a character of that gender than its own: E47 "成凯那边
+    # 已经四家了", given to 苏曼青, sounds male and 0.79 like 陈总 (0.32 her). Pitch alone also
+    # took a shout from its speaker (E46 "我说了不找他": 韩子昂 at 327 Hz, yet 0.60 like him,
+    # 0.37 his mother). Only a line timed to the video's own subtitle ("exact"): Transcribe's
+    # looser times often hold the other actor's words (E46 "妈，你不懂就别说", said by 韩子昂,
+    # mostly his mother's voice in its slot), where the name is right and the sound is not.
+    # The lines left group by voice below.
+    named = {}
+    for r in rows:
+        if r["name"]:
+            named.setdefault(r["name"], []).append(r)
+    sex = {n: gender_of(rs) for n, rs in named.items()}
+    cents = {n: centroid(rs) for n, rs in named.items()}
+    for n, rs in named.items():
+        for r in rs:
+            if not (sex[n] and r["exact"] and r["said"] and r["said"] != sex[n] and "print" in r):
+                continue
+            own = float(r["print"] @ cents[n]) if cents[n] is not None else -1.0
+            other = max((float(r["print"] @ c) for o, c in cents.items() if sex[o] == r["said"] and c is not None), default=None)
+            if other is not None and other > own:
+                r["name"] = None
+    named = {n: [r for r in rs if r["name"]] for n, rs in named.items()}
+    named = {n: rs for n, rs in named.items() if rs}
+    rest = [r for r in rows if not r["name"]]
+
+    groups = _voice_groups(rest, t, centroid, gender_of)
+    if named:
+        # A voice found among the unnamed lines is the named character of its gender it sounds
+        # most like; with none of its gender, a speaker of its own.
+        # A lone line is never a voice of its own then (E47: one shouted line the name was taken
+        # from made a one-line speaker).
+        characters = list(named.values())
+        for g in groups:
+            gg = gender_of(g)
+            fits = [c for c in characters if not gg or not gender_of(c) or gender_of(c) == gg]
+            best = max(fits, key=lambda c: like(g, c), default=None)
+            if best is not None and (like(g, best) >= t["join"] or len(g) < MIN_SPEAKER_LINES):
+                best.extend(g)
+            else:
+                characters.append(g)
+        groups = characters
+    # A line no speaker took (short, its name dropped) goes to the nearest speaker of its gender.
+    placed = {r["id"] for g in groups for r in g}
+    for r in rows:
+        if r["id"] in placed or not groups:
+            continue
+        fits = [g for g in groups if not r["gender"] or not gender_of(g) or gender_of(g) == r["gender"]] or groups
+        best = max(fits, key=lambda g: float(r["print"] @ centroid(g)) if "print" in r and centroid(g) is not None
+                   else -1.0 + sum(x["dur"] for x in g) / 1e6)
+        best.append(r)
+    groups.sort(key=lambda g: -sum(r["dur"] for r in g))
+
+    # Earlier episodes: a named character takes the earlier voice of the same name (any print
+    # model, with or without a print); any other speaker the earlier voice they match best, if
+    # close enough. Only prints of this model: another model's place the same voice elsewhere.
+    by_name = {}
+    for k in known or []:
+        if _name(k.get("name")) and k.get("id"):
+            by_name.setdefault(_name(k.get("name")), k)
+    known = [k for k in (known or []) if k.get("embedding") and len(k["embedding"]) == 192
+             and (k.get("model") or "campplus") == model.name]
+    speakers = []
+    for n, g in enumerate(groups):
+        c = centroid(g)
+        gg = gender_of(g)
+        names = [r["name"] for r in g if r["name"]]
+        name = max(set(names), key=names.count) if names else None
+        # The name decides, even where the voice of another earlier character seems closer: two
+        # men of E46/E47 (韩子昂, 陈总) scored 0.81-0.88 like each other's voices, so taking the
+        # voice over the name gave 韩子昂 陈总's voice in one episode order and fixed it in the other.
+        match, score = None, t["known"]
+        k = by_name.get(name) if name else None
+        if k and not (gg and _gender(k.get("gender")) and _gender(k.get("gender")) != gg):
+            match, score = k["id"], 1.0
+        for k in known if match is None and c is not None else []:
+            if gg and _gender(k.get("gender")) and _gender(k.get("gender")) != gg:
+                continue
+            if name and _name(k.get("name")) and _name(k.get("name")) != name:
+                continue  # another character's voice
+            s = float(c @ _unit(k["embedding"]))
+            if s >= score:
+                match, score = k["id"], s
+        # The clearest lines: most like the speaker as a whole, long enough to hear the voice,
+        # little music or noise under them.
+        def quality(r):
+            if "print" not in r or r["dur"] < 1.0 or c is None:
+                return -9.0
+            like_ = float(r["print"] @ c)
+            length = min(r["dur"], 6.0) / 6.0
+            noise = min(0.0, (-30.0 - _noise_db(r["clip"])) / 30.0)
+            return like_ + 0.25 * length + 0.5 * noise
+        ranked = sorted(g, key=quality, reverse=True)
+        speakers.append({
+            "key": f"S{n + 1}",
+            "gender": gg,
+            "name": name,
+            "lines": [r["id"] for r in sorted(g, key=lambda r: r["start"])],
+            "refs": [r["id"] for r in ranked if "print" in r and r["dur"] >= 1.0][:MAX_REFS],
+            "seconds": round(sum(r["dur"] for r in g), 1),
+            "embedding": [round(float(v), 5) for v in c] if c is not None else None,
+            "known": match,
+            "known_score": round(score, 3) if match else None,
+        })
+    matched = sum(1 for s in speakers if s["known"])
+    log(f"Found {len(speakers)} speaker(s) in {len(rows)} lines in {time.time() - t0:.1f}s ({model.name})"
+        + (f", {len(named)} named" if named else "")
+        + (f" ({matched} matched from earlier episodes)" if known or by_name else ""))
+    return {"speakers": speakers, "print_model": model.name}
+
+
+def _voice_groups(rows, t, centroid, gender_of):
+    """The lines grouped by voice alone (the search before Transcribe named the speakers)."""
+    sure = [r for r in rows if r["dur"] >= MIN_PRINT_SECONDS and "print" in r]
+    groups = [[sure[i] for i in g] for g in _group(np.stack([r["print"] for r in sure]) if sure else np.zeros((0, 192)),
+                                                     [r["gender"] for r in sure], t["same"])]
 
     # A speaker with too little speech (or one line) to clone from joins the nearest speaker (any gender if
     # their voices are alike: the gender heard on one line can be wrong).
@@ -493,42 +645,4 @@ def find_speakers(wav, lines, known=None, log=print):
             best = fits[0]  # groups are biggest first
         groups[best].append(r)
 
-    # Earlier episodes: each speaker takes the earlier voice they match best, if close enough.
-    # Only prints of this model: another model's place the same voice somewhere else entirely.
-    known = [k for k in (known or []) if k.get("embedding") and len(k["embedding"]) == 192
-             and (k.get("model") or "campplus") == model.name]
-    speakers = []
-    for n, g in enumerate(groups):
-        c = centroid(g)
-        gg = gender_of(g)
-        match, score = None, t["known"]
-        for k in known:
-            if gg and _gender(k.get("gender")) and _gender(k.get("gender")) != gg:
-                continue
-            s = float(c @ _unit(k["embedding"]))
-            if s >= score:
-                match, score = k["id"], s
-        # The clearest lines: most like the speaker as a whole, long enough to hear the voice,
-        # little music or noise under them.
-        def quality(r):
-            if "print" not in r or r["dur"] < 1.0:
-                return -9.0
-            like = float(r["print"] @ c)
-            length = min(r["dur"], 6.0) / 6.0
-            noise = min(0.0, (-30.0 - _noise_db(r["clip"])) / 30.0)
-            return like + 0.25 * length + 0.5 * noise
-        ranked = sorted(g, key=quality, reverse=True)
-        speakers.append({
-            "key": f"S{n + 1}",
-            "gender": gg,
-            "lines": [r["id"] for r in sorted(g, key=lambda r: r["start"])],
-            "refs": [r["id"] for r in ranked if "print" in r and r["dur"] >= 1.0][:MAX_REFS],
-            "seconds": round(sum(r["dur"] for r in g), 1),
-            "embedding": [round(float(v), 5) for v in c],
-            "known": match,
-            "known_score": round(score, 3) if match else None,
-        })
-    matched = sum(1 for s in speakers if s["known"])
-    log(f"Found {len(speakers)} speaker(s) in {len(rows)} lines in {time.time() - t0:.1f}s ({model.name})"
-        + (f" ({matched} matched from earlier episodes)" if known else ""))
-    return {"speakers": speakers, "print_model": model.name}
+    return groups

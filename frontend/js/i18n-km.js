@@ -1665,6 +1665,8 @@ window.I18N_KM = {
   "Each speaker's voice is cloned from the video. To change one line, pick its voice on the voice pill.": "សំឡេងអ្នកនិយាយម្នាក់ៗត្រូវបាន Clone ពីវីដេអូ។ ដើម្បីប្ដូរឃ្លាមួយ សូមជ្រើសសំឡេងរបស់វានៅលើប៊ូតុងសំឡេង។",
   "Find speakers again": "ស្វែងរកអ្នកនិយាយម្ដងទៀត",
   "Merge into…": "បញ្ចូលទៅក្នុង…",
+  "This episode's lines →": "ឃ្លាក្នុងភាគនេះ →",
+  "Wrong character in this episode only? Give this episode's lines to another voice - other episodes keep theirs": "តួអង្គខុសតែក្នុងភាគនេះ? ឲ្យឃ្លាក្នុងភាគនេះទៅសំឡេងផ្សេង - ភាគផ្សេងៗនៅដដែល",
   "Play the voice cloned from the video": "ចាក់សំឡេងដែល Clone ពីវីដេអូ",
   "Same person as another speaker? Merge their lines into that speaker": "ជាមនុស្សតែមួយនឹងអ្នកនិយាយផ្សេង? បញ្ចូលឃ្លារបស់គេទៅអ្នកនិយាយនោះ",
   "Listening to every line to find who speaks it…": "កំពុងស្ដាប់ឃ្លានីមួយៗ ដើម្បីរកអ្នកនិយាយ…",

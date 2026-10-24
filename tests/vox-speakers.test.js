@@ -39,6 +39,23 @@ test('linesWav: only the lines, back to back, as a 16 kHz mono wav with their ne
     assert.equal(wav.readInt16LE(44 + Math.round(1.3 * rate) * 2), (5 * rate) % 30000);
 });
 
+// One character, one voice: the name Transcribe gave a line, and whether its times are the
+// video's own subtitle's, reach the speaker search with it.
+test('linesWav and the page carry each line\'s character name and exact timing to the speaker search', () => {
+    const movie = Buffer.alloc(4 * 16000 * 2);
+    const { sent } = linesWav((a, b) => movie.subarray(a, b), movie.length, [
+        { id: 'a', start: 0, end: 1, gender: 'Female', name: '赵淑芬', exact: true },
+        { id: 'b', start: 2, end: 3, gender: 'Male' },
+    ]);
+    assert.deepEqual(sent[0], { id: 'a', start: 0, end: 1, gender: 'Female', name: '赵淑芬', exact: true });
+    assert.deepEqual(sent[1], { id: 'b', start: 1.3, end: 2.3, gender: 'Male' }, 'nothing added to a line without them');
+    const page = read('frontend', 'js', 'vox-speakers.js');
+    assert.match(page, /name: s\.characterName \|\| null, exact: !!s\.screenMatched/);
+    assert.match(page, /label: s\.name \|\| `Speaker \$\{\+\+number\}`/);
+    assert.match(read('frontend', 'js', 'studio-main.js'), /\.\.\.\(characterName && \{ characterName \}\)/);
+    assert.match(read('backend', 'server.js'), /speaker: \{ type: 'STRING' \},/);
+});
+
 test('refPieces: the clearest lines in order until about 6 s, never more than 10 s or 4 lines', () => {
     const at = (start, end) => ({ start, end });
     let p = refPieces([at(10, 14), at(20, 23), at(30, 31)]);

@@ -145,17 +145,32 @@ function applyGlossaryToSheet(sheet, glossary) {
 }
 
 // The sheet as the few compact lines every translate batch gets.
+// A surname with a title (韩总, 王董) while someone else of that surname is listed: it can be
+// any of them, so Transcribe used it as a speaker name for a father in one episode and his son in
+// the next (one voice for both). Sheets saved before the builder was told so still have them.
+const TITLES = /^(.)(总|董|董事长|总裁|经理|队|局|老板|少|爷)$/;
+function isSharedTitle(name, characters) {
+    const m = TITLES.exec(String(name || ''));
+    return !!m && characters.some((c) => c.name !== name && c.name.startsWith(m[1]) && !TITLES.test(c.name));
+}
+
 function formatSheetForPrompt(sheet) {
     const s = normalizeSheet(sheet);
     if (!sheetSize(s)) return '';
     const out = ['\n\nCHARACTER SHEET (the same for the whole series - write these names exactly so, and keep these forms of address in every line unless the relationship visibly changes):'];
     if (s.characters.length) {
         out.push('Names:');
-        for (const c of s.characters) out.push(`- ${c.name} = ${c.khmer} (${c.gender}${c.role ? `, ${c.role}` : ''})`);
+        for (const c of s.characters) {
+            if (isSharedTitle(c.name, s.characters)) continue;
+            out.push(`- ${c.name} = ${c.khmer} (${c.gender}${c.role ? `, ${c.role}` : ''})`);
+        }
     }
     if (s.address.length) {
         out.push('Forms of address (speaker -> listener: calls them / calls self):');
-        for (const x of s.address) out.push(`- ${x.speaker} -> ${x.listener}: ${x.calls} / ${x.self}`);
+        for (const x of s.address) {
+            if (isSharedTitle(x.speaker, s.characters) || isSharedTitle(x.listener, s.characters)) continue;
+            out.push(`- ${x.speaker} -> ${x.listener}: ${x.calls} / ${x.self}`);
+        }
     }
     if (s.terms.length) {
         out.push('Terms:');
@@ -187,7 +202,7 @@ Return a JSON object with:
 ${KHMER_FORMS_OF_ADDRESS}
 - "terms": recurring named places, sects, clans, companies, titles, techniques or items (at most ${MAX_TERMS}): "original" exactly as written, "khmer" the Khmer to use.
 
-Only include what the dialogue supports. Do not list generic words (师父, 老板, boss) as names.${knownText ? `\n\nALREADY DECIDED in earlier episodes - keep these exactly as they are and list only what is new:${knownText}` : ''}${glossaryHint}
+Only include what the dialogue supports. Do not list generic words (师父, 老板, boss) as names. A surname with a title (韩总, 王董, 李队) is not a character of its own when it can be someone already listed (韩总 is 韩峥 at work, his brother, or their father): list the person; one known only by the title (陈总) is listed by it. A family member who speaks but is never named is listed by role (韩父, 韩母).${knownText ? `\n\nALREADY DECIDED in earlier episodes - keep these exactly as they are and list only what is new:${knownText}` : ''}${glossaryHint}
 
 DIALOGUE:
 ${dialogue.join('\n')}`;
@@ -228,6 +243,70 @@ function saveSeriesSheet(dir, sourceFilePath, sheet) {
     return true;
 }
 
+// ── Speakers already given a voice in the series ──
+// Transcribe names each line's speaker; one not on the sheet gets a role (父亲, 陈总, 助理) that the
+// next episode named again differently (父亲 in E46, 韩父 in E47: two voices for one father).
+// The names an episode used are kept beside the sheet and shown to the next one, to reuse.
+const MAX_SPEAKERS = 40;
+const speakersFile = (dir, sourceFilePath) => {
+    const file = sheetFile(dir, sourceFilePath);
+    return file && file.replace(/\.json$/, '.speakers.json');
+};
+
+function loadSeriesSpeakers(dir, sourceFilePath) {
+    try {
+        const list = JSON.parse(fs.readFileSync(speakersFile(dir, sourceFilePath), 'utf8'));
+        return Array.isArray(list) ? list.filter(s => s && str(s.name)) : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+// The folder of a series' cast pictures (a frame of each named speaker while speaking).
+const castDir = (dir, sourceFilePath) => {
+    const file = sheetFile(dir, sourceFilePath);
+    return file && file.replace(/\.json$/, '.cast');
+};
+
+function saveSeriesSpeakers(dir, sourceFilePath, list) {
+    const file = speakersFile(dir, sourceFilePath);
+    if (!file) return;
+    fs.mkdirSync(dir, { recursive: true });
+    const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(list.slice(-MAX_SPEAKERS)), 'utf8');
+    fs.renameSync(tmp, file);
+}
+
+// cues: Transcribe's lines ({ speaker, gender }). Every name it used is kept (once), "?" and
+// shared titles left out; a name's cast pictures are added by the caller (frames). Returns the
+// list as saved.
+function addSeriesSpeakers(dir, sourceFilePath, cues, sheet) {
+    if (!speakersFile(dir, sourceFilePath)) return [];
+    const s = normalizeSheet(sheet);
+    const list = loadSeriesSpeakers(dir, sourceFilePath);
+    const have = new Set(list.map(x => x.name));
+    const votes = new Map();
+    for (const c of cues || []) {
+        const name = str(c && c.speaker).slice(0, 60);
+        if (!name || /^[?？]+$/.test(name) || have.has(name) || isSharedTitle(name, s.characters)) continue;
+        const v = votes.get(name) || { Male: 0, Female: 0 };
+        if (c.gender === 'Male' || c.gender === 'Female') v[c.gender]++;
+        votes.set(name, v);
+    }
+    if (!votes.size) return list;
+    for (const [name, v] of votes) list.push({ name, gender: v.Male === v.Female ? 'Unknown' : v.Male > v.Female ? 'Male' : 'Female' });
+    saveSeriesSpeakers(dir, sourceFilePath, list);
+    return list.slice(-MAX_SPEAKERS);
+}
+
+// The names not on the sheet (the sheet lists its own): roles an earlier episode gave (父亲, 助理).
+function formatSpeakersForPrompt(list, sheet) {
+    const onSheet = new Set(normalizeSheet(sheet).characters.map(c => c.name));
+    const rest = (Array.isArray(list) ? list : []).filter(x => !onSheet.has(x.name));
+    if (!rest.length) return '';
+    return `\n\nSPEAKERS ALREADY VOICED IN EARLIER EPISODES (not on the sheet): when one of these people speaks, write exactly this name as "speaker" again:\n${rest.map(x => `- ${x.name} (${x.gender})`).join('\n')}`;
+}
+
 // Episodes of one series translated at the same time take turns on the sheet, so episode 2 starts
 // from what episode 1 decided instead of both inventing their own spellings.
 const seriesLocks = new Map(); // sheet file -> promise of the last holder
@@ -258,5 +337,10 @@ module.exports = {
     buildCharacterSheetPrompt,
     loadSeriesSheet,
     saveSeriesSheet,
+    loadSeriesSpeakers,
+    saveSeriesSpeakers,
+    addSeriesSpeakers,
+    formatSpeakersForPrompt,
+    castDir,
     withSeriesLock
 };
