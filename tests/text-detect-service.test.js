@@ -188,3 +188,33 @@ describe('subtitle text detection jobs', () => {
         assert.equal(calls.filter((c) => c.startsWith('-m pip')).length, pipCalls + 1);
     });
 });
+
+describe('text_detector.py: reading the strip fast', () => {
+    const py = fs.readFileSync(path.join(__dirname, '..', 'backend', 'python', 'text_detector.py'), 'utf8');
+    const num = (name) => parseFloat((py.match(new RegExp(`^${name} = ([0-9.]+)`, 'm')) || [])[1]);
+
+    test('a strip with the same letters is not read again - but a line that changed some letters is', () => {
+        // Measured: the same line from read to read 0.85-1.0 alike; "读书比他好" -> "工作比他好" 0.62.
+        assert.ok(num('SAME_STRIP_GLYPHS') > 0.62 + 0.15, `threshold ${num('SAME_STRIP_GLYPHS')}`);
+        assert.ok(num('MIN_GLYPH_PIXELS') >= 20, 'too few letter pixels (coloured subtitles) never count as the same');
+        assert.ok(num('MAX_SKIPPED') >= 1 && num('MAX_SKIPPED') <= 8, 'read for real at least every 2 s');
+        assert.match(py, /skipped < MAX_SKIPPED and \(/);
+        assert.match(py, /or same_letters\(prev\['glyphs'\], glyphs\)/);
+        // an empty strip is skipped only once this video's subtitles showed as letter pixels
+        assert.match(py, /or \(letters_seen and prev\['line'\] is None and int\(\(prev\['glyphs'\] \| glyphs\)\.sum\(\)\) < MIN_GLYPH_PIXELS\)\)/);
+        assert.match(py, /letters_seen = letters_seen or /);
+    });
+
+    test('read 4 times a second: 3 merged short lines and moved 15% of the times for 5% less time', () => {
+        const svc = fs.readFileSync(path.join(__dirname, '..', 'backend', 'text_detect_service.js'), 'utf8');
+        assert.match(svc, /'--fps', '4'/);
+    });
+
+    test('the strip is decoded by NVIDIA when it can be, else on the CPU', () => {
+        assert.match(py, /HWACCEL = os\.environ\.get\('DR_TEXT_HWACCEL', 'cuda'\)/);
+        // the last try is always without a decoder: a PC without one still reads its tabs
+        assert.match(py, /\+ \[None\]:/);
+        assert.match(py, /if len\(first\) == frame_bytes or hw is None:/);
+        assert.match(py, /proc, first = open_strip\(video, vf, frame_bytes\)/);
+    });
+});

@@ -165,3 +165,43 @@ describe('a subtitle shown over several on-screen lines', () => {
             [{ start: 1, end: 3, text: 'ទេ' }]);
     });
 });
+
+describe('no subtitle without a line, no line late', () => {
+    // On screen: four lines. Transcribed: the same four, the last two 6 s late (drift).
+    const LINES4 = [[0, 1.5, '我们走吧'], [2, 3.5, '你先别上去'], [10, 11.5, '他是新郎'], [12, 13.5, '这个戒指']].map(([start, end, text]) => ({ start, end, text }));
+    const DRIFTED = [[0, 1.5, '我们走吧'], [2, 3.5, '你先别上去'], [16, 17.5, '他是新郎'], [18, 19.5, '这个戒指']].map(([start, end, text]) => ({ start, end, text }));
+
+    test('lines drifted past the first pass are paired again by their text - no delay', () => {
+        const m = SS.matchSubtitles(DRIFTED, LINES4);
+        assert.equal(m[2], null, 'more than 2.5 s off: the first pass leaves it');
+        SS.matchLeftovers(DRIFTED, LINES4, m);
+        assert.deepEqual(m.map((x) => x && x.start), [0, 2, 10, 12]);
+    });
+
+    test('the second pass never pairs by time alone, nor moves a line past its neighbours', () => {
+        const other = DRIFTED.map((s, i) => (i === 2 ? { ...s, text: '完全不同的话' } : s));
+        const m = SS.matchLeftovers(other, LINES4, SS.matchSubtitles(other, LINES4));
+        assert.equal(m[2], null, 'other words: not paired');
+        // A line whose text is on screen only before its matched neighbour stays where it is.
+        const subs = [{ start: 20, end: 21, text: '我们走吧' }, { start: 2, end: 3.5, text: '你先别上去' }];
+        const lines = [{ start: 0, end: 1.5, text: '我们走吧' }, { start: 2, end: 3.5, text: '你先别上去' }];
+        const m2 = SS.matchLeftovers(subs, lines, SS.matchSubtitles(subs, lines));
+        assert.equal(m2[0], null);
+        assert.equal(m2[1].start, 2);
+    });
+
+    test('on-screen lines no subtitle covers: the ones to give a line', () => {
+        const m = SS.matchSubtitles(DRIFTED.slice(0, 2), LINES4);
+        assert.deepEqual(SS.uncoveredLines(LINES4, m).map((l) => l.text), ['他是新郎', '这个戒指']);
+        assert.deepEqual(SS.uncoveredLines([...LINES4, { start: 20, end: 20.3, text: '啊' }], [...m, { start: 10, end: 14 }]).map((l) => l.text), [], 'too short to be a line: left');
+    });
+
+    test("only the video's subtitles - centred - not chat bubbles on a phone or signs", () => {
+        const shown = [
+            { start: 1, end: 2, text: '她有律师函', x: 40, w: 20.6 }, // a subtitle: 0.3% off the middle
+            { start: 3, end: 4, text: '几点出发', x: 10, w: 16.6 }, // a chat bubble: 31.7% left
+            { start: 5, end: 6, text: '中国', x: 70, w: 4 }, // a sign: 22% right
+        ];
+        assert.deepEqual(SS.uncoveredLines(shown, []).map((l) => l.text), ['她有律师函']);
+    });
+});

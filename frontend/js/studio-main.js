@@ -178,6 +178,23 @@
       return window.resolveCharacterKey(role || gender);
     };
 
+    // Male or Female for Edge (Piseth / Sreymom), also for a line given a voice while VoxCPM2 was
+    // on: the voice id (8 letters, e.g. "a3f2dad0") sits in gender, and in character after a pick
+    // on the voice pill. Read as a role word an id said "Male" (or "Father"), so a woman with a
+    // cloned voice was voiced by Piseth once VoxCPM2 was switched off. Transcribe's Male/Female
+    // tag comes first - what Edge used before her voice was cloned - then the voice's own gender.
+    window.edgeVoiceOf = function (sub, profiles) {
+      for (const v of [sub.character, sub.gender]) {
+        const preset = v && window.CHARACTER_PRESETS[String(v).trim()];
+        if (preset) return preset.gender;
+      }
+      for (const v of [sub.character, sub.gender]) {
+        const profile = v && (profiles || []).find((p) => p.id === v);
+        if (profile && (profile.gender === "Male" || profile.gender === "Female")) return profile.gender;
+      }
+      return window.resolveCharacterKey(sub.character || sub.gender);
+    };
+
     // Voices offered in the voice pickers: only Male and Female.
     window.voicePickerPresets = function () {
       return [window.CHARACTER_PRESETS.Male, window.CHARACTER_PRESETS.Female];
@@ -1042,6 +1059,13 @@
         if (p.bgmTrack) p.bgmTrack.volume = val;
       });
       if (typeof bgmTrack !== "undefined" && bgmTrack) bgmTrack.volume = val;
+    }
+    // The volume a tab's music plays and exports at: the A2 volume, and the tab's own level on
+    // top (bgmTrack.levelDb - a tab with loud music all the way through is turned down, see
+    // musicLevelDb).
+    function bgmPlayVolume(track) {
+      const v = track?.volume ?? 0.5;
+      return track?.levelDb ? v * Math.pow(10, track.levelDb / 20) : v;
     }
     let globalSubtitleItalic = localStorage.getItem("aiDubberSubItalic") === "true";
     let globalSubtitleUnderline = localStorage.getItem("aiDubberSubUnderline") === "true";
@@ -2044,6 +2068,17 @@
       return pool[0];
     }
 
+    // The voice tag a line is said with when VoxCPM2 is on. A line set back to Male/Female while
+    // VoxCPM2 was off (or by an older version) gets the voice of the speaker found saying it
+    // again, when that voice is the same gender - not the group's first Male/Female voice.
+    function voxVoiceTagOf(sub, profiles) {
+      if (sub.voxSpeaker && (sub.gender === "Male" || sub.gender === "Female")) {
+        const found = (profiles || []).find((p) => p.id === sub.voxSpeaker);
+        if (found && found.gender === sub.gender) return found.id;
+      }
+      return sub.gender;
+    }
+
     // Close preset panel when color-adjust opens (and vice versa)
     document.getElementById("btn-color-adjust").addEventListener(
       "click",
@@ -2871,7 +2906,7 @@
         }
         if (bgmTrack && bgmTrack.src) {
           bgmAudio = new Audio(bgmTrack.src);
-          bgmAudio.volume = bgmTrack.volume !== undefined ? bgmTrack.volume : 0.5;
+          bgmAudio.volume = bgmPlayVolume(bgmTrack);
           bgmAudio.muted = bgmTrack.isMuted || false;
           const seekTime = Math.max(0, (p.currentTime || 0) - (bgmTrack.start || 0));
           bgmAudio.currentTime = seekTime;
@@ -3597,9 +3632,14 @@
         const textRaw = sub.text || "";
 
         const detectedChar = window.defaultVoiceFor(sub.gender || sub.voice, sub.speaker || sub.character);
+        // Who says it, as Transcribe named them from the series' character sheet (not a voice
+        // preset): one character, one voice, in every episode (js/vox-speakers.js).
+        const named = String(sub.speaker || "").trim();
+        const characterName = named && !/^[?？]+$/.test(named) && !window.CHARACTER_PRESETS?.[named] ? named.slice(0, 60) : undefined;
 
         return {
           id: crypto.randomUUID().substring(0, 8),
+          ...(characterName && { characterName }),
           textStart: parseAiTime(startRaw).toFixed(2),
           textEnd: parseAiTime(endRaw).toFixed(2),
           audioStart: parseAiTime(startRaw).toFixed(2),
@@ -6150,7 +6190,7 @@
 
       bgmAudio = new Audio(src);
       bgmAudio.preload = "auto";
-      bgmAudio.volume = bgmTrack.volume ?? 0.5;
+      bgmAudio.volume = bgmPlayVolume(bgmTrack);
       bgmAudio.muted = !!bgmTrack.isMuted;
 
       // keep sync if video is already on a valid time
@@ -6769,6 +6809,20 @@
       return Number.isFinite(room) && room > slot ? room : slot;
     }
 
+    // A matched subtitle's voice may run on past its line, up to shortly before the next one
+    // (sub.voiceRoom). Returns the subtitles in time order.
+    function setVoiceRooms(subs, tabDuration = 0) {
+      const byStart = (subs || []).slice().sort((a, b) => parseFloat(a.textStart) - parseFloat(b.textStart));
+      if (!byStart.length) return byStart;
+      const tabEnd = tabDuration > 0 ? tabDuration : parseFloat(byStart[byStart.length - 1].textEnd) + 10;
+      byStart.forEach((s, i) => {
+        if (!s.screenMatched) return void delete s.voiceRoom;
+        const until = byStart[i + 1] ? parseFloat(byStart[i + 1].textStart) - VOICE_GAP : tabEnd;
+        s.voiceRoom = Math.max(parseFloat(s.textEnd) - parseFloat(s.textStart), until - parseFloat(s.textStart)).toFixed(2);
+      });
+      return byStart;
+    }
+
     // A subtitle matched to the video's own line appears with that line and stays up while its
     // voice speaks (a subtitle gone while its voice still talks reads wrong): its end is the
     // later of the line's end (screenLen from its start) and its voice's end, never into the
@@ -6835,10 +6889,10 @@
         return { ok: false, error: "No subtitles yet." };
       }
 
-      const matches = window.ScreenSync.matchSubtitles(
-        subs.map((s) => ({ start: s.textStart, end: s.textEnd, text: s.originalText || "" })),
-        proj.textBlur.lines,
-      );
+      const items = subs.map((s) => ({ start: s.textStart, end: s.textEnd, text: s.originalText || "" }));
+      const matches = window.ScreenSync.matchSubtitles(items, proj.textBlur.lines);
+      // Lines whose transcribed time drifted too far: paired again by their text (no delay).
+      window.ScreenSync.matchLeftovers(items, proj.textBlur.lines, matches);
       const placed = window.ScreenSync.placeUnmatched(subs.map((s, i) => (matches[i]
         ? { start: matches[i].start, end: matches[i].end, matched: true }
         : { start: s.textStart, end: s.textEnd, matched: false })));
@@ -6867,14 +6921,7 @@
           s.audioEnd = hasVoice ? (parseFloat(s.textStart) + voiceLen).toFixed(2) : s.textEnd;
         }
       });
-      // A matched subtitle's voice may run on past its line, up to shortly before the next one.
-      const byStart = subs.slice().sort((a, b) => parseFloat(a.textStart) - parseFloat(b.textStart));
-      const tabEnd = proj.duration > 0 ? proj.duration : parseFloat(byStart[byStart.length - 1].textEnd) + 10;
-      byStart.forEach((s, i) => {
-        if (!s.screenMatched) return void delete s.voiceRoom;
-        const until = byStart[i + 1] ? parseFloat(byStart[i + 1].textStart) - VOICE_GAP : tabEnd;
-        s.voiceRoom = Math.max(parseFloat(s.textEnd) - parseFloat(s.textStart), until - parseFloat(s.textStart)).toFixed(2);
-      });
+      const byStart = setVoiceRooms(subs, proj.duration);
       // Each voice fitted to its new room: 1.0x when it fits (a speed-up made for the old,
       // shorter slot is undone), just fast enough to end before the next line when not.
       byStart.forEach((s, i) => {
@@ -9981,6 +10028,29 @@
       return status;
     }
 
+    // Dub Whole Series runs overnight: a local VoxCPM2 server that is not running (the app was
+    // restarted, or the server stopped) is started here, as the Start Server button does, instead
+    // of the series pausing until someone starts it. Asked every time: a server that crashed
+    // still looks ready to _voxPingReady. True once the server answers.
+    async function voxCmp2EnsureServer({ onStart, waitMs = 5 * 60000 } = {}) {
+      const data = voxCmp2Load();
+      const url = (data.serverUrl || "").trim();
+      if (!data.enabled || !/^https?:\/\/.+/.test(url)) return false;
+      try {
+        if ((await fetch(url.endsWith("/") ? url : url + "/", { signal: AbortSignal.timeout(5000) })).ok) return (_voxPingReady = true);
+      } catch (_) { }
+      _voxPingReady = false;
+      if (!data.pythonPath || !window.electronAPI?.startVoxServer) return false; // a remote server: nothing to start here
+      onStart?.();
+      const status = await voxCmp2SyncServerButtonState();
+      if (status?.running) voxCmp2StartPingLoop(url, "Series"); // loading its model: wait for it
+      else await voxCmp2ToggleServer();
+      for (const until = Date.now() + waitMs; Date.now() < until && !_voxPingReady;) {
+        await new Promise((r) => setTimeout(r, 3000));
+      }
+      return _voxPingReady;
+    }
+
     function voxCmp2AddProfile() {
       const data = voxCmp2Load();
       const newProfile = {
@@ -12091,8 +12161,8 @@
           // Format: [BaseGender:ProfileID] (e.g., [Female:my_profile_id])
           genderMarker = `[${baseGender}:${sub.gender}] `;
         } else {
-          // Standard Edge-TTS mode (10 Character Presets): Tag with exact character ID!
-          const charKey = typeof window.resolveCharacterKey === "function" ? window.resolveCharacterKey(sub.character || sub.gender) : (sub.gender || "Male");
+          // Standard Edge-TTS mode: [Male] or [Female], also for a line with a VoxCPM2 voice
+          const charKey = window.edgeVoiceOf(sub, voxData.profiles);
           genderMarker = `[${charKey}] `;
         }
 
@@ -14805,7 +14875,7 @@
                 profiles: [],
               };
           const isVoxCpmActive = voxCmp2Settings.enabled === true;
-          const currentVoiceTag = (sub.gender || "").trim().toLowerCase();
+          const currentVoiceTag = String((isVoxCpmActive ? voxVoiceTagOf(sub, voxCmp2Settings.profiles) : sub.gender) || "").trim().toLowerCase();
 
           // 2. Branch UI rendering based on active engine
           if (isVoxCpmActive && voxCmp2Settings.profiles && voxCmp2Settings.profiles.length > 0) {
@@ -14862,7 +14932,7 @@
             }
           } else {
             // --- MODE B: MALE / FEMALE (Edge-TTS) ---
-            const charKey = typeof window.resolveCharacterKey === "function" ? window.resolveCharacterKey(sub.character || sub.gender || currentVoiceTag) : (sub.gender === "Male" ? "Male" : "Female");
+            const charKey = window.edgeVoiceOf(sub, voxCmp2Settings.profiles);
             const charOpts = window.voicePickerPresets(charKey).map((p) => ({
               value: p.id,
               label: p.label,
@@ -14876,7 +14946,10 @@
 
             const liveSubIdx = index;
             if (liveSubIdx > -1) {
-              subtitles[liveSubIdx].gender = charKey;
+              // A VoxCPM2 voice stays on the line, for when VoxCPM2 is switched on again; Edge
+              // reads the Male/Female in character.
+              const isVoxVoice = (voxCmp2Settings.profiles || []).some((p) => p.id === sub.gender);
+              if (!isVoxVoice) subtitles[liveSubIdx].gender = charKey;
               subtitles[liveSubIdx].character = charKey;
             }
           }
@@ -16315,7 +16388,7 @@
       cancelSeriesBackgroundJoin();
       if (seriesRun.splitJobId) post("http://localhost:3001/api/split/cancel", { jobId: seriesRun.splitJobId });
       if (seriesRun.step === "generate" && (isGeneratingAudioAll || voxQueueRunning)) generateSelectedAudioAllProjects();
-      if (seriesRun.step === "generate") cancelFastCondenseRequests(); // "Shortening rushed lines"
+      if (seriesRun.step === "generate" || seriesRun.step === "match") cancelFastCondenseRequests(); // "Shortening rushed lines", "Subtitles with no line"
       if (seriesRun.step === "isolate" && isIsolatingBgmAll) isolateBgmAllProjects({ skipConfirm: true });
       else stopSeriesBackgroundIsolate(); // isolating beside the other steps
       stopDetectTextAll(); // reading the tabs for subtitles runs beside the other steps
@@ -16413,22 +16486,117 @@
       // Parts whose hands-free export started this session and isn't complete yet, in part order.
       const unfinishedExports = () => (plan ? plan.parts.map((p, k) => k).filter((k) => !plan.parts[k].exported && seriesExports.has(plan.parts[k])) : []);
 
-      // A part hands-free was to export (autoExport) but that isn't exported lost its export when
-      // the app closed: the render queue and the part's tabs are gone. Dub it again instead of
-      // leaving a hole in the series.
+      // ── Checkpoints: the app closing loses no work ──────────────────────────
+      // A power cut, a crash or closing the app lost the open part's tabs (all that Transcribe,
+      // Match, Generate, Isolate and Blur made lives in them) and a finished part's export queue,
+      // and Continue dubbed the part again. Both are kept on disk while the series works
+      // (backend/routes/series-checkpoint.js): Continue opens the tabs as they were, with the
+      // steps done by then, and exports only the tabs not exported yet.
+      const ckKey = (i, what) => `series_${String(plan?.id || 0).replace(/\W/g, "")}_part${i + 1}_${what}`;
+      // Never throws: a checkpoint that can't be written or read only means less is kept.
+      const ckCall = async (url, body) => {
+        try {
+          const res = await fetch(url, body === undefined ? undefined : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+          return res ? await res.json() : null;
+        } catch (e) {
+          return null;
+        }
+      };
+      const ckSave = (key, data) => ckCall(`${API}/series-checkpoint`, { key, data });
+      const ckLoad = async (key) => (await ckCall(`${API}/series-checkpoint?key=${encodeURIComponent(key)}`))?.data || null;
+      const ckDelete = (keys) => ckCall(`${API}/series-checkpoint/delete`, { keys });
+
+      // A tab as data: everything but the page's own objects (its File, blob URLs, abort
+      // controllers), the undo history and the flags of jobs that were running.
+      const TAB_NOT_KEPT = new Set(["file", "blobUrl", "previewBlobUrl", "pastStates", "currentTime", "videoFilePath",
+        "isGeneratingAudio", "isTranscribing", "isIsolatingBgm", "isRendering", "isDetectingText", "isFixingMissing", "isBatchTranscribing",
+        "cancelGeneration", "renderProgress", "renderOriginalBtnHTML", "textDetectProgress", "textDetectJobId", "bgmJobId", "whisperJobId", "geminiRequestId"]);
+      const isPlainValue = (v) => v === null || typeof v !== "object" || Array.isArray(v) || Object.getPrototypeOf(v) === Object.prototype;
+      function tabState(p) {
+        const out = {};
+        for (const [k, v] of Object.entries(p)) {
+          if (k.startsWith("_") || TAB_NOT_KEPT.has(k) || /AbortController$/.test(k) || v === undefined || typeof v === "function" || !isPlainValue(v)) continue;
+          out[k] = v;
+        }
+        return JSON.parse(JSON.stringify(out));
+      }
+
+      // The open part's tabs and its steps. One write at a time; one asked for meanwhile follows.
+      let tabsCkWriting = null;
+      let tabsCkAgain = false;
+      function saveTabsCheckpoint() {
+        if (tabsCkWriting) {
+          tabsCkAgain = true;
+          return tabsCkWriting;
+        }
+        if (!plan || plan.current == null || !piecesOpen()) return Promise.resolve();
+        saveCurrentProjectState(); // the shown tab's lines live in the editor until then
+        const i = plan.current;
+        const data = { part: i, pieces: plan.pieces, steps: plan.stepState, at: Date.now(), tabs: projects.map((p) => ({ path: p.videoFilePath, state: tabState(p) })) };
+        tabsCkWriting = ckSave(ckKey(i, "tabs"), data).finally(() => {
+          tabsCkWriting = null;
+          if (tabsCkAgain) {
+            tabsCkAgain = false;
+            saveTabsCheckpoint();
+          }
+        });
+        return tabsCkWriting;
+      }
+      // Puts the part's tabs back as the checkpoint kept them (the tabs were just opened again,
+      // fresh). The steps done by then stay done; a step that was running runs again and does
+      // only what is left (Transcribe keeps tabs with lines, Generate voices pending lines,
+      // Isolate and Blur come back from their caches). Returns how many tabs came back.
+      function restoreTabsCheckpoint(saved) {
+        if (!saved || saved.part !== plan.current || !piecesOpen() || JSON.stringify(saved.pieces) !== JSON.stringify(plan.pieces)) return 0;
+        let restored = 0;
+        projects.forEach((p) => {
+          const t = (saved.tabs || []).find((x) => x.path === p.videoFilePath);
+          if (!t?.state) return;
+          Object.assign(p, t.state);
+          restored++;
+        });
+        if (!restored) return 0;
+        restoreProjectState(activeProjectIndex); // the shown tab shows it
+        renderProjectTabs();
+        OPTIONAL_STEPS.forEach((k) => { if (saved.steps?.[k]?.state === "done") plan.stepState[k] = saved.steps[k]; });
+        savePlan();
+        return restored;
+      }
+
+      // A finished part's export queue: what each tab renders (a queue item holds it all, as
+      // files on disk) and which tabs are rendered.
+      function saveExportCheckpoint(i) {
+        const job = seriesExports.get(plan?.parts[i]);
+        if (!job) return;
+        ckSave(ckKey(i, "export"), {
+          part: i,
+          items: job.items.map((it) => ({ status: it.status, outputPath: it.outputPath || null, projectLabel: it.projectLabel, seriesTag: it.seriesTag, config: it.config })),
+        });
+      }
+      // Parts whose hands-free export the app closing interrupted get their queue back from the
+      // checkpoint (tabs rendered before stay rendered). A part without one (closed in the moment
+      // between its last step and its export, or saved by an older version) is dubbed again -
+      // its tabs come back from their own checkpoint, so that is quick.
+      async function restoreLostExports() {
+        if (!plan || !window.seriesRenderApi?.restoreItems) return;
+        const lost = plan.parts.map((p, k) => k).filter((k) => {
+          const p = plan.parts[k];
+          return p.status === "done" && p.autoExport && !p.exported && !seriesExports.has(p);
+        });
+        for (const k of lost) {
+          const saved = await ckLoad(ckKey(k, "export"));
+          if (saved?.part !== k || !saved.items?.length || seriesExports.has(plan.parts[k])) continue;
+          const items = await window.seriesRenderApi.restoreItems(saved.items);
+          seriesExports.set(plan.parts[k], { items, run: null, rendering: false, result: null, tabsClosed: true });
+        }
+      }
+
+      // A part hands-free was to export (autoExport) but that isn't exported: the app closed
+      // during its export. Continue exports the rest (restoreLostExports).
       let lostExportsNote = "";
       if (plan) {
         const lost = plan.parts.map((p, k) => k).filter((k) => plan.parts[k].status === "done" && plan.parts[k].autoExport && !plan.parts[k].exported);
-        if (lost.length) {
-          lost.forEach((k) => {
-            plan.parts[k].status = "joined";
-            delete plan.parts[k].autoExport;
-          });
-          // Its tabs are gone: Continue must not take whatever tabs are open for its export.
-          if (plan.lastDone && lost.includes(plan.lastDone.index)) plan.lastDone = null;
-          savePlan();
-          lostExportsNote = `Part ${lost.map((k) => k + 1).join(", ")} wasn't fully exported when the app closed, so ${lost.length === 1 ? "it is" : "they are"} dubbed again.`;
-        }
+        if (lost.length) lostExportsNote = `Part ${lost.map((k) => k + 1).join(", ")} wasn't fully exported when the app closed. Continue exports the rest.`;
       }
 
       // Remembered settings.
@@ -16706,7 +16874,8 @@
         let noteText = "";
         if (plan && !running && autoResume) {
           const left = Math.max(0, Math.round((autoResume.at - Date.now()) / 1000));
-          noteText = `Paused: ${autoResume.reason} Continuing by itself in ${fmtDur(left)} (try ${plan.autoResume?.tries || 1} of ${AUTO_RESUME_MAX[plan.autoResume?.kind] || 1}) - or press Continue now.`;
+          const tries = plan.autoResume?.kind ? ` (try ${plan.autoResume.tries || 1} of ${AUTO_RESUME_MAX[plan.autoResume.kind] || 1})` : "";
+          noteText = `Paused: ${autoResume.reason} Continuing by itself in ${fmtDur(left)}${tries} - or press Continue now.`;
         }
         else if (plan && !running && lostExportsNote) noteText = lostExportsNote;
         else if (plan && !running && u < 0 && nextIdx < 0 && !toJoin.length && !joining.length) {
@@ -16820,6 +16989,10 @@
         return null;
       };
       function cancelAutoResume() {
+        if (plan?.resumeAt) {
+          delete plan.resumeAt;
+          savePlan();
+        }
         if (!autoResume) return;
         clearTimeout(autoResume.timer);
         clearInterval(autoResume.tick);
@@ -16840,6 +17013,11 @@
           // The countdown in the window (only redrawn while the window is open).
           tick: setInterval(() => { if (!modal.classList.contains("hidden")) render(); }, 1000),
         };
+        // Kept: the app closed meanwhile continues by itself when it opens again.
+        if (plan) {
+          plan.resumeAt = autoResume.at;
+          savePlan();
+        }
         render();
       }
       // Returns the wait (ms) when a continue was scheduled, else 0. Each kind of pause keeps its
@@ -16872,6 +17050,13 @@
         cancelAutoResume();
         seriesRun = { stopped: false, step: null, joinJobId: null, splitJobId: null, startedAt: Date.now() };
         const runStartedAt = seriesRun.startedAt;
+        // Working: an app that closes before the run ends (power cut, crash) continues when it
+        // opens again (hands-free). The open part's tabs are saved every half minute meanwhile.
+        if (plan) {
+          plan.running = true;
+          savePlan();
+        }
+        const tabsCkTimer = setInterval(saveTabsCheckpoint, 30000);
         lostExportsNote = ""; // shown until the series goes on
         allTabsJob = "series";
         setLabel("Dub series");
@@ -16888,6 +17073,8 @@
             modal.classList.remove("hidden");
           }
         } finally {
+          clearInterval(tabsCkTimer);
+          saveTabsCheckpoint(); // stopped or paused with the part's tabs open: kept as they are
           // A pause ends the run: isolating beside it would keep Continue waiting ("another job
           // is running"). Tabs already isolated come back from the server's cache.
           stopSeriesBackgroundIsolate();
@@ -16900,7 +17087,10 @@
           seriesRun = null;
           allTabsJob = null;
           allTabsJobLabel = "";
-          if (plan) plan.joinProgress = null;
+          if (plan) {
+            plan.joinProgress = null;
+            plan.running = false;
+          }
           savePlan();
           updateTranscribeAllButtonState();
           render();
@@ -16997,6 +17187,7 @@
         }
         plan.stepState[name] = { state: "done", note: note || "", ms: Date.now() - startedAt };
         savePlan();
+        if (OPTIONAL_STEPS.includes(name)) saveTabsCheckpoint(); // what the step made survives the app closing
         render();
       }
 
@@ -17145,12 +17336,24 @@
         }
         if (!r.tabs) return "no tab has subtitles and a video";
         const left = failed.length ? ` · tab ${tabNumbers(failed)} kept the transcribed times (${failed[0].textDetectError || "no subtitles found"})` : "";
-        return `${r.matched} of ${r.total} subtitle(s) matched in ${r.tabs} tab(s)${left}`;
+        // Every subtitle on screen gets a voice: the ones Transcribe missed get a line of their own.
+        setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Subtitles with no line`);
+        const fill = await fillMissingScreenLinesAllTabs({
+          checkStop,
+          onProgress: (done, total) => setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Subtitles with no line ${done}/${total}`),
+        });
+        const added = (fill.added ? ` · ${fill.added} subtitle(s) Transcribe missed got a line` : "")
+          + (fill.missing > fill.added ? ` · ${fill.missing - fill.added} subtitle(s) still have no voice (Google did not answer)` : "");
+        return `${r.matched} of ${r.total} subtitle(s) matched in ${r.tabs} tab(s)${added}${left}`;
       }
 
       async function generateStep() {
         const missingVoice = () => projects.reduce((n, p) => n + liveSubtitlesOf(p).filter((s) => isSpeakableText(s.text) && (s.audioStatus !== "ready" || !s.file)).length, 0);
         const runGenerate = async () => {
+          if (voxCmp2Load().enabled) {
+            await voxCmp2EnsureServer({ onStart: () => setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Starting the VoxCPM2 server`) });
+            checkStop();
+          }
           const g = await generateSelectedAudioAllProjects({ ignoreSelection: true });
           checkStop();
           if (g && g.ok === false && g.reason === "no-subtitles") return g;
@@ -17196,6 +17399,20 @@
           await voiceMissingLines();
           refitShortenedLinesAllTabs();
         }
+        let slowed = fillShortVoicesAllTabs();
+        // Edge says the lines that still need a stretch again at their own pace (natural, not
+        // stretched); what is left is a small stretch. VoxCPM2 takes its pace from the actor.
+        let paced = 0;
+        if (!voxCmp2Load().enabled) { // the engine Generate All uses (g.vox is unset on a Continue with every line voiced)
+          paced = nativePaceAllTabs();
+          if (paced) {
+            setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Voicing ${paced} line(s) at their own pace`);
+            g = await runGenerate();
+            await voiceMissingLines();
+            refitPacedLinesAllTabs();
+            slowed = fillShortVoicesAllTabs();
+          }
+        }
         const stillRushed = countRushedLinesAllTabs();
 
         const voiced = projects.reduce((n, p) => n + liveSubtitlesOf(p).filter((s) => isSpeakableText(s.text)).length, 0);
@@ -17203,6 +17420,8 @@
         if (fit.extended) note += ` · ${fit.extended} line(s) given more time`;
         if (fit.shortened) note += ` · ${fit.shortened} rushed line(s) shortened`;
         if (stillRushed) note += ` · ${stillRushed} still fast (the "N rushed" chip lists them)`;
+        if (paced) note += ` · ${paced} line(s) said at their own pace to fit the actor`;
+        if (slowed) note += ` · ${slowed} short voice(s) slowed to last as long as the actor`;
         return note;
       }
 
@@ -17288,7 +17507,37 @@
         const ffmpegOnly = noEngine.filter((p) => projects.includes(p));
         if (ffmpegOnly.length) note += ` · tab ${tabNumbers(ffmpegOnly)} used FFmpeg phase cancellation (no AI separation engine is installed)`;
         if (besideMs >= 1000) note += ` · isolated in ${fmtDur(besideMs / 1000)} beside the other steps`;
+        const { louder, lowered } = await boostVoicesOverMusicAllTabs();
+        checkStop();
+        if (louder) note += ` · ${louder} line(s) played louder over loud music`;
+        if (lowered.length) note += ` · music turned down in tab ${lowered.map((p) => `${projects.indexOf(p) + 1} (${p.bgmTrack.levelDb} dB)`).join(", ")}`;
         return note;
+      }
+
+      // Each tab's voices over its music (boostVoicesOverMusic, musicLevelDb): the music's levels
+      // from the server, a tab with loud music all the way through turned down, the lines under
+      // loud music played louder. A tab whose levels can't be read keeps its voices as they are.
+      async function boostVoicesOverMusicAllTabs() {
+        saveCurrentProjectState();
+        let louder = 0;
+        const lowered = [];
+        for (const proj of projects) {
+          const music = proj.bgmTrack;
+          if (!music?.file || !proj.subtitles?.length) continue;
+          const r = await postJson(`${API}/audio-peaks`, { filePath: music.file }).catch(() => null);
+          if (!r?.success || !Array.isArray(r.peaks)) continue;
+          const start = parseFloat(music.start) || 0;
+          const levelDb = musicLevelDb(proj.subtitles, r.peaks, r.peaksPerSecond, start);
+          if (levelDb) {
+            music.levelDb = levelDb;
+            lowered.push(proj);
+          } else delete music.levelDb;
+          // The open tab plays (and is saved back) from its own copy of the track.
+          if (proj === projects[activeProjectIndex] && bgmTrack?.file === music.file) bgmTrack.levelDb = music.levelDb;
+          louder += boostVoicesOverMusic(proj.subtitles, r.peaks, r.peaksPerSecond, start);
+        }
+        refreshActiveTabFromProject();
+        return { louder, lowered };
       }
 
       // Burned-in subtitles: found in every tab (started when the tabs opened) and each blurred
@@ -17331,10 +17580,14 @@
           await runStep("split", splitStep);
         }
         if (!piecesOpen()) {
-          // Opening the tabs again (e.g. after an app restart) loses this part's earlier
-          // results, so the steps after it run again.
+          // Opening the tabs again (e.g. after the app closed): they come back as their checkpoint
+          // kept them, with the steps done by then. Without one, the steps after it run again.
+          const saved = await ckLoad(ckKey(i, "tabs"));
+          checkStop();
           ["load", ...OPTIONAL_STEPS].forEach((k) => delete plan.stepState[k]);
           await runStep("load", loadStep);
+          const restored = restoreTabsCheckpoint(saved);
+          if (restored) showToast(`Part ${i + 1}: ${restored} tab(s) opened as they were when the app closed - only what was left is done.`, "success");
         }
         // The subtitles are found while the part is transcribed and voiced (CPU work beside
         // network work); the "blurtext" step at the end only waits for it.
@@ -17460,6 +17713,7 @@
         seriesExports.set(part, { items, run: null, rendering: false, result: null, tabsClosed: false });
         part.autoExport = true;
         savePlan();
+        saveExportCheckpoint(i); // the export survives the app closing
       }
 
       // Renders part i's queue items (or joins the render already going). Resolves with the
@@ -17474,7 +17728,14 @@
         // The export's percent in the window: redrawn only when it changes, so a tooltip being
         // read isn't redrawn away every second.
         let shownPercent = -1;
+        const doneTabs = () => job.items.filter((it) => it.status === "done").length;
+        let savedDone = doneTabs();
         const tick = setInterval(() => {
+          const done = doneTabs();
+          if (done !== savedDone) {
+            savedDone = done;
+            saveExportCheckpoint(i); // a tab rendered: not rendered again after the app closes
+          }
           const pct = exportProgress(job).percent;
           if (pct === shownPercent || modal.classList.contains("hidden")) return;
           shownPercent = pct;
@@ -17486,12 +17747,13 @@
             if (exportComplete(r)) {
               part.exported = true;
               part.outputs = r.outputs; // kept for the whole-series join (after an app restart too)
+              ckDelete([ckKey(i, "tabs"), ckKey(i, "export")]);
               if (plan?.parts.includes(part)) {
                 delete plan.fullMerged; // a part exported again: the whole-series video is out of date
                 savePlan();
               }
               mergePartExport(i, r.outputs);
-            }
+            } else saveExportCheckpoint(i);
             return r;
           })
           .finally(() => {
@@ -17827,8 +18089,12 @@
         }
         if (!preflight()) return; // a setting is missing: preflight says which; a person fixes it
         if (!auto) plan.autoResume = null; // pressed by hand: the auto-continue tries start over
+        // Exports the app closing interrupted: their queues come back from the checkpoints.
+        await restoreLostExports();
+        if (seriesRun) return;
         // A hands-free part that finished but whose export never started this session and whose
-        // tabs are gone can't be exported any more: dub it again instead of leaving a hole.
+        // tabs are gone (no export checkpoint either) is dubbed again instead of leaving a hole -
+        // its tabs come back from their checkpoint, so only what was left is done.
         const orphaned = plan.parts.map((p, k) => k).filter((k) => {
           const p = plan.parts[k];
           return p.status === "done" && p.autoExport && !p.exported && !seriesExports.has(p) && !(plan.lastDone?.index === k && lastDoneTabsOpen());
@@ -17848,6 +18114,12 @@
           return;
         }
         const target = u >= 0 ? u : nextPartIndex() >= 0 ? nextPartIndex() : joiningIndices()[0] ?? partsToJoin()[0];
+        // Nothing left to dub, but exports the app closing interrupted: finish those (and the join).
+        if (target === undefined && handsFree() && plan.lastDone && unfinishedExports().length) {
+          savePrefs();
+          await withRun(exportAndContinue);
+          return;
+        }
         if (target === undefined) {
           if (mergesToRetry().length || wholeToRetry()) await withRun(retryMerges);
           return;
@@ -17862,6 +18134,8 @@
           // except the part being continued: runPart joins that one itself (two joins of one part
           // at once wrote the same file).
           await startBackgroundJoin(partsToJoin().filter((k) => k !== unfinishedIndex()));
+          // An export the app closing interrupted renders beside the dubbing again, as it did.
+          unfinishedExports().forEach((k) => renderPartExport(k).catch(() => { }));
           const idx = unfinishedIndex() >= 0 ? unfinishedIndex() : nextPartIndex();
           if (idx >= 0) await runPart(idx);
           await exportAndContinue();
@@ -18005,6 +18279,18 @@
       OPTIONAL_STEPS.forEach((k) => $(`ds-step-${k}`).addEventListener("change", () => { savePrefs(); render(); }));
       $("ds-merged").addEventListener("change", render);
       render();
+
+      // The app closed while the series worked (a power cut, a crash, closed by hand) or while it
+      // waited to continue by itself: hands-free continues by itself a minute after the app opens
+      // (the countdown in the window can be cancelled) - the tabs and exports come back from
+      // their checkpoints. Without hands-free, Continue does the same.
+      if (plan && handsFree() && !seriesFinished() && (plan.running || plan.resumeAt)) {
+        const wait = Math.max(60000, (plan.resumeAt || 0) - Date.now());
+        plan.running = false;
+        armAutoResume(wait, "The app closed while Dub Whole Series was working.");
+        modal.classList.remove("hidden");
+        showToast(`Dub Whole Series continues by itself in ${Math.round(wait / 60000)} min, where it stopped when the app closed.`, "info");
+      }
     })();
 
     // opts (Dub Whole Series), over the auto-apply preset's: videoColorAdj, the new tabs' color
@@ -19140,6 +19426,105 @@
       return { extended, shortened, rushed: total };
     }
 
+    // ── Dub Whole Series: every subtitle on screen has a voice ──
+    // Gemini misses about 2% of the lines a tab's burned-in subtitles show (short calls - 啊,
+    // a name called - and short lines); the export takes the actor's voice out, so they were
+    // silent. After Match, each subtitle no line covers (placed or not, so nothing is voiced twice)
+    // gets a line of its own on its exact times: Gemini translates it with the lines around it and
+    // says who speaks (/api/translate-missing-lines, lib/missing-lines.js), or skips what is not
+    // speech (a sign, a logo). A tab Gemini can't answer for keeps its lines as they are.
+    const MISSING_CONTEXT = 3; // lines before and after given with each
+    function missingScreenLinesOf(proj) {
+      const shown = (proj.textBlur && proj.textBlur.lines) || [];
+      if (!shown.length || !window.ScreenSync) return [];
+      const covered = (proj.subtitles || []).map((s) => {
+        const start = parseFloat(s.textStart) || 0;
+        const len = s.screenMatched && parseFloat(s.screenLen) > 0 ? parseFloat(s.screenLen) : (parseFloat(s.textEnd) || start) - start;
+        return { start, end: start + len };
+      });
+      return window.ScreenSync.uncoveredLines(shown, covered);
+    }
+
+    async function fillMissingScreenLinesAllTabs({ onProgress = () => { }, checkStop = () => { } } = {}) {
+      saveCurrentProjectState();
+      const todo = projects.map((proj) => [proj, missingScreenLinesOf(proj)]).filter(([, l]) => l.length);
+      const total = todo.reduce((n, [, l]) => n + l.length, 0);
+      const geminiKeys = getFastGeminiConfig().keys;
+      const keys = geminiKeys.length ? geminiKeys : (window.textAi?.ready() ? [""] : []);
+      if (!total || !keys.length) return { added: 0, missing: total };
+      const config = getFastGeminiConfig();
+      let added = 0, done = 0, next = 0, stopError = null;
+      const worker = async (w) => {
+        const apiKeys = [keys[w], ...keys.filter((k, i) => i !== w)];
+        while (next < todo.length && !stopError) {
+          const [proj, missing] = todo[next++];
+          try {
+            checkStop();
+          } catch (e) {
+            stopError = stopError || e;
+            return;
+          }
+          onProgress(done, total);
+          const subs = (proj.subtitles || []).slice().sort((a, b) => parseFloat(a.textStart) - parseFloat(b.textStart));
+          const near = (l) => {
+            const k = subs.findIndex((s) => parseFloat(s.textStart) > l.start);
+            const at = k < 0 ? subs.length : k;
+            const say = (s) => ({ onScreen: s.originalText || "", line: s.text || "", gender: s.character || s.gender || "" });
+            return { before: subs.slice(Math.max(0, at - MISSING_CONTEXT), at).map(say), after: subs.slice(at, at + MISSING_CONTEXT).map(say) };
+          };
+          const requestId = `missing_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+          fastCondenseRequestIds.add(requestId); // the series' Stop cancels it
+          let results = null;
+          try {
+            const res = await fetch("http://localhost:3001/api/translate-missing-lines", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                lines: missing.map((l, k) => ({ id: String(k), onScreen: l.text, seconds: l.end - l.start, ...near(l) })),
+                apiKey: apiKeys[0], apiKeys, model: config.model,
+                genre: activeDramaGenre || "historical",
+                targetLanguage: proj.targetLanguage || targetLanguage,
+                glossary: typeof getDramaGlossaryDict === "function" ? getDramaGlossaryDict() : null,
+                sourceFilePath: proj.videoFilePath || (proj.file && proj.file.path) || null,
+                requestId,
+              }),
+            });
+            const data = await res.json().catch(() => null);
+            results = data && data.success && Array.isArray(data.results) ? data.results : null;
+          } catch (e) {
+            console.warn("[Missing lines]", e);
+          } finally {
+            fastCondenseRequestIds.delete(requestId);
+          }
+          done += missing.length;
+          const fresh = (results || []).map((r) => {
+            const l = missing[Number(r.id)];
+            if (!l || !String(r.text || "").trim()) return null;
+            const voice = window.defaultVoiceFor(r.gender);
+            return {
+              id: crypto.randomUUID().substring(0, 8),
+              textStart: l.start.toFixed(2), textEnd: l.end.toFixed(2),
+              audioStart: l.start.toFixed(2), audioEnd: l.end.toFixed(2),
+              originalText: l.text, text: String(r.text).trim(),
+              speaker: voice, character: voice, gender: voice, emotion: r.emotion || "Neutral",
+              voice: "KH Khmer", status: "done", audioStatus: "idle", audioUrl: null, baseAudioDuration: 0, speed: 1.0, volume: 1.0,
+              screenMatched: true, screenLen: (l.end - l.start).toFixed(3), fromScreen: true,
+            };
+          }).filter(Boolean);
+          if (fresh.length) {
+            proj.subtitles = setVoiceRooms([...(proj.subtitles || []), ...fresh], proj.duration);
+            settleMatchedSubtitles(proj.subtitles, proj.duration > 0 ? proj.duration : Infinity);
+            added += fresh.length;
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(SERIES_FIT_MAX_PARALLEL, keys.length, todo.length) }, (_, w) => worker(w)));
+      onProgress(done, total);
+      refreshActiveTabFromProject();
+      if (stopError) throw stopError;
+      return { added, missing: total };
+    }
+
     function refreshActiveTabFromProject() {
       const active = projects[activeProjectIndex];
       if (active) {
@@ -19179,6 +19564,157 @@
         }
       }
       return n;
+    }
+
+    // A voice that ends well before its actor stops talking leaves the mouth moving with no sound
+    // (measured on an exported series: on long lines Edge TTS ended 1-2 s before the actor, in
+    // about 25 places a tab). Such a voice is played a little slower, at most down to
+    // FILL_MIN_SPEED, to last as long as the actor speaks: the video's own line for one matched
+    // to it, else its text slot - never into the next line. No new voice, no Gemini.
+    const FILL_MIN_SPEED = 0.85; // slower than this sounds dragged (Edge's own pace and the stretch together)
+    const FILL_MIN_GAP = 0.4; // s of silence under the actor worth filling
+    function fillShortVoicesAllTabs() {
+      saveCurrentProjectState();
+      let slowed = 0;
+      for (const proj of projects) {
+        const subs = proj.subtitles || [];
+        const tabDur = proj.duration > 0 ? proj.duration : Infinity;
+        const nextStartById = buildFastNextStartMap(subs, tabDur);
+        for (const sub of subs) {
+          const pace = analyzeSubPace(sub);
+          if (!pace.hasAudio || (parseFloat(sub.speed) || 1.0) > 1.0) continue; // sped-up voices have no time to give
+          const actorLen = sub.screenMatched && parseFloat(sub.screenLen) > 0 ? parseFloat(sub.screenLen) : pace.tEnd - pace.tStart;
+          const nextStart = nextStartById.get(String(sub.id)) ?? tabDur;
+          const want = Math.min(pace.tStart + actorLen, nextStart - VOICE_GAP) - pace.aStart;
+          if (want - pace.baseDur < FILL_MIN_GAP) continue;
+          // A voice Edge already said slower may only be stretched what is left of the limit.
+          const minSpeed = FILL_MIN_SPEED / (1 + nativeRateOf(sub) / 100);
+          const speed = Math.max(minSpeed, Math.ceil((pace.baseDur / want) * 100) / 100);
+          if (speed >= 1.0) continue;
+          sub.speed = speed;
+          sub.audioEnd = (pace.aStart + pace.baseDur / speed).toFixed(2);
+          if (activeAudios[sub.id]) activeAudios[sub.id].playbackRate = speed;
+          slowed++;
+        }
+        settleMatchedSubtitles(subs, tabDur); // a matched subtitle stays up while its voice speaks
+      }
+      refreshActiveTabFromProject();
+      return slowed;
+    }
+
+    // ── Edge's own pace ──
+    // A voice stretched to fit (atempo) sounds drawn out when slowed and rushed when sped up.
+    // Edge says the same line at another pace naturally, so after the fitting above, a line that
+    // still needs a stretch is voiced again at that pace (sub.ttsRate, in percent, sent to
+    // /api/generate-audio as fitRate) and only a small stretch is left. Kept for the text it was
+    // worked out for (ttsRateFor): an edited line is said at its normal pace again.
+    const NATIVE_MIN_RATE = -15; // Edge's slowest pace that still sounds natural
+    const NATIVE_MAX_RATE = 35;
+    const NATIVE_MIN_CHANGE = 0.04; // a stretch this small is not heard
+    function nativeRateOf(sub) {
+      return sub && sub.ttsRateFor === sub.text ? parseFloat(sub.ttsRate) || 0 : 0;
+    }
+
+    // Marks the voiced lines that need a stretch to be voiced again at their own pace (left idle
+    // for Generate). Returns how many.
+    function nativePaceAllTabs() {
+      saveCurrentProjectState();
+      let marked = 0;
+      for (const proj of projects) {
+        for (const sub of proj.subtitles || []) {
+          const speed = parseFloat(sub.speed) || 1.0;
+          if (sub.audioStatus !== "ready" || !isSpeakableText(sub.text) || Math.abs(speed - 1) < NATIVE_MIN_CHANGE) continue;
+          const was = nativeRateOf(sub);
+          const rate = Math.max(NATIVE_MIN_RATE, Math.min(NATIVE_MAX_RATE, Math.round(((1 + was / 100) * speed - 1) * 100)));
+          if (rate === was) continue; // already at the limit: the stretch stays
+          Object.assign(sub, { ttsRate: rate, ttsRateFor: sub.text, speed: 1.0, audioStatus: "idle", _nativePaced: true });
+          marked++;
+        }
+      }
+      refreshActiveTabFromProject();
+      return marked;
+    }
+
+    // After those lines are voiced again: each fitted to its slot (a small speed-up if it still
+    // runs over; one still short is filled by fillShortVoicesAllTabs).
+    function refitPacedLinesAllTabs() {
+      saveCurrentProjectState();
+      for (const proj of projects) {
+        const subs = proj.subtitles || [];
+        const nextStartById = buildFastNextStartMap(subs, proj.duration > 0 ? proj.duration : Infinity);
+        for (const sub of subs) {
+          if (!sub._nativePaced) continue;
+          delete sub._nativePaced;
+          if (sub.audioStatus === "ready") refitFastSubSpeed(sub, nextStartById.get(String(sub.id)) ?? Infinity);
+        }
+      }
+      refreshActiveTabFromProject();
+    }
+
+    // ── The voice above the music ──
+    // Measured on an exported series: every line had its voice, but where the music swells (a
+    // crying "ម៉ាក់..." on a dramatic cue, 5-8 dB louder than under the other lines) a calm Edge
+    // voice was barely above it or under it. Such a line is played louder, by how much louder the
+    // music under it is than under the tab's other lines (up to +6 dB; the export's loudness
+    // limiter keeps the peaks). A volume set by hand is left alone.
+    const MUSIC_BOOST_MAX_DB = 6;
+    const MUSIC_BOOST_OVER_DB = 0; // the voice rises as much as the music does (a sad or whispered Edge voice is quieter already)
+    // That only lifts lines louder than the tab's own usual music, so a tab with loud music all
+    // the way through got nothing: measured on a 20-tab series, the voice was 11-16 dB over the
+    // music in tabs whose usual music was -13 dB or less, but 5-7 dB (P1 tab 6: 41 of 143 lines
+    // under 3 dB) where it was -7 to -9 dB. Such a tab's music is turned down to -13 dB.
+    const MUSIC_USUAL_MAX_DB = -13;
+    const MUSIC_LOWER_MAX_DB = 8;
+
+    // The music under each voiced line (90th percentile of its peaks, dB) and the tab's usual
+    // (median) level, or null with too few voiced lines to tell. peaks: the tab's music, 0-255
+    // per slice (/api/audio-peaks), perSec slices a second, from musicStart s.
+    function musicUnderLines(subs, peaks, perSec, musicStart = 0) {
+      const levelOf = (from, to) => {
+        const a = Math.max(0, Math.floor((from - musicStart) * perSec)), b = Math.min(peaks.length, Math.ceil((to - musicStart) * perSec));
+        if (b <= a) return null;
+        const v = peaks.slice(a, b).sort((x, y) => x - y)[Math.floor((b - a - 1) * 0.9)];
+        return 20 * Math.log10(Math.max(1, v) / 255);
+      };
+      const lines = (subs || []).map((sub) => {
+        if (sub.audioStatus !== "ready" || !(parseFloat(sub.baseAudioDuration) > 0)) return null;
+        const from = parseFloat(sub.audioStart) || parseFloat(sub.textStart) || 0;
+        const to = parseFloat(sub.audioEnd) > from ? parseFloat(sub.audioEnd) : parseFloat(sub.textEnd) || from;
+        const level = levelOf(from, to);
+        return level === null ? null : { sub, level };
+      }).filter(Boolean);
+      if (lines.length < 3) return null;
+      const sorted = lines.map((l) => l.level).sort((x, y) => x - y);
+      return { lines, usual: sorted[Math.floor(sorted.length / 2)] };
+    }
+
+    // How far the tab's music is turned down (0 or a negative dB, kept as bgmTrack.levelDb).
+    function musicLevelDb(subs, peaks, perSec, musicStart = 0) {
+      const m = musicUnderLines(subs, peaks, perSec, musicStart);
+      if (!m || m.usual - MUSIC_USUAL_MAX_DB < 1) return 0; // under 1 dB isn't heard
+      return -Math.round(Math.min(MUSIC_LOWER_MAX_DB, m.usual - MUSIC_USUAL_MAX_DB) * 10) / 10;
+    }
+
+    // Returns how many lines are played louder.
+    function boostVoicesOverMusic(subs, peaks, perSec, musicStart = 0) {
+      const m = musicUnderLines(subs, peaks, perSec, musicStart);
+      if (!m) return 0;
+      const { lines, usual } = m;
+      let boosted = 0;
+      for (const { sub, level } of lines) {
+        const own = sub.musicBoostDb ? Math.round(Math.pow(10, sub.musicBoostDb / 20) * 100) / 100 : 1;
+        if (Math.abs((sub.volume ?? 1) - own) > 0.01) continue; // set by hand
+        const db = Math.min(MUSIC_BOOST_MAX_DB, Math.max(0, level - usual - MUSIC_BOOST_OVER_DB));
+        if (db >= 1) {
+          sub.musicBoostDb = Math.round(db * 10) / 10;
+          sub.volume = Math.round(Math.pow(10, sub.musicBoostDb / 20) * 100) / 100;
+          boosted++;
+        } else if (sub.musicBoostDb) {
+          delete sub.musicBoostDb;
+          sub.volume = 1;
+        }
+      }
+      return boosted;
     }
 
     // ── Timeline changes ──
@@ -20209,7 +20745,7 @@
             let data;
 
             if (isVoxCmp2Enabled) {
-              const matchedProfile = resolveSmartVoxCpmProfile(sub.gender, voxCmp2Data.profiles, voxCmp2ScopedProfiles(voxCmp2Data, targetProject));
+              const matchedProfile = resolveSmartVoxCpmProfile(voxVoiceTagOf(sub, voxCmp2Data.profiles), voxCmp2Data.profiles, voxCmp2ScopedProfiles(voxCmp2Data, targetProject));
               data = await executeVoxCpm2Synthesis({
                 text: sub.text,
                 serverUrl: voxCmp2Data.serverUrl,
@@ -20229,12 +20765,13 @@
                 body: JSON.stringify({
                   text: window.KhmerSpeech.normalizeForSpeech(sub.text), // as it is said (khmer-speech.js)
                   gender: sub.gender,
-                  character: sub.character || sub.gender,
+                  character: window.edgeVoiceOf(sub, voxCmp2Data.profiles), // Male/Female, also for a line with a VoxCPM2 voice
                   language: targetProject.targetLanguage || targetLanguage,
                   tempPath: targetProject.tempAudioPath || tempAudioPath,
                   index: sub.id,
                   speed: sub.speed || 1.0,
                   emotion: sub.emotion || "Neutral",
+                  fitRate: nativeRateOf(sub), // its own pace, to last as long as the actor (Dub Whole Series)
                 }),
                 signal: jobAbortController.signal,
               });
@@ -20857,7 +21394,7 @@
             }
 
             try {
-              const matchedProfile = resolveSmartVoxCpmProfile(sub.gender, voxCmp2Data.profiles, voxCmp2ScopedProfiles(voxCmp2Data, proj));
+              const matchedProfile = resolveSmartVoxCpmProfile(voxVoiceTagOf(sub, voxCmp2Data.profiles), voxCmp2Data.profiles, voxCmp2ScopedProfiles(voxCmp2Data, proj));
               const data = await executeVoxCpm2Synthesis({
                 text: sub.text,
                 serverUrl: voxCmp2Data.serverUrl,
@@ -21604,7 +22141,7 @@
             }
           }
 
-          const targetVolume = bgmTrack.isMuted ? 0 : Math.min(1.0, (bgmTrack.volume ?? 0.5) * fadeMult * window._previewDuckEnvelope);
+          const targetVolume = bgmTrack.isMuted ? 0 : Math.min(1.0, bgmPlayVolume(bgmTrack) * fadeMult * window._previewDuckEnvelope);
           if (Math.abs(bgmAudio.volume - targetVolume) > 0.01) {
             bgmAudio.volume = targetVolume;
           }
@@ -22494,7 +23031,7 @@
                 <div class="relative z-10 flex items-center px-2 h-full gap-1 pointer-events-none">
                     <i data-lucide="music" class="w-3 h-3 mr-1 opacity-70 shrink-0"></i>
                     <span class="truncate">${escHtml(bgmTrack.name)}</span>
-                    <span class="font-mono text-[9px] ml-1 opacity-60 shrink-0">V:${(bgmTrack.volume ?? 0.5).toFixed(1)}</span>
+                    <span class="font-mono text-[9px] ml-1 opacity-60 shrink-0">V:${(bgmTrack.volume ?? 0.5).toFixed(1)}${bgmTrack.levelDb ? ` ${bgmTrack.levelDb} dB` : ""}</span>
                     ${fadeIn > 0 ? `<span class="font-mono text-[9px] opacity-70 shrink-0 text-purple-200">▶${fadeIn.toFixed(1)}s</span>` : ""}
                     ${fadeOut > 0 ? `<span class="font-mono text-[9px] opacity-70 shrink-0 text-purple-200">◀${fadeOut.toFixed(1)}s</span>` : ""}
                 </div>
@@ -22535,7 +23072,7 @@
           if (bgmAudio) bgmAudio.volume = 0;
         } else {
           btnMuteA2.innerHTML = `<i data-lucide="volume-2" class="w-3.5 h-3.5"></i>`;
-          if (bgmAudio) bgmAudio.volume = Math.min(1.0, bgmTrack.volume ?? 0.5);
+          if (bgmAudio) bgmAudio.volume = Math.min(1.0, bgmPlayVolume(bgmTrack));
         }
         _lucideCreateIcons({ root: btnMuteA2 });
       });
@@ -23101,6 +23638,13 @@
           }
         } else if (!isBatch && data.method !== "ffmpeg_fallback") {
           showToast("Background BGM isolation finished!", "success");
+        }
+
+        // Speakers found from the film's mix are found again from the voices alone: music under
+        // the lines kept a character's prints apart between episodes (E62 -> E63: 0.77 and 0.64
+        // from the mix, 0.86 and 0.79 from the vocals). Only ML stems are used for that.
+        if (!/^ffmpeg/.test(String(targetProject.bgmMethod || "")) && targetProject.voxSpeakersFrom === "mix") {
+          window.voxSpeakers?.refind?.(targetProject);
         }
 
         return { success: true, method: targetProject.bgmMethod, fallbackReason: targetProject.bgmFallbackReason };
@@ -23798,6 +24342,57 @@
 
       // --- Main Render Logic ---
       if (btnRender) {
+        // Chromium drops a request when the network changes (Wi-Fi switched off or on), even one
+        // to this computer's own server. The page took that for a failed render while the server's
+        // FFmpeg kept rendering, and every next render got "A render is already in progress" until
+        // it was done (Dub Whole Series paused 3 times). Waits until the server has no render going
+        // and returns its last render's state ({ status, outputFile, error, token }). Throws when
+        // the server doesn't answer for 2 minutes, or when the signal is aborted (Stop).
+        const waitForServerRender = async (signal) => {
+          let lostSince = 0;
+          for (;;) {
+            if (signal?.aborted) throw new DOMException("The render was stopped.", "AbortError");
+            try {
+              const st = await (await fetch("http://localhost:3001/api/render-progress", { signal })).json();
+              lostSince = 0;
+              if (st.status !== "processing") return st;
+            } catch (e) {
+              if (e.name === "AbortError") throw e;
+              lostSince = lostSince || Date.now();
+              if (Date.now() - lostSince > 120000) throw new Error("The app's server stopped answering during the render.");
+            }
+            await new Promise((r) => setTimeout(r, 2000));
+          }
+        };
+        // Sends one render (formData's config carries renderToken = token) and resolves with its
+        // result ({ success, outputPath, error, status }). A request lost on the way is not a
+        // failed render: the server's render is waited for, and its result taken when it is this
+        // one (same token); a request that never reached the server is sent again. waitIfBusy: a
+        // render still going ("already in progress" - maybe for a request lost earlier) is waited
+        // out first, instead of answered with status 409.
+        const sendRender = async (formData, token, signal, { waitIfBusy = true } = {}) => {
+          for (let attempt = 0; ; attempt++) {
+            let res;
+            try {
+              res = await fetch("http://localhost:3001/api/render", { method: "POST", body: formData, signal });
+            } catch (e) {
+              if (e.name === "AbortError" || attempt >= 3) throw e;
+              console.warn(`[Render] The request was lost (${e.message}) - waiting for the server's render.`);
+              const st = await waitForServerRender(signal);
+              if (st.token === token) return st.status === "done" ? { success: true, outputPath: st.outputFile } : { success: false, error: st.error || "Render failed" };
+              continue; // it never reached the server
+            }
+            if (res.status === 409 && waitIfBusy && attempt < 3) {
+              await waitForServerRender(signal);
+              continue;
+            }
+            let data = null;
+            try { data = await res.json(); } catch (_) { }
+            return { ...(data || { success: false, error: `Server error ${res.status}` }), status: res.status };
+          }
+        };
+        const newRenderToken = () => `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+
         const formatSrtTime = (seconds) => {
           const pad = (num, size) => ("000" + num).slice(-size);
           const hrs = Math.floor(seconds / 3600);
@@ -23986,7 +24581,7 @@
                 ? {
                   serverPath: serverBgmPath,
                   start: parseFloat(projBgmTrack.start) || 0,
-                  volume: projBgmTrack.volume !== undefined ? parseFloat(projBgmTrack.volume) : 0.5,
+                  volume: bgmPlayVolume({ ...projBgmTrack, volume: projBgmTrack.volume !== undefined ? parseFloat(projBgmTrack.volume) : 0.5 }),
                   isMuted: false,
                   fadeIn: projBgmTrack.fadeIn || 0,
                   fadeOut: projBgmTrack.fadeOut || 0,
@@ -24126,6 +24721,8 @@
               }
             }
             configData.audioTracks = patchedAudioTracks;
+            const renderToken = newRenderToken();
+            configData.renderToken = renderToken;
 
             formData.append("data", JSON.stringify(configData));
 
@@ -24161,19 +24758,15 @@
             (targetProject._pollers = targetProject._pollers || []).push(renderProgressInterval);
 
             try {
-              const response = await fetch("http://localhost:3001/api/render", {
-                method: "POST",
-                body: formData,
-                signal: targetProject.renderAbortController.signal,
-              });
-              const data = await response.json();
+              // A request lost to a network change waits for the server's render (sendRender).
+              const data = await sendRender(formData, renderToken, targetProject.renderAbortController.signal, { waitIfBusy: false });
               if (data.success) {
                 if (projects[activeProjectIndex] === targetProject) showToast("Video rendered successfully!", "success");
                 else showToast(`Render complete for "${targetProject.file?.name || "project"}"!`, "success");
                 if (projects[activeProjectIndex] === targetProject) {
                   openRenderSuccessModal(activeRenderExportPath);
                 }
-              } else if (response.status === 409) {
+              } else if (data.status === 409) {
                 showToast("Another project is already rendering. Use \"Add to Queue\" instead so this one starts automatically when it's done.", "error");
               } else {
                 showToast(data.error || "Failed to render video.", "error");
@@ -24473,7 +25066,7 @@
               ? {
                 serverPath: serverBgmPath,
                 start: parseFloat(projBgmTrack.start) || 0,
-                volume: parseFloat(projBgmTrack.volume ?? 0.5),
+                volume: bgmPlayVolume({ ...projBgmTrack, volume: parseFloat(projBgmTrack.volume ?? 0.5) }),
                 isMuted: false,
                 fadeIn: projBgmTrack.fadeIn || 0,
                 fadeOut: projBgmTrack.fadeOut || 0,
@@ -25406,6 +25999,8 @@
                 }
               }
               queueConfig.audioTracks = patchedQueueTracks;
+              const renderToken = newRenderToken();
+              queueConfig.renderToken = renderToken;
 
               formData.append("data", JSON.stringify(queueConfig));
 
@@ -25431,21 +26026,8 @@
                 }
               });
 
-              const res = await fetch("http://localhost:3001/api/render", {
-                method: "POST",
-                body: formData,
-                signal: abortCtrl.signal,
-              });
-
-              if (!res.ok) {
-                let errMsg = `Server error ${res.status}`;
-                try {
-                  const errJson = await res.json();
-                  if (errJson.error) errMsg = errJson.error;
-                } catch (e) { }
-                throw new Error(errMsg);
-              }
-              const result = await res.json();
+              // A request lost to a network change waits for the server's render (sendRender).
+              const result = await sendRender(formData, renderToken, abortCtrl.signal);
               if (!result.success) throw new Error(result.error || "Render failed");
 
               item.outputPath = result.outputPath || null;
@@ -25579,7 +26161,34 @@
           });
           return refreshed;
         };
-        window.seriesRenderApi = { queueAllTabs: queueAllTabsForSeries, renderItems: renderSeriesItems, stop: stopRenderQueue, stopItems: stopSeriesItems, refreshItems: refreshSeriesItems };
+        // Dub Whole Series after the app closed: a part's export queue as its checkpoint kept it.
+        // A tab rendered before stays done while its video is there; the others (one that was
+        // rendering is half-written) are rendered again.
+        const restoreSeriesItems = async (saved) => {
+          const list = saved.filter((s) => s?.config);
+          const rendered = list.map((s) => s.status === "done" && !!s.outputPath);
+          try {
+            const r = await (await fetch("http://localhost:3001/api/series-checkpoint/files-exist", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ paths: list.map((s) => s.outputPath || "") }),
+            })).json();
+            r.exists.forEach((there, k) => { rendered[k] = rendered[k] && there; });
+          } catch (_) {
+            rendered.fill(false); // can't tell: rendered again
+          }
+          const items = [];
+          for (const [k, s] of list.entries()) {
+            const done = rendered[k];
+            const item = { status: done ? "done" : "pending", progress: done ? 100 : 0, projectLabel: s.projectLabel, seriesTag: s.seriesTag, config: s.config, outputPath: done ? s.outputPath : null };
+            renderQueue.push(item);
+            items.push(item);
+          }
+          updateQueueBadge();
+          renderQueueList();
+          return items;
+        };
+        window.seriesRenderApi = { queueAllTabs: queueAllTabsForSeries, renderItems: renderSeriesItems, stop: stopRenderQueue, stopItems: stopSeriesItems, refreshItems: refreshSeriesItems, restoreItems: restoreSeriesItems };
 
         // Initial render of empty queue UI
         renderQueueList();

@@ -38,6 +38,14 @@ STRIP_WIDTH = 540            # strip width in pass 2 (a subtitle line is still ~
 MIN_TEXT_SCORE = 0.75        # how sure the reader must be that a box is text
 CENTER_TOLERANCE = 22        # % from the middle a subtitle line may be centered
 SAME_FRAME_DIFF = 1.5        # mean pixel change below which a strip frame is "the same"
+# The picture behind a subtitle moves, so the strip is rarely "the same" as a whole, but its
+# letters' pixels are: a strip whose letter pixels are this alike shows the line it showed at the
+# last read, which is not read again (measured on a 7-min tab: 42% of the reads, no line missed;
+# a line changing two of its five letters was 0.62 alike). Only with enough letter pixels to tell
+# (coloured subtitles have none: every read is read), and at least every MAX_SKIPPED reads.
+SAME_STRIP_GLYPHS = 0.85
+MIN_GLYPH_PIXELS = 30
+MAX_SKIPPED = 7
 END_EXTRA = 0.04             # s a line stays blurred past the first read without it (a frame's slack)
 BRIDGE_GAP = 0.6             # s: a pause between two lines up to this long stays blurred
 SAME_TEXT = 0.85             # two reads this alike are the same line (the reader misreads a letter now and then)
@@ -112,6 +120,26 @@ def read_frame(video, t, width, height):
     return out.stdout
 
 
+# Pass 2 decodes every frame of the video. On the CPU a 7-minute 1080x1920 HEVC tab took 195 s of
+# CPU (four tabs at once, beside Transcribe, ran 4-10x slower than one alone); NVIDIA's decoder
+# (cuda) took 43 s of CPU and still kept ahead of the reading. Without that decoder FFmpeg stops
+# with no frame, and the strip is decoded on the CPU. DR_TEXT_HWACCEL: another decoder, or "none".
+HWACCEL = os.environ.get('DR_TEXT_HWACCEL', 'cuda').strip().lower()
+
+
+def open_strip(video, vf, frame_bytes):
+    """FFmpeg handing out the strip's frames, and the first frame (b'' when there is none)."""
+    for hw in ([HWACCEL] if HWACCEL not in ('', 'none') else []) + [None]:
+        proc = subprocess.Popen([ffmpeg_path(), '-v', 'error', *(['-hwaccel', hw] if hw else []), '-i', video, '-an', '-sn',
+                                 '-vf', vf, '-f', 'rawvideo', '-pix_fmt', 'bgr24', '-'],
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, **no_window())
+        first = proc.stdout.read(frame_bytes)
+        if len(first) == frame_bytes or hw is None:
+            return proc, first
+        proc.wait()  # this decoder can't: the next one
+    return proc, first
+
+
 def make_engine(threads):
     from rapidocr_onnxruntime import RapidOCR
     # 'max': never blow a small picture up (the default scales the short side up to 736 px,
@@ -168,6 +196,13 @@ def text_alike(a, b):
 def glyph_mask(gray):
     """Pixels of subtitle letters: bright, with the dark outline right next to them."""
     return (gray >= 170) & (cv2.erode(gray, np.ones((5, 5), np.uint8)) <= 90)
+
+
+def same_letters(mask_a, mask_b):
+    """Do two strips show the same letters (SAME_STRIP_GLYPHS)? Not when there are too few letter
+    pixels to tell."""
+    union = int((mask_a | mask_b).sum())
+    return union >= MIN_GLYPH_PIXELS and (mask_a & mask_b).sum() / union >= SAME_STRIP_GLYPHS
 
 
 def same_line(a, b, gray_a, gray_b):
@@ -330,10 +365,8 @@ def main():
     crop_h = max(8, int(height * (strip_y1 - strip_y0) / 100) // 2 * 2)
     out_h = max(8, int(round(crop_h * STRIP_WIDTH / width / 2)) * 2)
     frame_bytes = STRIP_WIDTH * out_h * 3
-    proc = subprocess.Popen([ffmpeg_path(), '-v', 'error', '-i', video, '-an', '-sn',
-                             '-vf', f'fps={rate_str}:round=up,crop={width}:{crop_h}:0:{crop_y},scale={STRIP_WIDTH}:{out_h}',
-                             '-f', 'rawvideo', '-pix_fmt', 'bgr24', '-'],
-                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, **no_window())
+    vf = f'fps={rate_str}:round=up,crop={width}:{crop_h}:0:{crop_y},scale={STRIP_WIDTH}:{out_h}'
+    proc, first = open_strip(video, vf, frame_bytes)
     line_px = line_h / 100 * height * STRIP_WIDTH / width
     found = []          # finished lines (see tidy_lines)
     cur = None          # the line on screen at the last read
@@ -341,8 +374,10 @@ def main():
     between = []        # (t, thumb) of the frames since the last read
     next_read = 0.0
     k = 0
+    skipped = 0         # reads in a row answered without reading (SAME_STRIP_GLYPHS)
+    letters_seen = False  # a line was read whose letters glyph_mask sees (white with an outline)
     while True:
-        raw = proc.stdout.read(frame_bytes)
+        raw, first = (first, None) if first is not None else (proc.stdout.read(frame_bytes), None)
         if len(raw) < frame_bytes:
             break
         t = k / rate
@@ -357,9 +392,17 @@ def main():
             next_read += 1.0 / fps
 
         small = img[::4, ::4, 1].astype(np.int16)
-        if prev is not None and float(np.abs(small - prev['small']).mean()) < SAME_FRAME_DIFF:
-            line = prev['line']  # nothing moved in the strip: same answer as the read before
+        glyphs = glyph_mask(gray)
+        if prev is not None and skipped < MAX_SKIPPED and (
+                float(np.abs(small - prev['small']).mean()) < SAME_FRAME_DIFF
+                or same_letters(prev['glyphs'], glyphs)
+                # no line before and no letter pixels now (15% of the reads), once this video's
+                # subtitles are known to show as letter pixels
+                or (letters_seen and prev['line'] is None and int((prev['glyphs'] | glyphs).sum()) < MIN_GLYPH_PIXELS)):
+            line = prev['line']  # the same letters as at the read before: the same answer
+            skipped += 1
         else:
+            skipped = 0
             # Boxes the size of a subtitle line, near the middle.
             cands = [c for c in detect(engine, img)
                      if 0.5 * line_px <= (c[1][3] - c[1][1]) <= 2.2 * line_px
@@ -371,6 +414,7 @@ def main():
                 texts.sort(key=lambda r: (round(r[0][1] / max(1.0, line_px)), r[0][0]))
                 line = {'x0': min(r[0][0] for r in texts), 'x1': max(r[0][2] for r in texts),
                         'text': ''.join(r[1] for r in texts)}
+                letters_seen = letters_seen or int(glyphs[:, int(line['x0']):int(line['x1']) + 1].sum()) >= 4 * MIN_GLYPH_PIXELS
 
         before = prev['line'] if prev else None
         if before and line and (line is before or same_line(before, line, prev['gray'], gray)):
@@ -387,7 +431,7 @@ def main():
             if line:
                 cur = {'start': at, 'safe_start': prev['t'] if prev else 0.0, 'x0': line['x0'], 'x1': line['x1'],
                        'texts': [line['text']]}
-        prev = {'t': t, 'gray': gray, 'thumb': thumb, 'small': small, 'line': line}
+        prev = {'t': t, 'gray': gray, 'thumb': thumb, 'small': small, 'glyphs': glyphs, 'line': line}
         between = []
         done += 1
         if done % 20 == 0:

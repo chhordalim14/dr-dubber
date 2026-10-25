@@ -111,7 +111,7 @@ function linesWav(read, size, lines) {
         const b = Math.min(size, Math.floor(Math.min(l.end, l.start + SPEAKER_MAX_LINE) * SPEAKER_RATE) * 2);
         if (!(b > a)) continue;
         parts.push(read(a, b), gap);
-        sent.push({ id: l.id, start: +(at / bps).toFixed(3), end: +((at + b - a) / bps).toFixed(3), gender: l.gender });
+        sent.push({ id: l.id, start: +(at / bps).toFixed(3), end: +((at + b - a) / bps).toFixed(3), gender: l.gender, ...(l.name && { name: l.name }), ...(l.exact && { exact: true }) });
         at += b - a + gap.length;
     }
     const data = Buffer.concat(parts);
@@ -432,6 +432,9 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
                     end: Number(l && l.end),
                     gender: /^(male|female)$/i.test(String(l && l.gender)) ? String(l.gender) : null,
                     emotion: emotionOf(l && l.emotion),
+                    // The character Transcribe named, and whether the times are the video's own subtitle's.
+                    name: l && l.name ? String(l.name).trim().slice(0, 60) : null,
+                    exact: !!(l && l.exact),
                 }))
                 .filter((l) => Number.isFinite(l.start) && Number.isFinite(l.end) && l.end > l.start);
             if (!lines.length) return res.status(400).json({ success: false, error: 'There are no timed lines to listen to.' });
@@ -464,7 +467,7 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
                 (Array.isArray(k.emotions) ? k.emotions : []).forEach((e) => have.add(emotionOf(e)));
                 haveOf.set(k.id, have);
             });
-            const payload = { lines: packed.sent, known: known.map((k) => ({ id: k && k.id, gender: k && k.gender, embedding: k && k.embedding, model: k && k.model })) };
+            const payload = { lines: packed.sent, known: known.map((k) => ({ id: k && k.id, gender: k && k.gender, embedding: k && k.embedding, model: k && k.model, name: (k && k.name) || null })) };
             if (local) {
                 // A local server reads the file itself instead of a JSON body hundreds of MB long.
                 sentFile = path.join(SEPARATED_DIR, `spk_lines_${crypto.randomUUID()}.wav`);
@@ -499,6 +502,7 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
                 const sp = {
                     key: s.key,
                     gender: s.gender || null,
+                    name: s.name || null,
                     lines: Array.isArray(s.lines) ? s.lines.map(String) : [],
                     seconds: s.seconds || 0,
                     embedding: Array.isArray(s.embedding) ? s.embedding : null,
@@ -518,7 +522,8 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
                 speakers.push(sp);
             }
             // The model that made the embeddings: prints of different models are never compared.
-            res.json({ success: true, speakers, dir, printModel: data.print_model || 'campplus' });
+            // source: what the prints were made from ('vocals' once Isolate BGM has the stems).
+            res.json({ success: true, speakers, dir, printModel: data.print_model || 'campplus', source: vocalStem ? 'vocals' : 'mix' });
         } catch (e) {
             res.status(e.status || 500).json({ success: false, error: e.message });
         } finally {

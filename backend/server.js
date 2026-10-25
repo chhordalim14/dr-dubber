@@ -77,7 +77,8 @@ const { createTtsWorker } = require('./lib/tts-worker');
 const { secureFetch, fetchBackend } = require('./lib/secure-fetch');
 const { createCodeCraftClient } = require('./lib/codecraft');
 const { KHMER_SYLLABLES_PER_SEC, KHMER_DUBBING_RULES, khmerMaxSyllables, lineSeconds, getKhmerDramaRegisterGuidance, parseSrtBlocksForTranslate, translatePromptLine, buildTranslateSystemPrompt, buildTranslateUserPrompt, buildReviewSystemPrompt, buildReviewUserPrompt, estimateSpeechSeconds, findOverlongLines } = require('./lib/khmer-prompts');
-const { CHARACTER_SHEET_SCHEMA, normalizeSheet, mergeSheets, sheetSize, applyGlossaryToSheet, formatSheetForPrompt, buildCharacterSheetPrompt, loadSeriesSheet, saveSeriesSheet, withSeriesLock } = require('./lib/character-sheet');
+const { MISSING_RESPONSE_SCHEMA, buildMissingLinesPrompt, checkMissingLine } = require('./lib/missing-lines');
+const { CHARACTER_SHEET_SCHEMA, normalizeSheet, mergeSheets, sheetSize, applyGlossaryToSheet, formatSheetForPrompt, buildCharacterSheetPrompt, loadSeriesSheet, saveSeriesSheet, loadSeriesSpeakers, saveSeriesSpeakers, addSeriesSpeakers, formatSpeakersForPrompt, castDir, withSeriesLock } = require('./lib/character-sheet');
 
 // Clean stale temporary cache files (> 7 days old) asynchronously to prevent disk bloat
 function cleanStaleTempFiles() {
@@ -1821,11 +1822,12 @@ const TRANSCRIBE_RESPONSE_SCHEMA = {
             end: { type: 'STRING' },
             originalText: { type: 'STRING' },
             text: { type: 'STRING' },
+            speaker: { type: 'STRING' },
             gender: { type: 'STRING', enum: ['Male', 'Female'] },
             emotion: { type: 'STRING', enum: TRANSCRIBE_EMOTIONS }
         },
         required: ['start', 'end', 'originalText', 'text', 'gender'],
-        propertyOrdering: ['start', 'end', 'originalText', 'text', 'gender', 'emotion']
+        propertyOrdering: ['start', 'end', 'originalText', 'text', 'speaker', 'gender', 'emotion']
     }
 };
 
@@ -1916,7 +1918,7 @@ function parseJsonArrayLoose(raw) {
     return null;
 }
 
-function buildTranscribePrompt({ clipSec, glossaryHint, genreGuidance, previousLines }) {
+function buildTranscribePrompt({ clipSec, glossaryHint, genreGuidance, previousLines, video = false }) {
     const clipLen = clipSec > 0 ? clipSec.toFixed(1) : null;
     const contextHint = previousLines && previousLines.length
         ? `\n\nPREVIOUS DIALOGUE (context only, for consistent names and pronouns; do NOT repeat these lines):\n${previousLines.map(l => `- [${l.gender || '?'}] ${l.originalText || ''} => ${l.text}`).join('\n')}`
@@ -1943,7 +1945,9 @@ TIMESTAMPS & ACTING RULES:
    - Size each "text" to its own start-to-end duration: about ${KHMER_SYLLABLES_PER_SEC} Khmer syllables per second (a 2-second line is about ${Math.round(2 * KHMER_SYLLABLES_PER_SEC)} syllables).
    - "text" is written in Khmer script only: never leave a word in Chinese or put in a word from any other language or script (Arabic, Thai, Japanese...). Write names and places in Khmer letters.
 
-3. Speaker Gender & Emotion:
+3. Speaker, Gender & Emotion:
+   - speaker: WHO says this line, so each character keeps one voice through the whole series. A character on the CHARACTER SHEET: their name exactly as written there in the original language (e.g. 赵淑芬). Anyone else: a short role in the original language that stays the same for that person in every line (母亲, 助理, 司机, 记者...). "?" only when it truly cannot be told. Work it out from the voice and the scene: a line calling "妈" is spoken TO the mother, by her child; "韩总，..." is said to 韩总, not by him. Never use a title several people can share as the name (韩总 can be any 韩 in charge): name the person, or an unnamed family member by role (韩父, 韩母).${video ? `
+   - You also see the picture: the speaker is the person whose mouth moves (or who the camera shows talking) during the line; the same face and the same voice is the same person in every line. A voice heard from off screen or a phone is whoever is on the other end, not the person shown.` : ''}
    - gender: "Male" or "Female" - the gender of the voice actually speaking this line. Judge by the voice you hear, not by who is being talked about.
    - emotion: "Neutral", "Angry", "Sad", "Whisper", "Excited", "Royal", "Romantic", "Fear".${genreGuidance}
 
@@ -1957,10 +1961,61 @@ SCHEMA:
     "end": "00:02.50",
     "originalText": "Original spoken dialogue",
     "text": "Natural Khmer line sized to start-end",
+    "speaker": "韩峥",
     "gender": "Male",
     "emotion": "Neutral"
   }
 ]`;
+}
+
+// ── Cast pictures: one character, one name, in every episode ──
+// A man only ever called by a title both brothers have ("韩总") was named 韩峥 by Gemini in one
+// episode and 韩子昂 in the one before. Shown two frames of each person earlier episodes named,
+// taken while they spoke, Gemini named him 韩子昂 in all 11 of his lines (0 of 11 without).
+// About 1k tokens a picture.
+const CAST_FRAMES = 2;
+const CAST_MAX_PEOPLE = 12;
+
+// [{ text }, { inlineData }...] for Transcribe, or [] when the series has no pictures yet.
+function seriesCastParts(dir, speakers) {
+    const people = [];
+    for (const s of speakers || []) {
+        const files = (s.frames || []).map(f => path.join(dir || '', f)).filter(f => dir && fs.existsSync(f)).slice(0, CAST_FRAMES);
+        if (files.length) people.push({ s, files });
+    }
+    if (!people.length) return [];
+    const parts = [{ text: 'CAST - people already voiced in earlier episodes of this series. Each picture was taken while that person was speaking (someone else may be in it too: the person shown in all of their pictures is them). Someone in this clip who looks like one of them IS that character: write their name as "speaker", even when the dialogue only calls them by a title.' }];
+    for (const { s, files } of people.slice(-CAST_MAX_PEOPLE)) {
+        parts.push({ text: `${s.name} (${s.gender}):` });
+        for (const f of files) parts.push({ inlineData: { mimeType: 'image/jpeg', data: fs.readFileSync(f).toString('base64') } });
+    }
+    return parts;
+}
+
+// Frames of each named speaker who has fewer than CAST_FRAMES pictures, from their longest lines
+// in this episode. cues: with _start/_end in the video's seconds. Returns whether any were added
+// (speakers[].frames updated in place).
+async function captureCastFrames({ video, cues, dir, speakers }) {
+    if (!dir) return false;
+    let added = false;
+    for (const s of speakers || []) {
+        const have = (s.frames || []).filter(f => fs.existsSync(path.join(dir, f)));
+        if (have.length >= CAST_FRAMES) continue;
+        const lines = (cues || []).filter(c => c.speaker === s.name && c._end - c._start >= 1.0)
+            .sort((a, b) => (b._end - b._start) - (a._end - a._start)).slice(0, CAST_FRAMES - have.length);
+        for (const c of lines) {
+            fs.mkdirSync(dir, { recursive: true });
+            const file = `${crypto.createHash('md5').update(s.name).digest('hex').slice(0, 12)}_${Date.now().toString(36)}_${have.length}.jpg`;
+            const { code } = await runFFmpegCapture(['-hide_banner', '-y', '-ss', ((c._start + c._end) / 2).toFixed(2), '-i', video,
+                '-frames:v', '1', '-vf', 'scale=-2:320', '-q:v', '6', path.join(dir, file)]);
+            if (code === 0 && fs.existsSync(path.join(dir, file))) {
+                have.push(file);
+                added = true;
+            }
+        }
+        s.frames = have;
+    }
+    return added;
 }
 
 // Transcribe one clip; returns cues with times relative to the clip start.
@@ -1969,6 +2024,7 @@ async function transcribeClipWithGemini({ apiKey, model, audioBase64, mimeType, 
         contents: [{
             role: 'user',
             parts: [
+                ...((promptOpts && promptOpts.castParts) || []),
                 { inlineData: { mimeType, data: audioBase64 } },
                 { text: buildTranscribePrompt({ ...promptOpts, clipSec }) }
             ]
@@ -2532,6 +2588,8 @@ app.post('/api/transcribe', backgroundable(async (req, res) => {
         fitToTime = true,
         // false: skip the review pass (reviewKhmerLines) - Settings > Khmer review pass.
         review = true,
+        // false: Gemini hears only the sound, even when the tab's video is on disk.
+        sendVideo = true,
         // Requests this file may run at once. With 1, the extra keys are only backups: a
         // rate-limited key hands the next chunk to the least busy other key (Dub Whole Series
         // runs one file per key, so this keeps every key at about one request).
@@ -2574,10 +2632,12 @@ app.post('/api/transcribe', backgroundable(async (req, res) => {
         const userGlossaryHint = glossary ? `\n\nCUSTOM CHARACTER / GLOSSARY DICTIONARY (STRICTLY USE THESE TRANSLATIONS):\n${typeof glossary === 'string' ? glossary : JSON.stringify(glossary, null, 2)}` : '';
         // The series' character sheet from earlier episodes (names, forms of address), if any.
         const savedSheet = loadSeriesSheet(CHARACTER_SHEETS_DIR, sourceFilePath);
+        const seriesSpeakers = sourceFilePath ? loadSeriesSpeakers(CHARACTER_SHEETS_DIR, sourceFilePath) : [];
         const seriesSheet = savedSheet && applyGlossaryToSheet(savedSheet, glossary);
         const promptOpts = {
             genreGuidance: getKhmerDramaRegisterGuidance(genreRegister),
-            glossaryHint: userGlossaryHint + formatSheetForPrompt(seriesSheet),
+            // + the speaker names earlier episodes gave people not on the sheet (父亲, 陈总), to reuse.
+            glossaryHint: userGlossaryHint + formatSheetForPrompt(seriesSheet) + formatSpeakersForPrompt(seriesSpeakers, seriesSheet),
             usage: createTokenUsage() // every Gemini answer for this file, the missed-dialogue pass included
         };
 
@@ -2596,6 +2656,22 @@ app.post('/api/transcribe', backgroundable(async (req, res) => {
         const silences = totalSec > (chunkPlan.singleMax || TRANSCRIBE_SINGLE_MAX_SEC) ? await detectSilences(inputFile, abortCtrl.signal) : [];
         const chunks = totalSec > 0 ? planTranscribeChunks(totalSec, silences, chunkPlan) : [{ start: 0, end: 0 }];
         console.log(`[Transcribe] ${totalSec.toFixed(1)}s audio -> ${chunks.length} chunk(s)`);
+
+        // The tab's own video, when it is the audio's video (same length): Gemini is sent a small
+        // copy (360p, 2 fps, with the sound) and sees who talks. From the sound alone it named
+        // the wrong one of two men talking to each other (both "韩总") and a mother as the young
+        // lead; with the picture those came out right. A 2-minute part is about 12k tokens.
+        let videoSource = null;
+        if (sendVideo !== false && totalSec > 0) {
+            const src = resolveLocalFilePath(sourceFilePath);
+            if (src && security.VIDEO_EXTS.has(path.extname(src).toLowerCase()) && fs.existsSync(src)) {
+                const videoSec = await probeAudioDuration(src);
+                if (videoSec && Math.abs(videoSec - totalSec) < 1.5) videoSource = src;
+            }
+        }
+        // Pictures of the people earlier episodes voiced, so a face is named as before.
+        const castParts = videoSource ? seriesCastParts(castDir(CHARACTER_SHEETS_DIR, sourceFilePath), seriesSpeakers) : [];
+        if (videoSource) console.log(`[Transcribe] Gemini sees the video (who talks)${castParts.length ? `, with pictures of ${castParts.filter(p => p.text && p.text.endsWith('):')).length} known speaker(s)` : ''}`);
 
         // One lane per API key (max 4). Each lane takes a contiguous run of chunks
         // and walks it in order, so neighbouring chunks still share context.
@@ -2616,6 +2692,16 @@ app.post('/api/transcribe', backgroundable(async (req, res) => {
         const cutClip = async (i) => {
             const chunk = chunks[i];
             const clipSec = chunk.end - chunk.start;
+            if (videoSource) {
+                const clipFile = path.join(workDir, `clip_${i}.mp4`);
+                const { code } = await runFFmpegCapture(['-hide_banner', '-y', '-ss', chunk.start.toFixed(3), '-t', clipSec.toFixed(3),
+                    '-i', videoSource, '-vf', 'scale=-2:360,fps=2', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '32',
+                    '-c:a', 'aac', '-ac', '1', '-ar', '16000', '-b:a', '48k', '-movflags', '+faststart', clipFile], abortCtrl.signal);
+                // Too big to send inline, or not made: this chunk goes as sound only.
+                if (code === 0 && fs.existsSync(clipFile) && fs.statSync(clipFile).size < 15 * 1024 * 1024) {
+                    return { clipBase64: fs.readFileSync(clipFile).toString('base64'), clipMime: 'video/mp4' };
+                }
+            }
             // Speech-only 16kHz mono at 48kbps: tiny upload, same recognition quality.
             // A file given by path is always cut: it may be a video, or too big to send as is.
             if (!(chunks.length > 1 || usePath || audioBase64.length > 14 * 1024 * 1024) || !(totalSec > 0)) {
@@ -2661,7 +2747,7 @@ app.post('/api/transcribe', backgroundable(async (req, res) => {
                     }
                     out = await tryKeysOnce(keys, (key) => transcribeClipWithGemini({
                         apiKey: key, model, audioBase64: clipBase64, mimeType: clipMime, clipSec,
-                        promptOpts: { ...promptOpts, previousLines: laneCues.slice(-4) },
+                        promptOpts: { ...promptOpts, previousLines: laneCues.slice(-4), video: clipMime === 'video/mp4', castParts: clipMime === 'video/mp4' ? castParts : null },
                         signal: abortCtrl.signal, stayOnModel: holdModel
                     }));
                     const busy = !out.ok && isGeminiBusy(out.result);
@@ -2749,6 +2835,20 @@ app.post('/api/transcribe', backgroundable(async (req, res) => {
             sheetHint: formatSheetForPrompt(seriesSheet), tag: 'Transcribe', usage: promptOpts.usage
         });
         console.log(`[Transcribe] ${allCues.length} lines${videoName ? ` (${videoName})` : ''}: ${formatTokenUsage(promptOpts.usage)}`);
+
+        // The speaker names this episode gave people not on the sheet: the next episode reuses them.
+        if (sourceFilePath) {
+            try {
+                const speakers = addSeriesSpeakers(CHARACTER_SHEETS_DIR, sourceFilePath, allCues, seriesSheet);
+                if (videoSource) {
+                    captureCastFrames({ video: videoSource, cues: allCues, dir: castDir(CHARACTER_SHEETS_DIR, sourceFilePath), speakers })
+                        .then((changed) => { if (changed) saveSeriesSpeakers(CHARACTER_SHEETS_DIR, sourceFilePath, speakers); })
+                        .catch(e => console.warn('[Sheet] Could not keep the cast pictures:', e.message));
+                }
+            } catch (e) {
+                console.warn('[Sheet] Could not keep the speaker names:', e.message);
+            }
+        }
 
         // Learn this episode's names and forms of address for the next episodes in the folder,
         // copying the Khmer spellings this episode used. In the background: the result doesn't wait.
@@ -3813,6 +3913,57 @@ app.post('/api/condense-fast-subtitles', async (req, res) => {
     }
 });
 
+// 4f. Subtitles on screen with no dubbed line (lib/missing-lines.js): Gemini translates each with
+// the lines around it, says who speaks, or skips what is not speech. body.lines: [{ id, onScreen,
+// seconds, before, after }]; sourceFilePath: the tab's video (its series' character sheet).
+// Answers only the lines to voice.
+app.post('/api/translate-missing-lines', async (req, res) => {
+    const { lines: rawLines = [], targetLanguage = 'Khmer', genre = 'historical', glossary, apiKey, apiKeys, model = 'gemini-3.8-flash', sourceFilePath, requestId } = req.body || {};
+    const items = (Array.isArray(rawLines) ? rawLines : []).filter(l => l && l.id !== undefined && String(l.onScreen || '').trim()).slice(0, 200);
+    if (!items.length) return res.json({ success: true, results: [] });
+    const keyPool = textKeys([apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])]);
+    if (keyPool.length === 0) {
+        return res.status(400).json({ success: false, error: 'INVALID_API_KEY', message: 'Gemini API key is required in Settings.' });
+    }
+    const abortCtrl = new AbortController();
+    if (requestId) activeTranscribeRequests.set(requestId, abortCtrl);
+    try {
+        const isKhmer = /khmer|^km/i.test(String(targetLanguage));
+        const registerGuidance = isKhmer ? getKhmerDramaRegisterGuidance(genre || 'historical') : '';
+        const savedSheet = sourceFilePath ? loadSeriesSheet(CHARACTER_SHEETS_DIR, sourceFilePath) : null;
+        const glossaryHint = (glossary ? `\n\nGLOSSARY (keep these names/terms exactly as given):\n${typeof glossary === 'string' ? glossary : JSON.stringify(glossary, null, 2)}` : '')
+            + formatSheetForPrompt(savedSheet && applyGlossaryToSheet(savedSheet, glossary));
+        const payload = {
+            contents: [{ role: 'user', parts: [{ text: buildMissingLinesPrompt({ items, targetLanguage, registerGuidance, glossaryHint }) }] }],
+            generationConfig: { responseMimeType: 'application/json', responseSchema: MISSING_RESPONSE_SCHEMA }
+        };
+        const out = await geminiWithKeys(keyPool, async (key) => {
+            const r = await generateText(key, model, payload, abortCtrl.signal, { timeoutMs: GEMINI_TEXT_TIMEOUT_MS, thinking: 'low' });
+            if (!r.success) return { ok: false, result: r };
+            const parsed = parseJsonArrayLoose(r.text);
+            if (!Array.isArray(parsed)) return { ok: false, result: { status: 502, error: 'JSON_PARSE_ERROR', message: 'The AI did not return a list of lines.' } };
+            return { ok: true, parsed };
+        }, abortCtrl.signal, { retries: GEMINI_RETRY_DELAYS_MS.length });
+        if (!out.ok) return geminiFailureResponse(res, out.result);
+        const asked = new Set(items.map(it => String(it.id)));
+        const results = [];
+        for (const answer of out.parsed) {
+            const ok = checkMissingLine(answer, { isKhmer });
+            if (!ok || !asked.has(ok.id)) continue;
+            asked.delete(ok.id); // the first answer per line
+            let text = isKhmer ? sanitizeKhmerDialogue(ok.text) : ok.text;
+            if (glossary) text = applyGlossary(text, glossary);
+            if (text) results.push({ ...ok, text });
+        }
+        res.json({ success: true, results });
+    } catch (e) {
+        if (e.name === 'AbortError') return res.json({ success: false, error: 'CANCELLED' });
+        res.status(500).json({ success: false, error: e.message });
+    } finally {
+        if (requestId) activeTranscribeRequests.delete(requestId);
+    }
+});
+
 app.get('/api/transcribe-progress', (req, res) => {
     const p = transcribeProgress.get(String(req.query.requestId || ''));
     res.json(p ? { success: true, ...p } : { success: false });
@@ -4019,6 +4170,18 @@ function getEmotionProsody(emotion, basePitch, baseVolume, _baseSpeed, baseRate)
     return { pitch: finalPitch, volume: finalVolume, rate: rateStr };
 }
 
+// A line's own pace on top of its emotion's (fitRate, in percent): Dub Whole Series asks Edge to
+// say a line slower or faster so it lasts as long as the actor talks - natural speech, where
+// stretching the finished voice (atempo) sounded drawn out or rushed. "+12%" + fitRate -15 ->
+// "-5%" (the two multiply).
+function applyFitRate(rateStr, fitRate) {
+    const fit = Math.max(-20, Math.min(40, parseFloat(fitRate) || 0));
+    if (!fit) return rateStr;
+    const base = parseFloat(String(rateStr || '0').replace('%', '')) || 0;
+    const pct = Math.max(-40, Math.min(60, Math.round(((1 + base / 100) * (1 + fit / 100) - 1) * 100)));
+    return pct >= 0 ? `+${pct}%` : `${pct}%`;
+}
+
 // ── GLOBAL TTS CONCURRENCY REGULATOR ─────────────────────────────────────────
 // Protects Microsoft Edge-TTS from connection flooding across multi-tab generation.
 // Allows up to 3 concurrent active syntheses with an 80ms launch stagger.
@@ -4079,6 +4242,7 @@ app.post('/api/generate-audio', (req, res) => {
         volume = '+0%',
         speed = 1.0,
         emotion = 'Neutral',
+        fitRate = 0,
         tempPath,
         index
     } = req.body;
@@ -4116,6 +4280,7 @@ app.post('/api/generate-audio', (req, res) => {
     const effectiveRate = (rate && rate !== '+0%') ? rate : charPreset.rate;
 
     const prosody = getEmotionProsody(emotion, effectivePitch, volume, speed, effectiveRate);
+    prosody.rate = applyFitRate(prosody.rate, fitRate);
     const cacheKey = getTtsCacheKey(text, voice, prosody.rate, prosody.pitch, prosody.volume, speed, emotion);
 
     // Instant 0ms cache return if identical audio was previously generated
@@ -4603,6 +4768,7 @@ const textDetect = require('./text_detect_service').createTextDetectService({
     killProcessTree,
 });
 app.use('/api', require('./routes/text-detect')({ textDetect }));
+app.use('/api', require('./routes/series-checkpoint')());
 
 // Khmer movie/drama title generator. Reads the story from the dialogue (the open
 // project and/or uploaded SRT files), sampled evenly from start to end so the model

@@ -56,6 +56,7 @@ function makeStep(tabs, runs) {
     const setLabel = () => { };
     const stoppedError = () => new Error('stopped');
     const tabNumbers = (list) => list.map((p) => projects.indexOf(p) + 1).join(", ");
+    const saveCurrentProjectState = () => { }, refreshActiveTabFromProject = () => { }; // the voices over the music: these tabs have none
     ${block}
     return Object.assign(isolateStep, { startBackgroundIsolate });
   `)(tabs, isolateBgmAllProjects, () => 'mdx', LABELS);

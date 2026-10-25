@@ -202,7 +202,9 @@
     let data = load();
     const lines = liveSubs(proj)
       .filter(speakable)
-      .map((s) => ({ id: s.id, start: parseFloat(s.textStart), end: parseFloat(s.textEnd), gender: lineGender(s, data), emotion: s.emotion || "Neutral" }))
+      // name: the character Transcribe named (one voice per character in every episode); exact:
+      // timed to the video's own subtitle (Match Subtitles), so its sound is that line's.
+      .map((s) => ({ id: s.id, start: parseFloat(s.textStart), end: parseFloat(s.textEnd), gender: lineGender(s, data), emotion: s.emotion || "Neutral", name: s.characterName || null, exact: !!s.screenMatched }))
       .filter((l) => l.end > l.start);
     if (!lines.length) return { ok: false };
 
@@ -211,9 +213,14 @@
     const pr = prints();
     const inGroup = new Set(group.profileIds || []);
     // A voice merged into another keeps its print there, so it is not found as a new speaker.
+    // A character's voice is found again by its name, prints or not.
     const known = (data.profiles || [])
       .filter((p) => inGroup.has(p.id) && p.source === "speakers" && p.audioPath)
-      .flatMap((p) => printsOf(pr, p.id).map(({ model, e }) => ({ id: p.id, gender: p.gender, embedding: e, model, emotions: clipsHave(p) })));
+      .flatMap((p) => {
+        const base = { id: p.id, gender: p.gender, name: p.characterName || null, emotions: clipsHave(p) };
+        const own = printsOf(pr, p.id).map(({ model, e }) => ({ ...base, embedding: e, model }));
+        return own.length || !base.name ? own : [{ ...base, embedding: null, model: null }];
+      });
 
     toast(`Finding who speaks in "${tabName}"…`, "info");
     const res = await fetch(`${API}/api/voice-capture/speakers`, {
@@ -243,7 +250,11 @@
     group = (data.groups || []).find((g) => g.id === group.id) || groupFor(data, proj);
     const pr2 = prints();
     const used = new Set((data.profiles || []).map((p) => p.color));
-    let number = (data.profiles || []).filter((p) => (group.profileIds || []).includes(p.id) && p.source === "speakers").length;
+    // Numbered after the highest "Speaker N" of the series: counting them gave a second
+    // "Speaker 3" once an earlier one was removed.
+    let number = Math.max(0, ...(data.profiles || [])
+      .filter((p) => (group.profileIds || []).includes(p.id) && p.source === "speakers")
+      .map((p) => parseInt((/^Speaker (\d+)$/.exec(p.label || "") || [])[1], 10) || 0));
     const profileOf = new Map(); // speaker key -> profile id
     let made = 0;
     const madeIds = [];
@@ -252,6 +263,11 @@
     for (const s of out.speakers || []) {
       const known = s.known && (data.profiles || []).find((p) => p.id === s.known);
       if (known) {
+        // A voice found by its print learns its character's name, so later episodes find it by name.
+        if (s.name && !known.characterName) known.characterName = s.name;
+        // And keeps this episode's print beside its others (the last 6): a character's voice
+        // checked against several episodes, not only the one it was first heard in.
+        if (Array.isArray(s.embedding)) pr2[known.id] = [...printsOf(pr2, known.id), { model: out.printModel || "campplus", e: s.embedding }].slice(-6);
         // What this episode adds to a voice from an earlier one: a calm clip if it had none (and
         // its clip is still the one found for it, not one picked by hand), and new feelings.
         if (s.filePath && s.calm && !known.calmClip && ownClip(known)) {
@@ -269,7 +285,8 @@
       used.add(color);
       const profile = {
         id: crypto.randomUUID().substring(0, 8),
-        label: `Speaker ${++number}`,
+        label: s.name || `Speaker ${++number}`,
+        ...(s.name && { characterName: s.name }),
         gender: s.gender === "Female" ? "Female" : "Male",
         color,
         instruction: "",
@@ -354,6 +371,7 @@
     save(data);
     savePrints(pr2);
     proj.voxSpeakersAt = Date.now();
+    proj.voxSpeakersFrom = out.source || "mix";
     if (active && typeof renderSubtitles === "function") renderSubtitles();
     document.dispatchEvent(new Event("vox-group-changed"));
 
@@ -466,6 +484,8 @@
         .map(({ p, n }) => {
           const male = (p.gender || "").toLowerCase() !== "female";
           const others = rows.filter((r) => r.p.id !== p.id);
+          // Every voice of the series: this episode's lines may belong to someone it has no voice for yet.
+          const seriesVoices = (data.profiles || []).filter((x) => x.id !== p.id && (group?.profileIds || []).includes(x.id));
           const feels = Object.keys(FEELING_ICONS).filter((e) => p.emotionClips?.[e]?.path);
           return `<div class="vsp-row" data-pid="${esc(p.id)}">
             <span class="vox-group-dot vgm-big-dot" style="background:${esc(p.color || "#6366f1")}"></span>
@@ -484,6 +504,10 @@
             ${others.length ? `<select class="vsp-merge" data-act="merge" title="Same person as another speaker? Merge their lines into that speaker">
               <option value="">Merge into…</option>
               ${others.map((r) => `<option value="${esc(r.p.id)}">${esc(r.p.label || r.p.id)}</option>`).join("")}
+            </select>` : ""}
+            ${seriesVoices.length ? `<select class="vsp-merge" data-act="move" title="Wrong character in this episode only? Give this episode's lines to another voice - other episodes keep theirs">
+              <option value="">This episode's lines →</option>
+              ${seriesVoices.map((x) => `<option value="${esc(x.id)}">${esc(x.label || x.id)}</option>`).join("")}
             </select>` : ""}
           </div>`;
         })
@@ -521,9 +545,38 @@
     if (el.dataset.act === "label") {
       const label = el.value.trim();
       if (label) mutateProfile(pid, (p) => (p.label = label));
+    } else if (el.dataset.act === "move" && el.value) {
+      moveLines(pid, el.value);
     } else if (el.dataset.act === "merge" && el.value) {
       merge(pid, el.value);
     }
+  }
+
+  // A character named wrongly in one episode (E47: the man both brothers' title fits, "韩总",
+  // named 韩峥 though he is 韩子昂): this episode's lines of that voice go to another voice of the
+  // series, the voice itself stays for the episodes it is right in (Merge into… changes them all).
+  // The voice the search found stays on each line (voxSpeaker), so searching again keeps the pick.
+  function moveLines(fromId, intoId) {
+    const proj = dlg.proj;
+    const data = load();
+    const into = (data.profiles || []).find((p) => p.id === intoId);
+    if (!proj || !into) return;
+    const active = proj === activeTab();
+    if (active && typeof saveStateToPast === "function") saveStateToPast();
+    let moved = 0;
+    const apply = (list) => list.forEach((s) => {
+      if (s.gender !== fromId) return;
+      if (!s.voxSpeaker) s.voxSpeaker = fromId;
+      Object.assign(s, { gender: intoId, audioStatus: "idle", audioUrl: null, audioStart: s.textStart, audioEnd: s.textEnd });
+      if (into.characterName) s.characterName = into.characterName;
+      if (list === liveSubs(proj)) moved++;
+    });
+    apply(liveSubs(proj));
+    if (active && proj.subtitles && proj.subtitles !== liveSubs(proj)) apply(proj.subtitles);
+    if (active && typeof renderSubtitles === "function") renderSubtitles();
+    document.dispatchEvent(new Event("vox-group-changed"));
+    toast(`${moved} line${moved === 1 ? "" : "s"} of this episode now speak with "${into.label}" — generate them again to hear it.`, "success");
+    renderDialog();
   }
 
   // One speaker was really two: their lines (in every open tab) go to the other, and the
