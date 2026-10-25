@@ -10,6 +10,10 @@ const { isNetworkPath, safeOutputFileName } = require('../lib/security');
 
 module.exports = function createRenderRouter({ upload, renderVideo, cancelRender, getRenderProgress, audioRepair }) {
     const router = express.Router();
+    // A render the server took but hasn't started yet (it checks the video's own audio first).
+    // It counts as going: a page whose request was lost on the way (see /render-progress) must
+    // wait for it, not send it again - two renders of one file at once.
+    let pendingRender = null;
 
     router.post('/render', upload.any(), async (req, res) => {
         // Disable HTTP timeout for long render operations
@@ -38,7 +42,7 @@ module.exports = function createRenderRouter({ upload, renderVideo, cancelRender
         }
 
         // Guard against simultaneous renders
-        if (getRenderProgress().status === 'rendering') {
+        if (getRenderProgress().status === 'rendering' || pendingRender) {
             return res.status(409).json({ success: false, error: 'A render is already in progress. Wait for it to finish or cancel it first.' });
         }
 
@@ -104,6 +108,17 @@ module.exports = function createRenderRouter({ upload, renderVideo, cancelRender
             ? (renderOpts.showSubtitles === true || renderOpts.showSubtitles === 'true')
             : (renderOpts.burnSubtitles === true || renderOpts.burnSubtitles === 'true');
 
+        // Only when the video's own audio is actually mixed in (same rule as render_service):
+        // checking/repairing a 2-hour track for a muted or audio-only export is wasted time.
+        pendingRender = { token: renderOpts.renderToken ? String(renderOpts.renderToken).slice(0, 64) : null };
+        let originalAudioPath = null;
+        try {
+            originalAudioPath = (videoPath && !isAudioOnly && !(renderOpts.isOriginalAudioMuted !== undefined ? renderOpts.isOriginalAudioMuted : (renderOpts.muteOriginal !== undefined ? renderOpts.muteOriginal : true)))
+                ? (await audioRepair.getAudioSource(videoPath).catch(() => ({ path: videoPath }))).path : null;
+        } finally {
+            pendingRender = null; // renderVideo takes over in this same tick (it marks its job first)
+        }
+
         // 5. Run render and wait for completion
         renderVideo({
             ...renderOpts,
@@ -134,10 +149,7 @@ module.exports = function createRenderRouter({ upload, renderVideo, cancelRender
                 : true,
             duckingDepth: renderOpts.duckingDepth || 'standard',
             normalizeLoudness: renderOpts.normalizeLoudness === undefined ? true : !(renderOpts.normalizeLoudness === false || renderOpts.normalizeLoudness === 'false' || renderOpts.normalizeLoudness === 0 || renderOpts.normalizeLoudness === '0'),
-            // Only when the video's own audio is actually mixed in (same rule as render_service):
-            // checking/repairing a 2-hour track for a muted or audio-only export is wasted time.
-            originalAudioPath: (videoPath && !isAudioOnly && !(renderOpts.isOriginalAudioMuted !== undefined ? renderOpts.isOriginalAudioMuted : (renderOpts.muteOriginal !== undefined ? renderOpts.muteOriginal : true)))
-                ? (await audioRepair.getAudioSource(videoPath).catch(() => ({ path: videoPath }))).path : null,
+            originalAudioPath,
             outputPath
         },
         (progress, eta) => { },
@@ -154,13 +166,14 @@ module.exports = function createRenderRouter({ upload, renderVideo, cancelRender
     });
 
     router.get('/render-progress', (req, res) => {
-        const progress = getRenderProgress();
+        const progress = pendingRender ? { status: 'rendering', progress: 0, eta: 'Calculating...', token: pendingRender.token } : getRenderProgress();
         res.json({
             status: progress.status === 'rendering' ? 'processing' : progress.status,
             percent: progress.progress,
             eta: progress.eta,
             error: progress.error,
-            outputFile: progress.outputFile
+            outputFile: progress.outputFile,
+            token: progress.token || null
         });
     });
 

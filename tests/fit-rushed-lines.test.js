@@ -49,7 +49,7 @@ function makeEnv({ condense, missing = () => [], keys = ['k1'], delayMs = 0 }) {
     };
     ${voiceSlotSrc}
     ${fastBlock}
-    return { fillMissingScreenLinesAllTabs, fitFastLinesAllTabs, refitShortenedLinesAllTabs, countRushedLinesAllTabs, fillShortVoicesAllTabs, nativePaceAllTabs, refitPacedLinesAllTabs, boostVoicesOverMusic, analyzeSubPace, settleMatchedSubtitles, setProjects: (p) => { projects = p; }, setActive: (i, live) => { activeProjectIndex = i; subtitles = live; }, getLive: () => subtitles };
+    return { fillMissingScreenLinesAllTabs, fitFastLinesAllTabs, refitShortenedLinesAllTabs, countRushedLinesAllTabs, fillShortVoicesAllTabs, nativePaceAllTabs, refitPacedLinesAllTabs, boostVoicesOverMusic, musicLevelDb, analyzeSubPace, settleMatchedSubtitles, setProjects: (p) => { projects = p; }, setActive: (i, live) => { activeProjectIndex = i; subtitles = live; }, getLive: () => subtitles };
   `);
   return { env, api: factory(env, condense, missing, JSON.stringify(keys), delayMs, KhmerSpeech, ScreenSync) };
 }
@@ -425,6 +425,31 @@ describe('the voice above the music', () => {
     const iso = src.slice(src.indexOf('      async function isolateStep() {'), src.indexOf('      async function blurTextStep() {'));
     assert.match(iso, /await boostVoicesOverMusicAllTabs\(\)/);
     assert.match(iso, /audio-peaks`, \{ filePath: music\.file \}/);
+  });
+
+  test('a tab with loud music all the way through is turned down to -13 dB (at most 8 dB)', () => {
+    const { api } = makeEnv({ condense: () => [] });
+    const subs = () => [voiced('a', 0, 2), voiced('b', 3, 5), voiced('c', 6, 8), voiced('d', 9, 11)];
+    // 128/255 = -6 dB under every line: no line is louder than the tab's usual, so none is
+    // played louder, but the whole tab's music goes down 7 dB.
+    const loud = subs();
+    assert.equal(api.musicLevelDb(loud, music(12, 128), 20), -7);
+    assert.equal(api.boostVoicesOverMusic(loud, music(12, 128), 20), 0);
+    assert.equal(api.musicLevelDb(subs(), music(12, 255), 20), -8, 'capped at 8 dB');
+    assert.equal(api.musicLevelDb(subs(), music(12, 32), 20), 0, 'quiet music (-18 dB) is left alone');
+    assert.equal(api.musicLevelDb(subs(), music(12, 58), 20), 0, '-12.9 dB: under 1 dB to take off, left alone');
+    assert.equal(api.musicLevelDb(subs().slice(0, 2), music(12, 255), 20), 0, 'too few voiced lines to tell');
+  });
+
+  test('the tab level reaches the series step, the open tab, the preview and both exports', () => {
+    const iso = src.slice(src.indexOf('      async function boostVoicesOverMusicAllTabs() {'), src.indexOf('      async function blurTextStep() {'));
+    assert.match(iso, /music\.levelDb = levelDb/);
+    assert.match(iso, /bgmTrack\.levelDb = music\.levelDb/, 'the open tab saves its own copy back over the project');
+    assert.equal((src.match(/volume: bgmPlayVolume\(\{ \.\.\.projBgmTrack/g) || []).length, 2, 'both export snapshots');
+    assert.doesNotMatch(src, /bgmAudio\.volume = bgmTrack\.volume|\(bgmTrack\.volume \?\? 0\.5\) \* fadeMult/, 'every playback path');
+    const bgmPlayVolume = new Function(`${src.slice(src.indexOf('    function bgmPlayVolume(track) {'), src.indexOf('    let globalSubtitleItalic'))}; return bgmPlayVolume;`)();
+    assert.equal(bgmPlayVolume({ volume: 0.5 }), 0.5);
+    assert.ok(Math.abs(bgmPlayVolume({ volume: 0.5, levelDb: -6 }) - 0.2506) < 0.001);
   });
 });
 

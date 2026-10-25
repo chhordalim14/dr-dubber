@@ -1319,6 +1319,7 @@ window.I18N_KM = {
   "· tab {0} used {1} instead ({2})": "· ផ្ទាំង {0} បានប្រើ {1} ជំនួសវិញ ({2})",
   "· tab {0} used FFmpeg phase cancellation (no AI separation engine is installed)": "· ផ្ទាំង {0} បានប្រើវិធី phase cancellation របស់ FFmpeg (មិនទាន់មានម៉ាស៊ីនញែកសំឡេង AI ដំឡើងទេ)",
   "· isolated in {0} beside the other steps": "· ញែករួចក្នុងរយៈពេល {0} ស្របពេលនឹងជំហានផ្សេងទៀត",
+  "· music turned down in tab {0}": "· បានបន្ថយសំឡេងភ្លេងក្នុងផ្ទាំង {0}",
   "{0} subtitle line(s) blurred in {1} of {2} tab(s)": "បានធ្វើឲ្យព្រិលអក្សររត់ {0} ឃ្លា ក្នុង {1} នៃ {2} ផ្ទាំង",
   "Part {0} of {1} is dubbed ✓ Export it, then press Next part in Dub Whole Series.": "ផ្នែកទី {0} នៃ {1} បញ្ចូលសំឡេងរួចហើយ ✓ សូមនាំចេញ រួចចុច ផ្នែកបន្ទាប់ នៅក្នុងមុខងារបញ្ចូលសំឡេងរឿងភាគទាំងមូល។",
   "Part {0} is dubbed ✓ That was the last part.": "ផ្នែកទី {0} បញ្ចូលសំឡេងរួចហើយ ✓ នេះជាផ្នែកចុងក្រោយ។",

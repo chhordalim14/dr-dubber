@@ -80,7 +80,7 @@ test('generation keeps a line\'s own voice but voices plain Male/Female lines fr
     assert.equal(ctx.resolve('Female', all, [all[0], all[1]]).id, 'y1', 'by the profile gender, not its name');
     assert.equal(ctx.resolve('Female', all).id, 'y1', 'no group: all profiles');
     // every generation path passes the tab's group
-    assert.equal((main.match(/resolveSmartVoxCpmProfile\(sub\.gender, voxCmp2Data\.profiles, voxCmp2ScopedProfiles\(voxCmp2Data, (targetProject|proj)\)\)/g) || []).length, 2);
+    assert.equal((main.match(/resolveSmartVoxCpmProfile\(voxVoiceTagOf\(sub, voxCmp2Data\.profiles\), voxCmp2Data\.profiles, voxCmp2ScopedProfiles\(voxCmp2Data, (targetProject|proj)\)\)/g) || []).length, 2);
 });
 
 test('the voice-capture page script loads after studio-main, the groups script before it', () => {

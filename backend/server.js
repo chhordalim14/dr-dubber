@@ -4768,6 +4768,7 @@ const textDetect = require('./text_detect_service').createTextDetectService({
     killProcessTree,
 });
 app.use('/api', require('./routes/text-detect')({ textDetect }));
+app.use('/api', require('./routes/series-checkpoint')());
 
 // Khmer movie/drama title generator. Reads the story from the dialogue (the open
 // project and/or uploaded SRT files), sampled evenly from start to end so the model

@@ -22,8 +22,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // app start, so not marked autoExport: that would be an export lost when the app closed).
 // outcome(item): 'done' or 'error' for one render of a queue item ({ tab, tries }).
 // merge: "Join into one video" is on; joinError: the join of every part fails with it.
-function makeSeries({ parts = 3, outcome = () => 'done', renderMs = 10, dubMs = 15, plan = null, merge = false, joinError = null, scope = 'part' } = {}) {
-  const env = { log: [], toasts: [], saves: 0, renderQueue: [], joins: [] };
+// tabsOpen: false - the app was just opened again, no tab is open. checkpoints: the server's
+// series checkpoints ({ key: data }); files: the exported videos on disk (paths).
+function makeSeries({ parts = 3, outcome = () => 'done', renderMs = 10, dubMs = 15, plan = null, merge = false, joinError = null, scope = 'part', tabsOpen = true, checkpoints = {}, files = [] } = {}) {
+  const env = { log: [], toasts: [], saves: 0, renderQueue: [], joins: [], checkpoints, ckDeleted: [] };
   const tabsOf = (k) => [1, 2, 3].map((t) => ({ name: `part${k + 1}_tab${t}` }));
   plan = plan || {
     outDir: 'D:\\out',
@@ -31,8 +33,8 @@ function makeSeries({ parts = 3, outcome = () => 'done', renderMs = 10, dubMs = 
     parts: Array.from({ length: parts }, (_, k) => (k === 0 ? { status: 'done' } : { status: 'joined' })),
     lastDone: { index: 0 },
   };
-  const projects = plan.lastDone ? tabsOf(plan.lastDone.index) : [];
-  const factory = new Function('env', 'plan', 'projects', 'tabsOf', 'outcome', 'renderMs', 'dubMs', 'sleep', 'merge', 'joinError', 'scope', `
+  const projects = plan.lastDone && tabsOpen ? tabsOf(plan.lastDone.index) : [];
+  const factory = new Function('env', 'plan', 'projects', 'tabsOf', 'outcome', 'renderMs', 'dubMs', 'sleep', 'merge', 'joinError', 'scope', 'files', `
     const savePlan = () => { env.saves++; env.saved = JSON.parse(JSON.stringify(plan)); };
     const render = () => { };
     const setLabel = () => { };
@@ -87,8 +89,17 @@ function makeSeries({ parts = 3, outcome = () => 'done', renderMs = 10, dubMs = 
     // The render queue: runs pending items one at a time; Stop cancels what hasn't finished.
     const renderQueue = env.renderQueue;
     let queueRunning = false, queueStops = 0, queueStopRequested = false;
-    const fetch = async () => { }; // the server's cancel-render
+    // The server: cancel-render, and the series checkpoints (backend/routes/series-checkpoint.js).
+    const fetch = async (url, opts) => {
+      const body = opts && opts.body ? JSON.parse(opts.body) : null;
+      const answer = (data) => ({ json: async () => data });
+      if (/series-checkpoint\\/files-exist/.test(url)) return answer({ success: true, exists: body.paths.map((p) => files.includes(p)) });
+      if (/series-checkpoint\\/delete/.test(url)) { env.ckDeleted.push(...body.keys); body.keys.forEach((k) => delete env.checkpoints[k]); return answer({ success: true }); }
+      if (/series-checkpoint\\?key=/.test(url)) return answer({ success: true, data: env.checkpoints[decodeURIComponent(url.split('key=')[1])] || null });
+      if (/series-checkpoint$/.test(url)) { env.checkpoints[body.key] = body.data; return answer({ success: true }); }
+    };
     const renderQueueList = () => { };
+    const updateQueueBadge = () => { };
     const runRenderQueue = async (only) => {
       if (queueRunning) return;
       queueRunning = true;
@@ -98,10 +109,11 @@ function makeSeries({ parts = 3, outcome = () => 'done', renderMs = 10, dubMs = 
         if (item.status !== 'pending' || (only && !only.has(item))) continue;
         item.status = 'running';
         item.tries = (item.tries || 0) + 1;
-        env.log.push('render ' + item.tab);
+        const tab = item.tab || item.projectLabel; // a queue item made from a checkpoint has no fake tab
+        env.log.push('render ' + tab);
         await sleep(renderMs);
         item.status = queueStopRequested ? 'cancelled' : outcome(item);
-        if (item.status === 'done') item.outputPath = 'D:/out/' + item.tab + '.mp4';
+        if (item.status === 'done') item.outputPath = 'D:/out/' + tab + '.mp4';
       }
       queueRunning = false;
       queueStopRequested = false;
@@ -115,7 +127,7 @@ function makeSeries({ parts = 3, outcome = () => 'done', renderMs = 10, dubMs = 
     ${renderBlock}
     const window = { seriesRenderApi: {
       queueAllTabs: (tag) => {
-        const items = projects.map((p) => ({ status: 'pending', tab: p.name, tag }));
+        const items = projects.map((p) => ({ status: 'pending', tab: p.name, tag, projectLabel: p.name, config: { outputFileName: p.name + '.mp4' } }));
         env.log.push('queue ' + tag);
         renderQueue.push(...items);
         return items;
@@ -123,6 +135,7 @@ function makeSeries({ parts = 3, outcome = () => 'done', renderMs = 10, dubMs = 
       renderItems: renderSeriesItems,
       stop: stopRenderQueue,
       stopItems: stopSeriesItems, // the real one (in renderBlock)
+      restoreItems: restoreSeriesItems, // the real one (in renderBlock)
     } };
 
     let stopSeriesBackgroundExport = () => { };
@@ -130,12 +143,13 @@ function makeSeries({ parts = 3, outcome = () => 'done', renderMs = 10, dubMs = 
     ${exportBlock}
     return {
       exportAndContinue, runPart, retryMerges, mergesToRetry, wholeToRetry, lostNote: () => lostExportsNote,
+      restoreLostExports, unfinishedExports,
       stop: () => { seriesRun.stopped = true; stopSeriesBackgroundExport(); }, // the series' Stop
       stopQueue: () => stopRenderQueue(), // the render queue's own Stop button
       newRun: () => { seriesRun = { stopped: false }; },
     };
   `);
-  const api = factory(env, plan, projects, tabsOf, outcome, renderMs, dubMs, sleep, merge, joinError, scope);
+  const api = factory(env, plan, projects, tabsOf, outcome, renderMs, dubMs, sleep, merge, joinError, scope, files);
   return { env, plan, projects, api };
 }
 
@@ -293,7 +307,7 @@ describe('Dub Whole Series hands-free export', () => {
     assert.ok(plan.parts.every((p) => p.exported));
   });
 
-  test('app restarted while a part was exporting: that part is dubbed again, other parts untouched', () => {
+  test('app closed while a part was exporting: the plan is kept as it was, Continue exports the rest', () => {
     const plan = {
       outDir: 'D:\\out',
       parts: [
@@ -304,14 +318,55 @@ describe('Dub Whole Series hands-free export', () => {
       ],
       lastDone: { index: 1 },
     };
-    const { env, api } = makeSeries({ plan });
-    assert.equal(plan.parts[0].status, 'done');
-    assert.equal(plan.parts[1].status, 'joined');
-    assert.equal(plan.parts[1].autoExport, undefined);
-    assert.equal(plan.parts[2].status, 'done');
-    assert.equal(plan.lastDone, null, 'Continue must not export whatever tabs are open as part 2');
-    assert.match(api.lostNote(), /Part 2 wasn't fully exported when the app closed, so it is dubbed again/);
-    assert.equal(env.saved.parts[1].status, 'joined');
+    const { env, api } = makeSeries({ plan, tabsOpen: false });
+    assert.equal(plan.parts[1].status, 'done', 'not dubbed again');
+    assert.equal(plan.parts[1].autoExport, true);
+    assert.deepEqual(plan.lastDone, { index: 1 });
+    assert.match(api.lostNote(), /Part 2 wasn't fully exported when the app closed\. Continue exports the rest\./);
+    assert.equal(env.saves, 0);
+  });
+
+  test('app closed mid-export: the queue comes back from its checkpoint; only the tabs not rendered are rendered', async () => {
+    const plan = { outDir: 'D:\\out', parts: [{ status: 'done', autoExport: true }, { status: 'joined' }], lastDone: { index: 0 } };
+    const item = (t, status, outputPath = null) => ({ status, outputPath, projectLabel: `part1_tab${t}`, seriesTag: 'D:\\out||part1', config: { outputFileName: `part1_tab${t}.mp4` } });
+    const checkpoints = { series_0_part1_export: { part: 0, items: [item(1, 'done', 'D:/out/part1_tab1.mp4'), item(2, 'running'), item(3, 'pending')] } };
+    const { env, api } = makeSeries({ plan, tabsOpen: false, checkpoints, files: ['D:/out/part1_tab1.mp4'] });
+    await api.restoreLostExports();
+    assert.deepEqual(api.unfinishedExports(), [0]);
+    await api.exportAndContinue();
+    assert.ok(!env.log.includes('render part1_tab1'), 'rendered before the app closed');
+    for (const t of [2, 3]) assert.ok(env.log.includes(`render part1_tab${t}`), `tab ${t}`);
+    assert.ok(plan.parts.every((p) => p.exported));
+    assert.ok(firstIndex(env.log, /render part1_tab3/) < firstIndex(env.log, /render part2_/), 'part 1 is exported before part 2');
+    assert.ok(env.ckDeleted.includes('series_0_part1_export') && env.ckDeleted.includes('series_0_part1_tabs'), "an exported part's checkpoints go");
+  });
+
+  test('a video the checkpoint says was rendered but that is not on disk is rendered again', async () => {
+    const plan = { outDir: 'D:\\out', parts: [{ status: 'done', autoExport: true }], lastDone: { index: 0 } };
+    const checkpoints = { series_0_part1_export: { part: 0, items: [{ status: 'done', outputPath: 'D:/out/gone.mp4', projectLabel: 'part1_tab1', config: { outputFileName: 'part1_tab1.mp4' } }] } };
+    const { env, api } = makeSeries({ plan, tabsOpen: false, checkpoints, files: [] });
+    await api.restoreLostExports();
+    await api.exportAndContinue();
+    assert.ok(env.log.includes('render part1_tab1'));
+    assert.equal(plan.parts[0].exported, true);
+  });
+
+  test('without an export checkpoint nothing is restored (Continue dubs that part again)', async () => {
+    const plan = { outDir: 'D:\\out', parts: [{ status: 'done', autoExport: true }, { status: 'joined' }], lastDone: { index: 0 } };
+    const { api } = makeSeries({ plan, tabsOpen: false });
+    await api.restoreLostExports();
+    assert.deepEqual(api.unfinishedExports(), []);
+  });
+
+  test("a part's export queue is saved when queued, and goes once the part is exported", async () => {
+    const { env, api } = makeSeries({ parts: 1 });
+    const run = api.exportAndContinue();
+    await sleep(1);
+    const saved = env.checkpoints.series_0_part1_export;
+    assert.equal(saved.part, 0);
+    assert.deepEqual(saved.items.map((it) => it.projectLabel), ['part1_tab1', 'part1_tab2', 'part1_tab3']);
+    await run;
+    assert.equal(env.checkpoints.series_0_part1_export, undefined, 'deleted once exported');
   });
 
   test('a normal start leaves the plan alone', () => {

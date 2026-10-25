@@ -6,6 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const { getFFmpegBinary, getFFprobeBinary } = require('./ffmpeg_env');
 const { buildTextBlurFilters, probeDisplaySize } = require('./lib/text-blur');
+const { buildColorFilters } = require('./lib/video-color');
 
 let activeRenderProcess = null;
 
@@ -1264,7 +1265,10 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             progress: 0,
             eta: 'Calculating...',
             outputFile: outputPath,
-            error: null
+            error: null,
+            // The page's id for this render: a page that lost its request (Wi-Fi switched off or
+            // on drops it, even to localhost) asks /api/render-progress whether this one is its own.
+            token: options.renderToken ? String(options.renderToken).slice(0, 64) : null
         };
         // Stop before FFmpeg has started (voice track, probes): cancelRender() marks this job,
         // and the render ends at the next check instead of rendering the whole tab after Stop.
@@ -1603,24 +1607,8 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         if (flippedH) vFilters.push('hflip');
         if (flippedV) vFilters.push('vflip');
 
-        // Color Adjustments & Filters
-        const ca = colorAdjustments || videoColorAdj || colorAdj || {};
-        const brightness = ca.brightness !== undefined ? (parseFloat(ca.brightness) - 100) / 100 : 0;
-        const contrast = ca.contrast !== undefined ? parseFloat(ca.contrast) / 100 : 1.0;
-        const saturation = ca.saturation !== undefined ? parseFloat(ca.saturation) / 100 : 1.0;
-        const hue = ca.hue !== undefined ? parseFloat(ca.hue) : 0;
-        const sharpness = ca.sharpness !== undefined ? parseFloat(ca.sharpness) : 0;
-
-        if (Math.abs(brightness) > 0.001 || Math.abs(contrast - 1.0) > 0.001 || Math.abs(saturation - 1.0) > 0.001) {
-            vFilters.push(`eq=brightness=${brightness.toFixed(2)}:contrast=${contrast.toFixed(2)}:saturation=${saturation.toFixed(2)}`);
-        }
-        if (Math.abs(hue) > 0.01) {
-            vFilters.push(`hue=h=${hue.toFixed(1)}`);
-        }
-        if (sharpness > 0.01) {
-            const lumaAmount = Math.min(2.5, Math.max(0.1, (sharpness / 100) * 2.5)).toFixed(2);
-            vFilters.push(`unsharp=5:5:${lumaAmount}:5:5:0.0`);
-        }
+        // Color Adjustments & Filters (graded like the editor's preview: see lib/video-color.js)
+        vFilters.push(...buildColorFilters(colorAdjustments || videoColorAdj || colorAdj || {}));
 
         // Vignette
         const vig = videoVignette || vignette;
