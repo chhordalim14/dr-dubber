@@ -88,3 +88,6 @@ storage/VoiceCaptures/
 # Local experiments
 scratch/
 voice-clone-test/
+
+# App data when run from the repo (exports, captures, caches, transcripts)
+storage/

@@ -286,17 +286,32 @@ def find_python_in_folder(folder, module_name=None):
             return c
     return None
 
-def separate_demucs(input_audio, output_dir, demucs_folder=None, segment=None, device=None, threads=None):
-    """
-    High-fidelity ML-based separation via Demucs (htdemucs model). Produces a
-    genuine isolated vocal stem and a clean instrumental/BGM stem.
-    """
-    demucs_python = (
+def find_demucs_python(demucs_folder=None):
+    return (
         find_python_in_folder(demucs_folder, "demucs")
         or (os.environ.get("DEMUCS_PYTHON") if is_demucs_python(os.environ.get("DEMUCS_PYTHON")) else None)
         or (DEMUCS_PYTHON_DEFAULT if is_working_python(DEMUCS_PYTHON_DEFAULT) else None)
         or (sys.executable if is_demucs_python(sys.executable) else None)
     )
+
+def thread_env(threads):
+    # torch otherwise starts one thread per core in every process, so two
+    # tabs separating at once would each grab all 16 and slow each other
+    # down. The server passes this process's share of the CPU.
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+    if threads:
+        for var in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+            env[var] = str(threads)
+    return env
+
+def separate_demucs(input_audio, output_dir, demucs_folder=None, segment=None, device=None, threads=None):
+    """
+    High-fidelity ML-based separation via Demucs (htdemucs model). Produces a
+    genuine isolated vocal stem and a clean instrumental/BGM stem.
+    """
+    demucs_python = find_demucs_python(demucs_folder)
     if not demucs_python:
         note_error("Demucs", "no Python with Demucs installed was found (backend/demucs-env is missing or broken)")
         return None
@@ -325,17 +340,7 @@ def separate_demucs(input_audio, output_dir, demucs_folder=None, segment=None, d
             cmd += ["--segment", str(segment)]
         cmd.append(input_audio)
 
-        # torch otherwise starts one thread per core in every process, so two
-        # tabs separating at once would each grab all 16 and slow each other
-        # down. The server passes this process's share of the CPU.
-        env = os.environ.copy()
-        env["PYTHONIOENCODING"] = "utf-8"
-        env["PYTHONUTF8"] = "1"
-        if threads:
-            for var in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
-                env[var] = str(threads)
-
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=env)
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=thread_env(threads))
 
         base_name = os.path.splitext(os.path.basename(input_audio))[0]
         stem_dir = os.path.join(job_dir, DEMUCS_MODEL, base_name)
@@ -528,6 +533,50 @@ def separate_ffmpeg(input_audio, output_dir):
         sys.stderr.write(f"[FFmpeg] exception: {e}\n")
         return None
 
+def remove_music(bgm_path, output_dir, model_dir, demucs_folder=None, device=None, threads=None):
+    """
+    Second pass for "Remove music from BGM": music_remover.py takes the music
+    out of a finished BGM stem and keeps the sound effects. It needs torch, so
+    it runs in the Demucs Python; its "[music] n/N" progress is passed on.
+    """
+    demucs_python = find_demucs_python(demucs_folder)
+    if not demucs_python:
+        return {"success": False, "error": "Remove music needs Demucs, and no Python with Demucs installed was found. Set the Demucs folder in Settings"}
+    job_dir = os.path.join(os.path.abspath(output_dir), f"nomusic_{os.getpid()}_{int(time.time() * 1000)}")
+    os.makedirs(job_dir, exist_ok=True)
+    cmd = [
+        demucs_python, os.path.join(_SCRIPT_DIR, "music_remover.py"),
+        "--input", bgm_path,
+        "--output", os.path.join(job_dir, "accompaniment.wav"),
+        "--model-dir", model_dir,
+        "--ffmpeg", get_ffmpeg_executable(),
+    ]
+    if device == "cpu":
+        cmd += ["--device", "cpu"]
+    if threads:
+        cmd += ["--threads", str(threads)]
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=thread_env(threads))
+    except Exception as e:
+        return {"success": False, "error": f"Remove music could not start ({e})"}
+    other = []
+    for line in proc.stderr:
+        if line.startswith("[music] "):
+            sys.stderr.write(line)
+            sys.stderr.flush()
+        else:
+            other.append(line)
+    out = proc.stdout.read()
+    proc.wait()
+    lines = [l.strip() for l in out.splitlines() if l.strip().startswith("{")]
+    try:
+        result = json.loads(lines[-1])
+    except Exception:
+        result = {"success": False, "error": error_tail("".join(other)) or f"exit code {proc.returncode}, no result"}
+    if not result.get("success"):
+        result["error"] = f"Remove music could not run ({result.get('error') or 'unknown error'})"
+    return result
+
 def ml_failure(engines):
     reasons = "; ".join(f"{name} could not run ({ENGINE_ERRORS.get(name, 'unknown error')})" for name in engines)
     return {"success": False, "error": reasons}
@@ -573,7 +622,7 @@ def main():
         pass
     try:
         parser = argparse.ArgumentParser(description="Stem & Vocal Separator")
-        parser.add_argument("--input", required=True, help="Input audio or video file")
+        parser.add_argument("--input", required=True, help="Input audio or video file (with --remove-music: the BGM stem)")
         parser.add_argument("--output", required=True, help="Output directory")
         parser.add_argument("--engine", default="mdx", help="Separation engine (mdx, spleeter, demucs, or ffmpeg)")
         parser.add_argument("--demucs-folder", default=None, help="Optional portable Demucs install to use instead of the bundled one")
@@ -582,8 +631,14 @@ def main():
         parser.add_argument("--spleeter-folder", default=None, help="Optional portable Spleeter install to use instead of the bundled one")
         parser.add_argument("--spleeter-python", default=None, help="Optional direct path to Spleeter Python binary")
         parser.add_argument("--threads", default=None, type=int, help="CPU threads the separator may use (its share when several tabs separate at once)")
+        parser.add_argument("--remove-music", action="store_true", help="Take the music out of the BGM stem given as --input, keep the sound effects")
+        parser.add_argument("--model-dir", default=None, help="Where the music model is kept (downloaded there the first time)")
 
         args = parser.parse_args()
+        if args.remove_music:
+            model_dir = args.model_dir or os.path.join(_SCRIPT_DIR, "..", "models")
+            print(json.dumps(remove_music(args.input, args.output, model_dir, args.demucs_folder, args.device, args.threads)))
+            return
         result = separate(
             args.input,
             args.output,

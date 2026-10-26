@@ -51,9 +51,11 @@ const codecByKey = { nvenc: 'h264_nvenc', qsv: 'h264_qsv', amf: 'h264_amf', mf: 
 function canEncodeWith(codec) {
     return new Promise((resolve) => {
         let settled = false;
+        let timer = null;
         const finish = (ok) => {
             if (settled) return;
             settled = true;
+            clearTimeout(timer);
             resolve(ok);
         };
         let p;
@@ -72,11 +74,13 @@ function canEncodeWith(codec) {
         // A laptop's NVIDIA GPU asleep (switched off while the integrated one drives the screen)
         // takes seconds to wake: 4 s let NVENC fail the test on an RTX 3060 laptop, and every
         // render of the session went to the slower integrated AMD encoder instead.
-        setTimeout(() => { try { p.kill(); } catch (e) { } finish(false); }, 15000);
+        timer = setTimeout(() => { try { p.kill(); } catch (e) { } finish(false); }, 15000);
     });
 }
 
 let _detectedEncoders = null;
+// A render failed with NVIDIA decoding the video and worked without it (see renderVideo).
+let _hwDecodeBroken = false;
 async function detectAvailableEncoders() {
     if (_detectedEncoders) return _detectedEncoders;
     let compiled = { nvenc: false, qsv: false, amf: false, mf: false, videotoolbox: false, libx264: true };
@@ -1466,7 +1470,16 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         // ─────────────────────────────────────────────────────────────
         const args = ['-y'];
 
-        // Main video input (input 0)
+        // Main video input (input 0). Decoded by NVIDIA's decoder whenever NVENC works (so there
+        // is a working NVIDIA GPU), whichever encoder was picked: decoding a 1080x1920 HEVC tab
+        // on the CPU is about half of a render's CPU work (60 s of a tab: 33 s of CPU, 9 cores
+        // busy), which the blur and colour filters need. The frames come back to system memory,
+        // so every filter runs as before, and decoding is exact: the picture is the same (checked
+        // through the whole blur + colour chain). Without a usable decoder FFmpeg stops at once
+        // (it does not fall back by itself), so a render that fails with it is tried once more
+        // without it; when that works, the rest of the session decodes on the CPU.
+        const hwDecode = !options._noHwDecode && !_hwDecodeBroken && !!(await detectAvailableEncoders()).nvenc;
+        if (hwDecode) args.push('-hwaccel', 'cuda');
         args.push('-i', videoPath);
 
         // BGM input (input 1, if present)
@@ -1845,7 +1858,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         }
         args.push(outputPath);
 
-        console.log(`[Render] Spawning FFmpeg to render (${chosenEncoder}): ${outputPath}`);
+        console.log(`[Render] Spawning FFmpeg to render (${chosenEncoder}${hwDecode ? ', NVIDIA decoding' : ''}): ${outputPath}`);
         stopIfCancelled();
         const ffmpeg = spawn(getFFmpegBinary(), args, { windowsHide: true });
         activeRenderProcess = ffmpeg;
@@ -1886,6 +1899,20 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                 currentRenderJob.eta = '0s';
                 if (onComplete) onComplete(outputPath);
             } else {
+                // Failed with NVIDIA decoding the video: once more with the CPU decoding it (and the
+                // same encoder - the decoder may be what broke).
+                if (hwDecode && currentRenderJob.status !== 'cancelled') {
+                    console.warn(`[Render Auto-Fallback] FFmpeg failed (exit code ${code}) with NVIDIA decoding the video. Retrying with the CPU decoding it...`);
+                    try { if (!outputPreexisted && fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch (e) { }
+                    return renderVideo({
+                        ...options,
+                        _noHwDecode: true,
+                        _outputPreexisted: outputPreexisted
+                    }, onProgress, (out) => {
+                        _hwDecodeBroken = true;
+                        if (onComplete) onComplete(out);
+                    }, onError);
+                }
                 // If a hardware encoder failed and this wasn't already a retry, and render was not cancelled,
                 // seamlessly fall back to the ultra-reliable CPU encoder (libx264)
                 if (chosenEncoder !== 'libx264' && !options._isRetry && currentRenderJob.status !== 'cancelled') {

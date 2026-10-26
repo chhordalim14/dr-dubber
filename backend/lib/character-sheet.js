@@ -14,6 +14,7 @@ const { KHMER_FORMS_OF_ADDRESS } = require('./khmer-prompts');
 const MAX_CHARACTERS = 60;
 const MAX_ADDRESS = 60;
 const MAX_TERMS = 40;
+const MAX_ALIASES = 8;
 // The sheet only needs the cast and how they talk, so a very long movie is cut to this much
 // dialogue (about 25k tokens of Chinese) instead of sending all of it.
 const MAX_DIALOGUE_CHARS = 40000;
@@ -31,10 +32,11 @@ const CHARACTER_SHEET_SCHEMA = {
                     name: { type: 'STRING' },
                     khmer: { type: 'STRING' },
                     gender: { type: 'STRING', enum: GENDERS },
-                    role: { type: 'STRING' }
+                    role: { type: 'STRING' },
+                    aliases: { type: 'ARRAY', items: { type: 'STRING' } }
                 },
                 required: ['name', 'khmer', 'gender'],
-                propertyOrdering: ['name', 'khmer', 'gender', 'role']
+                propertyOrdering: ['name', 'khmer', 'gender', 'role', 'aliases']
             }
         },
         address: {
@@ -82,7 +84,9 @@ function normalizeSheet(raw) {
         seenNames.add(name);
         const gender = GENDERS.includes(c.gender) ? c.gender : 'Unknown';
         const role = str(c.role).slice(0, 40);
-        sheet.characters.push({ name, khmer, gender, ...(role ? { role } : {}) });
+        const aliases = [...new Set((Array.isArray(c.aliases) ? c.aliases : []).map(a => str(a).slice(0, 60)))]
+            .filter(a => a && a !== name && !/^[?？]+$/.test(a)).slice(0, MAX_ALIASES);
+        sheet.characters.push({ name, khmer, gender, ...(role ? { role } : {}), ...(aliases.length ? { aliases } : {}) });
     }
     const seenPairs = new Set();
     for (const a of Array.isArray(raw.address) ? raw.address : []) {
@@ -110,15 +114,19 @@ function normalizeSheet(raw) {
 }
 
 // Earlier episodes win: a spelling or a form of address already used stays the same. The new
-// episode only adds what was not there yet.
+// episode only adds what was not there yet, and other spellings of someone already listed.
 function mergeSheets(known, fresh) {
     const a = normalizeSheet(known);
     const b = normalizeSheet(fresh);
+    const freshAliases = new Map(b.characters.map(c => [c.name, c.aliases || []]));
     const names = new Set(a.characters.map(c => c.name));
     const pairs = new Set(a.address.map(x => `${x.speaker}\u0000${x.listener}`));
     const terms = new Set(a.terms.map(t => t.original));
-    return normalizeSheet({
-        characters: [...a.characters, ...b.characters.filter(c => !names.has(c.name))],
+    return foldSheet({
+        characters: [
+            ...a.characters.map(c => ({ ...c, aliases: [...(c.aliases || []), ...(freshAliases.get(c.name) || [])] })),
+            ...b.characters.filter(c => !names.has(c.name))
+        ],
         address: [...a.address, ...b.address.filter(x => !pairs.has(`${x.speaker}\u0000${x.listener}`))],
         terms: [...a.terms, ...b.terms.filter(t => !terms.has(t.original))]
     });
@@ -154,15 +162,111 @@ function isSharedTitle(name, characters) {
     return !!m && characters.some((c) => c.name !== name && c.name.startsWith(m[1]) && !TITLES.test(c.name));
 }
 
-function formatSheetForPrompt(sheet) {
+// ── One person, several spellings ──
+// Gemini wrote one character differently from part to part: a same-sounding character (陆宴辞 /
+// 陆晏辞, 简微 / 简薇), the given name alone (晏辞), a made-up surname (苏心柔 for 心柔). Each spelling
+// became a character of its own on the sheet, a cast entry of its own and a new voice in the next
+// episode. A spelling the sheet lists as a character's alias (Gemini's), or a sheet name with one
+// surname character in front, is that person; never across genders, never a shared title.
+const HAN_RE = /^[㐀-鿿]+$/;
+const isUnnamed = (n) => !n || /^[?？]+$/.test(n);
+// 陆晏辞 = 晏辞 when 晏辞 is on the sheet. 老太太 is not 太太, 小婉 not 婉 (老/小/大/阿 are not surnames).
+function withSurname(long, short) {
+    return short.length >= 2 && long.length === short.length + 1 && long.endsWith(short)
+        && HAN_RE.test(long) && !/^[老小大阿]/.test(long);
+}
+
+// sheet + the series' speakers list -> name => the name of its person (the one listed first: the
+// sheet's before the speakers list's). A name nobody lists comes back as it is.
+function seriesNameOf(sheet, speakers) {
     const s = normalizeSheet(sheet);
+    const parent = new Map();
+    const sex = new Map(); // root -> 'Male' / 'Female'
+    const root = (n) => {
+        while (parent.get(n) !== n) n = parent.get(n);
+        return n;
+    };
+    const add = (name, gender) => {
+        const n = str(name).slice(0, 60);
+        if (isUnnamed(n) || isSharedTitle(n, s.characters)) return null;
+        if (!parent.has(n)) parent.set(n, n);
+        const r = root(n);
+        if ((gender === 'Male' || gender === 'Female') && !sex.has(r)) sex.set(r, gender);
+        return n;
+    };
+    const join = (a, b) => {
+        if (!a || !b) return;
+        const [ra, rb] = [root(a), root(b)];
+        if (ra === rb || (sex.has(ra) && sex.has(rb) && sex.get(ra) !== sex.get(rb))) return;
+        parent.set(rb, ra); // ra was added first: its name stays
+        if (!sex.has(ra) && sex.has(rb)) sex.set(ra, sex.get(rb));
+    };
+    for (const c of s.characters) add(c.name, c.gender);
+    for (const x of Array.isArray(speakers) ? speakers : []) add(x && x.name, x && x.gender);
+    for (const c of s.characters) for (const a of c.aliases || []) join(c.name, add(a, c.gender));
+    // The sheet's names and their spellings, each with a surname in front.
+    const sheetNames = s.characters.flatMap(c => [c.name, ...(c.aliases || [])]).filter(n => parent.has(n));
+    const all = [...parent.keys()];
+    for (const short of sheetNames) for (const n of all) if (withSurname(n, short)) join(short, n);
+    return (name) => {
+        const n = str(name).slice(0, 60);
+        if (parent.has(n)) return root(n);
+        const short = sheetNames.find(x => withSurname(n, x)); // 陆晏辞, met for the first time
+        return short ? root(short) : n;
+    };
+}
+
+// The sheet with one entry per person: the other spellings become its aliases, forms of address
+// between them use its name.
+function foldSheet(sheet) {
+    const s = normalizeSheet(sheet);
+    const nameOf = seriesNameOf(s, []);
+    const byName = new Map();
+    for (const c of s.characters) {
+        const main = byName.get(nameOf(c.name));
+        if (!main) {
+            byName.set(c.name, { ...c, aliases: [...(c.aliases || [])] });
+            continue;
+        }
+        main.aliases.push(c.name, ...(c.aliases || []));
+        if (!main.role && c.role) main.role = c.role;
+    }
+    return normalizeSheet({
+        characters: [...byName.values()],
+        address: s.address.map(x => ({ ...x, speaker: nameOf(x.speaker), listener: nameOf(x.listener) })),
+        terms: s.terms
+    });
+}
+
+// The series' speakers list with one entry per person: lines counted together, pictures kept.
+function foldSpeakers(list, sheet) {
+    const nameOf = seriesNameOf(sheet, list);
+    const byName = new Map();
+    for (const x of Array.isArray(list) ? list : []) {
+        const name = nameOf(x && x.name);
+        if (isUnnamed(name)) continue;
+        const main = byName.get(name);
+        if (!main) {
+            byName.set(name, { ...x, name, frames: [...(x.frames || [])] });
+            continue;
+        }
+        main.frames = [...new Set([...main.frames, ...(x.frames || [])])];
+        if (x.lines) main.lines = (main.lines || 0) + x.lines;
+        if (main.gender === 'Unknown' && x.gender) main.gender = x.gender;
+    }
+    return [...byName.values()];
+}
+
+function formatSheetForPrompt(sheet) {
+    const s = foldSheet(sheet);
     if (!sheetSize(s)) return '';
-    const out = ['\n\nCHARACTER SHEET (the same for the whole series - write these names exactly so, and keep these forms of address in every line unless the relationship visibly changes):'];
+    const out = ['\n\nCHARACTER SHEET (the same for the whole series - write these names exactly so, and keep these forms of address in every line unless the relationship visibly changes; a person "also written" another way is still written with the name before "="):'];
     if (s.characters.length) {
         out.push('Names:');
         for (const c of s.characters) {
             if (isSharedTitle(c.name, s.characters)) continue;
-            out.push(`- ${c.name} = ${c.khmer} (${c.gender}${c.role ? `, ${c.role}` : ''})`);
+            const aliases = (c.aliases || []).filter(a => !isSharedTitle(a, s.characters));
+            out.push(`- ${c.name} = ${c.khmer} (${c.gender}${c.role ? `, ${c.role}` : ''}${aliases.length ? `; also written ${aliases.join(', ')}` : ''})`);
         }
     }
     if (s.address.length) {
@@ -197,12 +301,12 @@ function buildCharacterSheetPrompt({ lines, known, glossaryHint = '' }) {
 Read the dialogue below. Each line is the original-language dialogue; [Male]/[Female] is the speaker's gender heard in the audio, and "=> ..." is the Khmer already used for that line, when there is one.
 
 Return a JSON object with:
-- "characters": every named character who speaks or is talked about (at most ${MAX_CHARACTERS}): "name" exactly as written in the original dialogue (the shortest form, e.g. 林峰 not 林峰哥哥), "khmer" the Khmer spelling to use (a natural Khmer transliteration; when the Khmer lines already spell the name, copy that spelling exactly), "gender" Male / Female / Unknown, "role" 1-4 English words (e.g. "emperor", "heroine's maid").
+- "characters": every named character who speaks or is talked about (at most ${MAX_CHARACTERS}): "name" exactly as written in the original dialogue (the shortest form, e.g. 林峰 not 林峰哥哥), "khmer" the Khmer spelling to use (a natural Khmer transliteration; when the Khmer lines already spell the name, copy that spelling exactly), "gender" Male / Female / Unknown, "role" 1-4 English words (e.g. "emperor", "heroine's maid"), "aliases" the other ways the dialogue writes THE SAME person (a same-sounding character such as 陆宴辞 for 陆晏辞, the given name alone, a title only they hold; usually none). One person is ONE entry: never list another spelling of someone as a character of their own.
 - "address": for characters who talk to each other (at most ${MAX_ADDRESS} pairs): "speaker" and "listener" (names as in "characters"), "calls" the Khmer word the speaker uses for the listener, "self" the Khmer word the speaker uses for themself. Choose them by the relationship:
 ${KHMER_FORMS_OF_ADDRESS}
 - "terms": recurring named places, sects, clans, companies, titles, techniques or items (at most ${MAX_TERMS}): "original" exactly as written, "khmer" the Khmer to use.
 
-Only include what the dialogue supports. Do not list generic words (师父, 老板, boss) as names. A surname with a title (韩总, 王董, 李队) is not a character of its own when it can be someone already listed (韩总 is 韩峥 at work, his brother, or their father): list the person; one known only by the title (陈总) is listed by it. A family member who speaks but is never named is listed by role (韩父, 韩母).${knownText ? `\n\nALREADY DECIDED in earlier episodes - keep these exactly as they are and list only what is new:${knownText}` : ''}${glossaryHint}
+Only include what the dialogue supports. Do not list generic words (师父, 老板, boss) as names. A surname with a title (韩总, 王董, 李队) is not a character of its own when it can be someone already listed (韩总 is 韩峥 at work, his brother, or their father): list the person; one known only by the title (陈总) is listed by it. A family member who speaks but is never named is listed by role (韩父, 韩母).${knownText ? `\n\nALREADY DECIDED in earlier episodes - keep these exactly as they are and list only what is new. A new spelling of someone already decided is not new: return that person (their name as decided) with the spelling in "aliases". If two names decided below are one person, return the first with the other in its "aliases".${knownText}` : ''}${glossaryHint}
 
 DIALOGUE:
 ${dialogue.join('\n')}`;
@@ -268,41 +372,54 @@ const castDir = (dir, sourceFilePath) => {
     return file && file.replace(/\.json$/, '.cast');
 };
 
+// Over the cap, those who said least are let go (not the first ones: they are the main cast).
+const keptSpeakers = (list) => (list.length <= MAX_SPEAKERS ? list
+    : list.filter(x => [...list].sort((a, b) => (b.lines || 0) - (a.lines || 0)).slice(0, MAX_SPEAKERS).includes(x)));
+
 function saveSeriesSpeakers(dir, sourceFilePath, list) {
     const file = speakersFile(dir, sourceFilePath);
     if (!file) return;
     fs.mkdirSync(dir, { recursive: true });
     const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(list.slice(-MAX_SPEAKERS)), 'utf8');
+    fs.writeFileSync(tmp, JSON.stringify(keptSpeakers(list)), 'utf8');
     fs.renameSync(tmp, file);
 }
 
-// cues: Transcribe's lines ({ speaker, gender }). Every name it used is kept (once), "?" and
-// shared titles left out; a name's cast pictures are added by the caller (frames). Returns the
-// list as saved.
+// cues: Transcribe's lines ({ speaker, gender }). Every person it named is kept (once, by the
+// name of their person: seriesNameOf), "?" and shared titles left out, with the lines they said
+// in all episodes (lines: the cast pictures Gemini sees go to those who talk most); a name's
+// cast pictures are added by the caller (frames). Returns the list as saved.
 function addSeriesSpeakers(dir, sourceFilePath, cues, sheet) {
     if (!speakersFile(dir, sourceFilePath)) return [];
     const s = normalizeSheet(sheet);
-    const list = loadSeriesSpeakers(dir, sourceFilePath);
-    const have = new Set(list.map(x => x.name));
+    const list = foldSpeakers(loadSeriesSpeakers(dir, sourceFilePath), s);
+    const nameOf = seriesNameOf(s, list);
+    const have = new Map(list.map(x => [x.name, x]));
     const votes = new Map();
     for (const c of cues || []) {
-        const name = str(c && c.speaker).slice(0, 60);
-        if (!name || /^[?？]+$/.test(name) || have.has(name) || isSharedTitle(name, s.characters)) continue;
-        const v = votes.get(name) || { Male: 0, Female: 0 };
+        const name = nameOf(str(c && c.speaker).slice(0, 60));
+        if (isUnnamed(name) || isSharedTitle(name, s.characters)) continue;
+        const v = votes.get(name) || { Male: 0, Female: 0, lines: 0 };
         if (c.gender === 'Male' || c.gender === 'Female') v[c.gender]++;
+        v.lines++;
         votes.set(name, v);
     }
     if (!votes.size) return list;
-    for (const [name, v] of votes) list.push({ name, gender: v.Male === v.Female ? 'Unknown' : v.Male > v.Female ? 'Male' : 'Female' });
+    for (const [name, v] of votes) {
+        const known = have.get(name);
+        if (known) known.lines = (known.lines || 0) + v.lines;
+        else list.push({ name, gender: v.Male === v.Female ? 'Unknown' : v.Male > v.Female ? 'Male' : 'Female', lines: v.lines });
+    }
     saveSeriesSpeakers(dir, sourceFilePath, list);
-    return list.slice(-MAX_SPEAKERS);
+    return keptSpeakers(list);
 }
 
 // The names not on the sheet (the sheet lists its own): roles an earlier episode gave (父亲, 助理).
 function formatSpeakersForPrompt(list, sheet) {
-    const onSheet = new Set(normalizeSheet(sheet).characters.map(c => c.name));
-    const rest = (Array.isArray(list) ? list : []).filter(x => !onSheet.has(x.name));
+    const s = normalizeSheet(sheet);
+    const nameOf = seriesNameOf(s, list);
+    const onSheet = new Set(s.characters.map(c => nameOf(c.name)));
+    const rest = foldSpeakers(list, s).filter(x => !onSheet.has(x.name));
     if (!rest.length) return '';
     return `\n\nSPEAKERS ALREADY VOICED IN EARLIER EPISODES (not on the sheet): when one of these people speaks, write exactly this name as "speaker" again:\n${rest.map(x => `- ${x.name} (${x.gender})`).join('\n')}`;
 }
@@ -339,6 +456,9 @@ module.exports = {
     saveSeriesSheet,
     loadSeriesSpeakers,
     saveSeriesSpeakers,
+    seriesNameOf,
+    foldSheet,
+    foldSpeakers,
     addSeriesSpeakers,
     formatSpeakersForPrompt,
     castDir,

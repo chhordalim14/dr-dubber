@@ -8909,6 +8909,16 @@
       });
     }
 
+    // Remove music from BGM (read on every Isolate BGM request)
+    const removeMusicToggle = document.getElementById("setting-remove-music");
+    if (removeMusicToggle) {
+      removeMusicToggle.checked = localStorage.getItem("aiDubberRemoveMusic") === "true";
+      removeMusicToggle.addEventListener("change", () => {
+        localStorage.setItem("aiDubberRemoveMusic", removeMusicToggle.checked ? "true" : "false");
+        if (removeMusicToggle.checked) showToast("Music will be removed from the BGM. Isolate BGM again on tabs that already have one.", "info");
+      });
+    }
+
     // Pronunciation list (khmer-speech.js): saved and applied as it is typed
     const pronunciationBox = document.getElementById("setting-pronunciations");
     if (pronunciationBox && window.KhmerSpeech) {
@@ -23479,6 +23489,8 @@
         let demucsFolder = localStorage.getItem("aiDubberDemucsFolder") || "";
         let demucsSegment = localStorage.getItem("aiDubberDemucsSegment") || "7";
         let spleeterFolder = localStorage.getItem("aiDubberSpleeterFolder") || "";
+        // Settings > Remove music from BGM: the server takes the music out after separating.
+        const removeMusic = localStorage.getItem("aiDubberRemoveMusic") === "true";
         // A local VoxCPM2 server is asked to lend its GPU while this runs.
         const voxServerUrl = typeof voxCmp2Load === "function" ? voxCmp2Load().serverUrl || "" : "";
 
@@ -23499,6 +23511,7 @@
               demucsSegment,
               spleeterFolder,
               voxServerUrl,
+              removeMusic,
               parallelJobs: opts.parallelJobs || 1,
             }),
             signal: targetProject.isolateAbortController.signal,
@@ -23525,6 +23538,7 @@
           if (demucsSegment) formData.append("demucsSegment", demucsSegment);
           if (spleeterFolder) formData.append("spleeterFolder", spleeterFolder);
           if (voxServerUrl) formData.append("voxServerUrl", voxServerUrl);
+          if (removeMusic) formData.append("removeMusic", "true");
           formData.append("parallelJobs", String(opts.parallelJobs || 1));
 
           response = await fetch("http://localhost:3001/api/remove-vocals", {
@@ -23595,7 +23609,7 @@
         targetProject.bgmTrack = {
           src: `http://localhost:3001${data.url}`,
           file: data.file,
-          name: (targetProject.file?.name || "Audio") + " (Instrumental)",
+          name: (targetProject.file?.name || "Audio") + (data.musicRemoved ? " (Sound effects)" : " (Instrumental)"),
           start: 0,
           duration: Math.min(bgmRealDuration, videoDuration),
           volume: getGlobalBgmVolume(),
@@ -23633,7 +23647,8 @@
             } else if (data.fallbackReason) {
               showToast(`BGM isolated, but not with the engine you picked:${fallbackNote}`, "warning");
             } else {
-              showToast(data.cached ? "BGM isolated (reused the earlier result for this video)." : "BGM successfully isolated!", "success");
+              if (data.musicRemoved) showToast(data.cached ? "BGM without music reused from the earlier result for this video." : "BGM isolated and music removed: sound effects kept.", "success");
+              else showToast(data.cached ? "BGM isolated (reused the earlier result for this video)." : "BGM successfully isolated!", "success");
             }
           }
         } else if (!isBatch && data.method !== "ffmpeg_fallback") {

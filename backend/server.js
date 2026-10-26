@@ -78,7 +78,7 @@ const { secureFetch, fetchBackend } = require('./lib/secure-fetch');
 const { createCodeCraftClient } = require('./lib/codecraft');
 const { KHMER_SYLLABLES_PER_SEC, KHMER_DUBBING_RULES, khmerMaxSyllables, lineSeconds, getKhmerDramaRegisterGuidance, parseSrtBlocksForTranslate, translatePromptLine, buildTranslateSystemPrompt, buildTranslateUserPrompt, buildReviewSystemPrompt, buildReviewUserPrompt, estimateSpeechSeconds, findOverlongLines } = require('./lib/khmer-prompts');
 const { MISSING_RESPONSE_SCHEMA, buildMissingLinesPrompt, checkMissingLine } = require('./lib/missing-lines');
-const { CHARACTER_SHEET_SCHEMA, normalizeSheet, mergeSheets, sheetSize, applyGlossaryToSheet, formatSheetForPrompt, buildCharacterSheetPrompt, loadSeriesSheet, saveSeriesSheet, loadSeriesSpeakers, saveSeriesSpeakers, addSeriesSpeakers, formatSpeakersForPrompt, castDir, withSeriesLock } = require('./lib/character-sheet');
+const { CHARACTER_SHEET_SCHEMA, normalizeSheet, mergeSheets, sheetSize, applyGlossaryToSheet, formatSheetForPrompt, buildCharacterSheetPrompt, loadSeriesSheet, saveSeriesSheet, loadSeriesSpeakers, saveSeriesSpeakers, addSeriesSpeakers, seriesNameOf, foldSpeakers, formatSpeakersForPrompt, castDir, withSeriesLock } = require('./lib/character-sheet');
 
 // Clean stale temporary cache files (> 7 days old) asynchronously to prevent disk bloat
 function cleanStaleTempFiles() {
@@ -709,6 +709,14 @@ const BGM_ENGINES = ['mdx', 'spleeter', 'demucs', 'ffmpeg'];
 const DEFAULT_BGM_ENGINE = 'mdx';
 const BGM_ENGINE_LABELS = { mdx: 'MDX-Net', spleeter: 'Spleeter', demucs: 'Demucs', ffmpeg: 'FFmpeg' };
 const bgmChildren = new Map(); // jobId -> running separator process, so Stop can kill it
+// "Remove music from BGM" (music may be copyrighted): a second pass, music_remover.py
+// (MVSEP-CDX23, needs the Demucs Python), takes the music out of the finished BGM and keeps
+// the sound effects. Its result is cached on its own key, so turning the setting on reuses
+// a tab's earlier voice/BGM split. The model is downloaded to <storage>/models (kept across
+// app updates).
+const NO_MUSIC_MODEL = '+nomusic:cdx23-dbb4db15';
+const MUSIC_MODEL_DIR = path.join(STORAGE_BASE, 'models');
+const bgmMusicJobs = new Map(); // jobId -> what the music pass needs, until it starts
 
 // Part of the cache key: a new model must not reuse the old model's stems.
 function bgmEngineModel(engine) {
@@ -744,6 +752,102 @@ function bgmDoneJob(bgmPath, vocalPath, extra = {}) {
 function removeDirQuietly(dir) {
     if (!dir) return;
     fs.rm(dir, { recursive: true, force: true }, () => {});
+}
+
+// Every finished separation ends here: done at once, or first the music pass when the
+// job asked for it.
+function finishBgmJob(jobId, bgmPath, vocalPath, extra = {}) {
+    const music = bgmMusicJobs.get(jobId);
+    bgmMusicJobs.delete(jobId);
+    if (!music) {
+        bgmJobs.set(jobId, bgmDoneJob(bgmPath, vocalPath, extra));
+        return;
+    }
+    removeMusicFromBgm(jobId, bgmPath, vocalPath, extra, music).catch((e) => {
+        if (isBgmJobCancelled(jobId)) return;
+        bgmJobs.set(jobId, { status: 'error', success: false, timestamp: Date.now(), error: `Remove music could not run (${e.message})` });
+    });
+}
+
+// No silent fallback to the BGM with music: the user turned this on to keep copyrighted
+// music out, so a failure is an error the app shows.
+async function removeMusicFromBgm(jobId, bgmPath, vocalPath, extra, music) {
+    if (isBgmJobCancelled(jobId)) return;
+    const fail = (error) => {
+        if (isBgmJobCancelled(jobId)) return;
+        console.error(`[Remove Music] Job ${jobId}: ${error}`);
+        bgmJobs.set(jobId, { status: 'error', success: false, timestamp: Date.now(), error });
+    };
+    if (!PYTHON_CMD) return fail('Remove music could not run (no working Python was found)');
+    bgmJobs.set(jobId, { status: 'processing', progress: 60, success: true, stage: 'music', timestamp: Date.now() });
+
+    const workDir = path.join(SEPARATED_DIR, 'bgm-work', `${String(jobId).replace(/[^\w.-]/g, '_')}_nomusic`);
+    try { fs.mkdirSync(workDir, { recursive: true }); } catch (e) {}
+    const pyArgs = ['--remove-music', '--input', bgmPath, '--output', workDir, '--model-dir', MUSIC_MODEL_DIR,
+        '--threads', String(pickSeparatorThreads(os.cpus().length, music.parallelJobs))];
+    if (music.demucsFolder) pyArgs.push('--demucs-folder', music.demucsFolder);
+    if (!music.useGPU || await lendVoxCpmGpu(music.voxServerUrl) === 'cpu') pyArgs.push('--device', 'cpu');
+    if (isBgmJobCancelled(jobId)) {
+        removeDirQuietly(workDir);
+        return;
+    }
+
+    const child = spawn(PYTHON_CMD, [getPythonScriptPath('vocal_separator.py'), ...pyArgs], {
+        env: { ...PYTHON_ENV, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
+        windowsHide: true,
+        detached: process.platform !== 'win32'
+    });
+    trackProcess(child);
+    bgmChildren.set(jobId, child);
+    let output = '';
+    let stderr = '';
+    const stdoutDecoder = new StringDecoder('utf8');
+    const stderrDecoder = new StringDecoder('utf8');
+    child.stdout.on('data', d => output += stdoutDecoder.write(d));
+    child.stderr.on('data', d => {
+        const text = stderrDecoder.write(d);
+        const m = [...text.matchAll(/\[music\] (\d+)\/(\d+)/g)].pop();
+        const job = bgmJobs.get(jobId);
+        if (m && job && job.status === 'processing') {
+            job.progress = 60 + Math.floor(38 * Number(m[1]) / Math.max(1, Number(m[2])));
+        }
+        stderr += text.replace(/^\[music\] .*(\r?\n|$)/gm, '');
+    });
+    await new Promise((resolve) => {
+        child.on('error', (err) => { stderr += err.message; resolve(); });
+        child.on('close', resolve);
+    });
+    bgmChildren.delete(jobId);
+    if (isBgmJobCancelled(jobId)) {
+        removeDirQuietly(workDir);
+        return;
+    }
+    const line = output.trim().split(/\r?\n/).reverse().find(l => l.trim().startsWith('{'));
+    let data = null;
+    try { data = JSON.parse(line); } catch (e) {}
+    if (!data || !data.success) {
+        removeDirQuietly(workDir);
+        const errTail = stderr.trim().split(/\r?\n/).filter(Boolean).slice(-2).join(' ').slice(-300);
+        return fail((data && data.error) || `Remove music could not run (${errTail || 'no result'})`);
+    }
+
+    let outBgm = data.bgm;
+    let outVocal = vocalPath;
+    if (music.cacheKey && extra.method === music.engine) {
+        // The cache entry needs its own vocals.wav: a hard link costs no space.
+        const vocalCopy = path.join(workDir, 'vocals.wav');
+        try {
+            try { fs.linkSync(vocalPath, vocalCopy); } catch (e) { fs.copyFileSync(vocalPath, vocalCopy); }
+            const stored = storeStems(SEPARATED_DIR, music.cacheKey, { bgm: outBgm, vocal: vocalCopy, method: extra.method, source: music.sourcePath });
+            if (stored) {
+                outBgm = stored.bgm;
+                outVocal = stored.vocal;
+                removeDirQuietly(workDir);
+            }
+        } catch (e) {}
+    }
+    console.log(`[Remove Music] Job ${jobId}: music removed from the BGM (${data.device || 'cpu'}).`);
+    bgmJobs.set(jobId, bgmDoneJob(outBgm, outVocal, { ...extra, musicRemoved: true }));
 }
 
 // Cached stems not used for 14 days, work folders left by a crash or Stop, and the FFmpeg
@@ -844,9 +948,9 @@ function isolateBgmWithFfmpeg(audioPath, outputDir, jobId, isFallback = false, f
         }
         if (code === 0 && fs.existsSync(bgmPath) && fs.existsSync(vocalPath)) {
             console.log(`[FFmpeg Vocal Separation Succeeded] Job ${jobId} finished! BGM: ${bgmPath}`);
-            bgmJobs.set(jobId, bgmDoneJob(bgmPath, vocalPath, isFallback
+            finishBgmJob(jobId, bgmPath, vocalPath, isFallback
                 ? { method: 'ffmpeg_fallback', fallbackReason: fallbackReason || 'The ML separator could not run.' }
-                : { method: 'ffmpeg' }));
+                : { method: 'ffmpeg' });
         } else {
             console.error(`[FFmpeg Vocal Separation Failed] Code ${code}, Stderr: ${stderr.trim()}`);
             removeDirQuietly(jobDir);
@@ -901,12 +1005,33 @@ app.post('/api/remove-vocals', upload.any(), async (req, res) => {
     let engine = req.body.engine;
     if (!BGM_ENGINES.includes(engine)) engine = DEFAULT_BGM_ENGINE;
     const cacheKey = (sourcePath && engine !== 'ffmpeg') ? cacheKeyForFile(sourcePath, engine, bgmEngineModel(engine)) : null;
+    const removeMusic = req.body.removeMusic === true || req.body.removeMusic === 'true';
+    const noMusicKey = (removeMusic && sourcePath && engine !== 'ffmpeg') ? cacheKeyForFile(sourcePath, engine, bgmEngineModel(engine) + NO_MUSIC_MODEL) : null;
+
+    const cachedNoMusic = lookupCachedStems(SEPARATED_DIR, noMusicKey);
+    if (cachedNoMusic) {
+        console.log(`[Vocal Separator] Job ${jobId}: reusing cached ${engine} stems without music for ${path.basename(sourcePath)}`);
+        bgmJobs.set(jobId, bgmDoneJob(cachedNoMusic.bgm, cachedNoMusic.vocal, { method: cachedNoMusic.method || engine, requestedEngine: engine, cached: true, musicRemoved: true }));
+        return res.json({ success: true, jobId: jobId, status: 'processing' });
+    }
+    if (removeMusic) {
+        bgmMusicJobs.set(jobId, {
+            engine,
+            cacheKey: noMusicKey,
+            sourcePath,
+            useGPU: req.body.useGPU === true || req.body.useGPU === 'true',
+            parallelJobs: parseInt(req.body.parallelJobs, 10) || 1,
+            demucsFolder: isNetworkPath(req.body.demucsFolder) ? '' : String(req.body.demucsFolder || '').trim(),
+            voxServerUrl: req.body.voxServerUrl,
+        });
+    }
 
     // Same file, same engine and model as an earlier run: hand back its stems at once.
     const cached = lookupCachedStems(SEPARATED_DIR, cacheKey);
     if (cached) {
         console.log(`[Vocal Separator] Job ${jobId}: reusing cached ${engine} stems for ${path.basename(sourcePath)}`);
-        bgmJobs.set(jobId, bgmDoneJob(cached.bgm, cached.vocal, { method: cached.method || engine, requestedEngine: engine, cached: true }));
+        if (removeMusic) bgmJobs.set(jobId, { status: 'processing', progress: 60, success: true, timestamp: Date.now() });
+        finishBgmJob(jobId, cached.bgm, cached.vocal, { method: cached.method || engine, requestedEngine: engine, cached: true });
         return res.json({ success: true, jobId: jobId, status: 'processing' });
     }
 
@@ -1009,7 +1134,8 @@ app.post('/api/remove-vocals', upload.any(), async (req, res) => {
         const m = [...text.matchAll(/\[progress\] (\d+)\/(\d+)/g)].pop();
         const job = bgmJobs.get(jobId);
         if (m && job && job.status === 'processing') {
-            job.progress = 10 + Math.floor(85 * Number(m[1]) / Math.max(1, Number(m[2])));
+            // 10-60% when the music pass comes after it.
+            job.progress = 10 + Math.floor((removeMusic ? 50 : 85) * Number(m[1]) / Math.max(1, Number(m[2])));
         }
         stderr += text.replace(/^\[progress\] .*(\r?\n|$)/gm, '');
     });
@@ -1062,7 +1188,7 @@ app.post('/api/remove-vocals', upload.any(), async (req, res) => {
                 }
                 const extra = { method, requestedEngine: engine };
                 if (data.fallbackReason) extra.fallbackReason = data.fallbackReason;
-                bgmJobs.set(jobId, bgmDoneJob(bgmPath, vocalPath, extra));
+                finishBgmJob(jobId, bgmPath, vocalPath, extra);
             } else {
                 removeDirQuietly(workDir);
                 fallBack(data.error || `${engineLabel} could not run (${errTail || 'no result'})`);
@@ -1084,6 +1210,7 @@ app.post('/api/cancel-remove-vocals', (req, res) => {
         // Mark it first: the process's close handler then neither reports a
         // result nor starts the FFmpeg fallback for a job the user stopped.
         bgmJobs.set(jobId, { status: 'cancelled', success: false, error: 'Cancelled', timestamp: Date.now() });
+        bgmMusicJobs.delete(jobId);
         const child = bgmChildren.get(jobId);
         bgmChildren.delete(jobId);
         if (child) killProcessTree(child);
@@ -1946,7 +2073,7 @@ TIMESTAMPS & ACTING RULES:
    - "text" is written in Khmer script only: never leave a word in Chinese or put in a word from any other language or script (Arabic, Thai, Japanese...). Write names and places in Khmer letters.
 
 3. Speaker, Gender & Emotion:
-   - speaker: WHO says this line, so each character keeps one voice through the whole series. A character on the CHARACTER SHEET: their name exactly as written there in the original language (e.g. 赵淑芬). Anyone else: a short role in the original language that stays the same for that person in every line (母亲, 助理, 司机, 记者...). "?" only when it truly cannot be told. Work it out from the voice and the scene: a line calling "妈" is spoken TO the mother, by her child; "韩总，..." is said to 韩总, not by him. Never use a title several people can share as the name (韩总 can be any 韩 in charge): name the person, or an unnamed family member by role (韩父, 韩母).${video ? `
+   - speaker: WHO says this line, so each character keeps one voice through the whole series. A character on the CHARACTER SHEET: their name exactly as written there in the original language (e.g. 赵淑芬), the name before "=" even when the line calls them another way the sheet lists ("also written"). Anyone else: a short role in the original language that stays the same for that person in every line (母亲, 助理, 司机, 记者...). "?" only when it truly cannot be told. Work it out from the voice and the scene: a line calling "妈" is spoken TO the mother, by her child; "韩总，..." is said to 韩总, not by him. Never use a title several people can share as the name (韩总 can be any 韩 in charge): name the person, or an unnamed family member by role (韩父, 韩母).${video ? `
    - You also see the picture: the speaker is the person whose mouth moves (or who the camera shows talking) during the line; the same face and the same voice is the same person in every line. A voice heard from off screen or a phone is whoever is on the other end, not the person shown.` : ''}
    - gender: "Male" or "Female" - the gender of the voice actually speaking this line. Judge by the voice you hear, not by who is being talked about.
    - emotion: "Neutral", "Angry", "Sad", "Whisper", "Excited", "Royal", "Romantic", "Fear".${genreGuidance}
@@ -1977,15 +2104,19 @@ const CAST_FRAMES = 2;
 const CAST_MAX_PEOPLE = 12;
 
 // [{ text }, { inlineData }...] for Transcribe, or [] when the series has no pictures yet.
-function seriesCastParts(dir, speakers) {
+// The CAST_MAX_PEOPLE shown: the sheet's named characters before roles (医生, 助理), then who said
+// most. The last ones added were shown before, so a long series lost its main cast's pictures.
+function seriesCastParts(dir, speakers, sheet) {
+    const named = new Set(normalizeSheet(sheet).characters.map(c => c.name));
     const people = [];
     for (const s of speakers || []) {
         const files = (s.frames || []).map(f => path.join(dir || '', f)).filter(f => dir && fs.existsSync(f)).slice(0, CAST_FRAMES);
         if (files.length) people.push({ s, files });
     }
     if (!people.length) return [];
+    people.sort((a, b) => (named.has(b.s.name) - named.has(a.s.name)) || ((b.s.lines || 0) - (a.s.lines || 0)));
     const parts = [{ text: 'CAST - people already voiced in earlier episodes of this series. Each picture was taken while that person was speaking (someone else may be in it too: the person shown in all of their pictures is them). Someone in this clip who looks like one of them IS that character: write their name as "speaker", even when the dialogue only calls them by a title.' }];
-    for (const { s, files } of people.slice(-CAST_MAX_PEOPLE)) {
+    for (const { s, files } of people.slice(0, CAST_MAX_PEOPLE)) {
         parts.push({ text: `${s.name} (${s.gender}):` });
         for (const f of files) parts.push({ inlineData: { mimeType: 'image/jpeg', data: fs.readFileSync(f).toString('base64') } });
     }
@@ -2632,8 +2763,9 @@ app.post('/api/transcribe', backgroundable(async (req, res) => {
         const userGlossaryHint = glossary ? `\n\nCUSTOM CHARACTER / GLOSSARY DICTIONARY (STRICTLY USE THESE TRANSLATIONS):\n${typeof glossary === 'string' ? glossary : JSON.stringify(glossary, null, 2)}` : '';
         // The series' character sheet from earlier episodes (names, forms of address), if any.
         const savedSheet = loadSeriesSheet(CHARACTER_SHEETS_DIR, sourceFilePath);
-        const seriesSpeakers = sourceFilePath ? loadSeriesSpeakers(CHARACTER_SHEETS_DIR, sourceFilePath) : [];
         const seriesSheet = savedSheet && applyGlossaryToSheet(savedSheet, glossary);
+        // One entry per person, however earlier episodes spelled them (陆宴辞 / 陆晏辞 / 晏辞).
+        const seriesSpeakers = sourceFilePath ? foldSpeakers(loadSeriesSpeakers(CHARACTER_SHEETS_DIR, sourceFilePath), seriesSheet) : [];
         const promptOpts = {
             genreGuidance: getKhmerDramaRegisterGuidance(genreRegister),
             // + the speaker names earlier episodes gave people not on the sheet (父亲, 陈总), to reuse.
@@ -2670,7 +2802,7 @@ app.post('/api/transcribe', backgroundable(async (req, res) => {
             }
         }
         // Pictures of the people earlier episodes voiced, so a face is named as before.
-        const castParts = videoSource ? seriesCastParts(castDir(CHARACTER_SHEETS_DIR, sourceFilePath), seriesSpeakers) : [];
+        const castParts = videoSource ? seriesCastParts(castDir(CHARACTER_SHEETS_DIR, sourceFilePath), seriesSpeakers, seriesSheet) : [];
         if (videoSource) console.log(`[Transcribe] Gemini sees the video (who talks)${castParts.length ? `, with pictures of ${castParts.filter(p => p.text && p.text.endsWith('):')).length} known speaker(s)` : ''}`);
 
         // One lane per API key (max 4). Each lane takes a contiguous run of chunks
@@ -2810,6 +2942,10 @@ app.post('/api/transcribe', backgroundable(async (req, res) => {
         if (allCues.length === 0) {
             return res.status(422).json({ success: false, error: 'No spoken dialogue was detected in this audio.' });
         }
+        // Each speaker by their person's one name: another spelling Gemini wrote (陆晏辞 for 陆宴辞)
+        // would be a new voice in Clone Voices and a new cast entry.
+        const speakerNameOf = seriesNameOf(seriesSheet, seriesSpeakers);
+        allCues.forEach(c => { if (c.speaker) c.speaker = speakerNameOf(c.speaker); });
 
         // Review pass: the Khmer read again against the words heard, before it is fitted to time.
         let reviewed = 0;

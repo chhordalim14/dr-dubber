@@ -17,8 +17,10 @@ const { spawn, execFile } = require('child_process');
 const { resolveLocalFilePath, STORAGE_BASE, SEPARATED_DIR } = require('../lib/paths');
 const { isNetworkPath, safeOutputFileName } = require('../lib/security');
 const { secureFetch } = require('../lib/secure-fetch');
+const { loadSeriesSheet, loadSeriesSpeakers, seriesNameOf } = require('../lib/character-sheet');
 
 const DEFAULT_CAPTURE_DIR = path.join(STORAGE_BASE, 'VoiceCaptures');
+const CHARACTER_SHEETS_DIR = path.join(STORAGE_BASE, 'character_sheets'); // as server.js
 const WINDOW_RATE = 22050;     // enough for a wave, checks and a clear preview
 const SAVE_RATE = 44100;
 const MAX_WINDOW = 180;        // seconds the page may ask for in one go
@@ -439,6 +441,10 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
                 .filter((l) => Number.isFinite(l.start) && Number.isFinite(l.end) && l.end > l.start);
             if (!lines.length) return res.status(400).json({ success: false, error: 'There are no timed lines to listen to.' });
             const { resolved, hasCenter, map, vocalStem } = await source(req);
+            // Names by their person: an earlier episode's voice for 陆宴辞 is 陆晏辞's in this one
+            // (transcripts made before Transcribe gave one name per person still have both).
+            const nameOf = seriesNameOf(loadSeriesSheet(CHARACTER_SHEETS_DIR, resolved), loadSeriesSpeakers(CHARACTER_SHEETS_DIR, resolved));
+            lines.forEach((l) => { if (l.name) l.name = nameOf(l.name); });
 
             // Same host rule as /api/generate-voxcmp2 (Node 18+ resolves localhost to ::1 first).
             let base = String(body.serverUrl || 'http://127.0.0.1:8808').trim().replace(/\/+$/, '').replace('localhost', '127.0.0.1');
@@ -467,7 +473,7 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
                 (Array.isArray(k.emotions) ? k.emotions : []).forEach((e) => have.add(emotionOf(e)));
                 haveOf.set(k.id, have);
             });
-            const payload = { lines: packed.sent, known: known.map((k) => ({ id: k && k.id, gender: k && k.gender, embedding: k && k.embedding, model: k && k.model, name: (k && k.name) || null })) };
+            const payload = { lines: packed.sent, known: known.map((k) => ({ id: k && k.id, gender: k && k.gender, embedding: k && k.embedding, model: k && k.model, name: k && k.name ? nameOf(String(k.name)) : null })) };
             if (local) {
                 // A local server reads the file itself instead of a JSON body hundreds of MB long.
                 sentFile = path.join(SEPARATED_DIR, `spk_lines_${crypto.randomUUID()}.wav`);
