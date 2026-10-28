@@ -17,7 +17,7 @@ const { spawn, execFile } = require('child_process');
 const { resolveLocalFilePath, STORAGE_BASE, SEPARATED_DIR } = require('../lib/paths');
 const { isNetworkPath, safeOutputFileName } = require('../lib/security');
 const { secureFetch } = require('../lib/secure-fetch');
-const { loadSeriesSheet, loadSeriesSpeakers, seriesNameOf } = require('../lib/character-sheet');
+const { loadSeriesSheet, loadSeriesSpeakers, seriesNameOf, seriesEnglishOf } = require('../lib/character-sheet');
 
 const DEFAULT_CAPTURE_DIR = path.join(STORAGE_BASE, 'VoiceCaptures');
 const CHARACTER_SHEETS_DIR = path.join(STORAGE_BASE, 'character_sheets'); // as server.js
@@ -152,6 +152,8 @@ function refPieces(lines) {
 const EMOTIONS = ['Neutral', 'Angry', 'Sad', 'Whisper', 'Excited', 'Royal', 'Romantic', 'Fear'];
 const CALM_MIN = 3;       // seconds of calm lines for the main clip to be cut from them alone
 const FEELING_MIN = 2.5;  // seconds of one feeling for that feeling to get a clip of its own
+const CLIP_SHORT = 4;     // a main clip found here that is not calm and shorter than this...
+const CLIP_GAIN = 1;      // ...is replaced by one at least this many seconds longer
 const span = (pieces) => pieces.reduce((t, p) => t + p.end - p.start, 0);
 const emotionOf = (v) => EMOTIONS.find((e) => e.toLowerCase() === String(v || '').trim().toLowerCase()) || 'Neutral';
 
@@ -159,18 +161,23 @@ const emotionOf = (v) => EMOTIONS.find((e) => e.toLowerCase() === String(v || ''
 // a calm main clip (VoxCPM2 copies the feeling of its clip: one cut from shouting made every
 // line angry), and one clip per feeling they speak enough of. refLines are their clearest lines,
 // best first, each with its .emotion. `have` is what an earlier episode already gave this voice
-// ('Neutral' = a calm main clip, plus feelings), or null for a new speaker.
+// ('Neutral' = a calm main clip, plus feelings), or null for a new speaker. `main`: that voice's
+// main clip { seconds, own } (own: found here, not picked by hand), when known.
 // Returns [{ emotion: null for the main clip | 'Angry'..., calm, pieces }].
-function planClips(refLines, have) {
+function planClips(refLines, have, main = null) {
     const plans = [];
     const of = (e) => refLines.filter((l) => l.emotion === e);
     if (!have || !have.has('Neutral')) {
         const calm = refPieces(of('Neutral'));
+        // A voice first heard in a few short lines got its clip from them: 1.3 s of one excited
+        // line (员工, E47) sounded least like its actor of 11 voices (ERes2NetV2 0.31, the rest
+        // 0.42-0.61). A later episode with more of them gives it a longer one.
+        const short = !!(main && main.own && main.seconds < CLIP_SHORT);
         if (span(calm) >= CALM_MIN) {
             plans.push({ emotion: null, calm: true, pieces: calm });
-        } else if (!have) {
+        } else if (!have || short) {
             const any = refPieces(refLines); // hardly a calm word: their clearest lines, whatever the feeling
-            if (any.length) plans.push({ emotion: null, calm: false, pieces: any });
+            if (any.length && (!have || span(any) >= main.seconds + CLIP_GAIN)) plans.push({ emotion: null, calm: false, pieces: any });
         }
     }
     for (const e of EMOTIONS.slice(1)) {
@@ -230,6 +237,31 @@ function wavData(buf) {
         at += 8 + size + (size % 2);
     }
     return Buffer.alloc(0);
+}
+
+// Seconds of a wav file from its header, or null when it cannot be read as one.
+function wavSeconds(file) {
+    let fd;
+    try {
+        fd = fs.openSync(file, 'r');
+        const head = Buffer.alloc(4096);
+        const n = fs.readSync(fd, head, 0, head.length, 0);
+        if (n < 44 || head.toString('ascii', 0, 4) !== 'RIFF' || head.toString('ascii', 8, 12) !== 'WAVE') return null;
+        let at = 12;
+        let byteRate = 0;
+        while (at + 8 <= n) {
+            const id = head.toString('ascii', at, at + 4);
+            const size = head.readUInt32LE(at + 4);
+            if (id === 'fmt ') byteRate = head.readUInt32LE(at + 16);
+            if (id === 'data') return byteRate > 0 ? Math.min(size, fs.fstatSync(fd).size - at - 8) / byteRate : null;
+            at += 8 + size + (size % 2);
+        }
+        return null;
+    } catch (e) {
+        return null;
+    } finally {
+        if (fd !== undefined) try { fs.closeSync(fd); } catch (e) { }
+    }
 }
 
 module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobeBinary, audioRepair, trackProcess, findVocalStem }) {
@@ -443,7 +475,10 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
             const { resolved, hasCenter, map, vocalStem } = await source(req);
             // Names by their person: an earlier episode's voice for 陆宴辞 is 陆晏辞's in this one
             // (transcripts made before Transcribe gave one name per person still have both).
-            const nameOf = seriesNameOf(loadSeriesSheet(CHARACTER_SHEETS_DIR, resolved), loadSeriesSpeakers(CHARACTER_SHEETS_DIR, resolved));
+            const seriesSheet = loadSeriesSheet(CHARACTER_SHEETS_DIR, resolved);
+            const seriesSpeakers = loadSeriesSpeakers(CHARACTER_SHEETS_DIR, resolved);
+            const nameOf = seriesNameOf(seriesSheet, seriesSpeakers);
+            const englishOf = seriesEnglishOf(seriesSheet, seriesSpeakers); // the name the page shows
             lines.forEach((l) => { if (l.name) l.name = nameOf(l.name); });
 
             // Same host rule as /api/generate-voxcmp2 (Node 18+ resolves localhost to ::1 first).
@@ -467,11 +502,17 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
             const known = Array.isArray(body.known) ? body.known.slice(0, 1000) : [];
             // The clips each earlier voice already has: only the feelings it lacks are cut.
             const haveOf = new Map();
+            const mainOf = new Map(); // id -> { seconds, own } of its main clip
             known.forEach((k) => {
                 if (!k || !k.id) return;
                 const have = haveOf.get(k.id) || new Set();
                 (Array.isArray(k.emotions) ? k.emotions : []).forEach((e) => have.add(emotionOf(e)));
                 haveOf.set(k.id, have);
+                if (!mainOf.has(k.id) && k.own) {
+                    // Voices made before the page kept the clip's length: read it from the clip.
+                    const seconds = Number(k.clipSeconds) > 0 ? Number(k.clipSeconds) : wavSeconds(resolveLocalFilePath(k.clip));
+                    if (seconds != null) mainOf.set(k.id, { seconds, own: true });
+                }
             });
             const payload = { lines: packed.sent, known: known.map((k) => ({ id: k && k.id, gender: k && k.gender, embedding: k && k.embedding, model: k && k.model, name: k && k.name ? nameOf(String(k.name)) : null })) };
             if (local) {
@@ -509,6 +550,7 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
                     key: s.key,
                     gender: s.gender || null,
                     name: s.name || null,
+                    english: (s.name && englishOf(s.name)) || null,
                     lines: Array.isArray(s.lines) ? s.lines.map(String) : [],
                     seconds: s.seconds || 0,
                     embedding: Array.isArray(s.embedding) ? s.embedding : null,
@@ -517,7 +559,7 @@ module.exports = function createVoiceCaptureRouter({ getFFmpegBinary, getFFprobe
                 };
                 const refLines = (s.refs || []).map((id) => byId.get(String(id))).filter(Boolean);
                 const have = sp.known ? haveOf.get(sp.known) || new Set() : null;
-                for (const plan of planClips(refLines, have)) {
+                for (const plan of planClips(refLines, have, sp.known ? mainOf.get(sp.known) : null)) {
                     const name = freeName(dir, `${stem} - ${s.key}${plan.emotion ? ` - ${plan.emotion}` : ''}`);
                     const out = path.join(dir, name);
                     await cutReference({ resolved, hasCenter, map, pieces: plan.pieces, out, vocalStem });
@@ -630,3 +672,4 @@ module.exports.planClips = planClips;
 module.exports.speechLevelDb = speechLevelDb;
 module.exports.framePowers = framePowers;
 module.exports.wavData = wavData;
+module.exports.wavSeconds = wavSeconds;

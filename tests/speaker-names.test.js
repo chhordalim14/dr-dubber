@@ -136,3 +136,40 @@ test('Clone Voices and Transcribe use the one name per person', () => {
     assert.match(route, /lines\.forEach\(\(l\) => \{ if \(l\.name\) l\.name = nameOf\(l\.name\); \}\);/);
     assert.match(route, /name: k && k\.name \? nameOf\(String\(k\.name\)\) : null/);
 });
+
+// The user reads no Chinese: the sheet gives each person an English name, the voices show it.
+test('each person has an English name, from the sheet, for every spelling', () => {
+    const sheet = cs.normalizeSheet({ characters: [
+        { name: '晏辞', khmer: 'យ៉ានស៊ី', gender: 'Male', aliases: ['宴辞'], english: 'Lu Yanci' },
+        { name: '员工', khmer: 'បុគ្គលិក', gender: 'Female', english: 'Employee' },
+        { name: '心柔', khmer: 'ស៊ីនរ៉ូវ', gender: 'Female', english: '心柔' }, // not English: dropped
+    ] });
+    assert.equal(sheet.characters[2].english, undefined);
+    const englishOf = cs.seriesEnglishOf(sheet, []);
+    assert.equal(englishOf('陆宴辞'), 'Lu Yanci', 'through the alias and the surname');
+    assert.equal(englishOf('员工'), 'Employee');
+    assert.equal(englishOf('心柔'), '');
+    assert.match(cs.formatSheetForPrompt(sheet), /- 晏辞 \[Lu Yanci\] = យ៉ានស៊ី/);
+    // A later answer gives a decided name its English, the decided spelling stays.
+    const merged = cs.mergeSheets(sheet, { characters: [{ name: '心柔', khmer: 'ស៊ីនរ៉ូ', gender: 'Female', english: 'Xinrou' }] });
+    assert.deepEqual([merged.characters[2].english, merged.characters[2].khmer], ['Xinrou', 'ស៊ីនរ៉ូវ']);
+});
+
+test('the sheet prompt asks for English names, also for speakers known only by a role', () => {
+    const prompt = cs.buildCharacterSheetPrompt({
+        lines: [{ text: '你好' }],
+        known: { characters: [{ name: '晏辞', khmer: 'យ៉ានស៊ី', gender: 'Male' }] },
+        speakers: [{ name: '陆晏辞', gender: 'Male' }, { name: '员工', gender: 'Female' }],
+    });
+    assert.match(prompt, /"english" the name in English letters/);
+    assert.match(prompt, /A decided name with no \[English\] yet/);
+    assert.match(prompt, /SPEAKERS ALSO VOICED, not on the sheet yet: [^\n]*: 员工$/m, '陆晏辞 is 晏辞, already listed');
+});
+
+test('voices are labelled with the English name; a name typed by hand stays', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'js', 'vox-speakers.js'), 'utf8');
+    assert.match(src, /label: s\.english \|\| s\.name \|\| `Speaker \$\{\+\+number\}`/);
+    assert.match(src, /if \(s\.english && known\.label === known\.characterName\) known\.label = s\.english;/);
+    const route = fs.readFileSync(path.join(__dirname, '..', 'backend', 'routes', 'voice-capture.js'), 'utf8');
+    assert.match(route, /english: \(s\.name && englishOf\(s\.name\)\) \|\| null/);
+});

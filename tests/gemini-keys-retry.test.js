@@ -10,6 +10,7 @@ const serverSource = fs.readFileSync(path.join(__dirname, '..', 'backend', 'serv
 const start = serverSource.indexOf('// Worth waiting and retrying:');
 const end = serverSource.indexOf('async function retranslateCues(');
 const block = serverSource.slice(start, end);
+const { createKeyRest } = require('../backend/lib/key-rest');
 
 function load() {
   const waits = [];
@@ -17,13 +18,14 @@ function load() {
   let now = 1e12;
   const fastTimeout = (fn, ms) => { waits.push(ms); now += ms; return setTimeout(fn, 0); };
   const FakeDate = { now: () => now };
-  const api = new Function('setTimeout', 'console', 'Date', `
+  const api = new Function('setTimeout', 'console', 'Date', 'createKeyRest', `
     const formatWait = (ms) => Math.round(ms / 1000) + 's';
+    const keyRest = createKeyRest({ now: () => Date.now() });
     const geminiModelCooldowns = new Map();
     const isCodeCraftKey = (k) => /^cc_/i.test(k);
     ${block}
-    return { geminiWithKeys, geminiShouldRetry, GEMINI_RETRY_DELAYS_MS, GEMINI_BUSY_RETRY_BUDGET_MS };
-  `)(fastTimeout, { warn: () => { }, log: () => { } }, FakeDate);
+    return { geminiWithKeys, geminiShouldRetry, tryKeysOnce, geminiKeyStatus, GEMINI_RETRY_DELAYS_MS, GEMINI_BUSY_RETRY_BUDGET_MS };
+  `)(fastTimeout, { warn: () => { }, log: () => { } }, FakeDate, createKeyRest);
   return { ...api, waits, now: () => now };
 }
 
@@ -208,5 +210,43 @@ describe('geminiShouldRetry', () => {
   test('a daily quota is never retried', () => {
     const { geminiShouldRetry } = load();
     assert.equal(geminiShouldRetry(daily.result, 0, Date.now()), false);
+  });
+});
+
+describe('keys Google refuses', () => {
+  const refused = (status, message) => ({ ok: false, result: { success: false, status, error: 'INVALID_API_KEY', message } });
+
+  test('a dead key (401: its service account deleted) rests a day; the next key does the work', async () => {
+    const { tryKeysOnce, geminiKeyStatus } = load();
+    const asked = [];
+    const out = await tryKeysOnce(['dead', 'good'], async (k) => {
+      asked.push(k);
+      return k === 'dead' ? refused(401, 'The bound service account is deleted or disabled.') : { ok: true };
+    });
+    assert.equal(out.ok, true);
+    assert.deepEqual(asked, ['dead', 'good']);
+    const st = geminiKeyStatus('dead');
+    assert.equal(st.state, 'invalid');
+    assert.equal(st.dead, true);
+    assert.equal(st.retryAfterMs, 24 * 3600 * 1000);
+    assert.match(st.message, /service account/);
+    asked.length = 0;
+    await tryKeysOnce(['dead', 'good'], async (k) => { asked.push(k); return { ok: true }; });
+    assert.deepEqual(asked, ['good'], 'not asked again');
+  });
+
+  test('a 400 "API key expired" is dead too; a 403 and a CodeCraft key rest 10 minutes', async () => {
+    const { tryKeysOnce, geminiKeyStatus } = load();
+    const answer = async (k) => (
+      k === 'old' ? refused(400, 'API key expired.')
+        : k === 'k403' ? refused(403, 'Permission denied')
+          : k === 'cc_x' ? refused(401, 'bad key')
+            : { ok: true });
+    await tryKeysOnce(['old', 'k403', 'good'], answer);
+    await tryKeysOnce(['cc_x', 'good'], answer);
+    assert.equal(geminiKeyStatus('old').dead, true);
+    assert.equal(geminiKeyStatus('k403').dead, false);
+    assert.equal(geminiKeyStatus('k403').retryAfterMs, 10 * 60 * 1000);
+    assert.equal(geminiKeyStatus('cc_x').dead, false);
   });
 });

@@ -51,7 +51,7 @@ test('linesWav and the page carry each line\'s character name and exact timing t
     assert.deepEqual(sent[1], { id: 'b', start: 1.3, end: 2.3, gender: 'Male' }, 'nothing added to a line without them');
     const page = read('frontend', 'js', 'vox-speakers.js');
     assert.match(page, /name: s\.characterName \|\| null, exact: !!s\.screenMatched/);
-    assert.match(page, /label: s\.name \|\| `Speaker \$\{\+\+number\}`/);
+    assert.match(page, /label: s\.english \|\| s\.name \|\| `Speaker \$\{\+\+number\}`/);
     assert.match(read('frontend', 'js', 'studio-main.js'), /\.\.\.\(characterName && \{ characterName \}\)/);
     assert.match(read('backend', 'server.js'), /speaker: \{ type: 'STRING' \},/);
 });
@@ -93,6 +93,52 @@ test('planClips: a calm main clip, and a clip of each feeling the actor speaks e
     const noCalm = planClips(lines, new Set(['Angry']));
     assert.deepEqual(noCalm.map((p) => [p.emotion, p.calm]), [[null, true], ['Whisper', false]], 'gets the calm clip it had none of');
     assert.deepEqual(planClips([at(0, 3, 'Angry')], new Set()).map((p) => p.emotion), ['Angry'], 'never a non-calm main clip for a known voice');
+});
+
+// 员工 (E47) was cloned from 1.3 s of one excited line and sounded least like her actor: a voice
+// whose clip was found here, is not calm and is short gets a longer one from a later episode.
+test('planClips: a short clip that is not calm is replaced by a longer one', () => {
+    const { planClips } = require('../backend/routes/voice-capture');
+    const at = (start, len, emotion) => ({ start, end: start + len, emotion });
+    const loud = [at(0, 2.5, 'Excited'), at(5, 2, 'Excited')]; // 4.4 s, no calm
+    const main = (p) => p.find((x) => x.emotion === null);
+    assert.equal(main(planClips(loud, new Set(), { seconds: 1.3, own: true })).calm, false, '1.3 s -> 4.4 s');
+    assert.equal(main(planClips(loud, new Set(), { seconds: 3.8, own: true })), undefined, 'not 1 s longer');
+    assert.equal(main(planClips(loud, new Set(), { seconds: 4.6, own: true })), undefined, 'long enough already');
+    assert.equal(main(planClips(loud, new Set(), { seconds: 1.3, own: false })), undefined, 'a clip picked by hand stays');
+    assert.equal(main(planClips(loud, new Set(['Neutral']), { seconds: 1.3, own: true })), undefined, 'a calm clip stays');
+    const calm = [...loud, at(10, 2, 'Neutral'), at(20, 2, 'Neutral')];
+    assert.equal(main(planClips(calm, new Set(), { seconds: 4.6, own: true })).calm, true, 'calm still wins, whatever the length');
+});
+
+test('wavSeconds reads a clip\'s length from its header', () => {
+    const { wavSeconds } = require('../backend/routes/voice-capture');
+    const os = require('node:os');
+    const rate = 44100;
+    const data = Buffer.alloc(rate * 2 * 1.5); // 1.5 s, mono 16-bit
+    const head = Buffer.alloc(44);
+    head.write('RIFF', 0); head.writeUInt32LE(36 + data.length, 4); head.write('WAVEfmt ', 8);
+    head.writeUInt32LE(16, 16); head.writeUInt16LE(1, 20); head.writeUInt16LE(1, 22);
+    head.writeUInt32LE(rate, 24); head.writeUInt32LE(rate * 2, 28); head.writeUInt16LE(2, 32); head.writeUInt16LE(16, 34);
+    head.write('data', 36); head.writeUInt32LE(data.length, 40);
+    const file = path.join(os.tmpdir(), `drd-clip-${process.pid}.wav`);
+    fs.writeFileSync(file, Buffer.concat([head, data]));
+    try {
+        assert.ok(Math.abs(wavSeconds(file) - 1.5) < 1e-9);
+    } finally {
+        fs.unlinkSync(file);
+    }
+    assert.equal(wavSeconds(null), null);
+    assert.equal(wavSeconds(__filename), null, 'not a wav');
+});
+
+test('the page sends its clip, takes a longer one and marks a voice with a weak clip', () => {
+    const src = read('frontend', 'js', 'vox-speakers.js');
+    assert.match(src, /\.\.\.\(ownClip\(p\) && \{ own: true, clip: p\.audioPath, clipSeconds: p\.clipSeconds \|\| null \}\)/);
+    assert.match(src, /if \(s\.filePath && !known\.calmClip && ownClip\(known\)\) \{\n\s+Object\.assign\(known, \{ audioPath: s\.filePath, audioName: s\.fileName, autoClip: s\.filePath, calmClip: !!s\.calm, clipSeconds: s\.clipSeconds \}\);/);
+    assert.match(src, /ownClip\(p\) && !p\.calmClip \? `<span class="vsp-weak" title="\$\{WEAK_CLIP\}">/);
+    const route = read('backend', 'routes', 'voice-capture.js');
+    assert.match(route, /planClips\(refLines, have, sp\.known \? mainOf\.get\(sp\.known\) : null\)/);
 });
 
 test('a line takes its feeling from the actor saying it, else their clip of that feeling; the voice stays the voice\'s own clip', () => {

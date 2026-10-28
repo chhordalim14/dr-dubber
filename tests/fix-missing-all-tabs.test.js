@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'js', 'studio-main.js'), 'utf8');
-const start = src.indexOf('    const FIX_MISSING_MAX_PARALLEL = 6;');
+const start = src.indexOf('    const FIX_MISSING_MAX_PARALLEL = 8;');
 const end = src.indexOf('    // ── Make names consistent across all tabs');
 const block = src.slice(start, end);
 

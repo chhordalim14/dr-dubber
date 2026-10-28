@@ -4466,7 +4466,7 @@
     // series for each tab.
     // Stops early when every key is out of its daily quota: the other tabs would only fail too.
     // Started from the "All Tabs" menu; resolves with { checked, fixedLines, quotaOut, stopped }.
-    const FIX_MISSING_MAX_PARALLEL = 6; // tabs checked at once with keyPerTab (Batch Transcribe's cap)
+    const FIX_MISSING_MAX_PARALLEL = 8; // tabs checked at once with keyPerTab (Dub Whole Series' Transcribe cap)
 
     function stopFixMissingAll() {
       if (!fixMissingAllRun) return;
@@ -10564,6 +10564,13 @@
 
       apiKeys.push(val);
       saveGeminiKeys();
+      // Added again (maybe fixed in Google Cloud): the server tries it again instead of letting
+      // it rest out the day it was refused for.
+      fetch("http://localhost:3001/api/gemini-keys-added", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ keys: [val] }),
+      }).catch(() => { }).finally(() => window.daiStudio?.refreshKeyStatuses?.());
       input.value = "";
       renderApiKeys();
       updateApiKeyPasteButtonState();
@@ -18948,6 +18955,9 @@
     const FAST_MAX_SPEED = 2.5;          // same ceiling as the timeline resize handles
     const FAST_FIT_TOLERANCE = 0.1;      // seconds a 1.0x voice may run past its slot end
     const FAST_EST_CHARS_PER_SEC = 12;   // natural pace estimate for lines without audio yet
+    // VoxCPM2 says Khmer slower: a median 15.6 code points a second over 428 lines of the server
+    // log (2026-10-22..26), 1.72 code points a letter on 30 lines with their text: about 9 letters.
+    const VOX_EST_CHARS_PER_SEC = 9;
     const FAST_CONDENSE_CHUNK = 40;      // lines per Gemini request in Fix Rushed Lines
 
     const fastEscapeHtml = (str) => String(str ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
@@ -18964,7 +18974,9 @@
     // Count base characters only (drops combining marks/spaces) so Khmer vowel signs don't inflate the estimate.
     const fastSpokenLength = (text) => String(text || "").replace(/[\p{M}\s​-‍]/gu, "").length;
 
-    function analyzeSubPace(sub) {
+    // estRate: letters a second the voice says, for a line not voiced yet (VOX_EST_CHARS_PER_SEC
+    // for VoxCPM2).
+    function analyzeSubPace(sub, estRate = FAST_EST_CHARS_PER_SEC) {
       const tStart = parseFloat(sub.textStart) || 0;
       const tEnd = parseFloat(sub.textEnd) || 0;
       // The voice's room: its text's slot, or for a line matched to the video, up to the next
@@ -18979,7 +18991,7 @@
       const baseDur = parseFloat(sub.baseAudioDuration) || 0;
       const hasAudio = sub.audioStatus === "ready" && baseDur > 0;
       const playSpeed = parseFloat(sub.speed) || 1.0;
-      const speechDur = hasAudio ? baseDur : fastSpokenLength(window.KhmerSpeech.normalizeForSpeech(sub.text)) / FAST_EST_CHARS_PER_SEC; // as said: numbers in words
+      const speechDur = hasAudio ? baseDur : fastSpokenLength(window.KhmerSpeech.normalizeForSpeech(sub.text)) / estRate; // as said: numbers in words
       // With audio: the audible speed, or the speed it would need to end inside its slot. Without: an estimate.
       const effectiveSpeed = hasAudio ? Math.max(playSpeed, baseDur / fitDur) : speechDur / fitDur;
       return { tStart, tEnd, aStart, slot, fitDur, baseDur, hasAudio, speechDur, effectiveSpeed, screenMatched, overflow: Math.max(0, speechDur - fitDur) };
@@ -19292,7 +19304,7 @@
 
     // Returns [{ id, condensedText }] or null (error already toasted unless quiet, or cancelled).
     // apiKeys: the keys in the order to use them (default: Settings' order).
-    async function requestFastCondense(subs, { proj = projects[activeProjectIndex], quiet = false, apiKeys = null } = {}) {
+    async function requestFastCondense(subs, { proj = projects[activeProjectIndex], quiet = false, apiKeys = null, estRate = FAST_EST_CHARS_PER_SEC } = {}) {
       const config = getFastGeminiConfig();
       const keys = apiKeys || config.keys;
       const model = config.model;
@@ -19308,7 +19320,7 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             subtitles: subs.map((s) => {
-              const pace = analyzeSubPace(s);
+              const pace = analyzeSubPace(s, estRate);
               return { id: String(s.id), text: s.text, slotDuration: pace.fitDur, speed: pace.effectiveSpeed, originalText: s.originalText || "" };
             }),
             apiKey: keys[0],
@@ -19374,7 +19386,8 @@
             extended++;
           }
           refitFastSubSpeed(sub, nextStart);
-          if (analyzeSubPace(sub).effectiveSpeed >= SERIES_FIT_SPEED && isSpeakableText(sub.text)) {
+          // A line VoxCPM2 had shortened before voicing (shortenForVoxCpm2) keeps its one cut.
+          if (analyzeSubPace(sub).effectiveSpeed >= SERIES_FIT_SPEED && isSpeakableText(sub.text) && !sub._voxShortened) {
             if (!toShorten.has(proj)) toShorten.set(proj, []);
             toShorten.get(proj).push(sub);
           }
@@ -19434,6 +19447,45 @@
 
       refreshActiveTabFromProject();
       return { extended, shortened, rushed: total };
+    }
+
+    // ── VoxCPM2: rushed lines shortened before they are voiced ──
+    // VoxCPM2 says Khmer slower than Edge (VOX_EST_CHARS_PER_SEC): by the server log a third of its
+    // lines still overran their room after three takes and were played faster, 1 in 5 at 1.3x or
+    // more, which sounds rushed and hard. Shortened only after voicing (fitFastLinesAllTabs), such a
+    // line was voiced twice at 30-100 s a line. So the lines about to be voiced that clearly will not
+    // fit get the free time after them first, then Gemini shortens them, as Fix Rushed Lines does.
+    // Edge is not touched. ids: the lines about to be voiced. Returns the number shortened.
+    async function shortenForVoxCpm2(proj, ids, isCancelled = () => false) {
+      const isActive = projects[activeProjectIndex] === proj;
+      if (isActive) saveCurrentProjectState(); // the open tab's edits live in `subtitles`
+      const want = new Set((ids || []).map(String));
+      const nextStartById = buildFastNextStartMap(proj.subtitles || [], proj.duration > 0 ? proj.duration : Infinity);
+      const rushed = [];
+      for (const sub of proj.subtitles || []) {
+        if (!want.has(String(sub.id)) || sub.audioStatus === "ready" || sub._voxShortened || !isSpeakableText(sub.text)) continue;
+        const pace = analyzeSubPace(sub, VOX_EST_CHARS_PER_SEC);
+        if (pace.effectiveSpeed < SERIES_FIT_SPEED) continue;
+        const newEnd = getFastExtendEnd(pace, nextStartById.get(String(sub.id)) ?? Infinity);
+        if (newEnd != null) sub.textEnd = newEnd.toFixed(2);
+        if (analyzeSubPace(sub, VOX_EST_CHARS_PER_SEC).effectiveSpeed >= SERIES_FIT_SPEED) rushed.push(sub);
+      }
+      let shortened = 0;
+      for (let i = 0; i < rushed.length && !isCancelled(); i += FAST_CONDENSE_CHUNK) {
+        const chunk = rushed.slice(i, i + FAST_CONDENSE_CHUNK);
+        const results = await requestFastCondense(chunk, { proj, quiet: true, estRate: VOX_EST_CHARS_PER_SEC });
+        (results || []).forEach((r) => {
+          const sub = chunk.find((s) => String(s.id) === String(r.id));
+          const text = String(r.condensedText || "").trim();
+          if (!sub || !text || !isSpeakableText(text) || fastSpokenLength(text) >= fastSpokenLength(sub.text)) return; // no shorter: kept
+          sub.text = text;
+          sub._voxShortened = true; // shortened once: not again, before or after voicing
+          shortened++;
+        });
+      }
+      if (isActive) refreshActiveTabFromProject();
+      if (shortened) console.log(`[VoxCPM2] ${shortened} of ${rushed.length} rushed line(s) shortened before voicing`);
+      return shortened;
     }
 
     // ── Dub Whole Series: every subtitle on screen has a voice ──
@@ -20663,6 +20715,15 @@
           console.warn("[Speakers] Voicing with the picked voices:", e);
         }
       }
+      // A whole tab (or a batch): its clearly rushed lines are shortened first. Lines picked by
+      // hand, or Fix Rushed Lines voicing its own drafts, are said as they are written.
+      if (isVoxCmp2Enabled && (isBatch || !explicitIds || explicitIds.length >= targetProject.subtitles.length)) {
+        try {
+          await shortenForVoxCpm2(targetProject, idsToProcess, () => cancelRef.cancelled);
+        } catch (e) {
+          console.warn("[VoxCPM2] Voicing the lines as they are:", e);
+        }
+      }
 
       let renderTimeout = null;
       const batchedRenderSubtitles = (sub) => {
@@ -21373,6 +21434,14 @@
             if (await window.voxSpeakers.ensure(proj)) voxCmp2Data = voxCmp2Load();
           } catch (e) {
             console.warn("[Speakers] Voicing with the picked voices:", e);
+          }
+        }
+        // Its clearly rushed lines shortened first (shortenForVoxCpm2), unless lines were picked by hand.
+        if (!proj._selectedIds) {
+          try {
+            await shortenForVoxCpm2(proj, pendingSubs.map((s) => s.id), () => cancelRef.cancelled);
+          } catch (e) {
+            console.warn("[VoxCPM2] Voicing the lines as they are:", e);
           }
         }
 

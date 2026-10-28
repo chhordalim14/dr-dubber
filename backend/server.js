@@ -73,6 +73,9 @@ const { isNetworkPath, isServableMedia, isAudioFile } = security;
 require('./lib/server-log').installServerLog(LOGS_DIR);
 const { hasForeignText, stripForeignScript, collapseRepeatedPartSuffix, buildTtsArgv } = require('./lib/text-rules');
 const { trackProcess } = require('./lib/process-tracker');
+// Which Gemini keys are resting (refused, or over a limit) - kept on disk across restarts.
+const keyRest = require('./lib/key-rest').createKeyRest({ file: path.join(STORAGE_BASE, 'gemini_key_rest.json') });
+process.on('exit', () => keyRest.save());
 const { createTtsWorker } = require('./lib/tts-worker');
 const { secureFetch, fetchBackend } = require('./lib/secure-fetch');
 const { createCodeCraftClient } = require('./lib/codecraft');
@@ -1457,7 +1460,7 @@ function extractJsonValue(raw) {
 
 // Daily/minute limits are per key AND per model: "key|model" -> { until, daily, msg }. A model that
 // hit its limit is skipped until it resets, while the key's other models keep working.
-const geminiModelCooldowns = new Map();
+const geminiModelCooldowns = keyRest.modelLimits;
 
 // Google's 503 "high demand" (or no answer in time) is a model overloaded for everyone, not one
 // key's limit: model -> when it was last busy. For a minute after, requests ask the models that
@@ -2376,9 +2379,16 @@ async function silentFraction(file, start, dur, signal) {
     return dur > 0 ? Math.min(1, silent / dur) : 1;
 }
 
-// Keys Google rejected as invalid/expired are skipped for 10 minutes, so one bad key in
-// Settings can't fail a whole job (every chunk would otherwise hit it again).
-const invalidGeminiKeys = new Map(); // key -> time it was rejected
+// Keys Google rejected are skipped, so one bad key in Settings can't fail a whole job (every
+// chunk would otherwise hit it again). A key Google says is dead (invalid, expired, its service
+// account deleted) rests a day - it never comes back by itself - unless it is added again in
+// Settings; any other refusal (403, a CodeCraft key out of credit) rests 10 minutes.
+const invalidGeminiKeys = keyRest.invalid; // key -> { until, dead, message }
+const INVALID_KEY_REST_MS = 10 * 60 * 1000;
+const DEAD_KEY_REST_MS = 24 * 60 * 60 * 1000;
+function isDeadKeyAnswer(key, result) {
+    return !isCodeCraftKey(key) && !!result && result.error === 'INVALID_API_KEY' && (Number(result.status) === 400 || Number(result.status) === 401);
+}
 // Keys that just got a 429 are skipped for a cooldown too. Without this, every
 // concurrent lane/chunk/retry keeps trying that same key first (it's always first in
 // its own rotation) and piling fresh requests onto a key that's already over quota,
@@ -2391,10 +2401,11 @@ const invalidGeminiKeys = new Map(); // key -> time it was rejected
 // tries up to 4 models, up to 5 times, and that's per chunk).
 // The cooldown is as long as Google says (its "retry in 55s"), or until midnight Pacific
 // when every model of the key is out of its daily quota.
-const rateLimitedGeminiKeys = new Map(); // key -> { until, daily }
+const rateLimitedGeminiKeys = keyRest.keyLimits; // key -> { until, daily }
 const RATE_LIMIT_COOLDOWN_MS = 20 * 1000;
 function isGeminiKeyInvalid(key) {
-    return invalidGeminiKeys.get(key) > Date.now() - 10 * 60 * 1000;
+    const e = invalidGeminiKeys.get(key);
+    return !!(e && e.until > Date.now());
 }
 function isGeminiKeyCooling(key) {
     const parked = rateLimitedGeminiKeys.get(key);
@@ -2438,7 +2449,10 @@ function geminiRetryWaitMs(result, retry) {
 // For the API key list in Settings / DAI Studio: what each key can do right now.
 function geminiKeyStatus(key) {
     const now = Date.now();
-    if (isGeminiKeyInvalid(key)) return { state: 'invalid' };
+    if (isGeminiKeyInvalid(key)) {
+        const e = invalidGeminiKeys.get(key);
+        return { state: 'invalid', dead: !!e.dead, message: e.message || '', retryAfterMs: e.until - now };
+    }
     const models = [];
     for (const [id, c] of geminiModelCooldowns) {
         if (!id.startsWith(`${key}|`) || !(c.until > now)) continue;
@@ -2496,8 +2510,9 @@ async function tryKeysOnce(keys, call) {
         // PROVIDER_KEY: a CodeCraft key that was rejected or is out of credit - the same as a bad
         // Gemini key here: skipped for a while, and the keys after it take over.
         if (out.result && (out.result.error === 'INVALID_API_KEY' || out.result.code === 'PROVIDER_KEY')) {
-            invalidGeminiKeys.set(key, Date.now());
-            console.warn(`[Gemini] key …${String(key).slice(-4)} rejected (${out.result.message || 'invalid'}); skipping it`);
+            const dead = isDeadKeyAnswer(key, out.result);
+            invalidGeminiKeys.set(key, { until: Date.now() + (dead ? DEAD_KEY_REST_MS : INVALID_KEY_REST_MS), dead, message: out.result.message || '' });
+            console.warn(`[Gemini] key …${String(key).slice(-4)} rejected (${out.result.message || 'invalid'}); ${dead ? 'not used for a day (adding it again in Settings tries it sooner)' : 'skipping it'}`);
             continue;
         }
         // A dead connection affects every key the same way: don't cycle through them.
@@ -3101,7 +3116,7 @@ async function prepareCharacterSheet({ lines, sourceFilePath, glossary, glossary
         const known = saved && applyGlossaryToSheet(saved, glossary);
         if (lines.filter(l => l && l.text).length < CHARACTER_SHEET_MIN_LINES) return known;
         const payload = {
-            contents: [{ role: 'user', parts: [{ text: buildCharacterSheetPrompt({ lines, known, glossaryHint }) }] }],
+            contents: [{ role: 'user', parts: [{ text: buildCharacterSheetPrompt({ lines, known, glossaryHint, speakers: sourceFilePath ? loadSeriesSpeakers(CHARACTER_SHEETS_DIR, sourceFilePath) : [] }) }] }],
             generationConfig: { responseMimeType: 'application/json', responseSchema: CHARACTER_SHEET_SCHEMA, maxOutputTokens: 8192 }
         };
         let out;
@@ -4110,6 +4125,14 @@ app.get('/api/transcribe-progress', (req, res) => {
 app.post('/api/gemini-key-status', (req, res) => {
     const keys = (Array.isArray(req.body?.keys) ? req.body.keys : []).map(k => String(k || '').trim()).filter(Boolean);
     res.json({ success: true, keys: keys.map(k => ({ suffix: k.slice(-4), ...geminiKeyStatus(k) })) });
+});
+
+// A Gemini key added in Settings (again, maybe after fixing it in Google Cloud) is tried again
+// instead of resting out the day it was refused for. Its limits stay: Google keeps those.
+app.post('/api/gemini-keys-added', (req, res) => {
+    const keys = (Array.isArray(req.body?.keys) ? req.body.keys : []).map(k => String(k || '').trim()).filter(Boolean);
+    keys.forEach(k => invalidGeminiKeys.delete(k));
+    res.json({ success: true });
 });
 
 // Settings → "Translate subtitles with": the app sends its choice at start and on every change.

@@ -55,6 +55,9 @@
   const toClips = (m) => Object.fromEntries(Object.entries(m || {}).map(([e, c]) => [e, { path: c.filePath, name: c.fileName, seconds: c.seconds }]));
   // Its main clip is still the one found for it (profiles from before autoClip: the backend's name).
   const ownClip = (p) => (p.autoClip ? p.audioPath === p.autoClip : / - S\d+( \(\d+\))?\.wav$/i.test(p.audioName || ""));
+  // A voice whose clip is not a calm one (a character who said little, or only shouted): copied from
+  // it, it sounds less like its actor. A later episode replaces it (planClips in voice-capture.js).
+  const WEAK_CLIP = "Copied from a short or emotional clip, so it may not sound like the actor. A later episode with more of their speech gives it a better clip - or pick a clip yourself in the Voice Gallery.";
 
   // A profile's voice prints (several once another speaker was merged into it), each { model, e }:
   // the speaker server compares a print only with prints of the model that made it. A bare array
@@ -217,7 +220,9 @@
     const known = (data.profiles || [])
       .filter((p) => inGroup.has(p.id) && p.source === "speakers" && p.audioPath)
       .flatMap((p) => {
-        const base = { id: p.id, gender: p.gender, name: p.characterName || null, emotions: clipsHave(p) };
+        // own: its main clip is the one found here (a short one is replaced by a longer one later).
+        const base = { id: p.id, gender: p.gender, name: p.characterName || null, emotions: clipsHave(p),
+          ...(ownClip(p) && { own: true, clip: p.audioPath, clipSeconds: p.clipSeconds || null }) };
         const own = printsOf(pr, p.id).map(({ model, e }) => ({ ...base, embedding: e, model }));
         return own.length || !base.name ? own : [{ ...base, embedding: null, model: null }];
       });
@@ -265,13 +270,17 @@
       if (known) {
         // A voice found by its print learns its character's name, so later episodes find it by name.
         if (s.name && !known.characterName) known.characterName = s.name;
+        // Shown by its English name (the user reads no Chinese) once the sheet has one; a name
+        // typed in by hand stays.
+        if (s.english && known.label === known.characterName) known.label = s.english;
         // And keeps this episode's print beside its others (the last 6): a character's voice
         // checked against several episodes, not only the one it was first heard in.
         if (Array.isArray(s.embedding)) pr2[known.id] = [...printsOf(pr2, known.id), { model: out.printModel || "campplus", e: s.embedding }].slice(-6);
-        // What this episode adds to a voice from an earlier one: a calm clip if it had none (and
-        // its clip is still the one found for it, not one picked by hand), and new feelings.
-        if (s.filePath && s.calm && !known.calmClip && ownClip(known)) {
-          Object.assign(known, { audioPath: s.filePath, audioName: s.fileName, autoClip: s.filePath, calmClip: true });
+        // What this episode adds to a voice from an earlier one: a calm clip if it had none, or a
+        // longer one for a short clip (the server cuts one only then; and only while its clip is
+        // still the one found for it, not one picked by hand), and new feelings.
+        if (s.filePath && !known.calmClip && ownClip(known)) {
+          Object.assign(known, { audioPath: s.filePath, audioName: s.fileName, autoClip: s.filePath, calmClip: !!s.calm, clipSeconds: s.clipSeconds });
         }
         const added = toClips(s.emotionClips);
         feelings += Object.keys(added).length;
@@ -285,7 +294,7 @@
       used.add(color);
       const profile = {
         id: crypto.randomUUID().substring(0, 8),
-        label: s.name || `Speaker ${++number}`,
+        label: s.english || s.name || `Speaker ${++number}`,
         ...(s.name && { characterName: s.name }),
         gender: s.gender === "Female" ? "Female" : "Male",
         color,
@@ -294,6 +303,7 @@
         audioName: s.fileName,
         autoClip: s.filePath,
         calmClip: !!s.calm,
+        clipSeconds: s.clipSeconds,
         emotionClips: toClips(s.emotionClips),
         createdAt: Date.now(),
         source: "speakers",
@@ -498,6 +508,7 @@
             <button type="button" class="vg-ib" data-act="play" ${p.audioPath ? "" : "disabled"} title="${p.calmClip ? "Play their calm voice, cloned from the video" : "Play the voice cloned from the video"}">
               <i data-lucide="${dlg.playing === p.id ? "square" : "circle-play"}" class="w-3.5 h-3.5"></i>
             </button>
+            ${ownClip(p) && !p.calmClip ? `<span class="vsp-weak" title="${WEAK_CLIP}"><i data-lucide="triangle-alert" class="w-3.5 h-3.5"></i></span>` : `<span class="vsp-weak"></span>`}
             <div class="vsp-feels" role="group" aria-label="Feelings cloned from the video">${feels
               .map((e) => `<button type="button" class="vsp-feel${dlg.playing === `${p.id}|${e}` ? " is-playing" : ""}" data-act="play" data-emo="${esc(e)}" title="Play their ${esc(e.toLowerCase())} voice from the video: their ${esc(e.toLowerCase())} lines are cloned from it">${FEELING_ICONS[e] || "🎭"}</button>`)
               .join("")}</div>

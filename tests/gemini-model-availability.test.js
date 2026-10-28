@@ -11,6 +11,7 @@ const serverSource = fs.readFileSync(path.join(__dirname, '..', 'backend', 'serv
 const start = serverSource.indexOf('// --- GEMINI MODEL RESOLUTION & FALLBACK ENGINE ---');
 const end = serverSource.indexOf('// ── Text AI provider');
 const block = serverSource.slice(start, end);
+const { createKeyRest } = require('../backend/lib/key-rest');
 
 // listed: the models Google lists for the key. answer(model): the HTTP status it answers with.
 function load({ listed, answer = () => 200 }) {
@@ -27,11 +28,12 @@ function load({ listed, answer = () => 200 }) {
       : JSON.stringify({ error: { message: status === 404 ? `This model models/${model} is no longer available to new users.` : 'error' } });
     return { ok: status === 200, status, text: async () => text };
   };
-  const api = new Function('secureFetch', 'console', `
+  const api = new Function('secureFetch', 'console', 'createKeyRest', `
     const RATE_LIMIT_COOLDOWN_MS = 60000;
+    const keyRest = createKeyRest();
     ${block}
     return { resolveGeminiModel, rankGeminiFallbacks, executeGeminiGenerate };
-  `)(secureFetch, { warn: () => { }, log: () => { } });
+  `)(secureFetch, { warn: () => { }, log: () => { } }, createKeyRest);
   return { ...api, asked };
 }
 

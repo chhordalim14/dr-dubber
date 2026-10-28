@@ -287,7 +287,12 @@
 
   function keyStatusView(s) {
     if (!s) return { color: 'emerald', text: 'Ready' };
-    if (s.state === 'invalid') return { color: 'rose', text: 'Rejected by Google (invalid or expired key)' };
+    if (s.state === 'invalid') {
+      const why = s.message ? ` (${s.message})` : '';
+      return s.dead
+        ? { color: 'rose', text: `Refused by Google · not used, tried again in ${formatWaitShort(s.retryAfterMs)} or when added again`, title: `Google refused this key${why}. Delete it and add it again to try it sooner.` }
+        : { color: 'rose', text: 'Rejected by Google (invalid or expired key)', title: `Rejected by Google${why}` };
+    }
     if (s.state === 'daily') return { color: 'rose', text: `Google reported daily limit · rechecking in ${formatWaitShort(s.retryAfterMs)}` };
     if (s.state === 'cooling') return { color: 'amber', text: `Rate-limited · free again in ${formatWaitShort(s.retryAfterMs)}` };
     if (s.state === 'partial') {
@@ -321,7 +326,7 @@
       const c = KEY_STATUS_CLASSES[v.color];
       el.className = `text-[10px] ${c.text} flex items-center gap-1 min-w-0`;
       el.innerHTML = `<span class="w-1.5 h-1.5 rounded-full ${c.dot} shrink-0"></span> <span class="truncate">${escapeHtml(v.text)}</span>`;
-      el.title = v.text;
+      el.title = v.title || v.text;
     });
 
     // Header badge: how many keys can take work right now.
@@ -882,6 +887,18 @@
 
   // Max files transcribed at the same time (also capped by the number of API keys).
   const BATCH_MAX_PARALLEL_FILES = 6;
+  // Dub Whole Series (one key per tab): a part is often 7 tabs, and with a cap of 6 the 7th
+  // started only when another finished - 5-6 minutes later on a busy day.
+  const SERIES_MAX_PARALLEL_FILES = 8;
+
+  // How usable a key is for `model`, from /api/gemini-key-status: 0 ready, 1 maybe (limits on
+  // other models, or not known yet), 9 resting (refused by Google, or out for the day).
+  function keyStatusRank(st, model) {
+    if (!st) return 1;
+    if (st.state === 'invalid' || st.state === 'daily') return 9;
+    if ((st.models || []).some((m) => m.daily && m.model === model)) return 9;
+    return st.state === 'ok' ? 0 : 1;
+  }
 
   // A tab that failed for a passing reason is tried again right away, up to TAB_RETRIES more
   // times, instead of waiting for every other tab to finish first (Dub Whole Series' "again"
@@ -941,7 +958,27 @@
     // single Gemini request), so a one-at-a-time queue left most keys idle and a 2 hour movie
     // took hours. Each file starts on a different key so they don't all pile onto key #1; the
     // server's per-key cooldowns spread any rate limits across the rest.
-    const concurrency = Math.max(1, Math.min(maxParallel || BATCH_MAX_PARALLEL_FILES, apiKeys.length, pendingItems.length));
+    // keyPerTab: the keys that are ready come first, and only they get a tab of their own - a key
+    // refused by Google or out for the day only made its tab borrow another tab's key.
+    let ownKeyOrder = apiKeys;
+    if (keyPerTab) {
+      let statuses = [];
+      try {
+        const res = await fetch(`${getBackendBase()}/api/gemini-key-status`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ keys: apiKeys })
+        });
+        statuses = (await res.json()).keys || [];
+      } catch (e) { /* no statuses: the keys in their own order */ }
+      const ready = apiKeys
+        .map((k, i) => ({ k, r: keyStatusRank(statuses[i], model) }))
+        .filter((c) => c.r < 9)
+        .sort((a, b) => a.r - b.r)
+        .map((c) => c.k);
+      if (ready.length) ownKeyOrder = ready;
+    }
+    const concurrency = Math.max(1, Math.min(maxParallel || (keyPerTab ? SERIES_MAX_PARALLEL_FILES : BATCH_MAX_PARALLEL_FILES), ownKeyOrder.length, pendingItems.length));
     const keyStride = Math.max(1, Math.floor(apiKeys.length / concurrency));
     const batchAbort = state.batchAbortController;
     const todo = [...pendingItems];
@@ -949,7 +986,7 @@
     // quota. The key list is read live (keys added while the batch runs are used), and a
     // spare is chosen by what the server knows about it: never a rejected key or one already
     // out for today on this model, fully ready keys first.
-    const ownedKeys = new Set(keyPerTab ? apiKeys.slice(0, concurrency) : []);
+    const ownedKeys = new Set(keyPerTab ? ownKeyOrder.slice(0, concurrency) : []);
     const outKeys = new Set(); // ran out of daily quota during this batch
     const takeSpareKey = async () => {
       const candidates = getActiveApiKeys().filter((k) => !ownedKeys.has(k) && !outKeys.has(k));
@@ -963,14 +1000,8 @@
         });
         statuses = (await res.json()).keys || [];
       } catch (e) { /* no statuses: take the first candidate */ }
-      const rank = (st) => {
-        if (!st) return 1;
-        if (st.state === 'invalid' || st.state === 'daily') return 9;
-        if ((st.models || []).some((m) => m.daily && m.model === model)) return 9;
-        return st.state === 'ok' ? 0 : 1;
-      };
       const best = candidates
-        .map((k, i) => ({ k, r: rank(statuses[i]) }))
+        .map((k, i) => ({ k, r: keyStatusRank(statuses[i], model) }))
         .filter((c) => c.r < 9)
         .sort((a, b) => a.r - b.r)[0];
       if (!best || ownedKeys.has(best.k)) return null; // another worker took it meanwhile
@@ -987,7 +1018,7 @@
 
     let inFlight = 0; // files being worked on - one can come back to `todo` (its key ran out)
     const worker = async (w) => {
-      let ownKey = keyPerTab ? apiKeys[w] : null;
+      let ownKey = keyPerTab ? ownKeyOrder[w] : null;
       while (todo.length || (keyPerTab && inFlight)) {
         if (!state.isBatchRunning || state.batchAbortController?.signal.aborted || quotaOut) return;
         // keyPerTab worker whose key ran out with no spare: wait for one (a key added in

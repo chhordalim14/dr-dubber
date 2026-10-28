@@ -49,7 +49,7 @@ function makeEnv({ condense, missing = () => [], keys = ['k1'], delayMs = 0 }) {
     };
     ${voiceSlotSrc}
     ${fastBlock}
-    return { fillMissingScreenLinesAllTabs, fitFastLinesAllTabs, refitShortenedLinesAllTabs, countRushedLinesAllTabs, fillShortVoicesAllTabs, nativePaceAllTabs, refitPacedLinesAllTabs, boostVoicesOverMusic, musicLevelDb, analyzeSubPace, settleMatchedSubtitles, setProjects: (p) => { projects = p; }, setActive: (i, live) => { activeProjectIndex = i; subtitles = live; }, getLive: () => subtitles };
+    return { shortenForVoxCpm2, fillMissingScreenLinesAllTabs, fitFastLinesAllTabs, refitShortenedLinesAllTabs, countRushedLinesAllTabs, fillShortVoicesAllTabs, nativePaceAllTabs, refitPacedLinesAllTabs, boostVoicesOverMusic, musicLevelDb, analyzeSubPace, settleMatchedSubtitles, setProjects: (p) => { projects = p; }, setActive: (i, live) => { activeProjectIndex = i; subtitles = live; }, getLive: () => subtitles };
   `);
   return { env, api: factory(env, condense, missing, JSON.stringify(keys), delayMs, KhmerSpeech, ScreenSync) };
 }
@@ -503,5 +503,65 @@ describe('every subtitle on screen has a voice', () => {
     assert.match(match, /await fillMissingScreenLinesAllTabs\(\{\s*checkStop,/);
     assert.match(src, /if \(seriesRun\.step === "generate" \|\| seriesRun\.step === "match"\) cancelFastCondenseRequests\(\);/);
     assert.match(src, /window\.ScreenSync\.matchLeftovers\(items, proj\.textBlur\.lines, matches\);/, 'Match pairs drifted lines again');
+  });
+});
+
+// VoxCPM2 says Khmer slower than Edge (9 letters a second, not 12): a third of its lines overran
+// and were played faster. Before a tab is voiced with it, the clearly rushed lines get the free time
+// after them, then Gemini shortens them; each line is voiced once.
+describe('VoxCPM2: rushed lines shortened before voicing', () => {
+  const TEXT = 'ខ្ញុំមិនដឹងថាត្រូវធ្វើយ៉ាងម៉េចទៀតទេ';
+  const letters = KhmerSpeech.normalizeForSpeech(TEXT).replace(/[\p{M}\s​-‍]/gu, '').length; // as said
+  const slot = letters / 12 / 1.1; // Edge: 1.1x, not rushed; VoxCPM2: ~1.47x
+  const todo = (id, start, end, text = TEXT) => ({ id, textStart: String(start), textEnd: String(end), audioStatus: 'idle', speed: 1, text });
+
+  test('a line too long for VoxCPM2 (fine for Edge) is shortened before it is voiced, once', async () => {
+    const { env, api } = makeEnv({ condense: (subs) => subs.map((s) => ({ id: s.id, condensedText: 'ខ្ញុំមិនដឹងទេ' })) });
+    const a = todo('a', 0, slot);
+    const tab = { duration: 60, subtitles: [a, todo('b', slot, slot + 3, 'ទៅ')] };
+    api.setProjects([tab]);
+    assert.ok(api.analyzeSubPace(a).effectiveSpeed < 1.15, 'Edge pace: not rushed');
+    assert.equal(await api.shortenForVoxCpm2(tab, ['a', 'b']), 1);
+    assert.equal(a.text, 'ខ្ញុំមិនដឹងទេ');
+    assert.equal(a._voxShortened, true);
+    assert.equal(env.requests.length, 1);
+    assert.ok(env.requests[0].subtitles[0].speed > 1.4, `Gemini is told VoxCPM2's speed-up (${env.requests[0].subtitles[0].speed})`);
+    assert.equal(await api.shortenForVoxCpm2(tab, ['a', 'b']), 0, 'not shortened again');
+    assert.equal(env.requests.length, 1);
+    // After voicing, the series' Fix Rushed Lines leaves it alone, even if still fast.
+    Object.assign(a, { audioStatus: 'ready', file: 'x.mp3', baseAudioDuration: slot * 1.6, audioStart: '0' });
+    a.text = TEXT;
+    assert.equal((await api.fitFastLinesAllTabs()).rushed, 0);
+  });
+
+  test('free time after the line is used first; a line that then fits is not rewritten', async () => {
+    const { env, api } = makeEnv({ condense: () => { throw new Error('not asked'); } });
+    const a = todo('a', 0, slot);
+    const tab = { duration: 60, subtitles: [a, todo('b', 10, 12, 'ទៅ')] };
+    api.setProjects([tab]);
+    assert.equal(await api.shortenForVoxCpm2(tab, ['a']), 0);
+    assert.equal(env.requests.length, 0);
+    assert.ok(parseFloat(a.textEnd) > slot, 'its end moved into the free time');
+    assert.equal(a.text, TEXT);
+  });
+
+  test('a longer answer, a voiced line or a line not being voiced: kept as it is', async () => {
+    const { env, api } = makeEnv({ condense: (subs) => subs.map((s) => ({ id: s.id, condensedText: `${s.text} ទៀត` })) });
+    const a = todo('a', 0, slot);
+    const done = { ...todo('c', slot, slot * 2), audioStatus: 'ready', file: 'x.mp3', baseAudioDuration: slot, audioStart: String(slot) };
+    const other = todo('d', slot * 2, slot * 3);
+    const tab = { duration: 60, subtitles: [a, done, other, todo('e', slot * 3, slot * 3 + 3, 'ទៅ')] };
+    api.setProjects([tab]);
+    assert.equal(await api.shortenForVoxCpm2(tab, ['a', 'c']), 0);
+    assert.deepEqual(env.requests[0].subtitles.map((s) => s.id), ['a'], 'only the line about to be voiced');
+    assert.equal(a.text, TEXT);
+    assert.equal(other.text, TEXT);
+  });
+
+  test('both VoxCPM2 voicing paths shorten a whole tab first; lines picked by hand are said as written', () => {
+    const main = src.replace(/\r\n/g, '\n');
+    const gen = main.slice(main.indexOf('    async function generateStandardAudioForProject('));
+    assert.match(gen, /if \(isVoxCmp2Enabled && \(isBatch \|\| !explicitIds \|\| explicitIds\.length >= targetProject\.subtitles\.length\)\) \{\n\s+try \{\n\s+await shortenForVoxCpm2\(targetProject, idsToProcess, \(\) => cancelRef\.cancelled\);/);
+    assert.match(main, /if \(!proj\._selectedIds\) \{\n\s+try \{\n\s+await shortenForVoxCpm2\(proj, pendingSubs\.map\(\(s\) => s\.id\), \(\) => cancelRef\.cancelled\);/);
   });
 });

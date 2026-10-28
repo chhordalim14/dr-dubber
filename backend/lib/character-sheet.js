@@ -33,10 +33,11 @@ const CHARACTER_SHEET_SCHEMA = {
                     khmer: { type: 'STRING' },
                     gender: { type: 'STRING', enum: GENDERS },
                     role: { type: 'STRING' },
-                    aliases: { type: 'ARRAY', items: { type: 'STRING' } }
+                    aliases: { type: 'ARRAY', items: { type: 'STRING' } },
+                    english: { type: 'STRING' }
                 },
                 required: ['name', 'khmer', 'gender'],
-                propertyOrdering: ['name', 'khmer', 'gender', 'role', 'aliases']
+                propertyOrdering: ['name', 'khmer', 'gender', 'role', 'aliases', 'english']
             }
         },
         address: {
@@ -69,6 +70,12 @@ const CHARACTER_SHEET_SCHEMA = {
 
 const emptySheet = () => ({ characters: [], address: [], terms: [] });
 const str = (v) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim();
+// A character's name as the app shows it (Lu Yanci, Assistant): the user reads no Chinese. Latin
+// letters only; anything else is no English name.
+const englishName = (v) => {
+    const s = str(v).slice(0, 40);
+    return /^[A-Za-z][A-Za-z .'-]*$/.test(s) ? s : '';
+};
 const KHMER_RE = /[ក-៿]/;
 
 // A model's answer (or a saved file) as a clean sheet: trimmed strings, Khmer where Khmer is
@@ -86,7 +93,8 @@ function normalizeSheet(raw) {
         const role = str(c.role).slice(0, 40);
         const aliases = [...new Set((Array.isArray(c.aliases) ? c.aliases : []).map(a => str(a).slice(0, 60)))]
             .filter(a => a && a !== name && !/^[?？]+$/.test(a)).slice(0, MAX_ALIASES);
-        sheet.characters.push({ name, khmer, gender, ...(role ? { role } : {}), ...(aliases.length ? { aliases } : {}) });
+        const english = englishName(c.english);
+        sheet.characters.push({ name, khmer, gender, ...(role ? { role } : {}), ...(aliases.length ? { aliases } : {}), ...(english ? { english } : {}) });
     }
     const seenPairs = new Set();
     for (const a of Array.isArray(raw.address) ? raw.address : []) {
@@ -118,13 +126,16 @@ function normalizeSheet(raw) {
 function mergeSheets(known, fresh) {
     const a = normalizeSheet(known);
     const b = normalizeSheet(fresh);
-    const freshAliases = new Map(b.characters.map(c => [c.name, c.aliases || []]));
+    const freshOf = new Map(b.characters.map(c => [c.name, c]));
     const names = new Set(a.characters.map(c => c.name));
     const pairs = new Set(a.address.map(x => `${x.speaker}\u0000${x.listener}`));
     const terms = new Set(a.terms.map(t => t.original));
     return foldSheet({
         characters: [
-            ...a.characters.map(c => ({ ...c, aliases: [...(c.aliases || []), ...(freshAliases.get(c.name) || [])] })),
+            ...a.characters.map(c => {
+                const f = freshOf.get(c.name);
+                return { ...c, aliases: [...(c.aliases || []), ...((f && f.aliases) || [])], english: c.english || (f && f.english) };
+            }),
             ...b.characters.filter(c => !names.has(c.name))
         ],
         address: [...a.address, ...b.address.filter(x => !pairs.has(`${x.speaker}\u0000${x.listener}`))],
@@ -216,6 +227,14 @@ function seriesNameOf(sheet, speakers) {
     };
 }
 
+// sheet + speakers list -> name => its person's English name ('' when the sheet has none yet).
+function seriesEnglishOf(sheet, speakers) {
+    const s = foldSheet(sheet);
+    const nameOf = seriesNameOf(s, speakers);
+    const english = new Map(s.characters.filter(c => c.english).map(c => [c.name, c.english]));
+    return (name) => english.get(nameOf(name)) || '';
+}
+
 // The sheet with one entry per person: the other spellings become its aliases, forms of address
 // between them use its name.
 function foldSheet(sheet) {
@@ -230,6 +249,7 @@ function foldSheet(sheet) {
         }
         main.aliases.push(c.name, ...(c.aliases || []));
         if (!main.role && c.role) main.role = c.role;
+        if (!main.english && c.english) main.english = c.english;
     }
     return normalizeSheet({
         characters: [...byName.values()],
@@ -266,7 +286,7 @@ function formatSheetForPrompt(sheet) {
         for (const c of s.characters) {
             if (isSharedTitle(c.name, s.characters)) continue;
             const aliases = (c.aliases || []).filter(a => !isSharedTitle(a, s.characters));
-            out.push(`- ${c.name} = ${c.khmer} (${c.gender}${c.role ? `, ${c.role}` : ''}${aliases.length ? `; also written ${aliases.join(', ')}` : ''})`);
+            out.push(`- ${c.name}${c.english ? ` [${c.english}]` : ''} = ${c.khmer} (${c.gender}${c.role ? `, ${c.role}` : ''}${aliases.length ? `; also written ${aliases.join(', ')}` : ''})`);
         }
     }
     if (s.address.length) {
@@ -285,7 +305,13 @@ function formatSheetForPrompt(sheet) {
 
 // lines: [{ text, gender?, khmer? }] - the original dialogue, and the Khmer already used for it
 // when there is some (after a Direct transcription).
-function buildCharacterSheetPrompt({ lines, known, glossaryHint = '' }) {
+// speakers: the series' speakers list; the ones not on the sheet (roles: 员工, 助理) are asked for too,
+// for their English names.
+function buildCharacterSheetPrompt({ lines, known, glossaryHint = '', speakers = [] }) {
+    const nameOf = seriesNameOf(known, speakers);
+    const listed = new Set(normalizeSheet(known).characters.map(c => nameOf(c.name)));
+    const others = [...new Set(foldSpeakers(speakers, known).map(x => x.name))]
+        .filter(n => !listed.has(n) && !isSharedTitle(n, normalizeSheet(known).characters)).slice(0, 30);
     let budget = MAX_DIALOGUE_CHARS;
     const dialogue = [];
     for (const l of lines || []) {
@@ -301,12 +327,12 @@ function buildCharacterSheetPrompt({ lines, known, glossaryHint = '' }) {
 Read the dialogue below. Each line is the original-language dialogue; [Male]/[Female] is the speaker's gender heard in the audio, and "=> ..." is the Khmer already used for that line, when there is one.
 
 Return a JSON object with:
-- "characters": every named character who speaks or is talked about (at most ${MAX_CHARACTERS}): "name" exactly as written in the original dialogue (the shortest form, e.g. 林峰 not 林峰哥哥), "khmer" the Khmer spelling to use (a natural Khmer transliteration; when the Khmer lines already spell the name, copy that spelling exactly), "gender" Male / Female / Unknown, "role" 1-4 English words (e.g. "emperor", "heroine's maid"), "aliases" the other ways the dialogue writes THE SAME person (a same-sounding character such as 陆宴辞 for 陆晏辞, the given name alone, a title only they hold; usually none). One person is ONE entry: never list another spelling of someone as a character of their own.
+- "characters": every named character who speaks or is talked about (at most ${MAX_CHARACTERS}): "name" exactly as written in the original dialogue (the shortest form, e.g. 林峰 not 林峰哥哥), "khmer" the Khmer spelling to use (a natural Khmer transliteration; when the Khmer lines already spell the name, copy that spelling exactly), "gender" Male / Female / Unknown, "role" 1-4 English words (e.g. "emperor", "heroine's maid"), "aliases" the other ways the dialogue writes THE SAME person (a same-sounding character such as 陆宴辞 for 陆晏辞, the given name alone, a title only they hold; usually none). One person is ONE entry: never list another spelling of someone as a character of their own. "english" the name in English letters for the user, who reads no Chinese: a name in pinyin without tone marks, surname first, each part capitalised (陆晏辞 -> Lu Yanci), a role translated (母亲 -> Mother, 助理 -> Assistant).
 - "address": for characters who talk to each other (at most ${MAX_ADDRESS} pairs): "speaker" and "listener" (names as in "characters"), "calls" the Khmer word the speaker uses for the listener, "self" the Khmer word the speaker uses for themself. Choose them by the relationship:
 ${KHMER_FORMS_OF_ADDRESS}
 - "terms": recurring named places, sects, clans, companies, titles, techniques or items (at most ${MAX_TERMS}): "original" exactly as written, "khmer" the Khmer to use.
 
-Only include what the dialogue supports. Do not list generic words (师父, 老板, boss) as names. A surname with a title (韩总, 王董, 李队) is not a character of its own when it can be someone already listed (韩总 is 韩峥 at work, his brother, or their father): list the person; one known only by the title (陈总) is listed by it. A family member who speaks but is never named is listed by role (韩父, 韩母).${knownText ? `\n\nALREADY DECIDED in earlier episodes - keep these exactly as they are and list only what is new. A new spelling of someone already decided is not new: return that person (their name as decided) with the spelling in "aliases". If two names decided below are one person, return the first with the other in its "aliases".${knownText}` : ''}${glossaryHint}
+Only include what the dialogue supports. Do not list generic words (师父, 老板, boss) as names. A surname with a title (韩总, 王董, 李队) is not a character of its own when it can be someone already listed (韩总 is 韩峥 at work, his brother, or their father): list the person; one known only by the title (陈总) is listed by it. A family member who speaks but is never named is listed by role (韩父, 韩母).${knownText ? `\n\nALREADY DECIDED in earlier episodes - keep these exactly as they are and list only what is new. A new spelling of someone already decided is not new: return that person (their name as decided) with the spelling in "aliases". If two names decided below are one person, return the first with the other in its "aliases". A decided name with no [English] yet: return it (name, khmer and gender as decided) with its "english".${knownText}` : ''}${others.length ? `\n\nSPEAKERS ALSO VOICED, not on the sheet yet: list each as a character too (its name exactly so, with "english"): ${others.join(', ')}` : ''}${glossaryHint}
 
 DIALOGUE:
 ${dialogue.join('\n')}`;
@@ -457,6 +483,7 @@ module.exports = {
     loadSeriesSpeakers,
     saveSeriesSpeakers,
     seriesNameOf,
+    seriesEnglishOf,
     foldSheet,
     foldSpeakers,
     addSeriesSpeakers,

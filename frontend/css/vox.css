@@ -397,6 +397,15 @@
   color: var(--text-muted);
   white-space: nowrap;
 }
+.vsp-weak {
+  /* the same width on every row, marked or not, so the columns line up */
+  width: 16px;
+  flex-shrink: 0;
+  display: flex;
+  justify-content: center;
+  color: var(--warning, #f59e0b);
+  cursor: help;
+}
 .vsp-feels {
   /* the same width on every row, so the columns line up (three feelings a row) */
   width: 78px;
