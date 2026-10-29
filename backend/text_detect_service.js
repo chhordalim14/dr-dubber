@@ -14,7 +14,7 @@ const crypto = require('crypto');
 const { spawn: realSpawn, execFile: realExecFile } = require('child_process');
 const { StringDecoder } = require('string_decoder');
 
-const DETECTOR_VERSION = 4; // bump when text_detector.py's results change: old cached results are ignored
+const DETECTOR_VERSION = 5; // bump when text_detector.py's results change: old cached results are ignored
 const JOB_KEEP_MS = 30 * 60 * 1000;
 const DETECTOR_THREADS = 2;
 // Detections at once: about one per 4 CPU threads (each keeps ~2.6 busy), leaving room for the

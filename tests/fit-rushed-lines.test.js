@@ -502,7 +502,8 @@ describe('every subtitle on screen has a voice', () => {
     const match = src.slice(src.indexOf('      async function matchStep() {'), src.indexOf('      async function generateStep() {'));
     assert.match(match, /await fillMissingScreenLinesAllTabs\(\{\s*checkStop,/);
     assert.match(src, /if \(seriesRun\.step === "generate" \|\| seriesRun\.step === "match"\) cancelFastCondenseRequests\(\);/);
-    assert.match(src, /window\.ScreenSync\.matchLeftovers\(items, proj\.textBlur\.lines, matches\);/, 'Match pairs drifted lines again');
+    assert.match(src, /const matches = window\.ScreenSync\.matchFollowingDrift\(items, proj\.textBlur\.lines\);/, 'Match follows the drift');
+    assert.match(src, /const corrected = window\.ScreenSync\.driftShifted\(items, matches\);/, 'lines with none on screen are moved by the drift too');
   });
 });
 

@@ -210,6 +210,16 @@ describe('text_detector.py: reading the strip fast', () => {
         assert.match(svc, /'--fps', '4'/);
     });
 
+    test('a notice that stays on screen all video is not taken for the subtitle row', () => {
+        // "人物均为AI生成..." under the subtitles was in 40 of 40 samples, the subtitles in fewer: its
+        // row won and 20 tabs had 1 line (the notice) instead of ~200, so nothing was matched.
+        assert.ok(num('STATIC_SHARE') > 0.05 && num('STATIC_SHARE') <= 0.5, `share ${num('STATIC_SHARE')}`);
+        assert.match(py, /row = find_row\(drop_static\(found, n_row\), n_row\)/);
+        assert.match(py, /for \(x0, y0, x1, y1\), text in read\(engine, img, cands\):/);
+        const svc = fs.readFileSync(path.join(__dirname, '..', 'backend', 'text_detect_service.js'), 'utf8');
+        assert.ok(+svc.match(/DETECTOR_VERSION = (\d+)/)[1] >= 5, 'cached results with the notice as the row are read again');
+    });
+
     test('the strip is decoded by NVIDIA when it can be, else on the CPU', () => {
         assert.match(py, /HWACCEL = os\.environ\.get\('DR_TEXT_HWACCEL', 'cuda'\)/);
         // the last try is always without a decoder: a PC without one still reads its tabs

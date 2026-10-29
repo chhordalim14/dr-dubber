@@ -190,6 +190,44 @@ describe('no subtitle without a line, no line late', () => {
         assert.equal(m2[1].start, 2);
     });
 
+    // A tab's on-screen lines every 3 s, with words that share letters (as dialogue does), and
+    // Transcribe's times for them drifting 0 -> 15 s late over 4 minutes (measured: 0.6 -> 12 s).
+    const WORDS = ['我们现在就走吧', '你先别上去了', '他才是新郎官', '这个戒指给你', '我不想再等了', '你到底想怎样', '今天的事别说', '我知道你想走',
+        '这件事我想起来了', '不好意思是我误会', '那今晚我们一起', '你怕我做坏事吗', '老婆你真的爱我', '先自己休息一下', '我问问姑妈酒店', '那你打电话问问'];
+    const SCREEN = Array.from({ length: 80 }, (_, k) => ({ start: k * 3, end: k * 3 + 2.4, text: `${WORDS[k % WORDS.length]}${k}` }));
+    const drift = (t) => 15 * t / 240;
+    const LATE = SCREEN.map((l) => ({ start: l.start + drift(l.start), end: l.end + drift(l.start), text: l.text }));
+
+    test('a tab whose times drift 15 s: every line still finds its own on-screen line', () => {
+        const old = SS.matchSubtitles(LATE, SCREEN);
+        SS.matchLeftovers(LATE, SCREEN, old);
+        assert.ok(old.filter((m, i) => m && m.start === SCREEN[i].start).length < 60, 'without following the drift many were lost');
+        const m = SS.matchFollowingDrift(LATE, SCREEN);
+        assert.deepEqual(m.map((x) => x && x.start), SCREEN.map((l) => l.start));
+    });
+
+    test('a jump (a part transcribed apart) is followed too', () => {
+        const jumped = SCREEN.map((l) => (l.start >= 120 ? { ...l, start: l.start + 7, end: l.end + 7 } : l));
+        assert.deepEqual(SS.matchFollowingDrift(jumped, SCREEN).map((x) => x && x.start), SCREEN.map((l) => l.start));
+    });
+
+    test('a line with nothing on screen is moved by the drift around it, not left at its late time', () => {
+        const hidden = new Set([30, 31, 32, 50]);
+        const shown = SCREEN.filter((_, k) => !hidden.has(k));
+        const m = SS.matchFollowingDrift(LATE, shown);
+        const times = SS.driftShifted(LATE, m);
+        for (const k of hidden) {
+            assert.equal(m[k], null);
+            assert.ok(Math.abs(times[k].start - SCREEN[k].start) < 0.3, `line ${k}: ${times[k].start} for ${SCREEN[k].start} (was ${LATE[k].start})`);
+        }
+        assert.deepEqual(m.filter(Boolean).map((x) => x.start), shown.map((l) => l.start), 'the others: their own line');
+    });
+
+    test('nothing is paired by time alone however far it moves', () => {
+        const other = LATE.map((s, k) => (k === 40 ? { ...s, text: '完全不同的一句话' } : s));
+        assert.equal(SS.matchFollowingDrift(other, SCREEN)[40], null);
+    });
+
     test('on-screen lines no subtitle covers: the ones to give a line', () => {
         const m = SS.matchSubtitles(DRIFTED.slice(0, 2), LINES4);
         assert.deepEqual(SS.uncoveredLines(LINES4, m).map((l) => l.text), ['他是新郎', '这个戒指']);

@@ -52,6 +52,9 @@ SAME_TEXT = 0.85             # two reads this alike are the same line (the reade
 OTHER_TEXT = 0.4             # this unalike: another line. In between, the letters' pixels decide
 SAME_GLYPHS = 0.45           # share of the letter pixels two reads of the same line have in common
 REJOIN_GAP = 0.5             # s: a line lost for a read or two and back again is one line
+# A text read in this share of the row samples (spread over the whole video) stays on screen: a
+# notice or watermark, not a subtitle - one subtitle line shows in one or two samples at most.
+STATIC_SHARE = 0.25
 CJK_RE = re.compile(r'[㐀-䶿一-鿿豈-﫿]')
 ALNUM_RE = re.compile(r'[A-Za-z0-9]')
 
@@ -240,6 +243,22 @@ def change_frame(before, after, frames, x0, x1):
     return frames[best][0] if best < len(frames) else after['t']
 
 
+def drop_static(found, samples):
+    """The boxes of text that changes, as [(x0, y0, x1, y1)]. found: [((x0, y0, x1, y1), text)]
+    in % from every sampled frame. Text that keeps showing the same words at the same height
+    (a notice like "人物均为AI生成，本故事纯属虚构" under the subtitles all video long) is left out:
+    in 40 samples it was in all 40 and the subtitles in fewer, so its row was taken for theirs,
+    and none of the video's subtitles were read."""
+    limit = max(3, samples * STATIC_SHARE)
+    cy_of = lambda b: (b[1] + b[3]) / 2
+
+    def same_place(a, b):
+        return abs(cy_of(a) - cy_of(b)) <= 0.6 * (b[3] - b[1])
+
+    return [r for r, text in found
+            if sum(1 for o, t in found if same_place(o, r) and text_alike(t, text) >= 0.6) < limit]
+
+
 def find_row(boxes, samples):
     """The row centered text lines keep appearing in, as (y0, y1) in %, or None.
     boxes: [(x0, y0, x1, y1)] in % from every sampled frame."""
@@ -347,9 +366,9 @@ def main():
                 continue
             img = np.frombuffer(raw, np.uint8).reshape(sh, sw, 3)
             cands = [c for c in detect(engine, img) if abs((c[1][0] + c[1][2]) / 2 / sw * 100 - 50) <= CENTER_TOLERANCE]
-            for (x0, y0, x1, y1), _ in read(engine, img, cands):
-                found.append((x0 / sw * 100, y0 / sh * 100, x1 / sw * 100, y1 / sh * 100))
-    row = find_row(found, n_row)
+            for (x0, y0, x1, y1), text in read(engine, img, cands):
+                found.append(((x0 / sw * 100, y0 / sh * 100, x1 / sw * 100, y1 / sh * 100), text))
+    row = find_row(drop_static(found, n_row), n_row)
     if not row:
         progress(total, total)
         emit({'success': True, 'width': width, 'height': height, 'duration': duration, 'row': None,

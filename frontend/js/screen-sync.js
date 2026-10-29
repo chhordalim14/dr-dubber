@@ -201,6 +201,111 @@
     return matches;
   }
 
+  // Times for every subtitle with the transcription's error around it taken off. A matched
+  // subtitle tells the error where it is (its line's start minus its transcribed start), and the
+  // error drifts over a tab (measured on 164 tabs: one went from 0.6 s to 12 s early over 4
+  // minutes, another 6 s late after minute 3), so an unmatched one is moved by the error of the
+  // matched ones on either side of it, in between by time (a jump - a part transcribed apart -
+  // is kept sharp: a median of several neighbours put the line at the jump on the wrong side).
+  // Matched ones keep their transcribed times here.
+  //   -> [{ start, end }] (same order as subs)
+  const median = (v) => {
+    const s = v.slice().sort((a, b) => a - b);
+    return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
+  };
+
+  // The error at time t, from anchors [{ t, off }] in time order (see driftShifted).
+  function offsetAt(anchors, t) {
+    if (!anchors.length) return 0;
+    let k = 0;
+    while (k < anchors.length && anchors[k].t < t) k++;
+    if (k < anchors.length && anchors[k].t === t) return anchors[k].off;
+    if (k === 0) return anchors[0].off;
+    if (k === anchors.length) return anchors[k - 1].off;
+    const a = anchors[k - 1], b = anchors[k];
+    return a.off + ((b.off - a.off) * (t - a.t)) / (b.t - a.t);
+  }
+
+  function driftShifted(subs, matches) {
+    const S = prepare(subs || []);
+    const anchors = S.filter((s) => matches[s.i] && s.start !== null)
+      .map((s) => ({ t: s.start, off: matches[s.i].start - s.start }))
+      .sort((a, b) => a.t - b.t);
+    return S.map((s) => {
+      if (matches[s.i] || s.start === null || !anchors.length) return { start: s.start, end: s.end };
+      const off = offsetAt(anchors, s.start);
+      return { start: s.start + off, end: s.end === null ? null : s.end + off };
+    });
+  }
+
+  // Subtitles that are surely one on-screen line, found by their text alone, to measure the
+  // transcription's error before anything is matched: matching within MAX_SHIFT first paired
+  // lines 15 s off with the wrong line next to them (alike letters), which then kept the right
+  // one from them. Only text of ANCHOR_MIN letters or more that both sides hold nearly all of
+  // (ANCHOR_ALIKE), within ANCHOR_WINDOW s, the most of them in order; one whose error is far
+  // from its neighbours' (a line said twice) is left out. -> [{ t, off }] in time order
+  const ANCHOR_WINDOW = 30;
+  const ANCHOR_MIN = 4;
+  const ANCHOR_ALIKE = 0.8;
+  const ANCHOR_OUTLIER = 2; // s
+  function textAnchors(subs, lines) {
+    const S = prepare(subs || []).filter((s) => s.start !== null && s.text.length >= ANCHOR_MIN).sort((a, b) => a.start - b.start);
+    const L = prepare(lines || []).filter((l) => l.start !== null && l.end !== null && l.text.length >= ANCHOR_MIN).sort((a, b) => a.start - b.start);
+    const cand = []; // [sub k, line j, how alike]
+    S.forEach((s, k) => {
+      L.forEach((l, j) => {
+        if (Math.abs(l.start - s.start) > ANCHOR_WINDOW) return;
+        const common = commonLetters(s.counts, l.counts);
+        const alike = Math.min(common / s.text.length, common / l.text.length);
+        if (alike >= ANCHOR_ALIKE) cand.push([k, j, alike]);
+      });
+    });
+    // The heaviest chain with subs and lines both in order.
+    const best = cand.map((c) => c[2]), from = cand.map(() => -1);
+    for (let a = 0; a < cand.length; a++) {
+      for (let b = 0; b < a; b++) {
+        if (cand[b][0] < cand[a][0] && cand[b][1] < cand[a][1] && best[b] + cand[a][2] > best[a]) {
+          best[a] = best[b] + cand[a][2];
+          from[a] = b;
+        }
+      }
+    }
+    let top = -1;
+    best.forEach((v, a) => { if (top < 0 || v > best[top]) top = a; });
+    const chain = [];
+    for (let a = top; a >= 0; a = from[a]) chain.unshift({ t: S[cand[a][0]].start, off: L[cand[a][1]].start - S[cand[a][0]].start });
+    return chain.filter((a, k) => {
+      const near = chain.slice(Math.max(0, k - 3), k + 4).map((n) => n.off);
+      return Math.abs(a.off - median(near)) <= ANCHOR_OUTLIER;
+    });
+  }
+
+  // Every subtitle paired with its on-screen line, however far the transcription drifted: each
+  // is first moved by the error measured around it (textAnchors), then matchSubtitles and
+  // matchLeftovers pair them as usual, and the leftovers are paired again moved by the error of
+  // the pairs around them until no more are found. Returns matchSubtitles' result for the same
+  // subs; driftShifted(subs, result) gives the unmatched ones their best times.
+  const DRIFT_PASSES = 5;
+  function matchFollowingDrift(subs, lines) {
+    const anchors = textAnchors(subs, lines);
+    let moved = (subs || []).map((s) => {
+      const start = num(s.start), end = num(s.end);
+      if (start === null || !anchors.length) return s;
+      const off = offsetAt(anchors, start);
+      return { ...s, start: start + off, end: end === null ? s.end : end + off };
+    });
+    const matches = matchSubtitles(moved, lines);
+    matchLeftovers(moved, lines, matches);
+    for (let pass = 0; pass < DRIFT_PASSES; pass++) {
+      const before = matches.filter(Boolean).length;
+      if (before === matches.length) break;
+      moved = driftShifted(moved, matches).map((t, i) => ({ ...moved[i], start: t.start, end: t.end }));
+      matchLeftovers(moved, lines, matches);
+      if (matches.filter(Boolean).length === before) break;
+    }
+    return matches;
+  }
+
   // On-screen lines no matched subtitle shows over (their own text, no line of the transcription
   // for them): [{ start, end, text }]. Only the video's subtitles: on screen at least minSeconds,
   // with text, and centred like them - measured over 4,044 subtitles, 99% sit within 2% of the
@@ -238,5 +343,5 @@
     return out;
   }
 
-  return { MAX_SHIFT, FAR_SHIFT, MIN_HELD, MIN_SHARE, JOIN_GAP, normText, matchSubtitles, matchLeftovers, uncoveredLines, placeUnmatched, pairLines };
+  return { MAX_SHIFT, FAR_SHIFT, MIN_HELD, MIN_SHARE, JOIN_GAP, normText, matchSubtitles, matchLeftovers, driftShifted, matchFollowingDrift, uncoveredLines, placeUnmatched, pairLines };
 });

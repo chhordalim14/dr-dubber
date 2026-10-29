@@ -6890,12 +6890,15 @@
       }
 
       const items = subs.map((s) => ({ start: s.textStart, end: s.textEnd, text: s.originalText || "" }));
-      const matches = window.ScreenSync.matchSubtitles(items, proj.textBlur.lines);
-      // Lines whose transcribed time drifted too far: paired again by their text (no delay).
-      window.ScreenSync.matchLeftovers(items, proj.textBlur.lines, matches);
+      // Transcribe's times drift over a tab (up to 12 s): measured from the lines that are surely
+      // one on-screen line, taken off every line, then each is paired with its line.
+      const matches = window.ScreenSync.matchFollowingDrift(items, proj.textBlur.lines);
+      // A line with none on screen (no subtitle there) is moved by the drift around it too, so
+      // it neither speaks at the wrong moment nor covers another line's subtitle.
+      const corrected = window.ScreenSync.driftShifted(items, matches);
       const placed = window.ScreenSync.placeUnmatched(subs.map((s, i) => (matches[i]
         ? { start: matches[i].start, end: matches[i].end, matched: true }
-        : { start: s.textStart, end: s.textEnd, matched: false })));
+        : { start: Math.max(0, corrected[i].start), end: Math.max(0, corrected[i].end), matched: false })));
       let matched = 0, parts = 0;
       subs.forEach((s, i) => {
         const m = matches[i];
@@ -6963,12 +6966,14 @@
         && !(onlyNew && p.subtitles.some((s) => s.screenMatched)) && (!only || only.includes(p)));
       let matched = 0, total = 0;
       const failed = [];
+      const weak = []; // under half of the tab's subtitles found their line: the rest keep Transcribe's guessed times
       const stopsBefore = textDetectStops;
       for (const p of targets) {
         if (textDetectStops !== stopsBefore) break;
         const r = await syncSubtitlesToScreen(p, { quiet: true });
         if (r.cancelled || textDetectStops !== stopsBefore) break;
         if (!r.ok) failed.push(p);
+        else if (r.total && r.matched < r.total / 2) weak.push(p);
         matched += r.matched || 0;
         total += r.total || 0;
       }
@@ -6977,7 +6982,7 @@
           ? `Match Subtitles: ${matched} of ${total} subtitle(s) in ${targets.length} tab(s) matched to the video${failed.length ? ` - tab ${failed.map((p) => projects.indexOf(p) + 1).join(", ")} failed: ${failed[0].textDetectError || "no subtitles"}` : ""}.`
           : "No tab has subtitles and a video to match.", failed.length || !targets.length ? "warning" : "success");
       }
-      return { ok: true, tabs: targets.length, matched, total, failed };
+      return { ok: true, tabs: targets.length, matched, total, failed, weak };
     }
 
     document.getElementById("btn-sync-screen")?.addEventListener("click", () => {
@@ -17350,6 +17355,7 @@
           failed = again.failed || [];
           r.matched += again.matched;
           r.total += again.total;
+          r.weak = [...(r.weak || []), ...(again.weak || [])];
         }
         if (!r.tabs) return "no tab has subtitles and a video";
         const left = failed.length ? ` · tab ${tabNumbers(failed)} kept the transcribed times (${failed[0].textDetectError || "no subtitles found"})` : "";
@@ -17361,7 +17367,8 @@
         });
         const added = (fill.added ? ` · ${fill.added} subtitle(s) Transcribe missed got a line` : "")
           + (fill.missing > fill.added ? ` · ${fill.missing - fill.added} subtitle(s) still have no voice (Google did not answer)` : "");
-        return `${r.matched} of ${r.total} subtitle(s) matched in ${r.tabs} tab(s)${added}${left}`;
+        const few = r.weak?.length ? ` · tab ${tabNumbers(r.weak)}: under half matched, the rest keep Transcribe's guessed times` : "";
+        return `${r.matched} of ${r.total} subtitle(s) matched in ${r.tabs} tab(s)${added}${left}${few}`;
       }
 
       async function generateStep() {
