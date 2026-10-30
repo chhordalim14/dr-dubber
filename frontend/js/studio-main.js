@@ -8935,6 +8935,49 @@
       });
     }
 
+    // Automatic pronunciation fixes (backend/lib/pronunciation.js): read now and every minute and
+    // applied before Edge reads a line; ✕ takes a fix off the list for good.
+    const autoPronToggle = document.getElementById("setting-auto-pronunciation");
+    const autoPronStatus = document.getElementById("auto-pronunciation-status");
+    const autoPronList = document.getElementById("auto-pronunciation-list");
+    const showAutoPronunciation = (st) => {
+      window.KhmerSpeech?.setAutoPronunciations(st.enabled ? st.fixes : []);
+      if (!autoPronToggle) return;
+      autoPronToggle.checked = !!st.enabled;
+      autoPronStatus.textContent = !st.available ? "Needs the VoxCPM2 install (Settings > VoxCPM2 AI)."
+        : !st.enabled ? "Off."
+          : `${st.busy ? "Checking now. " : ""}${st.linesChecked} lines checked, ${st.fixes.length} word${st.fixes.length === 1 ? "" : "s"} fixed.${st.error ? ` Paused: ${st.error}` : ""}`;
+      autoPronList.replaceChildren(...st.fixes.map((f) => {
+        const row = document.createElement("div");
+        row.className = "flex items-center gap-2 text-sm";
+        const words = document.createElement("span");
+        words.className = "font-khmer text-[var(--text-primary)]";
+        words.textContent = `${f.written} → ${f.said}`;
+        const score = document.createElement("span");
+        score.className = "text-[11px] text-[var(--text-muted)]";
+        score.textContent = `right ${f.score}, before ${f.before}`;
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "ml-auto px-2 text-[var(--text-muted)] hover:text-red-500";
+        remove.title = "Remove this fix (it won't come back)";
+        remove.textContent = "✕";
+        remove.addEventListener("click", () => refreshAutoPronunciation("reject", { written: f.written }));
+        row.append(words, score, remove);
+        return row;
+      }));
+    };
+    const refreshAutoPronunciation = async (action, body) => {
+      try {
+        const res = await fetch(`http://localhost:3001/api/pronunciation${action ? `/${action}` : ""}`, action
+          ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : undefined);
+        const st = await res.json();
+        if (st && Array.isArray(st.fixes)) showAutoPronunciation(st);
+      } catch (e) { /* server not up yet: the next round reads it */ }
+    };
+    autoPronToggle?.addEventListener("change", () => refreshAutoPronunciation("enabled", { enabled: autoPronToggle.checked }));
+    refreshAutoPronunciation();
+    setInterval(() => refreshAutoPronunciation(), 60 * 1000);
+
     // Load Whisper folder
     const savedWhisperFolder = localStorage.getItem("aiDubberWhisperFolder") || "";
     const whisperInput = document.getElementById("setting-whisper-folder");
@@ -20537,7 +20580,7 @@
 
       // 🇰🇭 Khmer text as it is said (numbers in words, ៗ, acronyms, pauses; a closing ? or !
       // kept for the intonation) - see khmer-speech.js.
-      const cleanText = window.KhmerSpeech.normalizeForSpeech(text);
+      const cleanText = window.KhmerSpeech.normalizeForSpeech(text, { auto: false }); // the automatic list is for Edge
       const isKhmer = /[\u1780-\u17FF]/.test(cleanText);
 
       // A starter profile's description ("A clear, natural young male voice…") is for a voice

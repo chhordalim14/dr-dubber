@@ -75,6 +75,11 @@ describe('Khmer text for the voice', () => {
         for (const w of ['ម្ដាយ', 'ម្សិលមិញ', 'ម្ភៃ', 'នាង', 'ហូប', 'ពីរនាក់']) assert.equal(say(w), w + '។', w);
     });
 
+    test('សមមុខ is split so the second ម is not read twice (it was សំម៉ាមុខ)', () => {
+        assert.equal(say('សមមុខហើយ នរណាប្រើឲ្យខ្ញុំខឹង?'), 'សម មុខហើយ នរណាប្រើឲ្យខ្ញុំខឹង?');
+        assert.equal(say('សមមុខគាត់ហើយ'), 'សម មុខគាត់ហើយ។');
+    });
+
     test('times, dates, scores, fractions and ranges as they are said', () => {
         assert.equal(say('ម៉ោង 10:30 យើងជួបគ្នា'), 'ម៉ោងដប់កន្លះ យើងជួបគ្នា។');
         assert.equal(say('ជួបគ្នា 7:15 ព្រឹក'), 'ជួបគ្នា ម៉ោងប្រាំពីរ ដប់ប្រាំនាទី ព្រឹក។');

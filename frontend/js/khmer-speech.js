@@ -163,6 +163,10 @@
     ['ម្[ដត]ង', 'ម៉ាដង'], // ម្ដង and the look-alike spelling ម្តង
     ['ម្ខាង', 'ម៉ាខាង'],
     ['ម្នាក់', 'ម៉ានាក់'],
+    // សមមុខ at the start of a line: both voices said សំម៉ាមុខ (the second ម read twice). Heard
+    // back in 2 real lines x 2 voices, 2026-10-30: as written 4 of 4 had the extra syllable,
+    // សម មុខ 1 of 4 (សំមុខ, សម្មុខ and a hidden word break did not help).
+    ['សមមុខ', 'សម មុខ'],
   ].map(([from, to]) => [new RegExp(`(?<!្)${from}`, 'g'), to]);
   function fixPronunciation(text) {
     let s = text;
@@ -203,6 +207,32 @@
     return text.replace(new RegExp(userWords.map(([from]) => esc(from)).join('|'), 'g'), (w) => map.get(w));
   }
 
+  // The automatic list (backend/lib/pronunciation.js: words Edge was heard saying unlike Google's
+  // voice, with the respelling that fixed it). Whole words only - one word or a few written
+  // together (ពិសេស|មុខ) - and never one the user's own list already has: theirs wins.
+  let autoWords = [];
+  function setAutoPronunciations(list) {
+    autoWords = (Array.isArray(list) ? list : [])
+      .map((f) => [String((f && f.written) || '').trim(), String((f && f.said) || '').trim()])
+      .filter(([from, to]) => from && to && from !== to)
+      .sort((a, b) => b[0].length - a[0].length);
+  }
+  function applyAutoWords(text) {
+    if (!autoWords.length || !words) return text;
+    const mine = new Set(userWords.map(([from]) => from));
+    const edges = new Set();
+    for (const seg of words.segment(text)) { edges.add(seg.index); edges.add(seg.index + seg.segment.length); }
+    const found = []; // [start, end, said], not overlapping, longest first
+    for (const [from, to] of autoWords) {
+      if (mine.has(from)) continue;
+      for (let at = text.indexOf(from); at >= 0; at = text.indexOf(from, at + 1)) {
+        const end = at + from.length;
+        if (edges.has(at) && edges.has(end) && !found.some(([a, b]) => at < b && a < end)) found.push([at, end, to]);
+      }
+    }
+    return found.sort((x, y) => y[0] - x[0]).reduce((s, [a, b, to]) => s.slice(0, a) + to + s.slice(b), text);
+  }
+
   // Acronyms (1 to 5 capitals: VIP, CEO, the G of 5G, plan A) by their Khmer letter names.
   // A capital starting a word (Wen, Ting'an) is a name and is left as written.
   const spellAcronyms = (text) => text
@@ -223,7 +253,8 @@
   const sayAbbreviations = (text) => ABBREVIATIONS.reduce((s, [re, to]) => s.replace(re, to), text);
 
   // Subtitle text -> what the voice is given. Text without Khmer is only tidied.
-  function normalizeForSpeech(text) {
+  // opts.auto = false: without the automatic list (it was measured on Edge's voices, not VoxCPM2).
+  function normalizeForSpeech(text, opts) {
     let s = String(text == null ? '' : text)
       .replace(/^\s*\[[^\]]*:[^\]]*\]\s*/, '') // [Female:female-default] speaker tags
       .replace(/<[^>]+>/g, '')
@@ -237,6 +268,7 @@
     s = sayNumbers(s);
     s = sayTitles(s);
     s = spellAcronyms(s);
+    if (!opts || opts.auto !== false) s = applyAutoWords(s); // last: the checker found these words in text made ready as above
     s = s
       .replace(/[？]/g, '?').replace(/[！]/g, '!').replace(/[，、]/g, ',').replace(/[；]/g, ';').replace(/[：]/g, ':')
       .replace(/["“”„«»「」『』]/g, '')
@@ -261,5 +293,5 @@
     if (typeof localStorage !== 'undefined') setPronunciations(parsePronunciations(localStorage.getItem(PRONUNCIATION_KEY)));
   } catch (e) { /* no storage: no user words */ }
 
-  return { normalizeForSpeech, numberToWords, sayNumbers, expandRepeat, setPronunciations, parsePronunciations, PRONUNCIATION_KEY };
+  return { normalizeForSpeech, numberToWords, sayNumbers, expandRepeat, setPronunciations, parsePronunciations, setAutoPronunciations, PRONUNCIATION_KEY };
 });

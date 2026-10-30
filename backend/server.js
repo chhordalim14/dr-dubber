@@ -697,6 +697,7 @@ app.post('/api/batch-result/save', (req, res) => {
     const { sourceFilePath, result } = req.body || {};
     try {
         res.json({ success: saveBatchResult(BATCH_RESULTS_DIR, sourceFilePath, result) });
+        pronunciationRouter.checker.kick(); // its new words get checked while the series works
     } catch (e) {
         res.json({ success: false, error: e.message });
     }
@@ -4928,6 +4929,8 @@ const textDetect = require('./text_detect_service').createTextDetectService({
 });
 app.use('/api', require('./routes/text-detect')({ textDetect }));
 app.use('/api', require('./routes/series-checkpoint')());
+const pronunciationRouter = require('./routes/pronunciation')({ getFFmpegBinary, getPythonScriptPath, trackProcess });
+app.use('/api', pronunciationRouter);
 
 // Khmer movie/drama title generator. Reads the story from the dialogue (the open
 // project and/or uploaded SRT files), sampled evenly from start to end so the model

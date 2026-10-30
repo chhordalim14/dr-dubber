@@ -4284,6 +4284,16 @@
                 placeholder="លំហ = លំហា&#10;ស៊ូហ៊ាង = ស៊ូ ហ៊ាង"
                 class="w-full px-3 py-2 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)] text-sm text-[var(--text-primary)] font-khmer focus:border-[var(--accent-primary)] outline-none"></textarea>
               <p class="text-[11px] text-[var(--text-muted)]">A word the voice says wrong: one per line, written = said. Applies to the next lines you voice; subtitles are not changed.</p>
+              <!-- Automatic fixes (backend/lib/pronunciation.js) -->
+              <label for="setting-auto-pronunciation" class="flex items-start gap-3 mt-2 cursor-pointer">
+                <input id="setting-auto-pronunciation" type="checkbox" class="mt-1 w-4 h-4 accent-emerald-500 shrink-0 cursor-pointer" />
+                <span class="flex flex-col gap-1">
+                  <span class="text-sm text-[var(--text-bright)] font-medium">Fix words automatically</span>
+                  <span class="text-[11px] text-[var(--text-muted)] leading-relaxed">In the background, Piseth and Sreymom read your transcripts next to Google's voice and a Khmer recogniser compares them. A word they say wrong gets a new spelling that fixes it. Only for Edge voices; needs the VoxCPM2 install.</span>
+                </span>
+              </label>
+              <p id="auto-pronunciation-status" class="text-[11px] text-[var(--text-muted)]" data-i18n-skip></p>
+              <div id="auto-pronunciation-list" class="flex flex-col gap-1" data-i18n-skip></div>
             </div>
 
             <!-- ── Transcription Engine ── -->
