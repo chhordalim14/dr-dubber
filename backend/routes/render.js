@@ -148,6 +148,7 @@ module.exports = function createRenderRouter({ upload, renderVideo, cancelRender
                 ? (renderOpts.duckingEnabled === true || renderOpts.duckingEnabled === 'true' || renderOpts.duckingEnabled === 1 || renderOpts.duckingEnabled === '1')
                 : true,
             duckingDepth: renderOpts.duckingDepth || 'standard',
+            dialogueMastering: renderOpts.dialogueMastering === undefined ? true : !(renderOpts.dialogueMastering === false || renderOpts.dialogueMastering === 'false' || renderOpts.dialogueMastering === 0 || renderOpts.dialogueMastering === '0'),
             normalizeLoudness: renderOpts.normalizeLoudness === undefined ? true : !(renderOpts.normalizeLoudness === false || renderOpts.normalizeLoudness === 'false' || renderOpts.normalizeLoudness === 0 || renderOpts.normalizeLoudness === '0'),
             originalAudioPath,
             outputPath

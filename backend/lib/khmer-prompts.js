@@ -109,7 +109,12 @@ ${KHMER_FORMS_OF_ADDRESS}
 6. SUBTITLE LEGIBILITY & SPACING (អានស្រួល មើលច្បាស់):
    - Insert a clean standard space between grammatical clauses (e.g. "សុំទោស ខ្ញុំមកយឺត").
    - DO NOT insert zero-width characters (ZWSP). Ensure clean standard UTF-8 Khmer text.
-   - Keep punctuation clean, minimal, and expressive (!, ?, ..., ?!).`;
+   - Keep punctuation clean, minimal, and expressive (!, ?, ..., ?!).
+
+7. VOICE ACTING & NATURAL CADENCE (ចង្វាក់សន្ទនា និងអារម្មណ៍តួអង្គ):
+   - Translate for the EAR, not just the eyes: lines must sound natural and fluid when spoken aloud by a voice actor.
+   - For emotional pauses, use clean ellipsis "..." to give the voice breathing room between dramatic thoughts.
+   - For urgent shouts or battle calls, use short, punchy wording matching visual lip bursts (!, ?!).`;
 
 function getKhmerDramaRegisterGuidance(genreRegister) {
     if (genreRegister === 'historical' || genreRegister === 'imperial' || genreRegister === 'wuxia') {

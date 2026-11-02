@@ -9405,6 +9405,15 @@
         loudToggle.addEventListener("change", () => localStorage.setItem("aiDubberNormalizeLoudness", loudToggle.checked ? "true" : "false"));
       }
     }
+
+    // Studio Dialogue Mastering Strip (Pro Vocal Warmth & Leveling)
+    {
+      const masterToggle = document.getElementById("toggle-render-mastering");
+      if (masterToggle) {
+        masterToggle.checked = localStorage.getItem("aiDubberDialogueMastering") !== "false";
+        masterToggle.addEventListener("change", () => localStorage.setItem("aiDubberDialogueMastering", masterToggle.checked ? "true" : "false"));
+      }
+    }
     window.getSubtitleStylePreset = () => currentSubtitlePreset;
 
     // One Character Glossary for the whole app: the list kept by DAI-Transcribe's
@@ -24739,6 +24748,7 @@
               isOriginalAudioMuted,
               duckingEnabled: typeof isRenderDuckingEnabled === "function" ? isRenderDuckingEnabled() : true,
               normalizeLoudness: localStorage.getItem("aiDubberNormalizeLoudness") !== "false",
+              dialogueMastering: localStorage.getItem("aiDubberDialogueMastering") !== "false",
               duckingDepth: typeof getRenderDuckingDepth === "function" ? getRenderDuckingDepth() : "standard",
               subtitlePreset: typeof getSubtitleStylePreset === "function" ? getSubtitleStylePreset() : "classic",
               outputFileName: finalFileName,
@@ -25225,6 +25235,7 @@
               isOriginalAudioMuted: proj.isOriginalAudioMuted === true || (proj.currentVolume !== undefined ? proj.currentVolume === 0 : false),
               duckingEnabled: typeof isRenderDuckingEnabled === "function" ? isRenderDuckingEnabled() : true,
               normalizeLoudness: localStorage.getItem("aiDubberNormalizeLoudness") !== "false",
+              dialogueMastering: localStorage.getItem("aiDubberDialogueMastering") !== "false",
               duckingDepth: typeof getRenderDuckingDepth === "function" ? getRenderDuckingDepth() : "standard",
               subtitlePreset: typeof getSubtitleStylePreset === "function" ? getSubtitleStylePreset() : "classic",
               outputFileName: fileName,

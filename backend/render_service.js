@@ -897,23 +897,43 @@ function buildClipAudioFilters(item, voiceVolume) {
         afParts.push(`rubberband=pitch=${pitchRatio}`);
     }
 
-    // 4. Acoustic Reverb (aecho)
+    // 4. Acoustic Reverb & Spatial Reflections (Multi-tap diffused reflections with natural wall/air damping)
     if (item.reverb && (item.reverb.enabled === true || item.reverb.enabled === 'true' || item.reverb === true)) {
         const preset = item.reverb.preset || 'room';
         const str = Math.min(1.0, Math.max(0.05, (parseFloat(item.reverb.strength !== undefined ? item.reverb.strength : 30) || 30) / 100));
-        let delay = '40';
-        let decay = (0.2 * str).toFixed(2);
-        if (preset === 'palace') {
-            delay = '100|180';
-            decay = `${(0.35 * str).toFixed(2)}|${(0.25 * str).toFixed(2)}`;
+        if (preset === 'phone' || preset === 'radio') {
+            // Telephone / walkie-talkie bandpass effect
+            afParts.push('highpass=f=350,lowpass=f=3400,volume=1.1');
+        } else if (preset === 'car') {
+            // Enclosed vehicle: fast early reflections, warm upholstery damping
+            const d1 = (0.16 * str).toFixed(2);
+            const d2 = (0.09 * str).toFixed(2);
+            afParts.push(`aecho=0.85:0.75:14|26:${d1}|${d2}`, 'lowpass=f=3400');
+        } else if (preset === 'palace' || preset === 'hall') {
+            // Large grand hall: multi-tap spatial reflections with acoustic room roll-off
+            const d1 = (0.32 * str).toFixed(2);
+            const d2 = (0.24 * str).toFixed(2);
+            const d3 = (0.18 * str).toFixed(2);
+            const d4 = (0.10 * str).toFixed(2);
+            afParts.push(`aecho=0.8:0.82:35|68|115|180:${d1}|${d2}|${d3}|${d4}`, 'lowpass=f=3800');
         } else if (preset === 'outdoor') {
-            delay = '80';
-            decay = `${(0.25 * str).toFixed(2)}`;
+            // Outdoor open space: wide reflections with ground dissipation
+            const d1 = (0.20 * str).toFixed(2);
+            const d2 = (0.10 * str).toFixed(2);
+            afParts.push(`aecho=0.86:0.68:65|135:${d1}|${d2}`, 'highpass=f=120', 'lowpass=f=5200');
         } else if (preset === 'flashback') {
-            delay = '150|300';
-            decay = `${(0.45 * str).toFixed(2)}|${(0.35 * str).toFixed(2)}`;
+            // Dreamy ethereal memory: elongated delays with softened highs
+            const d1 = (0.38 * str).toFixed(2);
+            const d2 = (0.28 * str).toFixed(2);
+            const d3 = (0.18 * str).toFixed(2);
+            afParts.push(`aecho=0.76:0.78:120|240|360:${d1}|${d2}|${d3}`, 'lowpass=f=4200');
+        } else {
+            // Natural Room: 3-tap diffused reflections with wall damping (warm dry room)
+            const d1 = (0.22 * str).toFixed(2);
+            const d2 = (0.15 * str).toFixed(2);
+            const d3 = (0.09 * str).toFixed(2);
+            afParts.push(`aecho=0.82:0.72:18|32|50:${d1}|${d2}|${d3}`, 'lowpass=f=4600');
         }
-        afParts.push(`aecho=0.8:0.88:${delay}:${decay}`);
     }
 
     // 5. Timeline delay and master volume
@@ -1211,6 +1231,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         voiceVolume = 1.0,
         duckingEnabled = true,
         duckingDepth = 'standard', // 'light' | 'standard' | 'deep'
+        dialogueMastering = true, // Professional broadcast dialogue strip (HPF + presence EQ + optical leveling)
         // Every export at the same loudness: -14 LUFS (YouTube / Facebook), peaks under -1.5 dB.
         normalizeLoudness = true,
         muteOriginal = true,
@@ -1374,22 +1395,38 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             }
 
             if (dIndex >= 0 && bIndex >= 0) {
+                // Studio Dialogue Mastering Strip: HPF 80Hz + presence boost 3.2kHz + optical leveling compressor
+                const dialogueMasterFilter = (dialogueMastering !== false && dialogueMastering !== 'false' && dialogueMastering !== 0 && dialogueMastering !== '0')
+                    ? 'highpass=f=80,equalizer=f=3200:t=q:w=1.2:g=1.8,acompressor=threshold=-21dB:ratio=2.5:attack=12:release=140:makeup=1.5dB'
+                    : 'anull';
+                let sidechainParams = 'threshold=0.07:ratio=5:attack=22:release=450';
+                if (duckingDepth === 'light') {
+                    sidechainParams = 'threshold=0.11:ratio=3.5:attack=30:release=500';
+                } else if (duckingDepth === 'deep') {
+                    sidechainParams = 'threshold=0.035:ratio=8:attack=15:release=400';
+                }
+                const duckingPocketEq = 'equalizer=f=1800:t=q:w=0.9:g=-5';
+
                 // sidechaincompress stops as soon as its shorter input reaches EOF, so if dialogue
                 // ends before the BGM/video does, the ducked output (and the final mix) would be cut
                 // short. Pad the sidechain-control copy out to the full export duration first.
                 const fComplex = [
-                    `[${dIndex}:a]asplit=2[d_sc_raw][d_mix]`,
+                    `[${dIndex}:a]${dialogueMasterFilter}[d_master]`,
+                    `[d_master]asplit=2[d_sc_raw][d_mix]`,
                     `[d_sc_raw]apad=whole_dur=${videoDuration.toFixed(3)}[d_sc]`,
                     `[${bIndex}:a]${bgmFilterChain}[bgm_vol]`,
-                    `[bgm_vol][d_sc]sidechaincompress=threshold=0.08:ratio=7:attack=15:release=350[bgm_ducked]`,
-                    `[bgm_ducked]equalizer=f=1100:t=q:w=1.5:g=-6[bgm_clean]`,
+                    `[bgm_vol][d_sc]sidechaincompress=${sidechainParams}[bgm_ducked]`,
+                    `[bgm_ducked]${duckingPocketEq}[bgm_clean]`,
                     `[bgm_clean][d_mix]amix=inputs=2:normalize=0:duration=longest[final_audio]`,
                     `[final_audio]${loudnessFilter}aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[clean_audio]`
                 ];
                 args.push('-filter_complex', fComplex.join(';'));
                 args.push('-map', '[clean_audio]');
             } else if (dIndex >= 0) {
-                args.push('-filter_complex', `[${dIndex}:a]${loudnessFilter}aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[clean_audio]`);
+                const dialogueMasterFilter = (dialogueMastering !== false && dialogueMastering !== 'false' && dialogueMastering !== 0 && dialogueMastering !== '0')
+                    ? 'highpass=f=80,equalizer=f=3200:t=q:w=1.2:g=1.8,acompressor=threshold=-21dB:ratio=2.5:attack=12:release=140:makeup=1.5dB'
+                    : 'anull';
+                args.push('-filter_complex', `[${dIndex}:a]${dialogueMasterFilter},${loudnessFilter}aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[clean_audio]`);
                 args.push('-map', '[clean_audio]');
             } else if (bIndex >= 0) {
                 args.push('-filter_complex', `[${bIndex}:a]${bgmFilterChain},${loudnessFilter}aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[clean_audio]`);
@@ -1514,12 +1551,20 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         const isDucking = (duckingEnabled === true || duckingEnabled === 'true' || duckingEnabled === 1 || duckingEnabled === '1');
 
         if (dialogueInputIndex >= 0) {
-            let sidechainParams = 'threshold=0.08:ratio=7:attack=15:release=350';
+            // Studio Dialogue Mastering Strip: HPF 80Hz + presence boost 3.2kHz + optical leveling compressor
+            const dialogueMasterFilter = (dialogueMastering !== false && dialogueMastering !== 'false' && dialogueMastering !== 0 && dialogueMastering !== '0')
+                ? 'highpass=f=80,equalizer=f=3200:t=q:w=1.2:g=1.8,acompressor=threshold=-21dB:ratio=2.5:attack=12:release=140:makeup=1.5dB'
+                : 'anull';
+            let sidechainParams = 'threshold=0.07:ratio=5:attack=22:release=450';
             if (duckingDepth === 'light') {
-                sidechainParams = 'threshold=0.12:ratio=4:attack=25:release=400';
+                sidechainParams = 'threshold=0.11:ratio=3.5:attack=30:release=500';
             } else if (duckingDepth === 'deep') {
-                sidechainParams = 'threshold=0.04:ratio=12:attack=10:release=300';
+                sidechainParams = 'threshold=0.035:ratio=8:attack=15:release=400';
             }
+            const duckingPocketEq = 'equalizer=f=1800:t=q:w=0.9:g=-5';
+
+            filterComplex.push(`[${dialogueInputIndex}:a]${dialogueMasterFilter}[d_master]`);
+            const dialogueTag = '[d_master]';
 
             if (bgmInputIndex >= 0) {
                 filterComplex.push(`[${bgmInputIndex}:a]${bgmFilterChain}[bgm_vol]`);
@@ -1529,47 +1574,47 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                     // Pad the sidechain-control split(s) to the full export duration so
                     // sidechaincompress doesn't stop early when dialogue ends before the video does.
                     if (includeOrigAudio) {
-                        filterComplex.push(`[${dialogueInputIndex}:a]asplit=3[d_sc1_raw][d_sc2_raw][d_mix]`);
+                        filterComplex.push(`${dialogueTag}asplit=3[d_sc1_raw][d_sc2_raw][d_mix]`);
                         filterComplex.push(`[d_sc1_raw]apad=whole_dur=${videoDuration.toFixed(3)}[d_sc1]`);
                         filterComplex.push(`[d_sc2_raw]apad=whole_dur=${videoDuration.toFixed(3)}[d_sc2]`);
                         filterComplex.push(`[bgm_vol][d_sc1]sidechaincompress=${sidechainParams}[bgm_ducked]`);
-                        filterComplex.push(`[bgm_ducked]equalizer=f=1100:t=q:w=1.5:g=-6[bgm_clean]`);
+                        filterComplex.push(`[bgm_ducked]${duckingPocketEq}[bgm_clean]`);
                         bgmFinalTag = '[bgm_clean]';
 
                         filterComplex.push(`${origAudioIn}volume=1.0[orig_vol]`);
                         filterComplex.push(`[orig_vol][d_sc2]sidechaincompress=${sidechainParams}[orig_ducked]`);
-                        filterComplex.push(`[orig_ducked]equalizer=f=1100:t=q:w=1.5:g=-6[orig_clean]`);
+                        filterComplex.push(`[orig_ducked]${duckingPocketEq}[orig_clean]`);
                         filterComplex.push(`${bgmFinalTag}[orig_clean][d_mix]amix=inputs=3:normalize=0:duration=longest[final_audio]`);
                     } else {
-                        filterComplex.push(`[${dialogueInputIndex}:a]asplit=2[d_sc1_raw][d_mix]`);
+                        filterComplex.push(`${dialogueTag}asplit=2[d_sc1_raw][d_mix]`);
                         filterComplex.push(`[d_sc1_raw]apad=whole_dur=${videoDuration.toFixed(3)}[d_sc1]`);
                         filterComplex.push(`[bgm_vol][d_sc1]sidechaincompress=${sidechainParams}[bgm_ducked]`);
-                        filterComplex.push(`[bgm_ducked]equalizer=f=1100:t=q:w=1.5:g=-6[bgm_clean]`);
+                        filterComplex.push(`[bgm_ducked]${duckingPocketEq}[bgm_clean]`);
                         bgmFinalTag = '[bgm_clean]';
                         filterComplex.push(`${bgmFinalTag}[d_mix]amix=inputs=2:normalize=0:duration=longest[final_audio]`);
                     }
                 } else {
                     if (includeOrigAudio) {
                         filterComplex.push(`${origAudioIn}volume=1.0[orig_vol]`);
-                        filterComplex.push(`${bgmFinalTag}[orig_vol][${dialogueInputIndex}:a]amix=inputs=3:normalize=0:duration=longest[final_audio]`);
+                        filterComplex.push(`${bgmFinalTag}[orig_vol]${dialogueTag}amix=inputs=3:normalize=0:duration=longest[final_audio]`);
                     } else {
-                        filterComplex.push(`${bgmFinalTag}[${dialogueInputIndex}:a]amix=inputs=2:normalize=0:duration=longest[final_audio]`);
+                        filterComplex.push(`${bgmFinalTag}${dialogueTag}amix=inputs=2:normalize=0:duration=longest[final_audio]`);
                     }
                 }
             } else {
                 if (includeOrigAudio) {
                     filterComplex.push(`${origAudioIn}volume=1.0[orig_vol]`);
                     if (isDucking) {
-                        filterComplex.push(`[${dialogueInputIndex}:a]asplit=2[d_sc1_raw][d_mix]`);
+                        filterComplex.push(`${dialogueTag}asplit=2[d_sc1_raw][d_mix]`);
                         filterComplex.push(`[d_sc1_raw]apad=whole_dur=${videoDuration.toFixed(3)}[d_sc1]`);
                         filterComplex.push(`[orig_vol][d_sc1]sidechaincompress=${sidechainParams}[orig_ducked]`);
-                        filterComplex.push(`[orig_ducked]equalizer=f=1100:t=q:w=1.5:g=-6[orig_clean]`);
+                        filterComplex.push(`[orig_ducked]${duckingPocketEq}[orig_clean]`);
                         filterComplex.push(`[orig_clean][d_mix]amix=inputs=2:normalize=0:duration=longest[final_audio]`);
                     } else {
-                        filterComplex.push(`[orig_vol][${dialogueInputIndex}:a]amix=inputs=2:normalize=0:duration=longest[final_audio]`);
+                        filterComplex.push(`${origAudioIn}${dialogueTag}amix=inputs=2:normalize=0:duration=longest[final_audio]`);
                     }
                 } else {
-                    filterComplex.push(`[${dialogueInputIndex}:a]anull[final_audio]`);
+                    filterComplex.push(`${dialogueTag}anull[final_audio]`);
                 }
             }
         } else if (bgmInputIndex >= 0) {
