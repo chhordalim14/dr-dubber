@@ -1244,8 +1244,8 @@ function resolveGeminiModel(modelName) {
     if (m === 'gemini-3.1-flash-lite' || m.includes('3.1-flash-lite') || m.includes('3.1-lite')) return 'gemini-3.1-flash-lite';
     // Shut down (or never a Gemini API model): an older saved setting gets Google's replacement.
     if (m === 'gemini-3.1-flash' || m.includes('3.1-flash') || m.includes('3.1')) return 'gemini-3.8-flash';
-    if (m === 'gemini-2.5-pro' || m.includes('2.5-pro')) return 'gemini-2.5-pro';
-    if (m.includes('2.5-flash') || m === 'gemini-2.5-flash') return 'gemini-2.5-flash';
+    if (m.includes('2.5-pro')) return 'gemini-3.1-pro-preview';
+    if (m.includes('2.5-flash')) return 'gemini-3.8-flash';
     if (m.includes('2.0-flash-lite') || m.includes('2.0-lite')) return 'gemini-3.1-flash-lite';
     if (m === 'gemini-2.0-flash' || m.includes('2.0-flash') || m.includes('2.0')) return 'gemini-3.6-flash';
     if (m.includes('1.5-pro') || m.includes('1.5-flash')) return 'gemini-3.8-flash';
@@ -1253,11 +1253,12 @@ function resolveGeminiModel(modelName) {
 }
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
-const GEMINI_ATTEMPT_TIMEOUT_MS = 240000;
+// 65s timeout: if Google hasn't answered within 65s, it is overloaded (hanging) - fail over
+// quickly to a responsive fallback model instead of wasting 4 minutes on a dead request.
+const GEMINI_ATTEMPT_TIMEOUT_MS = 65000;
 // Short text-only requests (shorten rushed lines, re-translate up to 40 lines, read the names)
-// answer well within this. When Google is overloaded such a request can hang with no answer at
-// all, and waiting the full 4 minutes held up a whole Dub Whole Series step each time.
-const GEMINI_TEXT_TIMEOUT_MS = 120000;
+// answer well within this.
+const GEMINI_TEXT_TIMEOUT_MS = 45000;
 const geminiModelListCache = new Map(); // apiKey -> { at, models: Set<string> }
 
 // Ask Google which models this key can actually call, so we never burn retries on
@@ -1287,14 +1288,16 @@ function rankGeminiFallbacks(available) {
     const parsed = [];
     for (const name of available) {
         if (GEMINI_ROUTED_MODELS[name]) continue;
+        // Skip 2.5 / 2.0 / 1.5 - Google returns 404 ("no longer available to new users")
+        if (name.includes('2.5') || name.includes('2.0') || name.includes('1.5')) continue;
         // Dated previews only ("-preview-09-2025"); skips -tts, -image, -live variants and
         // -transcribe (audio only: it refuses a prompt and JSON, so every request to it failed).
-        const m = name.match(/^gemini-(\d+(?:\.\d+)?)-(flash|pro)(?:-(latest|preview(?:-\d[\d-]*)?))?$/);
+        const m = name.match(/^gemini-(\d+(?:\.\d+)?)-(flash(?:-lite)?|pro)(?:-(latest|preview(?:-\d[\d-]*)?))?$/);
         if (!m) continue;
         parsed.push({ name, version: parseFloat(m[1]), tier: m[2], tag: m[3] || '' });
     }
     parsed.sort((a, b) =>
-        (a.tier === 'flash' ? 0 : 1) - (b.tier === 'flash' ? 0 : 1) ||
+        (a.tier.startsWith('flash') ? 0 : 1) - (b.tier.startsWith('flash') ? 0 : 1) ||
         (a.tag ? 1 : 0) - (b.tag ? 1 : 0) ||
         b.version - a.version);
     return parsed.map(p => p.name);
@@ -1614,16 +1617,13 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { 
             } catch (fetchErr) {
                 if (fetchErr.name === 'AbortError' && signal && signal.aborted) throw fetchErr;
                 if (fetchErr.code === 'TIMEOUT') {
-                    // No answer in time over a working connection: Google is too busy to answer
-                    // this model now - the same as a 503, not a dead network. Stop here: each
-                    // other model could hang just as long. The caller retries, asking the models
-                    // that are answering first.
+                    // No answer in time over a working connection: Google is busy on this model.
+                    // Mark it busy, record the overload, and break to try the next candidate model immediately.
                     geminiBusyModels.set(m, Date.now());
-                    console.warn(`[Gemini] ${m}: ${fetchErr.message} - Google is busy`);
-                    const msg = `${fetchErr.message} - Google is busy`;
-                    const cooling = (x) => { const c = geminiModelCooldowns.get(`${apiKey}|${x}`); return !!(c && c.until > Date.now()); };
-                    const otherModelsLimited = !stayOnModel && !usableModels.some(x => x !== m && !cooling(x));
-                    return { success: false, status: 503, code: 'OVERLOADED', error: msg, message: msg, ...(otherModelsLimited ? { otherModelsLimited } : {}) };
+                    console.warn(`[Gemini] ${m}: ${fetchErr.message} - Google is busy, trying next candidate model`);
+                    sawOverload = true;
+                    if (!primaryError) primaryError = { status: 503, code: 'OVERLOADED', error: `${m} timed out - Google is busy`, message: `${m}: Google is busy` };
+                    break;
                 }
                 const cause = fetchErr.cause && (fetchErr.cause.code || fetchErr.cause.message);
                 const msg = fetchErr.code === 'TIMEOUT'
@@ -1938,10 +1938,8 @@ const TRANSCRIBE_SINGLE_MAX_SEC = 240;
 const SAVER_CHUNK_TARGET_SEC = 540;
 const SAVER_SINGLE_MAX_SEC = 600;
 // Actual lane count is still min()'d against keyPool.length elsewhere, so this is just
-// a ceiling. It used to be 4, which silently capped throughput (and daily-quota spread)
-// at 4 keys no matter how many a user added in Settings - raised so adding keys actually
-// helps both speed and quota headroom.
-const TRANSCRIBE_MAX_LANES = 12;
+// a ceiling. Raised to 24 so pools with up to 20+ keys can run all lanes in parallel.
+const TRANSCRIBE_MAX_LANES = 24;
 const transcribeProgress = new Map(); // requestId -> { done, total }
 const TRANSCRIBE_EMOTIONS = ['Neutral', 'Angry', 'Sad', 'Whisper', 'Excited', 'Royal', 'Romantic', 'Fear'];
 const TRANSCRIBE_RESPONSE_SCHEMA = {
@@ -2528,7 +2526,7 @@ async function tryKeysOnce(keys, call) {
         // keys: a part asked one key's busy model every 30s for 9+ minutes while the other keys
         // still had gemini-3.6/3.7-flash requests left.
         if (out.result && (out.result.code === 'OVERLOADED' || Number(out.result.status) === 503)) {
-            if (!out.result.otherModelsLimited) return out;
+            if (!out.result.otherModelsLimited && keys.length <= 1) return out;
             if (!transientOut || transientOut.result.error === 'RATE_LIMIT_EXCEEDED') transientOut = out;
             continue;
         }
