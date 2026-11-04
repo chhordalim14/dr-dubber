@@ -1238,15 +1238,13 @@ function resolveGeminiModel(modelName) {
     // Google answers it with anyway.
     if (m === 'gemini-3.7-flash' || m.includes('3.7-flash') || m.includes('3.7')) return 'gemini-3.8-flash';
     if (m === 'gemini-3.6-flash' || m.includes('3.6-flash') || m.includes('3.6')) return 'gemini-3.6-flash';
-    if (m === 'gemini-3.5-flash-lite' || m.includes('3.5-flash-lite') || m.includes('3.5-lite')) return 'gemini-3.5-flash-lite';
+    if (m === 'gemini-3.1-pro-preview' || m === 'gemini-3.1-pro' || m.includes('3.1-pro') || m.includes('2.5-pro')) return 'gemini-3.1-pro-preview';
+    // Lite models produce broken Unicode, wrong pronouns and unreadable Khmer; route to 3.8 Flash.
+    if (m.includes('flash-lite') || m.includes('-lite') || m.includes('lite')) return 'gemini-3.8-flash';
     if (m === 'gemini-3.5-flash' || m.includes('3.5-flash') || m.includes('3.5')) return 'gemini-3.6-flash';
-    if (m === 'gemini-3.1-pro-preview' || m === 'gemini-3.1-pro' || m.includes('3.1-pro')) return 'gemini-3.1-pro-preview';
-    if (m === 'gemini-3.1-flash-lite' || m.includes('3.1-flash-lite') || m.includes('3.1-lite')) return 'gemini-3.1-flash-lite';
     // Shut down (or never a Gemini API model): an older saved setting gets Google's replacement.
     if (m === 'gemini-3.1-flash' || m.includes('3.1-flash') || m.includes('3.1')) return 'gemini-3.8-flash';
-    if (m.includes('2.5-pro')) return 'gemini-3.1-pro-preview';
-    if (m.includes('2.5-flash')) return 'gemini-3.8-flash';
-    if (m.includes('2.0-flash-lite') || m.includes('2.0-lite')) return 'gemini-3.1-flash-lite';
+    if (m.includes('2.5-flash') || m.includes('2.5')) return 'gemini-3.8-flash';
     if (m === 'gemini-2.0-flash' || m.includes('2.0-flash') || m.includes('2.0')) return 'gemini-3.6-flash';
     if (m.includes('1.5-pro') || m.includes('1.5-flash')) return 'gemini-3.8-flash';
     return m;
@@ -1289,15 +1287,16 @@ function rankGeminiFallbacks(available) {
     for (const name of available) {
         if (GEMINI_ROUTED_MODELS[name]) continue;
         // Skip 2.5 / 2.0 / 1.5 - Google returns 404 ("no longer available to new users")
-        if (name.includes('2.5') || name.includes('2.0') || name.includes('1.5')) continue;
+        // Skip flash-lite models - they produce unreadable/garbled Khmer dubbing lines
+        if (name.includes('2.5') || name.includes('2.0') || name.includes('1.5') || name.includes('-lite')) continue;
         // Dated previews only ("-preview-09-2025"); skips -tts, -image, -live variants and
         // -transcribe (audio only: it refuses a prompt and JSON, so every request to it failed).
-        const m = name.match(/^gemini-(\d+(?:\.\d+)?)-(flash(?:-lite)?|pro)(?:-(latest|preview(?:-\d[\d-]*)?))?$/);
+        const m = name.match(/^gemini-(\d+(?:\.\d+)?)-(flash|pro)(?:-(latest|preview(?:-\d[\d-]*)?))?$/);
         if (!m) continue;
         parsed.push({ name, version: parseFloat(m[1]), tier: m[2], tag: m[3] || '' });
     }
     parsed.sort((a, b) =>
-        (a.tier.startsWith('flash') ? 0 : 1) - (b.tier.startsWith('flash') ? 0 : 1) ||
+        (a.tier === 'flash' ? 0 : 1) - (b.tier === 'flash' ? 0 : 1) ||
         (a.tag ? 1 : 0) - (b.tag ? 1 : 0) ||
         b.version - a.version);
     return parsed.map(p => p.name);
@@ -1307,8 +1306,8 @@ async function getCandidateModels(apiKey, requestedModel, signal) {
     const primary = resolveGeminiModel(requestedModel);
     const available = await listGeminiModels(apiKey, signal);
     if (!available) {
-        // (2.5 Flash / Pro answer only keys that used them before, so they aren't guessed here.)
-        return [primary, 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-pro-preview']
+        // (2.5 Flash / Pro answer only keys that used them before; lite models produce bad Khmer)
+        return [primary, 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.1-pro-preview']
             .filter((v, i, a) => a.indexOf(v) === i);
     }
     const ranked = rankGeminiFallbacks(available);

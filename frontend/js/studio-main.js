@@ -8502,10 +8502,10 @@
     const loadSettings = async () => {
       // Default to Gemini 3.8 Flash (Latest workhorse model)
       let savedModel = localStorage.getItem("aiDubberModel") || "gemini-3.8-flash";
-      if (savedModel === "gemini-3.1-pro") {
+      if (savedModel === "gemini-3.1-pro" || savedModel.includes("2.5-pro")) {
         savedModel = "gemini-3.1-pro-preview";
       }
-      if (savedModel === "gemini-2.0-flash") {
+      if (savedModel.includes("lite") || savedModel.includes("2.5-flash") || savedModel === "gemini-2.0-flash") {
         savedModel = "gemini-3.8-flash";
       }
       // Retired Oct 8, 2026: Google answers them with these models anyway.
