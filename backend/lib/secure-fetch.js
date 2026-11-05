@@ -39,7 +39,21 @@ try {
     }
 } catch (e) { /* not running inside Electron */ }
 
-function secureFetch(url, options) {
+let ProxyAgentClass = null;
+try {
+    ProxyAgentClass = require('undici').ProxyAgent;
+} catch (e) {}
+
+function secureFetch(url, options = {}) {
+    if (options && options.proxy && ProxyAgentClass) {
+        try {
+            const { proxy, ...rest } = options;
+            const dispatcher = new ProxyAgentClass(proxy);
+            return fetch(url, { ...rest, dispatcher });
+        } catch (err) {
+            console.warn('[secure-fetch] ProxyAgent initialization error, falling back to direct:', err.message);
+        }
+    }
     if (electronNet && !ALLOW_INSECURE_TLS) {
         return electronNet.fetch(url, options);
     }

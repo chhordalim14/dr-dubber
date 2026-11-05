@@ -49,6 +49,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     loadPresets: () => ipcRenderer.invoke('preset:load'),
     deletePreset: (id) => ipcRenderer.invoke('preset:delete', id),
 
+    // DR Router PRO
+    drRouterGoogleLogin: () => ipcRenderer.invoke('dr-router:googleLogin'),
+
     // Window Controls
     minimizeWindow: () => ipcRenderer.send('window:minimize'),
     maximizeWindow: () => ipcRenderer.send('window:maximize'),

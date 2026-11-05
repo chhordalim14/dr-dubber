@@ -3577,8 +3577,9 @@
                     <!-- Text -->
                     <div class="flex flex-col items-center gap-1.5">
                         <div class="text-[var(--text-bright)] font-semibold text-base tracking-wide">${loadingTitle}</div>
-                        <div class="text-[var(--text-muted)] text-xs">${loadingSubtitle}</div>
+                        ${isWhisperEngine || !window.transcribeStepper ? `<div class="text-[var(--text-muted)] text-xs">${loadingSubtitle}</div>` : ""}
                         ${isWhisperEngine ? '<div class="text-[var(--accent-primary)] text-[11px] font-mono tabular-nums mt-1" id="transcribe-elapsed">00:00</div>' : ""}
+                        ${!isWhisperEngine && window.transcribeStepper ? window.transcribeStepper.html(activeProjForLoadingUI && activeProjForLoadingUI._transcribeProgress) : ""}
                     </div>
 
                 </div>
@@ -3808,6 +3809,7 @@
       let apiKeys = [];
       {
         apiKeys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]");
+        if (window.drPool) apiKeys = window.drPool.merge(apiKeys); // DR Router's ready accounts too
         if (apiKeys.length === 0 && engineMode === "whisper" && window.textAi?.ready()) {
           apiKeys = [""]; // one pass of the translate loop below; the server uses the CodeCraft key
         } else if (apiKeys.length === 0) {
@@ -4121,8 +4123,11 @@
 
               // Long videos are split into chunks on the server; show "Stop (3/20)" on the button.
               let lastProgressNote = null; // toast each "Google is busy" note once
+              targetProject._transcribeProgress = null; // the loading screen's steps start at Extract
               const progressTimer = window.backendJobs.pollEvery(2000, async (pollSignal) => {
                 const p = await (await fetch(`http://localhost:3001/api/transcribe-progress?requestId=${encodeURIComponent(targetProject.geminiRequestId || "")}`, { signal: pollSignal })).json();
+                targetProject._transcribeProgress = p;
+                if (projects[activeProjectIndex] === targetProject && window.transcribeStepper) window.transcribeStepper.update(p);
                 const label = document.getElementById("text-transcribe");
                 if (p.success && p.total > 1 && label && projects[activeProjectIndex] === targetProject) label.textContent = `Stop (${p.done}/${p.total})`;
                 if (p.success && p.note && p.note !== lastProgressNote && projects[activeProjectIndex] === targetProject) {
@@ -4281,7 +4286,11 @@
     const btnFixMissing = document.getElementById("btn-fix-missing");
     let fixMissingAllRun = null; // { stopped, requestIds } while "Fix Missing: All Tabs" runs
 
-    const getGeminiKeys = () => JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]").filter(Boolean);
+    // Settings keys, then DR Router's ready pool accounts (window.drPool, dr-router-modal.js).
+    const getGeminiKeys = () => {
+      const own = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]").filter(Boolean);
+      return window.drPool ? window.drPool.merge(own) : own;
+    };
     const projectTabName = (p) => p.tabTitle || (p.file?.name || p.name || `Tab ${projects.indexOf(p) + 1}`).replace(/\.[^/.]+$/, "");
     // The open tab's live list is the global `subtitles`; other tabs keep theirs on the project.
     const liveSubtitlesOf = (p) => (projects[activeProjectIndex] === p ? subtitles : p.subtitles || []);
@@ -4997,9 +5006,10 @@
           return;
         }
       } else {
-        const apiKeys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]");
+        let apiKeys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]");
+        if (window.drPool) { await window.drPool.refresh(); apiKeys = window.drPool.merge(apiKeys); }
         if (apiKeys.length === 0) {
-          showToast("Please add at least one Gemini API Key in Settings.", "error");
+          showToast("Please add at least one Gemini API Key in Settings, or an account in DR Router.", "error");
           document.getElementById("btn-open-settings")?.click();
           return;
         }
@@ -19358,6 +19368,7 @@
       let keys = [];
       try { keys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]"); } catch (_) { keys = []; }
       keys = (Array.isArray(keys) ? keys : []).map((k) => String(k || "").trim()).filter(Boolean);
+      if (window.drPool) keys = window.drPool.merge(keys); // DR Router's ready accounts too
       return { keys, model: localStorage.getItem("aiDubberModel") || "gemini-3.8-flash" };
     }
 

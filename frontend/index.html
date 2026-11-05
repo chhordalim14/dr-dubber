@@ -1258,6 +1258,10 @@
     </button>
     <!-- Header actions, left to right: tools · output · app -->
     <div class="app-header__actions">
+      <button type="button" id="btn-open-dr-router" class="hdr-btn hdr-btn--outline" title="DR Router PRO - Multi-Account Router">
+        <span class="w-2 h-2 rounded-full bg-amber-400 mr-1 shadow-[0_0_8px_#f59e0b] animate-pulse"></span>
+        <span class="font-bold text-amber-300">DR Router PRO</span>
+      </button>
       <div class="hdr-menu-wrap">
         <button type="button" class="hdr-btn hdr-btn--outline" data-hdr-menu="hdr-tools-menu" aria-haspopup="true" aria-expanded="false" title="AI &amp; Creative Tools">
           <i data-lucide="zap" class="w-4 h-4 text-amber-400"></i>
@@ -1265,6 +1269,9 @@
         </button>
         <div id="hdr-tools-menu" class="hdr-menu" hidden>
           <p class="hdr-menu__title">AI Studio Tools</p>
+          <button id="btn-open-dr-router-tools" type="button" class="hdr-menu__item" title="DR Router PRO - Multi-Account Router">
+            <i data-lucide="layers" class="text-amber-400"></i><span>DR Router PRO</span>
+          </button>
           <button id="btn-open-title-ai" type="button" class="hdr-menu__item" title="Khmer Movie Title Suggestions">
             <i data-lucide="sparkles" class="hdr-menu__magic"></i><span>Movie Title Ideas</span>
           </button>
@@ -4997,12 +5004,19 @@
                 <h3 class="text-base font-bold text-[var(--text-bright)] tracking-wide">Gemini API Keys</h3>
                 <p class="text-xs text-[var(--text-secondary)]">Failover setup for AI Transcription.</p>
               </div>
-              <button onclick="window.electronAPI?.openExternalUrl('https://aistudio.google.com/api-keys')"
-                class="group shrink-0 inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-md bg-[var(--accent-primary)]/15 border border-[var(--accent-primary)]/30 text-[var(--accent-text)] transition-all duration-300 ease-out hover:bg-[var(--accent-primary)]/25 hover:-translate-y-0.5 hover:shadow-lg active:scale-90">
-                <i data-lucide="key"
-                  class="w-3.5 h-3.5 transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-12 group-active:scale-90"></i>
-                Get API Key
-              </button>
+              <div class="flex items-center gap-2">
+                <button type="button" onclick="window.openDRRouterModal?.()"
+                  class="group shrink-0 inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-md bg-amber-500/15 border border-amber-500/30 text-amber-300 transition-all duration-300 hover:bg-amber-500/25 hover:shadow-lg active:scale-95">
+                  <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+                  DR Router PRO
+                </button>
+                <button onclick="window.electronAPI?.openExternalUrl('https://aistudio.google.com/api-keys')"
+                  class="group shrink-0 inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-md bg-[var(--accent-primary)]/15 border border-[var(--accent-primary)]/30 text-[var(--accent-text)] transition-all duration-300 ease-out hover:bg-[var(--accent-primary)]/25 hover:-translate-y-0.5 hover:shadow-lg active:scale-90">
+                  <i data-lucide="key"
+                    class="w-3.5 h-3.5 transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-12 group-active:scale-90"></i>
+                  Get API Key
+                </button>
+              </div>
             </div>
 
             <div class="flex gap-2">
@@ -6538,6 +6552,7 @@
   <script src="js/timeline-visuals.js"></script>
   <script src="js/backend-jobs.js"></script>
   <script src="js/vox-groups.js"></script>
+<script src="js/transcribe-stepper.js"></script>
 <script src="js/studio-main.js"></script>
 <script src="js/vox-gallery.js"></script>
 <script src="js/voice-capture.js"></script>
@@ -6702,6 +6717,7 @@
     </div>
   </div>
   <script src="js/dai-transcribe-studio.js"></script>
+  <script src="js/dr-router-modal.js"></script>
   <!-- Last: translates the UI once the app has built it -->
   <script src="js/i18n-km.js"></script>
   <script src="js/i18n.js"></script>

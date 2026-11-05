@@ -10,7 +10,7 @@ const {
 } = require('../backend/lib/khmer-prompts');
 
 // A Windows checkout has CRLF; the multi-line searches below are written with \n.
-const serverSource = fs.readFileSync(path.join(__dirname, '..', 'backend', 'server.js'), 'utf8').replace(/\r\n/g, '\n');
+const serverSource = fs.readFileSync(path.join(__dirname, '..', 'backend', 'routes', 'gemini.js'), 'utf8').replace(/\r\n/g, '\n');
 
 describe('dubbing rules do not contradict each other', () => {
     test('"តើ" is banned at the start of questions and not offered as a particle', () => {
@@ -178,7 +178,7 @@ describe('Khmer review pass', () => {
         for (const tag of ['Transcribe', 'Translate']) {
             const at = serverSource.indexOf(`usage: promptOpts.usage, tag: '${tag}'`) >= 0
                 ? serverSource.indexOf(`usage: promptOpts.usage, tag: '${tag}'`)
-                : serverSource.indexOf(`usage, tag: '${tag}'\n                });\n            }\n            fitted`);
+                : serverSource.search(new RegExp(`usage, tag: '${tag}'\\s*\\}\\);\\s*\\}\\s*fitted`));
             assert.ok(at > 0, `${tag} reviews its lines`);
         }
         assert.equal((serverSource.match(/if \(review !== false\)/g) || []).length, 2);

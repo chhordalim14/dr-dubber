@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, session } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, session, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -677,6 +677,243 @@ handle('app:getDeviceFingerprint', async () => {
 
 handle('app:confirmQuit', async () => {
     return { confirmed: true };
+});
+
+// DR Router PRO - One-Click Google Account Sign-In
+handle('dr-router:googleLogin', async () => {
+    return new Promise(async (resolve) => {
+        const partitionId = `temp_dr_router_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        const chromeUA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
+        // Configure session user-agent and headers before window creation
+        const ses = session.fromPartition(partitionId);
+        ses.setUserAgent(chromeUA);
+        ses.webRequest.onBeforeSendHeaders((details, callback) => {
+            const headers = { ...details.requestHeaders };
+            headers['User-Agent'] = chromeUA;
+            delete headers['sec-ch-ua'];
+            delete headers['sec-ch-ua-mobile'];
+            delete headers['sec-ch-ua-platform'];
+            callback({ requestHeaders: headers });
+        });
+
+        const loginWin = new BrowserWindow({
+            width: 580,
+            height: 740,
+            title: 'Sign in to Google Account — DR Router PRO',
+            autoHideMenuBar: true,
+            webPreferences: {
+                partition: partitionId,
+                nodeIntegration: false,
+                contextIsolation: true
+            }
+        });
+
+        loginWin.webContents.setUserAgent(chromeUA);
+
+        loginWin.webContents.on('did-fail-load', (e, code, desc, url) => {
+            console.warn('[DR Router Login] did-fail-load:', code, desc, url);
+        });
+
+        // Clean ServiceLogin URL with account chooser prompt so user can enter any Gmail
+        loginWin.loadURL('https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Faistudio.google.com%2Fapp%2Fapikey&service=wise');
+
+        let resolved = false;
+        const finish = (result) => {
+            if (resolved) return;
+            resolved = true;
+            try { if (!loginWin.isDestroyed()) loginWin.close(); } catch (e) {}
+            resolve(result);
+        };
+
+        loginWin.on('closed', () => {
+            if (!resolved) {
+                finish({ success: false, error: 'Login window closed.' });
+            }
+        });
+
+        let lastDetectedEmail = '';
+        let hasRedirectedToKeys = false;
+        // A key already on the clipboard belongs to some earlier account - only a newly copied key counts.
+        const clipKeyAtStart = ((clipboard.readText() || '').match(/AIzaSy[A-Za-z0-9_-]{33}/) || [])[0] || '';
+
+        // Monitor navigation & page content on aistudio.google.com
+        const intervalId = setInterval(async () => {
+            if (loginWin.isDestroyed() || resolved) {
+                clearInterval(intervalId);
+                return;
+            }
+            try {
+                // Check if key was copied to clipboard
+                const clip = (clipboard.readText() || '').trim();
+                const clipMatch = clip.match(/AIzaSy[A-Za-z0-9_-]{33}/);
+                if (clipMatch && clipMatch[0] !== clipKeyAtStart) {
+                    clearInterval(intervalId);
+                    finish({
+                        success: true,
+                        email: lastDetectedEmail || 'account@gmail.com',
+                        apiKey: clipMatch[0]
+                    });
+                    return;
+                }
+
+                const currentUrl = loginWin.webContents.getURL();
+                if (currentUrl.includes('aistudio.google.com')) {
+                    // If landed on main dashboard/chat instead of keys page, navigate to keys
+                    if (!hasRedirectedToKeys && !currentUrl.includes('/apikey') && !currentUrl.includes('/api-keys')) {
+                        hasRedirectedToKeys = true;
+                        setTimeout(() => {
+                            try {
+                                if (!loginWin.isDestroyed() && !resolved) {
+                                    loginWin.loadURL('https://aistudio.google.com/app/apikey');
+                                }
+                            } catch (e) {}
+                        }, 1200);
+                    }
+
+                    const data = await loginWin.webContents.executeJavaScript(`
+                        (function() {
+                            // Hook clipboard writeText so clicking "Copy" or "Copy Key" in AI Studio captures it instantly
+                            if (!window.__drHooked) {
+                                window.__drHooked = true;
+                                window.__drCapturedKey = '';
+                                if (navigator.clipboard && navigator.clipboard.writeText) {
+                                    const orig = navigator.clipboard.writeText.bind(navigator.clipboard);
+                                    navigator.clipboard.writeText = function(text) {
+                                        if (typeof text === 'string') {
+                                            const m = text.match(/AIzaSy[A-Za-z0-9_-]{33}/);
+                                            if (m) window.__drCapturedKey = m[0];
+                                        }
+                                        return orig(text);
+                                    };
+                                }
+                            }
+
+                            // Inject top helper banner
+                            if (!document.getElementById('__dr_router_bar')) {
+                                const bar = document.createElement('div');
+                                bar.id = '__dr_router_bar';
+                                bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#0c0e17;border-bottom:2px solid #f59e0b;color:#f8fafc;padding:10px 16px;display:flex;align-items:center;justify-content:space-between;font-family:sans-serif;font-size:12px;box-shadow:0 4px 20px rgba(0,0,0,0.8);';
+                                bar.innerHTML = \`
+                                  <div style="display:flex;align-items:center;gap:10px;">
+                                    <span style="background:#f59e0b;color:#000;font-weight:900;padding:2px 8px;border-radius:4px;font-size:11px;">DR ROUTER</span>
+                                    <span>Signed in! Click <b>"Create API key"</b> (or the <b>Copy icon</b>) to link this account.</span>
+                                  </div>
+                                  <div style="display:flex;align-items:center;gap:8px;">
+                                    <button id="__dr_switch_btn" style="background:#2563eb;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-weight:700;cursor:pointer;font-size:11px;">+ Add Another Gmail</button>
+                                    <a href="https://aistudio.google.com/app/apikey" style="background:#f59e0b;color:#000;padding:5px 12px;border-radius:6px;font-weight:700;text-decoration:none;font-size:11px;">API Keys ➔</a>
+                                  </div>
+                                \`;
+                                document.body.prepend(bar);
+                                document.body.style.paddingTop = '46px';
+
+                                const switchBtn = document.getElementById('__dr_switch_btn');
+                                if (switchBtn) {
+                                    switchBtn.onclick = () => {
+                                        window.location.href = 'https://accounts.google.com/AccountChooser?continue=https%3A%2F%2Faistudio.google.com%2Fapp%2Fapikey';
+                                    };
+                                }
+                            }
+
+                            // Extract email
+                            let email = '';
+                            const emailElem = document.querySelector('[data-email]') || 
+                                              document.querySelector('.gb_d') ||
+                                              document.querySelector('.gb_e') ||
+                                              document.querySelector('.gb_A') ||
+                                              document.querySelector('div[aria-label*="@"]') ||
+                                              document.querySelector('button[aria-label*="@"]');
+                            if (emailElem) {
+                                const aria = emailElem.getAttribute('aria-label') || '';
+                                const match = aria.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})/);
+                                if (match) email = match[1];
+                                else if (emailElem.dataset.email) email = emailElem.dataset.email;
+                            }
+                            if (!email) {
+                                const textMatch = document.body.innerText.match(/([a-zA-Z0-9._%+-]+@gmail\\.com)/);
+                                if (textMatch) email = textMatch[1];
+                            }
+
+                            // Auto-accept Terms of Service if modal is shown
+                            const tosButtons = Array.from(document.querySelectorAll('button, a'));
+                            const agreeBtn = tosButtons.find(b => {
+                                const t = (b.innerText || '').toLowerCase().trim();
+                                return t === 'i agree' || t === 'agree and continue' || t === 'get started' || t === 'continue';
+                            });
+                            if (agreeBtn && !agreeBtn.dataset.drClicked) {
+                                agreeBtn.dataset.drClicked = 'true';
+                                agreeBtn.click();
+                            }
+
+                            // Check captured key first
+                            let apiKey = window.__drCapturedKey || '';
+
+                            // Auto-click Copy icon or Create API key automatically
+                            if (!apiKey) {
+                                // 1. Try clicking existing Copy button
+                                const copyBtn = document.querySelector('button[aria-label*="Copy"]') || 
+                                                document.querySelector('button[title*="Copy"]') ||
+                                                Array.from(document.querySelectorAll('button')).find(b => (b.innerText || '').toLowerCase().includes('copy') || b.innerHTML.includes('content_copy'));
+                                if (copyBtn && !copyBtn.dataset.drClicked) {
+                                    copyBtn.dataset.drClicked = 'true';
+                                    copyBtn.click();
+                                }
+
+                                // 2. Try clicking "Create API key"
+                                const createBtn = Array.from(document.querySelectorAll('button, a')).find(b => {
+                                    const t = (b.innerText || '').toLowerCase().trim();
+                                    return t.includes('create api key') || t.includes('create key in new project') || t.includes('create key');
+                                });
+                                if (createBtn && !createBtn.dataset.drClicked) {
+                                    createBtn.dataset.drClicked = 'true';
+                                    createBtn.click();
+                                }
+                            }
+
+                            // Search all inputs, textareas, code, pre tags
+                            if (!apiKey) {
+                                const keyElements = Array.from(document.querySelectorAll('input, textarea, code, pre, span, div'));
+                                for (const el of keyElements) {
+                                    const val = el.value || el.innerText || '';
+                                    const m = val.match(/AIzaSy[A-Za-z0-9_-]{33}/);
+                                    if (m) { apiKey = m[0]; break; }
+                                }
+                            }
+
+                            // If key found, update banner to success
+                            if (apiKey) {
+                                const bar = document.getElementById('__dr_router_bar');
+                                if (bar) {
+                                    bar.style.background = '#064e3b';
+                                    bar.style.borderBottomColor = '#10b981';
+                                    bar.innerHTML = '<span style="color:#34d399;font-weight:bold;font-size:13px;">✅ API Key captured! Linking account to DR Router PRO...</span>';
+                                }
+                            }
+
+                            return { email, apiKey };
+                        })()
+                    `);
+
+                    if (data && data.email && !lastDetectedEmail) {
+                        lastDetectedEmail = data.email;
+                    }
+
+                    if (data && data.apiKey) {
+                        clearInterval(intervalId);
+                        setTimeout(() => {
+                            finish({
+                                success: true,
+                                email: data.email || lastDetectedEmail || 'account@gmail.com',
+                                apiKey: data.apiKey
+                            });
+                        }, 800);
+                    }
+                }
+            } catch (err) {
+                // Ignore cross-origin frame execution errors during Google auth redirects
+            }
+        }, 1200);
+    });
 });
 
 // Whisper Local Transcription Handlers

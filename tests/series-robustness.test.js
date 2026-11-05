@@ -57,11 +57,12 @@ test('Transcribe step: lines still in Chinese trigger Fix Missing; empty tabs ar
 });
 
 test('the series\' Direct transcription leaves timing to the later steps; incomplete results are not kept', () => {
-    assert.match(serverSrc, /const fitted = fitToTime === false \? 0 : await fitOverlongLines\(\{/);
+    const geminiSrc = read('backend', 'routes', 'gemini.js');
+    assert.match(geminiSrc, /const fitted = fitToTime === false \? 0 : await fitOverlongLines\(\{/);
     const dai = read('frontend', 'js', 'dai-transcribe-studio.js');
     assert.match(dai, /\.\.\.\(forSeries \? \{ fitToTime: false \} : \{\}\)/);
     assert.match(dai, /if \(!item\.reusedSaved && item\.filePath && !incomplete\) \{/);
-    assert.match(serverSrc, /if \(!result\.success\) return lowAnswer \? \{ \.\.\.lowAnswer, truncated: true \} : \{ ok: false, result \};/);
+    assert.match(geminiSrc, /if \(!result\.success\) return lowAnswer \? \{ \.\.\.lowAnswer, truncated: true \} : \{ ok: false, result \};/);
 });
 
 test('a short last part (the joined file itself) shares the series\' character sheet', () => {

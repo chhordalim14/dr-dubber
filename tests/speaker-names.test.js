@@ -46,7 +46,7 @@ test('the speaker names an episode used come back for the next episode of the sa
 // each person from earlier episodes go to Transcribe with the video, and frames of new speakers are
 // kept after it.
 test('Transcribe shows Gemini the cast pictures and keeps frames of the speakers it named', () => {
-    const src = fs.readFileSync(path.join(__dirname, '..', 'backend', 'server.js'), 'utf8').replace(/\r\n/g, '\n');
+    const src = fs.readFileSync(path.join(__dirname, '..', 'backend', 'routes', 'gemini.js'), 'utf8').replace(/\r\n/g, '\n');
     assert.match(src, /const castParts = videoSource \? seriesCastParts\(castDir\(CHARACTER_SHEETS_DIR, sourceFilePath\), seriesSpeakers, seriesSheet\) : \[\];/);
     assert.match(src, /castParts: clipMime === 'video\/mp4' \? castParts : null/, 'only beside the video, not the sound-only gap check');
     assert.match(src, /\.\.\.\(\(promptOpts && promptOpts\.castParts\) \|\| \[\]\),\n\s+\{ inlineData: \{ mimeType, data: audioBase64 \} \}/);
@@ -129,7 +129,7 @@ test('the speakers list keeps one entry per person, counts their lines and keeps
 });
 
 test('Clone Voices and Transcribe use the one name per person', () => {
-    const src = fs.readFileSync(path.join(__dirname, '..', 'backend', 'server.js'), 'utf8');
+    const src = fs.readFileSync(path.join(__dirname, '..', 'backend', 'routes', 'gemini.js'), 'utf8');
     assert.match(src, /allCues\.forEach\(c => \{ if \(c\.speaker\) c\.speaker = speakerNameOf\(c\.speaker\); \}\);/);
     assert.match(src, /people\.sort\(\(a, b\) => \(named\.has\(b\.s\.name\) - named\.has\(a\.s\.name\)\)/, 'main cast pictures first');
     const route = fs.readFileSync(path.join(__dirname, '..', 'backend', 'routes', 'voice-capture.js'), 'utf8');
