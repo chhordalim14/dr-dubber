@@ -1624,7 +1624,86 @@ const REVIEW_RESPONSE_SCHEMA = {
     }
 };
 
-async function reviewKhmerLines({ lines, texts, apply, genre, glossary, glossaryHint = '', sheetHint = '', keyPool, model, signal, usage, tag }) {
+// ── Shared review requests ──
+// A short tab (an episode of ~20 lines) spent a whole review request on its own, though one
+// request takes REVIEW_BATCH lines: on 2026-11-06, 113 episodes made 113 review requests, each
+// less than a quarter full - half of all requests, and Google's free tier allows 20 a day per
+// model per project. Tabs transcribed at the same time (Dub Whole Series: several at once) now
+// share review requests: a review waits until every running transcription has joined, the lines
+// fill a request, or REVIEW_GATHER_MS pass (measured: waits of 20 s would have made 46 requests
+// of the 113). Only reviews with the same model, register, glossary and sheet share.
+const REVIEW_GATHER_MS = 20 * 1000;
+let transcribesRunning = 0;
+const reviewGroups = new Map(); // group key -> { jobs: [], lines, timer }
+
+function sharedReview(groupKey, job) {
+    return new Promise((resolve) => {
+        let g = reviewGroups.get(groupKey);
+        if (g && g.lines + job.items.length > REVIEW_BATCH) { // full: it goes, this tab starts the next
+            flushReviewGroup(groupKey);
+            g = null;
+        }
+        if (!g) {
+            g = { jobs: [], lines: 0, timer: null };
+            reviewGroups.set(groupKey, g);
+            g.timer = setTimeout(() => flushReviewGroup(groupKey), REVIEW_GATHER_MS);
+        }
+        g.jobs.push({ ...job, resolve });
+        g.lines += job.items.length;
+        if (g.lines >= REVIEW_BATCH) flushReviewGroup(groupKey);
+        else flushReviewGroupsIfComplete();
+    });
+}
+
+// Every running transcription is already waiting in a group: nobody else will join.
+function flushReviewGroupsIfComplete() {
+    const waiting = [...reviewGroups.values()].reduce((n, g) => n + g.jobs.length, 0);
+    if (waiting && waiting >= transcribesRunning) [...reviewGroups.keys()].forEach(flushReviewGroup);
+}
+
+// One request for the group's lines (numbered across its tabs); each tab gets its own answers
+// back, numbered as it sent them - or { error } when Gemini didn't answer.
+async function flushReviewGroup(groupKey) {
+    const g = reviewGroups.get(groupKey);
+    if (!g) return;
+    reviewGroups.delete(groupKey);
+    clearTimeout(g.timer);
+    const jobs = g.jobs.filter(j => !(j.signal && j.signal.aborted));
+    g.jobs.filter(j => j.signal && j.signal.aborted).forEach(j => j.resolve({ error: { error: 'CANCELLED' } }));
+    if (!jobs.length) return;
+    const back = new Map();
+    const items = [];
+    jobs.forEach((j, k) => j.items.forEach((it) => { back.set(items.length, { k, i: it.i }); items.push({ ...it, i: items.length }); }));
+    const first = jobs[0];
+    const payload = {
+        systemInstruction: first.systemInstruction,
+        contents: [{ role: 'user', parts: [{ text: buildReviewUserPrompt({ lines: items, glossaryHint: first.glossaryHint, sheetHint: first.sheetHint, previousLines: first.previousLines }) }] }],
+        generationConfig: { responseMimeType: 'application/json', responseSchema: REVIEW_RESPONSE_SCHEMA, maxOutputTokens: 16384 }
+    };
+    if (jobs.length > 1) console.log(`[Review] ${jobs.length} tabs share one request (${items.length} lines)`);
+    let out;
+    try {
+        out = await geminiWithKeys(first.keys, async (key) => {
+            const r = await generateText(key, first.model, payload, null);
+            if (!r.success) return { ok: false, result: r };
+            addTokenUsage(first.usage, r); // counted once, on the first tab's total
+            const parsed = parseJsonArrayLoose(r.text);
+            return Array.isArray(parsed) ? { ok: true, parsed } : { ok: false, result: { status: 502, error: 'JSON_PARSE_ERROR' } };
+        }, null, { retries: GEMINI_RETRY_DELAYS_MS.length });
+    } catch (e) {
+        out = { ok: false, result: { error: e.message } };
+    }
+    const per = jobs.map(() => []);
+    if (out.ok) {
+        for (const item of out.parsed) {
+            const b = back.get(Number(item && item.i));
+            if (b) per[b.k].push({ ...item, i: b.i });
+        }
+    }
+    jobs.forEach((j, k) => j.resolve(out.ok ? { parsed: per[k] } : { error: out.result }));
+}
+
+async function reviewKhmerLines({ lines, texts, apply, genre, glossary, glossaryHint = '', sheetHint = '', keyPool, model, signal, usage, tag, share = false }) {
     const todo = lines.map((_, i) => i).filter(i => texts[i] && KHMER_CHAR_RE.test(texts[i]) && lines[i].source);
     if (!todo.length) return 0;
     const systemInstruction = { parts: [{ text: buildReviewSystemPrompt({ genreGuidance: getKhmerDramaRegisterGuidance(genre || 'historical') }) }] };
@@ -1645,18 +1724,26 @@ async function reviewKhmerLines({ lines, texts, apply, genre, glossary, glossary
         });
         const previousLines = todo.slice(Math.max(0, todo.indexOf(idx[0]) - 6), todo.indexOf(idx[0]))
             .map(i => ({ source: lines[i].source, khmer: texts[i], gender: lines[i].gender }));
-        const payload = {
-            systemInstruction,
-            contents: [{ role: 'user', parts: [{ text: buildReviewUserPrompt({ lines: items, glossaryHint, sheetHint, previousLines }) }] }],
-            generationConfig: { responseMimeType: 'application/json', responseSchema: REVIEW_RESPONSE_SCHEMA, maxOutputTokens: 16384 }
-        };
-        const out = await geminiWithKeys(keys, async (key) => {
-            const r = await generateText(key, model, payload, signal);
-            if (!r.success) return { ok: false, result: r };
-            addTokenUsage(usage, r);
-            const parsed = parseJsonArrayLoose(r.text);
-            return Array.isArray(parsed) ? { ok: true, parsed } : { ok: false, result: { status: 502, error: 'JSON_PARSE_ERROR' } };
-        }, signal, { retries: GEMINI_RETRY_DELAYS_MS.length });
+        let out;
+        if (share && batches.length === 1) {
+            // A short tab: its lines go in a request shared with the other tabs being transcribed.
+            const r = await sharedReview(JSON.stringify([model, genre || 'historical', glossaryHint, sheetHint]),
+                { items, previousLines, keys, model, systemInstruction, glossaryHint, sheetHint, signal, usage });
+            out = r.error ? { ok: false, result: r.error } : { ok: true, parsed: r.parsed };
+        } else {
+            const payload = {
+                systemInstruction,
+                contents: [{ role: 'user', parts: [{ text: buildReviewUserPrompt({ lines: items, glossaryHint, sheetHint, previousLines }) }] }],
+                generationConfig: { responseMimeType: 'application/json', responseSchema: REVIEW_RESPONSE_SCHEMA, maxOutputTokens: 16384 }
+            };
+            out = await geminiWithKeys(keys, async (key) => {
+                const r = await generateText(key, model, payload, signal);
+                if (!r.success) return { ok: false, result: r };
+                addTokenUsage(usage, r);
+                const parsed = parseJsonArrayLoose(r.text);
+                return Array.isArray(parsed) ? { ok: true, parsed } : { ok: false, result: { status: 502, error: 'JSON_PARSE_ERROR' } };
+            }, signal, { retries: GEMINI_RETRY_DELAYS_MS.length });
+        }
         if (!out.ok) {
             failed += idx.length;
             console.warn(`[${tag}] Review of lines ${idx[0] + 1}-${idx[idx.length - 1] + 1} skipped: ${out.result.message || out.result.error}`);
@@ -2006,6 +2093,7 @@ function createGeminiRouter(options = {}) {
         const abortCtrl = new AbortController();
         if (requestId) activeTranscribeRequests.set(requestId, abortCtrl);
         const workDir = path.join(SEPARATED_DIR, `transcribe_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`);
+        transcribesRunning++; // the review pool waits for the others still running (sharedReview)
 
         try {
             const genreRegister = genre || dramaRegister || 'historical';
@@ -2179,7 +2267,8 @@ function createGeminiRouter(options = {}) {
                     texts: reviewTexts,
                     apply: (i, text) => { allCues[i].text = text; allCues[i]._reviewed = true; },
                     genre: genreRegister, glossary, glossaryHint: userGlossaryHint, sheetHint: formatSheetForPrompt(seriesSheet),
-                    keyPool: textKeys(keyPool), model, signal: abortCtrl.signal, usage: promptOpts.usage, tag: 'Transcribe'
+                    keyPool: textKeys(keyPool), model, signal: abortCtrl.signal, usage: promptOpts.usage, tag: 'Transcribe',
+                    share: true // with the other tabs being transcribed (sharedReview)
                 });
                 progress.note = null;
             }
@@ -2232,6 +2321,8 @@ function createGeminiRouter(options = {}) {
             console.error('[Transcribe] Error:', e);
             res.status(500).json({ success: false, error: e.message });
         } finally {
+            transcribesRunning--;
+            flushReviewGroupsIfComplete(); // a review waiting for this tab need not wait any longer
             if (requestId) {
                 activeTranscribeRequests.delete(requestId);
                 transcribeProgress.delete(requestId);
