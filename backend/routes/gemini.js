@@ -1381,8 +1381,12 @@ async function tryKeysOnce(keys, call) {
         if (out.result && out.result.code === 'NETWORK_ERROR') return out;
         if (out.result && (out.result.code === 'OVERLOADED' || Number(out.result.status) === 503)) {
             // A 503 is the model overloaded for everyone, not this key's fault: the pool account
-            // stays ready (parking it only shrank the pool for the next jobs).
-            if (!out.result.otherModelsLimited && keys.length <= 1) return out;
+            // stays ready (parking it only shrank the pool for the next jobs). The key already
+            // asked every model, so the next key would only ask the same busy models again (seen:
+            // 15 keys x 3 models in a row, 10 min for one 2-minute clip) - the caller waits and
+            // asks again instead. Unless this key's other models are out of quota: another key
+            // may still have them.
+            if (!out.result.otherModelsLimited) return out;
             if (!transientOut || transientOut.result.error === 'RATE_LIMIT_EXCEEDED') transientOut = out;
             continue;
         }

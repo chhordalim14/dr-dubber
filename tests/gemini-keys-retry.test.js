@@ -39,13 +39,22 @@ describe('geminiWithKeys', () => {
     assert.ok(start > 0 && end > start, 'markers moved - update this test');
   });
 
-  test('"high demand" is waited out across keys when multiple keys exist', async () => {
+  test('"high demand" is waited out, not walked through every key (the model is busy for every key)', async () => {
     const { geminiWithKeys, waits } = load();
     const asked = [];
     const out = await geminiWithKeys(['own', 'k2', 'k3'], async (key) => { asked.push(key); return busy; }, null);
     assert.equal(out.ok, false);
-    assert.deepEqual(asked, ['own', 'k2', 'k3', 'own', 'k2', 'k3', 'own', 'k2', 'k3'], 'tries all keys in each round');
+    assert.equal(asked.length, 3, 'one key per round, a wait between rounds');
     assert.deepEqual(waits, [5000, 15000]);
+  });
+
+  test('"high demand", then Google answers: the next round gets it, without asking the other keys first', async () => {
+    const { geminiWithKeys, waits } = load();
+    let n = 0;
+    const out = await geminiWithKeys(['own', 'k2', 'k3'], async (key) => (++n === 1 ? busy : { ok: true, key }), null, { busyBudgetMs: 30 * 60 * 1000 });
+    assert.equal(out.ok, true);
+    assert.equal(n, 2);
+    assert.deepEqual(waits, [5000]);
   });
 
   test('"high demand" does not park DR Router pool accounts (it is Google busy, not the key); a 429 does', async () => {
