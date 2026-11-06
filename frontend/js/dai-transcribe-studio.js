@@ -318,11 +318,13 @@
 
   // The last statuses, kept so the countdowns and the Ready / Resting groups update every
   // second without asking the backend again.
-  let shownKeyStatuses = null; // { statuses, at }
+  let shownKeyStatuses = null; // { statuses, keys, at }
+  let deadKeys = []; // refused by Google for good (deleted service account, invalid / expired key)
   function drawKeyStatuses() {
     if (!shownKeyStatuses) return;
     const elapsed = Date.now() - shownKeyStatuses.at;
     const resting = new Set();
+    deadKeys = shownKeyStatuses.statuses.map((s, idx) => (s.state === 'invalid' && s.dead ? shownKeyStatuses.keys?.[idx] : null)).filter(Boolean);
     shownKeyStatuses.statuses.forEach((s, idx) => {
       const el = document.querySelector(`[data-dai-keystatus="${idx}"]`);
       if (!el) return;
@@ -351,7 +353,12 @@
       head.id = 'api-keys-resting-head';
       head.className = 'text-[10px] font-semibold uppercase tracking-wide text-[var(--text-muted)] pt-2 pb-0.5 px-1';
     }
-    if (head) head.textContent = `Resting · ${resting.size} key${resting.size === 1 ? '' : 's'} skipped until the limit lifts`;
+    if (head) {
+      head.className = 'flex items-center justify-between gap-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--text-muted)] pt-2 pb-0.5 px-1';
+      const html = `<span>Resting · ${resting.size} key${resting.size === 1 ? '' : 's'} skipped until the limit lifts</span>` +
+        (deadKeys.length ? `<button type="button" class="remove-dead-keys normal-case tracking-normal text-[11px] font-semibold px-2 py-0.5 rounded-md border border-rose-500/40 text-rose-400 hover:bg-rose-500/10" title="Google refused these keys for good (a deleted service account, an invalid or expired key) - they are retried every day and refused every time.">Remove ${deadKeys.length} dead key${deadKeys.length === 1 ? '' : 's'}</button>` : '');
+      if (head.dataset.html !== html) { head.innerHTML = html; head.dataset.html = html; }
+    }
     const want = [];
     ordered.forEach((r) => {
       if (head && resting.size && resting.has(idxOf(r)) && !want.includes(head)) want.push(head);
@@ -368,14 +375,28 @@
     if (shownKeyStatuses && document.querySelector('[data-dai-keystatus]')) drawKeyStatuses();
   }, 1000);
 
+  document.addEventListener('click', async (e) => {
+    if (!e.target.closest('.remove-dead-keys') || !deadKeys.length || typeof window.removeGeminiApiKeys !== 'function') return;
+    const removed = await window.removeGeminiApiKeys(deadKeys);
+    if (removed) {
+      showToast(`Removed ${removed} dead key(s).`, 'success');
+      refreshKeyStatuses();
+    }
+  });
+
   // Settings' "Check limits": asks every key once which ones Google limited today (one tiny
   // request each on the transcribe model; a used-up key is refused at no cost).
-  async function checkKeyLimits(btn) {
+  // auto: the one retry it makes by itself when Google was overloaded (3 minutes later).
+  let recheckTimer = null;
+  const RECHECK_MS = 3 * 60 * 1000;
+  async function checkKeyLimits(btn, { auto = false } = {}) {
+    clearTimeout(recheckTimer); // pressed again by hand: that is the retry
+    recheckTimer = null;
     const keys = getActiveApiKeys();
     if (!keys.length) return showToast('Add a Gemini API key first.', 'warning');
     if (btn) btn.disabled = true;
     const model = $('dai-model-select')?.value || getActiveModel();
-    showToast(`Checking ${keys.length} key(s) on ${model}…`, 'info');
+    showToast(auto ? `Checking the keys again on ${model}…` : `Checking ${keys.length} key(s) on ${model}…`, 'info');
     try {
       const res = await fetch(`${getBackendBase()}/api/gemini-check-limits`, {
         method: 'POST',
@@ -384,11 +405,17 @@
       });
       const d = await res.json();
       if (!d.success) throw new Error(d.error || 'check failed');
-      shownKeyStatuses = { statuses: d.keys, at: Date.now() };
+      shownKeyStatuses = { statuses: d.keys, keys, at: Date.now() };
       drawKeyStatuses();
       updateApiStatusDisplay();
       if (d.stoppedBusy) {
-        showToast(`Google is overloaded on ${model} right now - every key answered "high demand", which says nothing about its limits. Stopped after ${d.asked} key(s); try Check limits again in a few minutes.`, 'warning');
+        // "High demand" says nothing about a key's limits: one more try by itself a little later.
+        if (!auto) {
+          recheckTimer = setTimeout(() => checkKeyLimits(null, { auto: true }), RECHECK_MS);
+          showToast(`Google is overloaded on ${model} right now - every key answered "high demand", which says nothing about its limits. Checking again by itself in 3 minutes.`, 'warning');
+        } else {
+          showToast(`Google is still overloaded on ${model}. Press Check limits again later - a series started now would be slow too.`, 'warning');
+        }
         return;
       }
       const parts = [`${d.ready} ready`];
@@ -421,7 +448,7 @@
     if (!Array.isArray(statuses)) return;
 
     // Key list in the API key modal (rows are in the same order as the keys).
-    shownKeyStatuses = { statuses, at: Date.now() };
+    shownKeyStatuses = { statuses, keys, at: Date.now() };
     drawKeyStatuses();
 
     // Header badge: how many keys can take work right now.

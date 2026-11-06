@@ -10608,6 +10608,21 @@
       renderApiKeys();
     });
 
+    // The key list's "Remove dead keys" (dai-transcribe-studio.js draws it in the Resting group):
+    // keys Google refused for good - a deleted service account, an invalid or expired key. Asks
+    // first; resolves with how many were removed.
+    window.removeGeminiApiKeys = async (keys) => {
+      const drop = new Set(keys);
+      const hit = apiKeys.filter((k) => drop.has(k));
+      if (!hit.length) return 0;
+      const ok = await customConfirm(`Remove ${hit.length} key(s) Google refused for good (${hit.map((k) => `…${k.slice(-4)}`).join(", ")})? They can't work again - make new keys in AI Studio instead.`, "Remove dead keys", "Remove");
+      if (!ok) return 0;
+      for (let i = apiKeys.length - 1; i >= 0; i--) if (drop.has(apiKeys[i])) apiKeys.splice(i, 1);
+      saveGeminiKeys();
+      renderApiKeys();
+      return hit.length;
+    };
+
     // Smart Paste/Clear button — morphs based on whether the field has content
     const updateApiKeyPasteButtonState = () => {
       const input = document.getElementById("input-new-apikey");

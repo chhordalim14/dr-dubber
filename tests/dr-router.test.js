@@ -435,6 +435,23 @@ test('a refused key (403) rests; only a bad key is retired', (t) => {
     assert.equal(mgr.getReadyAccounts().length, 1, 'back once the rest is over');
 });
 
+test('"Remove invalid" deletes only the accounts Google refused for good, and frees their proxies', (t) => {
+    const { mgr, configPath, cleanup } = tempManager();
+    t.after(cleanup);
+    const good = mgr.addAccount({ email: 'good@gmail.com', apiKey: 'AIzaSyGoodKey0000000001' });
+    const resting = mgr.addAccount({ email: 'rest@gmail.com', apiKey: 'AIzaSyRestKey0000000002' });
+    const dead = mgr.addAccount({ email: 'dead@gmail.com', apiKey: 'AIzaSyDeadKey0000000003' });
+    const proxy = mgr.addProxy('1.2.3.4:8080');
+    mgr.bindProxyToAccount(dead.id, proxy.id);
+    mgr.markRejected(resting.id, 'HTTP 403');       // resting, not dead: stays
+    mgr.markInvalid(dead.id, 'service account deleted');
+    assert.equal(mgr.deleteInvalidAccounts(), 1);
+    assert.deepEqual(mgr.accounts.map(a => a.id), [good.id, resting.id]);
+    assert.equal(mgr.proxies[0].accountId, null, 'its proxy is free for another account');
+    assert.equal(new DRRouterManager({ configPath, port: 8766 }).accounts.length, 2);
+    assert.equal(mgr.deleteInvalidAccounts(), 0);
+});
+
 test('picking for the proxy skips tried and resting accounts', (t) => {
     const { mgr, cleanup } = tempManager();
     t.after(cleanup);

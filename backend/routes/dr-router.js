@@ -95,6 +95,12 @@ function createDRRouter(options = {}) {
         });
     });
 
+    // Delete every account whose key Google refused for good ("Remove invalid")
+    router.post('/account/delete-invalid', (req, res) => {
+        const deleted = mgr.deleteInvalidAccounts();
+        res.json({ success: true, deleted, stats: mgr.getStats() });
+    });
+
     // Toggle account enabled/disabled
     router.post('/account/toggle', (req, res) => {
         const { id, enabled } = req.body || {};

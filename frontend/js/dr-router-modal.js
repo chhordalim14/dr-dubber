@@ -170,6 +170,7 @@
             <div id="dr-view-accounts" class="absolute inset-0 p-5 overflow-y-auto hidden">
               <div class="flex items-center justify-between mb-4">
                 <h3 class="font-bold text-base text-white">Gmail Account Pool</h3>
+                <button id="dr-remove-invalid" type="button" class="hidden ml-auto mr-3 px-2.5 py-1 rounded-md text-[11px] font-semibold border border-red-500/40 text-red-400 hover:bg-red-500/10" title="Delete the accounts whose key Google refused for good (a deleted service account, an invalid or expired key).">Remove invalid</button>
                 <span class="text-xs text-gray-400">Each account contributes its free Gemini tier quota</span>
               </div>
               
@@ -951,6 +952,14 @@
       btn.className = `dr-strat-btn px-2.5 py-1 rounded-md text-xs font-medium ${active ? 'bg-amber-500 text-black font-bold shadow-sm' : 'text-gray-400 hover:text-white'}`;
     });
 
+    // "Remove invalid": shown while some account's key is refused for good.
+    const invalidCount = accountsData.filter((a) => a.status === 'invalid').length;
+    const removeInvalid = document.getElementById('dr-remove-invalid');
+    if (removeInvalid) {
+      removeInvalid.classList.toggle('hidden', !invalidCount);
+      removeInvalid.textContent = `Remove ${invalidCount} invalid`;
+    }
+
     // Accounts Table
     const tbody = document.getElementById('dr-accounts-table-body');
     if (tbody) {
@@ -1142,6 +1151,20 @@
 
     // Add Account button & modal
     const addModal = document.getElementById('dr-add-modal');
+    document.getElementById('dr-remove-invalid')?.addEventListener('click', async () => {
+      const bad = accountsData.filter((a) => a.status === 'invalid');
+      if (!bad.length) return;
+      if (!confirm(`Delete ${bad.length} account(s) whose key Google refused for good (${bad.map((a) => a.email || a.maskedKey).join(', ')})? They can't work again.`)) return;
+      try {
+        const res = await fetch(`${API_BASE}/account/delete-invalid`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const d = await res.json();
+        if (!d.success) throw new Error(d.error || 'failed');
+        fetchDRRouterData();
+      } catch (e) {
+        alert(`Could not delete them: ${e.message}`);
+      }
+    });
+
     document.getElementById('dr-btn-add-account')?.addEventListener('click', () => {
       if (addModal) addModal.classList.remove('hidden');
       document.getElementById('dr-add-bulk-result')?.classList.add('hidden');

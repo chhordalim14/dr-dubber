@@ -315,6 +315,18 @@ class DRRouterManager {
         return false;
     }
 
+    // "Remove invalid": the accounts whose key Google refused for good. Returns how many went.
+    deleteInvalidAccounts() {
+        const before = this.accounts.length;
+        this.accounts = this.accounts.filter(a => a.status !== 'invalid');
+        const deleted = before - this.accounts.length;
+        if (deleted) {
+            for (const p of this.proxies) if (p.accountId && !this.accounts.some(a => a.id === p.accountId)) p.accountId = null;
+            this.save();
+        }
+        return deleted;
+    }
+
     toggleAccount(id, enabled) {
         const acc = this.accounts.find(a => a.id === id);
         if (acc) {
