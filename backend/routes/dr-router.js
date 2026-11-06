@@ -50,39 +50,22 @@ function createDRRouter(options = {}) {
     });
 
     // Bulk add accounts
+    // rawText (Bulk Paste): answers what happened to every line - added, already in the pool,
+    // repeated in the paste, or skipped (no Gemini key in it).
     router.post('/account/bulk-add', (req, res) => {
         const { accounts, rawText } = req.body || {};
-        const toAdd = [];
+        let result;
         if (Array.isArray(accounts)) {
-            toAdd.push(...accounts);
-        } else if (typeof rawText === 'string') {
-            const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
-            lines.forEach((line, idx) => {
-                let email = '';
-                let apiKey = '';
-                if (line.includes(',')) {
-                    const parts = line.split(',');
-                    email = parts[0].trim();
-                    apiKey = parts[1].trim();
-                } else if (line.includes(':') && !line.startsWith('AIzaSy')) {
-                    const parts = line.split(':');
-                    email = parts[0].trim();
-                    apiKey = parts[1].trim();
-                } else if (line.includes('\t') || (line.includes(' ') && !line.startsWith('AIzaSy'))) {
-                    const parts = line.split(/\s+/);
-                    email = parts[0];
-                    apiKey = parts[1] || '';
-                } else {
-                    apiKey = line;
-                    email = `account_${mgr.accounts.length + idx + 1}@gmail.com`;
-                }
-                if (apiKey) toAdd.push({ email, apiKey });
-            });
+            result = { added: mgr.addAccounts(accounts).length, alreadyInPool: 0, repeated: 0, skipped: [] };
+        } else {
+            result = mgr.bulkAddFromText(typeof rawText === 'string' ? rawText : '');
         }
-        const added = mgr.addAccounts(toAdd);
         res.json({
             success: true,
-            addedCount: added.length,
+            addedCount: result.added,
+            alreadyInPool: result.alreadyInPool,
+            repeated: result.repeated,
+            skipped: result.skipped,
             accounts: mgr.getMaskedAccounts(),
             stats: mgr.getStats()
         });
@@ -174,14 +157,10 @@ function createDRRouter(options = {}) {
         });
     });
 
-    // Toggle local proxy server (127.0.0.1:8765)
+    // Toggle local proxy server (127.0.0.1:8765); the choice is kept for the next start
     router.post('/proxy/toggle', (req, res) => {
         const { enabled } = req.body || {};
-        if (enabled && !mgr.proxyActive) {
-            mgr.startProxy();
-        } else if (!enabled && mgr.proxyActive) {
-            mgr.stopProxy();
-        }
+        mgr.setProxyEnabled(!!enabled);
         res.json({
             success: true,
             stats: mgr.getStats()

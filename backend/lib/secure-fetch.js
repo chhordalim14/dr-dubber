@@ -39,20 +39,39 @@ try {
     }
 } catch (e) { /* not running inside Electron */ }
 
-let ProxyAgentClass = null;
+// DR Router's per-account proxies (options.proxy). undici is a dependency of its own: the
+// copy inside electron/electron-builder is dev-only and not in the installed app. Its own
+// fetch is used with its ProxyAgent - a ProxyAgent from one undici given to another's fetch
+// (Node's built-in one) breaks when their versions drift apart.
+let undici = null;
 try {
-    ProxyAgentClass = require('undici').ProxyAgent;
+    undici = require('undici');
 } catch (e) {}
 
+// One agent per proxy address, so its connections are reused instead of a new pool per request.
+const proxyAgents = new Map();
+function proxyAgentFor(proxyUrl) {
+    let agent = proxyAgents.get(proxyUrl);
+    if (!agent) {
+        agent = new undici.ProxyAgent(proxyUrl);
+        proxyAgents.set(proxyUrl, agent);
+    }
+    return agent;
+}
+
 function secureFetch(url, options = {}) {
-    if (options && options.proxy && ProxyAgentClass) {
+    if (options && options.proxy) {
+        // A request meant for a proxy never goes out direct: that would hide a dead proxy
+        // (its test said "online") and send the account's traffic from the user's own address.
+        const { proxy, ...rest } = options;
+        if (!undici) return Promise.reject(new Error('Proxy support is missing (undici not installed) - request not sent.'));
+        let dispatcher;
         try {
-            const { proxy, ...rest } = options;
-            const dispatcher = new ProxyAgentClass(proxy);
-            return fetch(url, { ...rest, dispatcher });
+            dispatcher = proxyAgentFor(proxy);
         } catch (err) {
-            console.warn('[secure-fetch] ProxyAgent initialization error, falling back to direct:', err.message);
+            return Promise.reject(new Error(`Proxy ${String(proxy).replace(/\/\/[^@/]*@/, '//')} can't be used: ${err.message}`));
         }
+        return undici.fetch(url, { ...rest, dispatcher });
     }
     if (electronNet && !ALLOW_INSECURE_TLS) {
         return electronNet.fetch(url, options);

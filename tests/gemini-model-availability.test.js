@@ -33,6 +33,7 @@ function load({ listed, answer = () => 200, clock = null }) {
   const api = new Function('secureFetch', 'console', 'createKeyRest', 'Date', `
     const RATE_LIMIT_COOLDOWN_MS = 60000;
     const keyRest = createKeyRest();
+    const getDRRouterProxyForKey = () => null; // DR Router off: no per-key proxy
     ${block}
     return { resolveGeminiModel, rankGeminiFallbacks, executeGeminiGenerate, geminiBusyRestMs };
   `)(secureFetch, { warn: () => { }, log: () => { } }, createKeyRest, FakeDate);

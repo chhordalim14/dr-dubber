@@ -2006,7 +2006,7 @@ app.use('/api', pronunciationRouter);
 
 const { getDRRouterManager } = require('./lib/dr-router');
 const drRouterManager = getDRRouterManager();
-drRouterManager.startProxy();
+if (drRouterManager.proxyEnabled) drRouterManager.startProxy();
 const drRouterApi = require('./routes/dr-router')({ drRouterManager });
 app.use('/api/dr-router', drRouterApi);
 app.use('/api/dapool', drRouterApi);

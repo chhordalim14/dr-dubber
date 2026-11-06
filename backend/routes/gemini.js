@@ -720,12 +720,17 @@ function notifyDRRouterRateLimited(key, waitMs) {
 }
 const notifyDaPoolRateLimited = notifyDRRouterRateLimited;
 
-function notifyDRRouterInvalid(key, msg) {
+// dead: Google says the key itself is bad (retired). Otherwise (e.g. a 403 for region or a
+// disabled API) the pool account only rests for restMs, like the key does here.
+function notifyDRRouterInvalid(key, msg, dead = true, restMs = undefined) {
     try {
         const { getDRRouterManager } = require('../lib/dr-router');
         const dr = getDRRouterManager();
         const acc = dr.accounts.find(a => a.apiKey === key);
-        if (acc) dr.markInvalid(acc.id, msg);
+        if (acc) {
+            if (dead) dr.markInvalid(acc.id, msg);
+            else dr.markRejected(acc.id, msg, restMs);
+        }
     } catch (e) {}
 }
 const notifyDaPoolInvalid = notifyDRRouterInvalid;
@@ -1367,7 +1372,7 @@ async function tryKeysOnce(keys, call) {
         lastOut = out;
         if (out.result && (out.result.error === 'INVALID_API_KEY' || out.result.code === 'PROVIDER_KEY')) {
             const dead = isDeadKeyAnswer(key, out.result);
-            if (typeof notifyDRRouterInvalid === 'function') notifyDRRouterInvalid(key, out.result.message || '');
+            if (typeof notifyDRRouterInvalid === 'function') notifyDRRouterInvalid(key, out.result.message || '', dead, INVALID_KEY_REST_MS);
             else if (typeof notifyDaPoolInvalid === 'function') notifyDaPoolInvalid(key, out.result.message || '');
             invalidGeminiKeys.set(key, { until: Date.now() + (dead ? DEAD_KEY_REST_MS : INVALID_KEY_REST_MS), dead, message: out.result.message || '' });
             console.warn(`[Gemini] key …${String(key).slice(-4)} rejected (${out.result.message || 'invalid'}); ${dead ? 'not used for a day (adding it again in Settings tries it sooner)' : 'skipping it'}`);

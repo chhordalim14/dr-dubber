@@ -11,11 +11,22 @@ const { secureFetch } = require('./secure-fetch');
 const DEFAULT_CONFIG_PATH = path.join(STORAGE_BASE, 'dr_router_accounts.json');
 const LEGACY_CONFIG_PATH = path.join(STORAGE_BASE, 'dapool_accounts.json');
 const DEFAULT_PORT = 8765;
+// A key Google refuses for a reason that can pass (403: API not enabled, region, VPN) rests
+// this long instead of being retired - same as INVALID_KEY_REST_MS in routes/gemini.js.
+const KEY_REJECTED_REST_MS = 10 * 60 * 1000;
+// "Daily quota used up" is rechecked after 15 min, then 1 h, before it is trusted until the
+// reset (Google says it to keys far below the limit - see dailyCooldownUntil in gemini.js).
+const DAILY_RECHECK_MS = [15 * 60 * 1000, 60 * 60 * 1000];
+// A Google API key, not part of a longer token: the old form "AIza" + 35 characters, or the
+// newer one "AQ." + a long code (keys bound to a service account; Settings accepts both).
+const GEMINI_KEY_RE = /(?<![0-9A-Za-z_.-])(?:AIza[0-9A-Za-z_-]{35}|AQ[.][0-9A-Za-z_.-]{20,100})(?![0-9A-Za-z_.-])/;
 
 class DRRouterManager {
     constructor(options = {}) {
         this.configPath = options.configPath || DEFAULT_CONFIG_PATH;
         this.port = options.port || DEFAULT_PORT;
+        // Where the local proxy sends requests (a test points it at a fake Google).
+        this.upstreamBase = options.upstreamBase || 'https://generativelanguage.googleapis.com';
         this.strategy = 'round-robin'; // 'round-robin' | 'least-used' | 'random'
         // Linked: DR Dubber's own transcribe / translate jobs draw keys from the pool.
         // Unlinked: they use only the keys in Settings; the proxy still serves outside tools.
@@ -28,6 +39,9 @@ class DRRouterManager {
         this.proxyRotatingIndex = 0;
         this.proxyServer = null;
         this.proxyActive = false;
+        this.proxyEnabled = true; // the user's on/off switch for the local proxy, kept across restarts
+        this.proxyError = null;   // why it isn't listening (e.g. the port is taken)
+        this.dailyStrikes = new Map(); // account id -> { count, at }: "daily quota" answers in a row
         this.roundRobinIndex = 0;
         this.clientLastSeen = null;
         this.lastRequestAt = null; // last time the dubber (or a proxy client) used a pool key
@@ -86,9 +100,18 @@ class DRRouterManager {
                 if (data && data.port) this.port = data.port;
                 if (data && data.linked === false) this.linked = false;
                 if (data && data.fastMode === true) this.fastMode = true;
+                if (data && data.proxyEnabled === false) this.proxyEnabled = false;
             }
         } catch (e) {
             console.warn('[DR Router] Error loading config:', e.message);
+            // Keep the unreadable file: the next save would otherwise replace every key with an empty pool.
+            try {
+                if (fs.existsSync(this.configPath)) {
+                    const kept = `${this.configPath}.broken-${Date.now()}`;
+                    fs.copyFileSync(this.configPath, kept);
+                    console.warn(`[DR Router] Unreadable pool file kept as ${kept}`);
+                }
+            } catch (e2) {}
         }
     }
 
@@ -100,6 +123,7 @@ class DRRouterManager {
                 strategy: this.strategy,
                 linked: this.linked,
                 fastMode: this.fastMode,
+                proxyEnabled: this.proxyEnabled,
                 port: this.port,
                 proxyMode: this.proxyMode,
                 updatedAt: new Date().toISOString(),
@@ -130,7 +154,10 @@ class DRRouterManager {
                     proxyId: a.proxyId || null
                 }))
             };
-            fs.writeFileSync(this.configPath, JSON.stringify(data, null, 2), 'utf8');
+            // Written beside it and renamed over it: a crash mid-write leaves the last good file.
+            const tmp = `${this.configPath}.tmp`;
+            fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
+            fs.renameSync(tmp, this.configPath);
         } catch (e) {
             console.warn('[DR Router] Error saving config:', e.message);
         }
@@ -200,20 +227,22 @@ class DRRouterManager {
         });
     }
 
-    addAccount({ email, apiKey }) {
+    addAccount({ email, apiKey }, { save = true } = {}) {
         if (!apiKey || typeof apiKey !== 'string' || !apiKey.trim()) {
             throw new Error('API key is required.');
         }
         const cleanKey = apiKey.trim();
-        const cleanEmail = (email && typeof email === 'string' && email.trim()) || `account_${this.accounts.length + 1}@gmail.com`;
+        const givenEmail = (email && typeof email === 'string' && email.trim()) || '';
+        const cleanEmail = givenEmail || `account_${this.accounts.length + 1}@gmail.com`;
 
         // Check if duplicate key already exists
         const existing = this.accounts.find(a => a.apiKey === cleanKey);
         if (existing) {
-            existing.email = cleanEmail;
+            // Pasted again without an email: keep its name rather than renaming it account_N.
+            if (givenEmail) existing.email = givenEmail;
             existing.status = 'ready';
             existing.enabled = true;
-            this.save();
+            if (save) this.save();
             return existing;
         }
 
@@ -231,8 +260,37 @@ class DRRouterManager {
         };
 
         this.accounts.push(newAccount);
-        this.save();
+        if (save) this.save();
         return newAccount;
+    }
+
+    // Bulk Paste: one account per line. The key is found anywhere in the line (alone, or with an
+    // email before it - comma, colon, space or tab); a line without a whole Gemini key (a header
+    // row, a key cut short) is skipped and reported back, so nothing junk joins the pool.
+    bulkAddFromText(rawText) {
+        const result = { added: 0, alreadyInPool: 0, repeated: 0, skipped: [] };
+        const seen = new Set();
+        String(rawText || '').split(/\r?\n/).forEach((raw, idx) => {
+            const line = raw.trim();
+            if (!line) return;
+            const keyMatch = line.match(GEMINI_KEY_RE);
+            if (!keyMatch) {
+                result.skipped.push({ line: idx + 1, text: line.length > 60 ? `${line.slice(0, 57)}...` : line });
+                return;
+            }
+            const apiKey = keyMatch[0];
+            if (seen.has(apiKey)) {
+                result.repeated++;
+                return;
+            }
+            seen.add(apiKey);
+            const emailMatch = line.replace(apiKey, ' ').match(/[^\s,;:<>"']+@[^\s,;:<>"']+\.[A-Za-z]{2,}/);
+            if (this.findByKey(apiKey)) result.alreadyInPool++;
+            else result.added++;
+            this.addAccount({ email: emailMatch ? emailMatch[0] : '', apiKey }, { save: false });
+        });
+        if (seen.size) this.save();
+        return result;
     }
 
     addAccounts(list = []) {
@@ -322,9 +380,12 @@ class DRRouterManager {
         );
     }
 
-    pickAccount() {
-        const ready = this.getReadyAccounts();
+    // exclude: account ids already tried for this request. readyOnly: no resting account as a
+    // last resort (the local proxy answers "all resting" instead of spending one more 429).
+    pickAccount({ exclude = null, readyOnly = false } = {}) {
+        const ready = this.getReadyAccounts().filter(a => !exclude || !exclude.has(a.id));
         if (!ready.length) {
+            if (readyOnly) return null;
             // Check if there are cooling accounts and pick the one cooling earliest
             const cooling = this.accounts.filter(a => a.enabled !== false && a.status !== 'invalid' && !!a.apiKey);
             if (cooling.length) {
@@ -403,12 +464,44 @@ class DRRouterManager {
         }
     }
 
-    markRateLimited(id, retryAfterMs = 60000) {
+    markRateLimited(id, retryAfterMs = 60000, message = 'Rate limited (429)') {
         const acc = this.accounts.find(a => a.id === id);
         if (acc) {
             acc.status = 'cooling';
             acc.cooldownUntil = Date.now() + Math.max(5000, retryAfterMs);
-            acc.lastError = 'Rate limited (429)';
+            acc.lastError = message;
+            this.pushEvent(id, 'cool');
+            this.scheduleSave();
+        }
+    }
+
+    // Rest an account after Google's 429, for as long as the answer asks: its retry time, or
+    // the daily-quota rule (DAILY_RECHECK_MS, then until the reset). Returns the rest in ms.
+    restFromQuota(id, bodyText, now = Date.now()) {
+        const { daily, retryMs } = readQuotaError(bodyText);
+        let restMs;
+        if (daily && retryMs != null && retryMs > 10 * 60 * 1000) {
+            restMs = retryMs + 60 * 1000;
+        } else if (daily) {
+            const prev = this.dailyStrikes.get(id);
+            const count = prev && now - prev.at < 6 * 60 * 60 * 1000 ? prev.count + 1 : 1;
+            this.dailyStrikes.set(id, { count, at: now });
+            const untilReset = msUntilPacificMidnight(now) + 60 * 1000;
+            restMs = count <= DAILY_RECHECK_MS.length ? Math.min(untilReset, DAILY_RECHECK_MS[count - 1]) : untilReset;
+        } else {
+            restMs = Math.min(2 * 60 * 1000, Math.max(5000, retryMs != null ? retryMs : 60000)) + 500;
+        }
+        this.markRateLimited(id, restMs, daily ? 'Daily quota used up (429)' : 'Rate limited (429)');
+        return restMs;
+    }
+
+    // Google refused the key for a reason that can pass (403): it rests, it isn't retired.
+    markRejected(id, message = 'Key refused', restMs = KEY_REJECTED_REST_MS) {
+        const acc = this.accounts.find(a => a.id === id);
+        if (acc) {
+            acc.status = 'cooling';
+            acc.cooldownUntil = Date.now() + restMs;
+            acc.lastError = message;
             this.pushEvent(id, 'cool');
             this.scheduleSave();
         }
@@ -460,6 +553,8 @@ class DRRouterManager {
             strategy: this.strategy,
             port: this.port,
             proxyActive: this.proxyActive,
+            proxyEnabled: this.proxyEnabled,
+            proxyError: this.proxyError,
             linked: this.linked,
             fastMode: this.fastMode,
             proxiesTotal,
@@ -470,32 +565,28 @@ class DRRouterManager {
         };
     }
 
-    // Ping single account using Gemini API test
+    // Check a key by asking Google for its model list: free (no quota used) and it answers
+    // any key, where a generate call to one fixed model 404s for keys that never used it.
     async testAccount(id) {
         const acc = this.accounts.find(a => a.id === id);
         if (!acc || !acc.apiKey) throw new Error('Account or API key not found');
 
-        const testUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(acc.apiKey)}`;
-        const payload = {
-            contents: [{ role: 'user', parts: [{ text: 'ping' }] }],
-            generationConfig: { maxOutputTokens: 2 }
-        };
-
         try {
             const proxyUrl = this.getProxyForAccount(acc.id);
             const fetchOpts = {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+                method: 'GET',
+                // Key in a header, not the URL: URLs end up in proxy logs and error messages.
+                headers: { 'x-goog-api-key': acc.apiKey }
             };
             if (proxyUrl) fetchOpts.proxy = proxyUrl;
 
-            const res = await secureFetch(testUrl, fetchOpts);
+            const res = await secureFetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1', fetchOpts);
 
             if (res.ok) {
                 acc.status = 'ready';
                 acc.lastError = null;
                 acc.cooldownUntil = 0;
+                this.dailyStrikes.delete(acc.id);
                 this.save();
                 return { success: true, status: 'ready', message: 'Account is ready & working.' };
             }
@@ -506,18 +597,20 @@ class DRRouterManager {
 
             const errMsg = (parsed.error && parsed.error.message) || `HTTP ${res.status}`;
             if (res.status === 429) {
-                acc.status = 'cooling';
-                acc.cooldownUntil = Date.now() + 60000;
-                acc.lastError = errMsg;
-                this.save();
+                this.restFromQuota(acc.id, body);
                 return { success: false, status: 'cooling', message: errMsg };
             }
 
-            if (isKeyRejection(res.status, body)) {
+            if (isDeadKeyRejection(res.status, body)) {
                 acc.status = 'invalid';
                 acc.lastError = errMsg;
                 this.save();
                 return { success: false, status: 'invalid', message: errMsg };
+            }
+
+            if (isKeyRejection(res.status, body)) {
+                this.markRejected(acc.id, errMsg);
+                return { success: false, status: 'cooling', message: errMsg };
             }
 
             return { success: false, status: acc.status, message: errMsg };
@@ -532,7 +625,7 @@ class DRRouterManager {
             const boundAccount = this.accounts.find(a => a.proxyId === p.id || a.id === p.accountId);
             return {
                 id: p.id,
-                url: p.url,
+                url: maskProxyUrl(p.url),
                 protocol: p.protocol,
                 host: p.host,
                 port: p.port,
@@ -805,127 +898,258 @@ class DRRouterManager {
         return results;
     }
 
+    // The user's on/off switch for the local proxy: kept, so a restart honours it.
+    setProxyEnabled(on) {
+        this.proxyEnabled = on !== false;
+        this.save();
+        if (this.proxyEnabled) this.startProxy();
+        else this.stopProxy();
+        return this.proxyEnabled;
+    }
+
     // Launch local proxy server on 127.0.0.1:8765
     startProxy() {
         if (this.proxyServer) return;
+        this.proxyError = null;
 
-        this.proxyServer = http.createServer(async (req, res) => {
-            // No CORS headers: only local tools may use the pool. A web page open in the
-            // browser must not be able to spend these keys by calling 127.0.0.1:8765.
-            if (req.headers.origin && !isLocalOrigin(req.headers.origin)) {
-                res.writeHead(403, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: { message: 'DR Router: requests from web pages are not allowed.', code: 'FORBIDDEN_ORIGIN' } }));
-                return;
-            }
-            if (req.method === 'OPTIONS') {
-                res.writeHead(204);
-                res.end();
-                return;
-            }
-
-            this.touchClient();
-
-            // Status endpoint
-            if (req.url === '/' || req.url === '/status' || req.url === '/health') {
-                res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({
-                    name: 'DR Router PRO Proxy',
-                    version: '1.0.0',
-                    status: 'online',
-                    ...this.getStats()
-                }));
-                return;
-            }
-
-            // Pick an account from the pool
-            const account = this.pickAccount();
-            if (!account || !account.apiKey) {
-                res.writeHead(503, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({
-                    error: {
-                        message: 'DR Router: No active or ready accounts available in the pool. Add accounts in DR Router PRO.',
-                        code: 'NO_ACCOUNTS'
-                    }
-                }));
-                return;
-            }
-
-            // Read incoming body
-            const chunks = [];
-            req.on('data', c => chunks.push(c));
-            req.on('end', async () => {
-                const bodyBuf = Buffer.concat(chunks);
-                // Keep the caller's query (e.g. alt=sse for streaming) but swap in the pool's key.
-                const incoming = new URL(req.url, 'http://127.0.0.1');
-                incoming.searchParams.delete('key');
-                incoming.searchParams.set('key', account.apiKey);
-                const upstreamUrl = `https://generativelanguage.googleapis.com${incoming.pathname}${incoming.search}`;
-
-                this.trackInFlight(account.id, 1);
-
-                try {
-                    const proxyUrl = this.getProxyForAccount(account.id);
-                    const fetchOpts = {
-                        method: req.method,
-                        headers: {
-                            'Content-Type': req.headers['content-type'] || 'application/json'
-                        },
-                        body: bodyBuf.length ? bodyBuf : undefined
-                    };
-                    if (proxyUrl) fetchOpts.proxy = proxyUrl;
-                    const upstreamRes = await secureFetch(upstreamUrl, fetchOpts);
-
-                    const resBody = typeof upstreamRes.buffer === 'function'
-                        ? await upstreamRes.buffer()
-                        : Buffer.from(await upstreamRes.arrayBuffer());
-                    this.trackInFlight(account.id, -1);
-
-                    if (upstreamRes.ok) {
-                        this.markSuccess(account.id);
-                    } else if (upstreamRes.status === 429) {
-                        this.markRateLimited(account.id);
-                    } else if (isKeyRejection(upstreamRes.status, resBody.toString('utf8'))) {
-                        this.markInvalid(account.id, `HTTP ${upstreamRes.status}`);
-                    }
-
-                    res.writeHead(upstreamRes.status, {
-                        'Content-Type': upstreamRes.headers.get('content-type') || 'application/json',
-                        'X-DR-Router-Account': account.id
-                    });
-                    res.end(resBody);
-                } catch (fetchErr) {
-                    this.trackInFlight(account.id, -1);
-                    res.writeHead(502, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ error: { message: fetchErr.message, code: 'PROXY_UPSTREAM_ERROR' } }));
-                }
+        const server = http.createServer((req, res) => {
+            this.handleProxyRequest(req, res).catch((err) => {
+                console.warn('[DR Router] Proxy request failed:', err.message);
+                if (!res.headersSent) sendJsonError(res, 500, err.message, 'PROXY_ERROR');
+                else res.destroy();
             });
         });
 
-        this.proxyServer.on('error', (err) => {
+        server.on('error', (err) => {
+            // Usually the port is taken: the installed app and the repo copy running at once.
+            this.proxyError = err.code === 'EADDRINUSE'
+                ? `Port ${this.port} is already in use (is another copy of DR Dubber open?)`
+                : err.message;
             console.warn('[DR Router] Proxy server error:', err.message);
             this.proxyActive = false;
+            if (this.proxyServer === server) this.proxyServer = null;
+            try { server.close(); } catch (e) {}
         });
 
-        this.proxyServer.listen(this.port, '127.0.0.1', () => {
+        server.listen(this.port, '127.0.0.1', () => {
             this.proxyActive = true;
+            this.proxyError = null;
             console.log(`[DR Router PRO] Multi-Account Proxy listening on http://127.0.0.1:${this.port}`);
         });
+        this.proxyServer = server;
+    }
+
+    async handleProxyRequest(req, res) {
+        // No CORS headers: only local tools may use the pool. A web page open in the
+        // browser must not be able to spend these keys by calling 127.0.0.1:8765.
+        if (req.headers.origin && !isLocalOrigin(req.headers.origin)) {
+            sendJsonError(res, 403, 'DR Router: requests from web pages are not allowed.', 'FORBIDDEN_ORIGIN');
+            return;
+        }
+        if (req.method === 'OPTIONS') {
+            res.writeHead(204);
+            res.end();
+            return;
+        }
+
+        this.touchClient();
+
+        // Status endpoint
+        if (req.url === '/' || req.url === '/status' || req.url === '/health') {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                name: 'DR Router PRO Proxy',
+                version: '1.0.0',
+                status: 'online',
+                ...this.getStats()
+            }));
+            return;
+        }
+
+        const bodyBuf = await readRequestBody(req);
+        // Keep the caller's query (e.g. alt=sse for streaming); the pool's key goes in a header,
+        // not the URL, so it stays out of proxy logs and error messages.
+        const incoming = new URL(req.url, 'http://127.0.0.1');
+        incoming.searchParams.delete('key');
+        const upstreamUrl = `${this.upstreamBase}${incoming.pathname}${incoming.search}`;
+
+        // The tool hung up: stop the request to Google too.
+        const abort = new AbortController();
+        res.on('close', () => { if (!res.writableFinished) abort.abort(); });
+
+        // An account that is rate-limited or refused hands the same request to the next ready
+        // one - the caller only sees an error once every account has had its turn.
+        const tried = new Set();
+        let last = null;
+        for (let account = this.pickAccount({ exclude: tried, readyOnly: true }); account; account = this.pickAccount({ exclude: tried, readyOnly: true })) {
+            tried.add(account.id);
+            const proxyUrl = this.getProxyForAccount(account.id);
+            const fetchOpts = {
+                method: req.method,
+                headers: {
+                    'Content-Type': req.headers['content-type'] || 'application/json',
+                    'x-goog-api-key': account.apiKey
+                },
+                body: bodyBuf.length ? bodyBuf : undefined,
+                signal: abort.signal
+            };
+            if (proxyUrl) fetchOpts.proxy = proxyUrl;
+
+            this.trackInFlight(account.id, 1);
+            let upstreamRes;
+            try {
+                upstreamRes = await secureFetch(upstreamUrl, fetchOpts);
+            } catch (fetchErr) {
+                this.trackInFlight(account.id, -1);
+                if (abort.signal.aborted) return;
+                last = {
+                    status: 502,
+                    contentType: 'application/json',
+                    body: JSON.stringify({ error: { message: fetchErr.message, code: 'PROXY_UPSTREAM_ERROR' } }),
+                    accountId: account.id
+                };
+                // Through its own proxy, the next account may still get through; direct, the
+                // network itself is down and every account would fail the same way.
+                if (proxyUrl) continue;
+                break;
+            }
+
+            if (upstreamRes.ok) {
+                // Passed on as it arrives, so streaming answers (alt=sse) reach the tool live.
+                res.writeHead(upstreamRes.status, {
+                    'Content-Type': upstreamRes.headers.get('content-type') || 'application/json',
+                    'X-DR-Router-Account': account.id
+                });
+                try {
+                    if (upstreamRes.body) {
+                        for await (const chunk of upstreamRes.body) res.write(chunk);
+                    }
+                    res.end();
+                    this.markSuccess(account.id);
+                } catch (streamErr) {
+                    res.destroy();
+                } finally {
+                    this.trackInFlight(account.id, -1);
+                }
+                return;
+            }
+
+            const text = await upstreamRes.text().catch(() => '');
+            this.trackInFlight(account.id, -1);
+            last = {
+                status: upstreamRes.status,
+                contentType: upstreamRes.headers.get('content-type') || 'application/json',
+                body: text,
+                accountId: account.id
+            };
+
+            if (upstreamRes.status === 429) {
+                this.restFromQuota(account.id, text);
+                continue;
+            }
+            if (isDeadKeyRejection(upstreamRes.status, text)) {
+                this.markInvalid(account.id, `HTTP ${upstreamRes.status}`);
+                continue;
+            }
+            if (isKeyRejection(upstreamRes.status, text)) {
+                this.markRejected(account.id, `HTTP ${upstreamRes.status}`);
+                continue;
+            }
+            break; // the request itself is wrong (400, 404, ...): another key won't help
+        }
+
+        if (last) {
+            res.writeHead(last.status, { 'Content-Type': last.contentType, 'X-DR-Router-Account': last.accountId });
+            res.end(last.body);
+            return;
+        }
+
+        // No account was ready to try at all.
+        const resting = this.accounts.filter(a => a.enabled !== false && a.status !== 'invalid' && !!a.apiKey);
+        if (resting.length) {
+            const waitMs = Math.max(1000, Math.min(...resting.map(a => (a.cooldownUntil || 0) - Date.now())));
+            res.setHeader('Retry-After', String(Math.ceil(waitMs / 1000)));
+            sendJsonError(res, 429, `DR Router: every pool account is resting - the next one is free in ${Math.ceil(waitMs / 1000)} s.`, 'ALL_ACCOUNTS_RESTING');
+            return;
+        }
+        sendJsonError(res, 503, 'DR Router: No active or ready accounts available in the pool. Add accounts in DR Router PRO.', 'NO_ACCOUNTS');
     }
 
     stopProxy() {
         if (this.proxyServer) {
             try { this.proxyServer.close(); } catch (e) {}
             this.proxyServer = null;
-            this.proxyActive = false;
         }
+        this.proxyActive = false;
+        this.proxyError = null;
     }
 }
 
-// A 400 is usually a bad request body, not a bad key - only retire the key when Google says so.
+function sendJsonError(res, status, message, code) {
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: { message, code } }));
+}
+
+function readRequestBody(req) {
+    return new Promise((resolve, reject) => {
+        const chunks = [];
+        req.on('data', c => chunks.push(c));
+        req.on('end', () => resolve(Buffer.concat(chunks)));
+        req.on('error', reject);
+    });
+}
+
+// Any refusal of the key (401 / 403 / 400 "API key not valid"). A 403 can pass (API not
+// enabled, region, VPN), so the pool rests that key; isDeadKeyRejection says when it's gone.
 function isKeyRejection(status, bodyText) {
     if (status === 401 || status === 403) return true;
+    return isDeadKeyRejection(status, bodyText);
+}
+
+// A 400 is usually a bad request body, not a bad key - only retire the key when Google says so.
+function isDeadKeyRejection(status, bodyText) {
+    if (status === 401) return true;
     if (status !== 400) return false;
     return /API_KEY_INVALID|API key not valid|API key expired/i.test(String(bodyText || ''));
+}
+
+// Google's 429 body says which limit was hit and how long to wait (same reading as
+// parseGeminiQuotaError in routes/gemini.js):
+//   details: [{ '@type': '...QuotaFailure', violations: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier' }] },
+//             { '@type': '...RetryInfo', retryDelay: '55s' }]
+function readQuotaError(bodyText) {
+    let data = null;
+    try { data = JSON.parse(bodyText); } catch (e) {}
+    const errMsg = String((data && data.error && data.error.message) || bodyText || '');
+    const details = Array.isArray(data && data.error && data.error.details) ? data.error.details : [];
+    let retryMs = null;
+    let daily = /per\s*-?day|daily quota|requests per day/i.test(errMsg);
+    for (const d of details) {
+        for (const v of (Array.isArray(d && d.violations) ? d.violations : [])) {
+            if (v && /PerDay/i.test(String(v.quotaId || ''))) daily = true;
+        }
+        if (d && typeof d.retryDelay === 'string' && isFinite(parseFloat(d.retryDelay))) retryMs = Math.ceil(parseFloat(d.retryDelay) * 1000);
+    }
+    if (retryMs === null) {
+        // "Please retry in 33.2s" or, for a daily limit, "Please retry in 20h3m39.5s".
+        const m = /retry in\s*(?:(\d+)h)?\s*(?:(\d+)m(?!s))?\s*(?:([\d.]+)s)?/i.exec(errMsg);
+        if (m && (m[1] || m[2] || m[3])) retryMs = Math.ceil(((+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (parseFloat(m[3]) || 0)) * 1000);
+    }
+    return { daily, retryMs };
+}
+
+// Google's daily quotas reset at midnight Pacific time.
+function msUntilPacificMidnight(now = Date.now()) {
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hourCycle: 'h23', hour: 'numeric', minute: 'numeric', second: 'numeric' })
+        .formatToParts(new Date(now));
+    const get = (t) => +((parts.find(p => p.type === t) || {}).value || 0);
+    const sinceMidnightMs = ((get('hour') % 24) * 3600 + get('minute') * 60 + get('second')) * 1000;
+    return Math.max(60 * 1000, 24 * 3600 * 1000 - sinceMidnightMs);
+}
+
+// The proxy address as the dashboard may show it: the password left out.
+function maskProxyUrl(url) {
+    return String(url || '').replace(/\/\/([^:@/]*):[^@/]*@/, '//$1:••••@');
 }
 
 function isLocalOrigin(origin) {
@@ -950,9 +1174,9 @@ function parseProxyString(raw) {
     }
 
     if (s.includes('@')) {
-        const atParts = s.split('@');
-        const userPass = atParts[0];
-        const hostPort = atParts[1];
+        const at = s.lastIndexOf('@');
+        const userPass = s.slice(0, at);
+        const hostPort = s.slice(at + 1);
         if (userPass.includes(':')) {
             const up = userPass.split(':');
             username = decodeURIComponent(up[0]);
@@ -1008,6 +1232,9 @@ module.exports = {
     getDRRouterManager,
     parseProxyString,
     isKeyRejection,
+    isDeadKeyRejection,
+    readQuotaError,
+    maskProxyUrl,
     isLocalOrigin,
     // Backward compatibility aliases
     DaPoolManager: DRRouterManager,

@@ -735,7 +735,7 @@ handle('dr-router:googleLogin', async () => {
         let lastDetectedEmail = '';
         let hasRedirectedToKeys = false;
         // A key already on the clipboard belongs to some earlier account - only a newly copied key counts.
-        const clipKeyAtStart = ((clipboard.readText() || '').match(/AIzaSy[A-Za-z0-9_-]{33}/) || [])[0] || '';
+        const clipKeyAtStart = ((clipboard.readText() || '').match(/(?:AIza[0-9A-Za-z_-]{35}|AQ[.][0-9A-Za-z_.-]{20,100})/) || [])[0] || '';
 
         // Monitor navigation & page content on aistudio.google.com
         const intervalId = setInterval(async () => {
@@ -746,7 +746,7 @@ handle('dr-router:googleLogin', async () => {
             try {
                 // Check if key was copied to clipboard
                 const clip = (clipboard.readText() || '').trim();
-                const clipMatch = clip.match(/AIzaSy[A-Za-z0-9_-]{33}/);
+                const clipMatch = clip.match(/(?:AIza[0-9A-Za-z_-]{35}|AQ[.][0-9A-Za-z_.-]{20,100})/);
                 if (clipMatch && clipMatch[0] !== clipKeyAtStart) {
                     clearInterval(intervalId);
                     finish({
@@ -781,7 +781,7 @@ handle('dr-router:googleLogin', async () => {
                                     const orig = navigator.clipboard.writeText.bind(navigator.clipboard);
                                     navigator.clipboard.writeText = function(text) {
                                         if (typeof text === 'string') {
-                                            const m = text.match(/AIzaSy[A-Za-z0-9_-]{33}/);
+                                            const m = text.match(/(?:AIza[0-9A-Za-z_-]{35}|AQ[.][0-9A-Za-z_.-]{20,100})/);
                                             if (m) window.__drCapturedKey = m[0];
                                         }
                                         return orig(text);
@@ -875,7 +875,7 @@ handle('dr-router:googleLogin', async () => {
                                 const keyElements = Array.from(document.querySelectorAll('input, textarea, code, pre, span, div'));
                                 for (const el of keyElements) {
                                     const val = el.value || el.innerText || '';
-                                    const m = val.match(/AIzaSy[A-Za-z0-9_-]{33}/);
+                                    const m = val.match(/(?:AIza[0-9A-Za-z_-]{35}|AQ[.][0-9A-Za-z_.-]{20,100})/);
                                     if (m) { apiKey = m[0]; break; }
                                 }
                             }

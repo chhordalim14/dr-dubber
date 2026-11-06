@@ -34,8 +34,8 @@
         <header class="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-gray-800/80 bg-[#10131c]">
           <!-- Brand & Proxy info -->
           <div class="flex items-center gap-3 shrink-0 whitespace-nowrap">
-            <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center shadow-[0_0_15px_rgba(245,158,11,0.5)]">
-              <span class="text-black font-extrabold text-sm tracking-tighter">DR</span>
+            <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-400 to-amber-600 text-black flex items-center justify-center shadow-[0_0_15px_rgba(245,158,11,0.5)]">
+              <span class="font-extrabold text-sm tracking-tighter">DR</span>
             </div>
             <div class="hidden xl:block">
               <span class="font-bold text-white tracking-wide text-base">DR Router <span class="text-amber-400 font-black">PRO</span></span>
@@ -343,7 +343,11 @@
             <div id="dr-add-bulk-container" class="flex flex-col gap-2 hidden">
               <label class="text-gray-300 font-medium">Paste Keys (one per line, or email,key):</label>
               <textarea id="dr-add-bulk-text" rows="7" placeholder="AIzaSyKey1...&#10;AIzaSyKey2...&#10;user@gmail.com,AIzaSyKey3..." class="w-full px-3 py-2 rounded-lg bg-gray-950 border border-gray-800 focus:border-amber-400 text-white font-mono text-xs outline-none resize-none"></textarea>
-              <p class="text-[10px] text-gray-400">Paste your 20+ keys here. Accounts will be auto-generated and added to the pool.</p>
+              <div class="flex items-center justify-between gap-2">
+                <p class="text-[10px] text-gray-400">One key per line - an email before it (comma, colon or space) is optional.</p>
+                <span id="dr-add-bulk-count" class="text-[10px] text-gray-400 shrink-0"></span>
+              </div>
+              <p id="dr-add-bulk-result" class="text-[11px] hidden"></p>
             </div>
 
             <div class="flex items-center justify-end gap-2 pt-2 border-t border-gray-800">
@@ -894,8 +898,11 @@
     }
     if (proxyPort && statsData.port) proxyPort.textContent = statsData.port;
     if (proxyLine) {
-      proxyLine.textContent = on ? `● Listening on :${statsData.port || 8765}` : '○ Proxy off';
-      proxyLine.className = `text-[10px] mt-0.5 ${on ? 'text-emerald-400/80' : 'text-gray-500'}`;
+      // Switched on but not listening (e.g. the port is taken by another copy of the app).
+      const failed = !on && statsData.proxyEnabled !== false && statsData.proxyError;
+      proxyLine.textContent = on ? `● Listening on :${statsData.port || 8765}` : failed ? `⚠ ${statsData.proxyError}` : '○ Proxy off';
+      proxyLine.className = `text-[10px] mt-0.5 ${on ? 'text-emerald-400/80' : failed ? 'text-amber-400' : 'text-gray-500'}`;
+      proxyLine.title = failed ? statsData.proxyError : '';
     }
     if (settingsProxy) {
       settingsProxy.textContent = on ? 'Enabled' : 'Disabled';
@@ -1105,6 +1112,7 @@
     const addModal = document.getElementById('dr-add-modal');
     document.getElementById('dr-btn-add-account')?.addEventListener('click', () => {
       if (addModal) addModal.classList.remove('hidden');
+      document.getElementById('dr-add-bulk-result')?.classList.add('hidden');
       document.getElementById('dr-add-email')?.focus();
     });
 
@@ -1140,9 +1148,34 @@
       document.getElementById('dr-add-bulk-text')?.focus();
     });
 
+    // Bulk Paste: count the keys as they are pasted, and say afterwards what happened to each line.
+    // Same key pattern as the server (dr-router.js GEMINI_KEY_RE).
+    const KEY_RE = /(?<![0-9A-Za-z_.-])(?:AIza[0-9A-Za-z_-]{35}|AQ[.][0-9A-Za-z_.-]{20,100})(?![0-9A-Za-z_.-])/;
+    const bulkText = document.getElementById('dr-add-bulk-text');
+    const bulkCount = document.getElementById('dr-add-bulk-count');
+    const bulkResult = document.getElementById('dr-add-bulk-result');
+    const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+    function showBulkResult(text, tone) {
+      if (!bulkResult) return;
+      bulkResult.textContent = text;
+      bulkResult.className = `text-[11px] ${tone === 'ok' ? 'text-emerald-400' : 'text-amber-400'}`;
+    }
+    function updateBulkCount() {
+      if (!bulkCount || !bulkText) return;
+      const lines = bulkText.value.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+      const withKey = lines.filter((l) => KEY_RE.test(l)).length;
+      const without = lines.length - withKey;
+      bulkCount.textContent = lines.length ? `${plural(withKey, 'key')} found${without ? ` · ${plural(without, 'line')} without a key` : ''}` : '';
+      bulkCount.className = `text-[10px] shrink-0 ${without ? 'text-amber-400' : 'text-gray-400'}`;
+    }
+    bulkText?.addEventListener('input', () => {
+      updateBulkCount();
+      bulkResult?.classList.add('hidden');
+    });
+
     document.getElementById('dr-add-submit')?.addEventListener('click', async () => {
       if (addMode === 'bulk') {
-        const rawText = document.getElementById('dr-add-bulk-text')?.value.trim();
+        const rawText = bulkText?.value.trim();
         if (!rawText) {
           alert('Please paste at least one Gemini API key.');
           return;
@@ -1151,13 +1184,30 @@
           const res = await fetch(`${API_BASE}/account/bulk-add`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ rawText })
+            body: JSON.stringify({ rawText: bulkText.value })
           });
           const d = await res.json();
           if (d.success) {
-            if (addModal) addModal.classList.add('hidden');
-            document.getElementById('dr-add-bulk-text').value = '';
+            const skipped = Array.isArray(d.skipped) ? d.skipped : [];
+            const parts = [`Added ${plural(d.addedCount || 0, 'new account')}.`];
+            if (d.alreadyInPool) parts.push(`${plural(d.alreadyInPool, 'key')} already in the pool (turned back on).`);
+            if (d.repeated) parts.push(`${plural(d.repeated, 'key')} pasted twice (added once).`);
             fetchDRRouterData();
+            if (skipped.length) {
+              // Leave only the skipped lines in the box, so they can be fixed and added again.
+              const all = bulkText.value.split(/\r?\n/);
+              bulkText.value = skipped.map((s) => all[s.line - 1]).join('\n');
+              parts.push(`${plural(skipped.length, 'line')} skipped - no whole API key found (left in the box to fix).`);
+              showBulkResult(parts.join(' '), 'warn');
+            } else {
+              bulkText.value = '';
+              showBulkResult(parts.join(' '), 'ok');
+              setTimeout(() => {
+                if (addModal) addModal.classList.add('hidden');
+                bulkResult?.classList.add('hidden');
+              }, 1800);
+            }
+            updateBulkCount();
           } else {
             alert(d.error || 'Failed to add accounts.');
           }

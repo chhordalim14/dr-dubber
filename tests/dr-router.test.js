@@ -3,7 +3,10 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { DRRouterManager, getDRRouterManager, parseProxyString, isKeyRejection, isLocalOrigin } = require('../backend/lib/dr-router');
+const http = require('http');
+const net = require('net');
+const { DRRouterManager, getDRRouterManager, parseProxyString, isKeyRejection, isDeadKeyRejection, isLocalOrigin, readQuotaError, maskProxyUrl } = require('../backend/lib/dr-router');
+const { secureFetch } = require('../backend/lib/secure-fetch');
 const createDRRouter = require('../backend/routes/dr-router');
 
 test('DR Router PRO - Manager and API routes', async (t) => {
@@ -106,7 +109,7 @@ test('DR Router PRO - Manager and API routes', async (t) => {
         let bulkJson = null;
         const bulkRoute = router.stack.find(s => s.route && s.route.path === '/account/bulk-add');
         assert.ok(bulkRoute);
-        const rawKeys = `AIzaSyBulkOne111111111\nAIzaSyBulkTwo222222222\ncustom@gmail.com,AIzaSyBulkThree333333333`;
+        const rawKeys = `${fakeKey('BulkOne')}\n${fakeKey('BulkTwo')}\ncustom@gmail.com,${fakeKey('BulkThree')}`;
         bulkRoute.route.stack[0].handle({ body: { rawText: rawKeys } }, {
             json: (obj) => { bulkJson = obj; return mockRes; }
         });
@@ -157,6 +160,10 @@ test('DR Router PRO - Manager and API routes', async (t) => {
         assert.equal(isKeyRejection(400, '{"error":{"status":"INVALID_ARGUMENT","details":[{"reason":"API_KEY_INVALID"}]}}'), true);
         assert.equal(isKeyRejection(403, ''), true);
         assert.equal(isKeyRejection(500, 'API key not valid'), false);
+        // ...but only a bad key is retired for good: a 403 (region, API not enabled) can pass
+        assert.equal(isDeadKeyRejection(400, 'API key not valid. Please pass a valid API key.'), true);
+        assert.equal(isDeadKeyRejection(401, ''), true);
+        assert.equal(isDeadKeyRejection(403, ''), false);
     });
 
     await t.test('proxy refuses requests from web pages', () => {
@@ -327,4 +334,215 @@ test('DR Router PRO - Manager and API routes', async (t) => {
         mgr.setLinked(true);
         mgr.accounts[0].cooldownUntil = 0;
     });
+});
+
+test('bulk paste: finds the key in each line, skips lines without one, says what happened', (t) => {
+    const { mgr, configPath, cleanup } = tempManager();
+    t.after(cleanup);
+    const known = mgr.addAccount({ email: 'known@gmail.com', apiKey: fakeKey('Known') });
+    let writes = 0;
+    const save = mgr.save.bind(mgr);
+    mgr.save = () => { writes++; save(); };
+
+    const pasted = [
+        'email,key',                                  // a header row
+        fakeKey('Plain'),
+        `user1@gmail.com,${fakeKey('Comma')}`,
+        `user2@gmail.com:${fakeKey('Colon')}`,
+        `user3@gmail.com\t${fakeKey('Tab')}`,
+        `  ${fakeKey('Plain')}  `,                    // the same key again
+        fakeKey('Known'),                             // already in the pool, no email given
+        fakeKey('Short').slice(0, 30),                // a key cut short
+        `user4@gmail.com,${NEW_KEY}`,                 // Google's newer key form
+        'AQ.Ab8RN6short',                             // ...cut short
+        ''
+    ].join('\r\n');
+    const r = mgr.bulkAddFromText(pasted);
+
+    assert.equal(r.added, 5);
+    assert.equal(r.alreadyInPool, 1);
+    assert.equal(r.repeated, 1);
+    assert.deepEqual(r.skipped.map(s => s.line), [1, 8, 10]);
+    assert.equal(writes, 1, 'the pool file is written once, not once per key');
+    assert.equal(mgr.accounts.length, 6);
+    assert.equal(mgr.findByKey(NEW_KEY).email, 'user4@gmail.com');
+    assert.equal(mgr.findByKey(fakeKey('Comma')).email, 'user1@gmail.com');
+    assert.equal(mgr.findByKey(fakeKey('Colon')).email, 'user2@gmail.com');
+    assert.equal(mgr.findByKey(fakeKey('Tab')).email, 'user3@gmail.com');
+    assert.match(mgr.findByKey(fakeKey('Plain')).email, /^account_\d+@gmail\.com$/);
+    assert.equal(known.email, 'known@gmail.com', 'pasting a known key without an email keeps its name');
+    assert.equal(new DRRouterManager({ configPath, port: 8766 }).accounts.length, 6);
+});
+
+// Google's newer key form ("AQ." + a long code), as Settings shows them: "AQ.Ab8RN...JrTg".
+const NEW_KEY = 'AQ.Ab8RN6' + 'k3Xb_q-9ZtLm2WvYp7RfHs0aDcE4gNuQwI1oJyT5lB8x'.padEnd(60, 'Q') + 'JrTg';
+
+// A Gemini-shaped key: "AIzaSy" + a tag, padded to the real 39 characters.
+function fakeKey(tag) {
+    return `AIzaSy${tag}`.padEnd(39, '0');
+}
+
+function tempManager(extra = {}) {
+    const configPath = path.join(os.tmpdir(), `dr_router_test_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.json`);
+    const mgr = new DRRouterManager({ configPath, port: 8766, ...extra });
+    const cleanup = () => {
+        for (const f of fs.readdirSync(os.tmpdir())) {
+            if (f.startsWith(path.basename(configPath))) fs.rmSync(path.join(os.tmpdir(), f), { force: true });
+        }
+    };
+    return { mgr, configPath, cleanup };
+}
+
+function freePort() {
+    return new Promise((resolve) => {
+        const s = net.createServer();
+        s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => resolve(port)); });
+    });
+}
+
+test('a 429 rests the account as long as Google asks; "daily quota" is rechecked before it is trusted', (t) => {
+    const { mgr, cleanup } = tempManager();
+    t.after(cleanup);
+    const acc = mgr.addAccount({ email: 'a@gmail.com', apiKey: 'AIzaSyQuotaTest00000001' });
+    const now = Date.now();
+    const rest = (body) => mgr.restFromQuota(acc.id, JSON.stringify(body), now);
+
+    assert.equal(rest({ error: { details: [{ retryDelay: '30s' }] } }), 30500);
+    assert.equal(rest({ error: { message: 'Please retry in 12.5s' } }), 13000);
+
+    const daily = { error: { details: [{ violations: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier' }] }, { retryDelay: '20s' }] } };
+    assert.deepEqual(readQuotaError(JSON.stringify(daily)), { daily: true, retryMs: 20000 });
+    assert.equal(rest(daily), 15 * 60 * 1000, 'first daily answer: recheck in 15 min');
+    assert.equal(rest(daily), 60 * 60 * 1000, 'second: in 1 h');
+    assert.ok(rest(daily) > 60 * 1000, 'third: until the reset');
+    assert.equal(mgr.getReadyAccounts().length, 0);
+    assert.match(mgr.accounts[0].lastError, /Daily quota/);
+
+    // a long wait Google states itself is believed at once
+    assert.equal(rest({ error: { message: 'Daily quota exceeded. Please retry in 5h0m0s' } }), 5 * 3600 * 1000 + 60 * 1000);
+});
+
+test('a refused key (403) rests; only a bad key is retired', (t) => {
+    const { mgr, cleanup } = tempManager();
+    t.after(cleanup);
+    const acc = mgr.addAccount({ email: 'a@gmail.com', apiKey: 'AIzaSyRefusedTest000001' });
+    mgr.markRejected(acc.id, 'HTTP 403', 60000);
+    assert.equal(acc.status, 'cooling');
+    assert.equal(mgr.getReadyAccounts().length, 0);
+    acc.cooldownUntil = 0;
+    assert.equal(mgr.getReadyAccounts().length, 1, 'back once the rest is over');
+});
+
+test('picking for the proxy skips tried and resting accounts', (t) => {
+    const { mgr, cleanup } = tempManager();
+    t.after(cleanup);
+    const a = mgr.addAccount({ email: 'a@gmail.com', apiKey: 'AIzaSyPickTest000000001' });
+    const b = mgr.addAccount({ email: 'b@gmail.com', apiKey: 'AIzaSyPickTest000000002' });
+    assert.equal(mgr.pickAccount({ exclude: new Set([a.id]), readyOnly: true }).id, b.id);
+    assert.equal(mgr.pickAccount({ exclude: new Set([a.id, b.id]), readyOnly: true }), null);
+    mgr.markRateLimited(a.id, 60000);
+    mgr.markRateLimited(b.id, 60000);
+    assert.equal(mgr.pickAccount({ readyOnly: true }), null);
+    assert.ok(mgr.pickAccount(), 'without readyOnly the soonest-free account is still offered');
+});
+
+test('the pool file is saved whole, and an unreadable one is kept rather than wiped', (t) => {
+    const { mgr, configPath, cleanup } = tempManager();
+    t.after(cleanup);
+    mgr.addAccount({ email: 'a@gmail.com', apiKey: 'AIzaSySaveTest000000001' });
+    assert.ok(fs.existsSync(configPath));
+    assert.ok(!fs.existsSync(`${configPath}.tmp`), 'no temp file left behind');
+
+    fs.writeFileSync(configPath, '{"accounts":[{"apiKey":"AIzaSyHalfWritt');
+    const reloaded = new DRRouterManager({ configPath, port: 8766 });
+    assert.equal(reloaded.accounts.length, 0);
+    const kept = fs.readdirSync(path.dirname(configPath)).filter(f => f.startsWith(`${path.basename(configPath)}.broken-`));
+    assert.equal(kept.length, 1, 'the broken file is copied aside before anything overwrites it');
+});
+
+test('the proxy on/off switch survives a restart', (t) => {
+    const { mgr, configPath, cleanup } = tempManager();
+    t.after(cleanup);
+    assert.equal(mgr.proxyEnabled, true);
+    mgr.setProxyEnabled(false);
+    assert.equal(new DRRouterManager({ configPath, port: 8766 }).proxyEnabled, false);
+    assert.equal(mgr.getStats().proxyEnabled, false);
+});
+
+test('proxy passwords stay out of the dashboard and may contain @', (t) => {
+    const { mgr, cleanup } = tempManager();
+    t.after(cleanup);
+    const p = parseProxyString('http://user:p@ss@1.2.3.4:8080');
+    assert.equal(p.host, '1.2.3.4');
+    assert.equal(p.password, 'p@ss');
+    assert.equal(maskProxyUrl('http://user:secret@1.2.3.4:8080'), 'http://user:••••@1.2.3.4:8080');
+    mgr.addProxy('5.6.7.8:3128:admin:secret');
+    assert.ok(!JSON.stringify(mgr.getMaskedProxies()).includes('secret'));
+});
+
+test('a request given a proxy goes through it, never direct', async (t) => {
+    const seen = [];
+    const fakeProxy = net.createServer((sock) => sock.once('data', (b) => { seen.push(b.toString('latin1')); sock.destroy(); }));
+    await new Promise(r => fakeProxy.listen(0, '127.0.0.1', r));
+    t.after(() => fakeProxy.close());
+    await assert.rejects(secureFetch('https://generativelanguage.googleapis.com/v1beta/models', {
+        proxy: `http://127.0.0.1:${fakeProxy.address().port}`, signal: AbortSignal.timeout(5000)
+    }));
+    assert.ok(seen.some(s => s.startsWith('CONNECT generativelanguage.googleapis.com:443')), 'the proxy was asked to connect');
+});
+
+test('local proxy: a rate-limited account hands the request to the next one; key in a header', async (t) => {
+    const asked = [];
+    const google = http.createServer((req, res) => {
+        const key = req.headers['x-goog-api-key'];
+        asked.push({ key, url: req.url });
+        if (key === 'AIzaSyProxyBusy0000001') {
+            res.writeHead(429, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: { code: 429, details: [{ retryDelay: '40s' }] } }));
+            return;
+        }
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        res.write('data: {"part":1}\n\n');
+        setTimeout(() => res.end('data: {"part":2}\n\n'), 20);
+    });
+    await new Promise(r => google.listen(0, '127.0.0.1', r));
+    const port = await freePort();
+    const { mgr, cleanup } = tempManager({ port, upstreamBase: `http://127.0.0.1:${google.address().port}` });
+    t.after(() => { mgr.stopProxy(); google.close(); cleanup(); });
+
+    const busy = mgr.addAccount({ email: 'busy@gmail.com', apiKey: 'AIzaSyProxyBusy0000001' });
+    const free = mgr.addAccount({ email: 'free@gmail.com', apiKey: 'AIzaSyProxyFree0000002' });
+    mgr.startProxy();
+    await new Promise(r => mgr.proxyServer.once('listening', r));
+
+    const url = `http://127.0.0.1:${port}/v1beta/models/gemini-3.8-flash:streamGenerateContent?alt=sse&key=CALLERS_OWN`;
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    assert.equal(res.status, 200);
+    assert.equal(await res.text(), 'data: {"part":1}\n\ndata: {"part":2}\n\n');
+    assert.equal(res.headers.get('x-dr-router-account'), free.id);
+    assert.deepEqual(asked.map(a => a.key), [busy.apiKey, free.apiKey]);
+    assert.ok(asked.every(a => a.url === '/v1beta/models/gemini-3.8-flash:streamGenerateContent?alt=sse'), 'no key in the URL');
+    assert.ok(busy.cooldownUntil - Date.now() > 35000, 'the 40 s retry time Google gave is kept');
+    assert.equal(free.served, 1);
+
+    // every account resting: answered at once, with when to come back
+    mgr.markRateLimited(free.id, 30000);
+    asked.length = 0;
+    const resting = await fetch(url, { method: 'POST', body: '{}' });
+    assert.equal(resting.status, 429);
+    assert.ok(Number(resting.headers.get('retry-after')) >= 29);
+    assert.equal((await resting.json()).error.code, 'ALL_ACCOUNTS_RESTING');
+    assert.equal(asked.length, 0, 'no resting key was spent');
+});
+
+test('local proxy: a taken port is reported, not silent', async (t) => {
+    const blocker = net.createServer();
+    await new Promise(r => blocker.listen(0, '127.0.0.1', r));
+    const { mgr, cleanup } = tempManager({ port: blocker.address().port });
+    t.after(() => { mgr.stopProxy(); blocker.close(); cleanup(); });
+    mgr.startProxy();
+    await new Promise(r => setTimeout(r, 100));
+    assert.equal(mgr.proxyActive, false);
+    assert.match(mgr.getStats().proxyError, /already in use/);
+    assert.equal(mgr.proxyServer, null, 'switching it on again can retry');
 });

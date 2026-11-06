@@ -3344,9 +3344,12 @@ body.kbd-nav .app-header button:focus-visible {
   background-color: rgb(0 0 0 / 0.6);
 }
 
-/* Window panel: flat, thin border, small radius, one modest shadow. */
-:is([id^="modal-"], [id$="-modal"]):not(#modal-settings) > div[class*="rounded-2xl"],
-:is([id^="modal-"], [id$="-modal"]):not(#modal-settings) > div[class*="rounded-xl"][class*="shadow"] {
+/* Window panel: flat, thin border, small radius, one modest shadow.
+   DR Router's windows (#dr-router-modal, #dr-add-modal, #dr-proxy-modal) are
+   drawn dark-only - fixed dark surfaces, light text - so they keep their own
+   panel: the light theme's white one left their text white on white. */
+:is([id^="modal-"], [id$="-modal"]):not(#modal-settings):not([id^="dr-"]) > div[class*="rounded-2xl"],
+:is([id^="modal-"], [id$="-modal"]):not(#modal-settings):not([id^="dr-"]) > div[class*="rounded-xl"][class*="shadow"] {
   border-radius: 12px;
   border-color: var(--border-light);
   background: var(--bg-panel);
@@ -3374,14 +3377,15 @@ body.kbd-nav .app-header button:focus-visible {
   color: var(--tile-neutral);
 }
 
-/* Gradients → flat. Coloured blocks with white text become coral; other
-   gradient surfaces become plain. Gradient text and the shine overlay keep
-   their own style. */
+/* Gradients → flat. Coloured blocks with white or dark text become coral
+   (dark text on a bright block, e.g. DR Router's amber buttons, would
+   otherwise be left black on the dark window); other gradient surfaces become
+   plain. Gradient text and the shine overlay keep their own style. */
 :is([id^="modal-"], [id$="-modal"], #queue-drawer, #title-ai-drawer):not(#modal-settings) [class*="bg-gradient-to-"] {
   background-image: none;
 }
 
-:is([id^="modal-"], [id$="-modal"], #queue-drawer, #title-ai-drawer):not(#modal-settings) [class*="bg-gradient-to-"]:is([class*="text-white"], [class*="text-slate-9"]) {
+:is([id^="modal-"], [id$="-modal"], #queue-drawer, #title-ai-drawer):not(#modal-settings) [class*="bg-gradient-to-"]:is([class*="text-white"], [class*="text-slate-9"], [class*="text-black"]) {
   color: #fff;
   background-color: var(--accent-primary);
 }
