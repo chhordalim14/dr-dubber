@@ -2935,8 +2935,13 @@ ${JSON.stringify(chunk)}`;
         const todo = keys.filter(k => !resting(k));
         const results = new Map();
         let next = 0;
+        // "Busy" is the model overloaded for everyone and says nothing about a key's limits: when
+        // the first answers are all busy, the other keys would only be busy too (seen: 32 keys,
+        // 2.5 min, all "high demand") - stop and say so.
+        const BUSY_STOP = 6;
+        let busyRun = 0, stoppedBusy = false;
         await Promise.all(Array.from({ length: Math.min(6, todo.length) }, async () => {
-            while (next < todo.length) {
+            while (next < todo.length && !stoppedBusy) {
                 const key = todo[next++];
                 try {
                     const r = await executeGeminiGenerate(key, model, payload, null, { stayOnModel: true, timeoutMs: GEMINI_TEXT_TIMEOUT_MS });
@@ -2945,19 +2950,25 @@ ${JSON.stringify(chunk)}`;
                         const dead = isDeadKeyAnswer(key, r);
                         invalidGeminiKeys.set(key, { until: Date.now() + (dead ? DEAD_KEY_REST_MS : INVALID_KEY_REST_MS), dead, message: r.message || '' });
                     }
-                    results.set(key, r.success ? 'ok' : (r.code === 'OVERLOADED' || Number(r.status) === 503) ? 'busy' : r.error === 'RATE_LIMIT_EXCEEDED' ? 'limited' : 'refused');
+                    const verdict = r.success ? 'ok' : (r.code === 'OVERLOADED' || Number(r.status) === 503) ? 'busy' : r.error === 'RATE_LIMIT_EXCEEDED' ? 'limited' : 'refused';
+                    results.set(key, verdict);
+                    busyRun = verdict === 'busy' ? busyRun + 1 : 0;
+                    if (busyRun >= BUSY_STOP && ![...results.values()].some(v => v !== 'busy')) stoppedBusy = true;
                 } catch (e) {
                     results.set(key, 'error');
                 }
             }
         }));
         const count = (v) => [...results.values()].filter(x => x === v).length;
-        console.log(`[Gemini] Check limits on ${model}: ${keys.length} key(s), ${keys.length - todo.length} already resting, ${count('ok')} ready, ${count('limited')} limited, ${count('refused')} refused, ${count('busy')} busy`);
+        const notAsked = todo.length - results.size;
+        console.log(`[Gemini] Check limits on ${model}: ${keys.length} key(s), ${keys.length - todo.length} already resting, ${count('ok')} ready, ${count('limited')} limited, ${count('refused')} refused, ${count('busy')} busy` +
+            (stoppedBusy ? ` - stopped: Google is overloaded on ${model}, ${notAsked} not asked` : ''));
         res.json({
             success: true,
-            asked: todo.length,
+            asked: results.size,
             alreadyResting: keys.length - todo.length,
             ready: count('ok'), limited: count('limited'), refused: count('refused'), busy: count('busy'),
+            stoppedBusy, notAsked,
             keys: keys.map(k => ({ suffix: k.slice(-4), ...geminiKeyStatus(k) }))
         });
     });

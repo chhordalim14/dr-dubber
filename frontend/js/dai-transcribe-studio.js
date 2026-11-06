@@ -387,6 +387,10 @@
       shownKeyStatuses = { statuses: d.keys, at: Date.now() };
       drawKeyStatuses();
       updateApiStatusDisplay();
+      if (d.stoppedBusy) {
+        showToast(`Google is overloaded on ${model} right now - every key answered "high demand", which says nothing about its limits. Stopped after ${d.asked} key(s); try Check limits again in a few minutes.`, 'warning');
+        return;
+      }
       const parts = [`${d.ready} ready`];
       if (d.limited) parts.push(`${d.limited} out of quota`);
       if (d.refused) parts.push(`${d.refused} refused`);
