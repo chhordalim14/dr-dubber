@@ -162,4 +162,75 @@ describe('episode joiner', { skip }, () => {
         assert.match(st.parts[0].outPath, /W_part01\.m4a$/);
         assert.ok(Math.abs(st.parts[0].duration - 3) < 0.3);
     });
+
+    test('a joined part is cut where an episode starts, so each tab holds whole episodes', async () => {
+        // Uneven episodes 50, 75, 60, 80, 65 s: starts at 50, 125, 185, 265. Two tabs: the even
+        // point is 165 s, the nearest episode start 185 s. Keyframes every 10 s (and at each start).
+        const edir = path.join(root, 'uneven');
+        fs.mkdirSync(edir);
+        const lengths = [50, 75, 60, 80, 65];
+        const files = lengths.map((sec, i) => {
+            const f = path.join(edir, `E${String(i + 1).padStart(2, '0')}.mp4`);
+            ff(['-f', 'lavfi', '-i', `testsrc2=s=160x120:r=25:d=${sec}`, '-f', 'lavfi', '-i', `sine=f=440:d=${sec}`, '-shortest',
+                '-c:v', 'libx264', '-preset', 'ultrafast', '-g', '250', '-c:a', 'aac', f]);
+            return f;
+        });
+        const id = await joiner.start({ parts: [files], partNumbers: [1], outDir: path.join(root, 'uneven-out'), seriesName: 'U' });
+        const joined = await waitJob(() => joiner.status(id));
+        assert.equal(joined.parts[0].status, 'done', joined.parts[0].error);
+        const part = joined.parts[0].outPath;
+
+        const split = async (dir) => {
+            const sid = await splitter.start({ file: part, outDir: path.join(root, dir), partCount: 2, baseName: 'U' });
+            const st = await waitJob(() => splitter.status(sid));
+            assert.equal(st.status, 'done', st.error);
+            return st;
+        };
+        const st = await split('uneven-split');
+        assert.equal(st.episodeCuts, 1);
+        assert.ok(Math.abs(st.parts[0].duration - 185) < 0.3, `first tab ${st.parts[0].duration}s, expected 185s (EP1-EP3)`);
+        assert.ok(Math.abs(st.parts[1].duration - 145) < 0.3, `second tab ${st.parts[1].duration}s, expected 145s (EP4-EP5)`);
+
+        // The same file without its episode list is cut near the even point, inside EP3.
+        fs.renameSync(part.replace(/\.mp4$/, '_episodes.txt'), part.replace(/\.mp4$/, '_episodes.off'));
+        const plain = await split('uneven-split-plain');
+        assert.equal(plain.episodeCuts, 0);
+        assert.ok(Math.abs(plain.parts[0].duration - 165) <= 10, `first tab ${plain.parts[0].duration}s`);
+    });
+});
+
+describe('choosing episode starts as cut points', () => {
+    const { episodeAnchors, episodeStartsFor } = require('../backend/video_splitter');
+
+    test('short episodes: every cut moves to the nearest episode start', () => {
+        // 20 episodes of 150 s = 50 min, 7 tabs: even points every ~428 s.
+        const starts = Array.from({ length: 19 }, (_, i) => (i + 1) * 150);
+        const targets = Array.from({ length: 6 }, (_, i) => (i + 1) * 3000 / 7);
+        const anchors = episodeAnchors(targets, starts, 3000);
+        assert.ok(anchors.every((a) => a !== null && starts.includes(a)));
+        anchors.forEach((a, i) => assert.ok(Math.abs(a - targets[i]) <= 75));
+    });
+
+    test('long episodes: points with no episode start nearby keep the usual cut', () => {
+        // 20-minute episodes, 7-minute tabs: only a point within half a tab of a start moves.
+        const anchors = episodeAnchors([420, 840, 1260, 1680, 2100], [1200, 2400], 2520);
+        assert.deepEqual(anchors, [null, null, 1200, null, null]);
+    });
+
+    test('two points never take the same episode start', () => {
+        const anchors = episodeAnchors([300, 330], [310], 900);
+        assert.deepEqual(anchors, [310, null]);
+    });
+
+    test('reads "<part>_episodes.txt"; other files have none', () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'drdub-eps-'));
+        try {
+            const part = path.join(dir, 'S_part01.mp4');
+            fs.writeFileSync(path.join(dir, 'S_part01_episodes.txt'), '00:00:00 EP1\n00:02:31 EP2\n01:00:05 EP3 extra words\n');
+            assert.deepEqual(episodeStartsFor(part), [151, 3605]);
+            assert.deepEqual(episodeStartsFor(path.join(dir, 'Movie.mp4')), []);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
 });

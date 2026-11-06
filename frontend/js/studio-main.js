@@ -17305,7 +17305,9 @@
         if (st.status === "cancelled") throw stoppedError();
         if (st.status !== "done") throw new Error(`Splitting failed: ${st.error || "unknown error"}.`);
         plan.pieces = st.parts.map((p) => p.outPath);
-        return `${n} tabs of about ${fmtDur(src.duration / n)}${capped ? ` (limited to ${MAX_PROJECT_TABS} tabs)` : ""}`;
+        // Joined parts are cut where an episode ends, so a tab holds whole episodes.
+        const between = st.episodeCuts ? (st.episodeCuts === n - 1 ? ", cut between episodes" : `, ${st.episodeCuts} of ${n - 1} cuts between episodes`) : "";
+        return `${n} tabs of about ${fmtDur(src.duration / n)}${between}${capped ? ` (limited to ${MAX_PROJECT_TABS} tabs)` : ""}`;
       }
 
       async function loadStep() {
