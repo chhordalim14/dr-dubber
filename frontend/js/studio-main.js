@@ -3577,8 +3577,9 @@
                     <!-- Text -->
                     <div class="flex flex-col items-center gap-1.5">
                         <div class="text-[var(--text-bright)] font-semibold text-base tracking-wide">${loadingTitle}</div>
-                        <div class="text-[var(--text-muted)] text-xs">${loadingSubtitle}</div>
+                        ${isWhisperEngine || !window.transcribeStepper ? `<div class="text-[var(--text-muted)] text-xs">${loadingSubtitle}</div>` : ""}
                         ${isWhisperEngine ? '<div class="text-[var(--accent-primary)] text-[11px] font-mono tabular-nums mt-1" id="transcribe-elapsed">00:00</div>' : ""}
+                        ${!isWhisperEngine && window.transcribeStepper ? window.transcribeStepper.html(activeProjForLoadingUI && activeProjForLoadingUI._transcribeProgress) : ""}
                     </div>
 
                 </div>
@@ -3808,6 +3809,7 @@
       let apiKeys = [];
       {
         apiKeys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]");
+        if (window.drPool) apiKeys = window.drPool.merge(apiKeys); // DR Router's ready accounts too
         if (apiKeys.length === 0 && engineMode === "whisper" && window.textAi?.ready()) {
           apiKeys = [""]; // one pass of the translate loop below; the server uses the CodeCraft key
         } else if (apiKeys.length === 0) {
@@ -4121,8 +4123,11 @@
 
               // Long videos are split into chunks on the server; show "Stop (3/20)" on the button.
               let lastProgressNote = null; // toast each "Google is busy" note once
+              targetProject._transcribeProgress = null; // the loading screen's steps start at Extract
               const progressTimer = window.backendJobs.pollEvery(2000, async (pollSignal) => {
                 const p = await (await fetch(`http://localhost:3001/api/transcribe-progress?requestId=${encodeURIComponent(targetProject.geminiRequestId || "")}`, { signal: pollSignal })).json();
+                targetProject._transcribeProgress = p;
+                if (projects[activeProjectIndex] === targetProject && window.transcribeStepper) window.transcribeStepper.update(p);
                 const label = document.getElementById("text-transcribe");
                 if (p.success && p.total > 1 && label && projects[activeProjectIndex] === targetProject) label.textContent = `Stop (${p.done}/${p.total})`;
                 if (p.success && p.note && p.note !== lastProgressNote && projects[activeProjectIndex] === targetProject) {
@@ -4281,7 +4286,11 @@
     const btnFixMissing = document.getElementById("btn-fix-missing");
     let fixMissingAllRun = null; // { stopped, requestIds } while "Fix Missing: All Tabs" runs
 
-    const getGeminiKeys = () => JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]").filter(Boolean);
+    // Settings keys, then DR Router's ready pool accounts (window.drPool, dr-router-modal.js).
+    const getGeminiKeys = () => {
+      const own = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]").filter(Boolean);
+      return window.drPool ? window.drPool.merge(own) : own;
+    };
     const projectTabName = (p) => p.tabTitle || (p.file?.name || p.name || `Tab ${projects.indexOf(p) + 1}`).replace(/\.[^/.]+$/, "");
     // The open tab's live list is the global `subtitles`; other tabs keep theirs on the project.
     const liveSubtitlesOf = (p) => (projects[activeProjectIndex] === p ? subtitles : p.subtitles || []);
@@ -4467,6 +4476,15 @@
     // Stops early when every key is out of its daily quota: the other tabs would only fail too.
     // Started from the "All Tabs" menu; resolves with { checked, fixedLines, quotaOut, stopped }.
     const FIX_MISSING_MAX_PARALLEL = 8; // tabs checked at once with keyPerTab (Dub Whole Series' Transcribe cap)
+    // Dub Whole Series' "Episodes at once" and "Retry failed", saved by its window
+    // (dai-transcribe-studio.js reads the same for the transcribe batch).
+    const savedSeriesNumber = (key, lo, hi, dflt) => {
+      let n = NaN;
+      try { n = parseInt(localStorage.getItem(key), 10); } catch (e) { } // storage blocked: the default
+      return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt;
+    };
+    const seriesParallel = () => savedSeriesNumber("aiDubberSeriesParallel", 1, 10, FIX_MISSING_MAX_PARALLEL);
+    const seriesRetryPasses = () => savedSeriesNumber("aiDubberSeriesRetries", 0, 5, 2);
 
     function stopFixMissingAll() {
       if (!fixMissingAllRun) return;
@@ -4501,7 +4519,7 @@
       fixMissingAllRun = run;
       const ownsJob = !allTabsJob; // inside "Transcribe, then Fix Missing" the pipeline owns the button
       if (ownsJob) allTabsJob = "fix";
-      const workerCount = keyPerTab ? Math.max(1, Math.min(FIX_MISSING_MAX_PARALLEL, apiKeys.length, targets.length)) : 1;
+      const workerCount = keyPerTab ? Math.max(1, Math.min(seriesParallel(), apiKeys.length, targets.length)) : 1;
       showToast(workerCount > 1 ? `Fix Missing: checking ${targets.length} tab(s) at once…` : `Fix Missing: checking ${targets.length} tab(s) one by one…`, "info");
       const results = [];
       let quotaMessage = "";
@@ -4997,9 +5015,10 @@
           return;
         }
       } else {
-        const apiKeys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]");
+        let apiKeys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]");
+        if (window.drPool) { await window.drPool.refresh(); apiKeys = window.drPool.merge(apiKeys); }
         if (apiKeys.length === 0) {
-          showToast("Please add at least one Gemini API Key in Settings.", "error");
+          showToast("Please add at least one Gemini API Key in Settings, or an account in DR Router.", "error");
           document.getElementById("btn-open-settings")?.click();
           return;
         }
@@ -8502,10 +8521,10 @@
     const loadSettings = async () => {
       // Default to Gemini 3.8 Flash (Latest workhorse model)
       let savedModel = localStorage.getItem("aiDubberModel") || "gemini-3.8-flash";
-      if (savedModel === "gemini-3.1-pro") {
+      if (savedModel === "gemini-3.1-pro" || savedModel.includes("2.5-pro")) {
         savedModel = "gemini-3.1-pro-preview";
       }
-      if (savedModel === "gemini-2.0-flash") {
+      if (savedModel.includes("lite") || savedModel.includes("2.5-flash") || savedModel === "gemini-2.0-flash") {
         savedModel = "gemini-3.8-flash";
       }
       // Retired Oct 8, 2026: Google answers them with these models anyway.
@@ -9403,6 +9422,15 @@
       if (loudToggle) {
         loudToggle.checked = localStorage.getItem("aiDubberNormalizeLoudness") !== "false";
         loudToggle.addEventListener("change", () => localStorage.setItem("aiDubberNormalizeLoudness", loudToggle.checked ? "true" : "false"));
+      }
+    }
+
+    // Studio Dialogue Mastering Strip (Pro Vocal Warmth & Leveling)
+    {
+      const masterToggle = document.getElementById("toggle-render-mastering");
+      if (masterToggle) {
+        masterToggle.checked = localStorage.getItem("aiDubberDialogueMastering") !== "false";
+        masterToggle.addEventListener("change", () => localStorage.setItem("aiDubberDialogueMastering", masterToggle.checked ? "true" : "false"));
       }
     }
     window.getSubtitleStylePreset = () => currentSubtitlePreset;
@@ -10579,6 +10607,21 @@
       saveGeminiKeys();
       renderApiKeys();
     });
+
+    // The key list's "Remove dead keys" (dai-transcribe-studio.js draws it in the Resting group):
+    // keys Google refused for good - a deleted service account, an invalid or expired key. Asks
+    // first; resolves with how many were removed.
+    window.removeGeminiApiKeys = async (keys) => {
+      const drop = new Set(keys);
+      const hit = apiKeys.filter((k) => drop.has(k));
+      if (!hit.length) return 0;
+      const ok = await customConfirm(`Remove ${hit.length} key(s) Google refused for good (${hit.map((k) => `…${k.slice(-4)}`).join(", ")})? They can't work again - make new keys in AI Studio instead.`, "Remove dead keys", "Remove");
+      if (!ok) return 0;
+      for (let i = apiKeys.length - 1; i >= 0; i--) if (drop.has(apiKeys[i])) apiKeys.splice(i, 1);
+      saveGeminiKeys();
+      renderApiKeys();
+      return hit.length;
+    };
 
     // Smart Paste/Clear button — morphs based on whether the field has content
     const updateApiKeyPasteButtonState = () => {
@@ -16225,20 +16268,22 @@
 
     // Greedy grouping of scanned episodes into parts of about `minutes`; a tiny last part is
     // merged into the one before. Shared by Join Episodes and Dub Whole Series.
-    function planEpisodeParts(scannedFiles, minutes) {
+    // maxCount: episodes in one part at most (Dub Whole Series' "Each episode its own tab" opens
+    // a part's episodes as tabs, so there it is the tab limit).
+    function planEpisodeParts(scannedFiles, minutes, maxCount = 80) {
       const target = Math.max(5, minutes || 60) * 60;
       const files = (scannedFiles || []).filter((f) => !f.error);
       const out = [];
       let cur = [], dur = 0;
       for (const f of files) {
-        if (cur.length && (dur + f.duration > target * 1.08 || cur.length >= 80)) { out.push(cur); cur = []; dur = 0; }
+        if (cur.length && (dur + f.duration > target * 1.08 || cur.length >= maxCount)) { out.push(cur); cur = []; dur = 0; }
         cur.push(f); dur += f.duration;
       }
       if (cur.length) out.push(cur);
       if (out.length > 1) {
         const last = out[out.length - 1], lastDur = last.reduce((s, f) => s + f.duration, 0);
         const prev = out[out.length - 2];
-        if (lastDur < target * 0.35 && prev.length + last.length <= 80) out.splice(out.length - 2, 2, prev.concat(last));
+        if (lastDur < target * 0.35 && prev.length + last.length <= maxCount) out.splice(out.length - 2, 2, prev.concat(last));
       }
       return out;
     }
@@ -16502,6 +16547,8 @@
       const splitMinutes = () => clampNum($("ds-split-minutes").value, 3, 60, 7);
       const STEP_NAMES = { split: "Split into tabs", load: "Open as tabs", transcribe: "Transcribe", match: "Match subtitles to video", generate: "Generate voices", isolate: "Isolate BGM", blurtext: "Blur subtitles" };
       const STEP_ORDER = ["split", "load", "transcribe", "match", "generate", "isolate", "blurtext"];
+      // A series of episodes as tabs has nothing to split: its first step only opens the episodes.
+      const stepName = (name) => (name === "split" && plan?.episodeTabs ? "Episodes as tabs" : STEP_NAMES[name]);
       const OPTIONAL_STEPS = ["transcribe", "match", "generate", "isolate", "blurtext"];
 
       let scan = null; // /api/episodes/scan result for a newly chosen folder
@@ -16510,6 +16557,14 @@
       const readyParts = () => scan?.joinedParts || (scan && $("ds-merged").checked
         ? scan.files.filter((f) => !f.error).map((f) => ({ path: f.path, label: f.name, episodes: 0, duration: f.duration }))
         : null);
+      // "Each episode its own tab": no joining and no cutting - every episode opens as a tab and
+      // is exported as its own video. A part is a batch of whole episodes of about "Minutes per
+      // part" (at most MAX_PROJECT_TABS), dubbed together like the joined mode's tabs.
+      const episodeTabsWanted = () => !!scan && !readyParts() && $("ds-episodes").checked;
+      const episodeTabsShown = () => (plan ? !!plan.episodeTabs : episodeTabsWanted());
+      // "Episodes to dub": every readable episode unless it was unticked (scan.unpicked: paths).
+      const pickedFiles = () => (scan ? scan.files.filter((f) => !f.error && !scan.unpicked?.has(f.path)) : []);
+      const episodeBatches = () => planEpisodeParts(pickedFiles(), joinMinutes(), MAX_PROJECT_TABS);
       let plan = null; // persisted: { folder, seriesName, outDir, joinMinutes, parts, current, stepState, pieces, lastDone }
       try {
         const saved = JSON.parse(localStorage.getItem(SERIES_KEY) || "null");
@@ -16675,25 +16730,44 @@
           if (typeof prefs.handsFree === "boolean" && $("ds-handsfree")) $("ds-handsfree").checked = prefs.handsFree;
           if (typeof prefs.merge === "boolean") $("ds-merge").checked = prefs.merge;
           if (prefs.mergeScope === "series" || prefs.mergeScope === "part") $("ds-merge-scope").value = prefs.mergeScope;
+          if (typeof prefs.episodeTabs === "boolean") $("ds-episodes").checked = prefs.episodeTabs;
+          if (typeof prefs.cleanWorking === "boolean") $("ds-clean").checked = prefs.cleanWorking;
+        }
+        // "Each episode its own tab" is new: the first time, every episode's own video plus the
+        // whole series joined once at the end (with Hands-free).
+        if (!prefs || typeof prefs.episodeTabs !== "boolean") {
+          $("ds-merge").checked = true;
+          $("ds-merge-scope").value = "series";
         }
       } catch (e) { }
+      // "Episodes at once" and "Retry failed": their own keys, read by the transcribe batch too.
+      [["ds-parallel", "aiDubberSeriesParallel"], ["ds-retries", "aiDubberSeriesRetries"]].forEach(([id, key]) => {
+        const sel = $(id);
+        const saved = localStorage.getItem(key);
+        if (saved !== null && [...sel.options].some((o) => o.value === saved)) sel.value = saved;
+        sel.addEventListener("change", () => { try { localStorage.setItem(key, sel.value); } catch (e) { } });
+      });
       const savePrefs = () => {
-        const prefs = { joinMinutes: joinMinutes(), splitMinutes: splitMinutes() };
+        const prefs = { joinMinutes: joinMinutes(), splitMinutes: splitMinutes(), episodeTabs: $("ds-episodes").checked };
         OPTIONAL_STEPS.forEach((k) => { prefs[k] = $(`ds-step-${k}`).checked; });
         prefs.handsFree = handsFree();
         prefs.merge = $("ds-merge").checked;
         prefs.mergeScope = mergeScope();
+        prefs.cleanWorking = $("ds-clean").checked;
         prefs.colorFilter = colorSel.value;
         try { localStorage.setItem("aiDubberSeriesPrefs", JSON.stringify(prefs)); } catch (e) { }
       };
       // Hands-free: each finished part is exported and the next part starts by itself.
       const handsFree = () => !!$("ds-handsfree")?.checked;
+      // "Delete the joined and split working files when the series is exported".
+      const cleanWorkingWanted = () => !!$("ds-clean")?.checked;
       // Hands-free: each exported part's tab videos are joined into one video.
       const mergeWanted = () => handsFree() && $("ds-merge").checked;
       // "part": one video per part, joined as each part is exported. "series": the whole series in
       // one video - every part's tabs joined once, after the last part.
       const mergeScope = () => ($("ds-merge-scope")?.value === "series" ? "series" : "part");
       $("ds-merge").addEventListener("change", () => { savePrefs(); render(); });
+      $("ds-clean").addEventListener("change", savePrefs);
       $("ds-merge-scope")?.addEventListener("change", () => { savePrefs(); render(); });
       // A finished part whose hands-free export didn't complete, with its tabs still open (tabs
       // open after its own were closed belong to something else).
@@ -16818,6 +16892,85 @@
 
 
       // ── Rendering ────────────────────────────────────────────────────────
+      // "Episodes to dub": a chip per readable episode; unticked ones are left out of the plan.
+      let chooserShown = "";
+      function drawChooser() {
+        const files = scan.files.filter((f) => !f.error);
+        $("ds-choose-count").textContent = `Episodes to dub: ${pickedFiles().length} of ${files.length}`;
+        $("ds-choose-new").classList.toggle("hidden", !episodeTabsWanted()); // only episodes are exported under their own names
+        const sig = files.map((f) => (scan.unpicked?.has(f.path) ? 0 : 1)).join("") + "|" + scan.folder;
+        if (sig === chooserShown) return;
+        chooserShown = sig;
+        $("ds-choose-grid").innerHTML = files.map((f, i) =>
+          `<button type="button" class="ds-ep-chip${scan.unpicked?.has(f.path) ? "" : " is-on"}" data-i="${i}" title="${esc(f.name)} · ${fmtDur(f.duration)}">${esc(epLabel(f))}</button>`).join("");
+      }
+      const readableFiles = () => (scan ? scan.files.filter((f) => !f.error) : []);
+      $("ds-choose-grid").addEventListener("click", (e) => {
+        const chip = e.target.closest(".ds-ep-chip");
+        const f = chip && readableFiles()[Number(chip.dataset.i)];
+        if (!f || plan) return;
+        scan.unpicked = scan.unpicked || new Set();
+        if (scan.unpicked.has(f.path)) scan.unpicked.delete(f.path);
+        else scan.unpicked.add(f.path);
+        render();
+      });
+      $("ds-choose-all").addEventListener("click", () => { if (scan && !plan) { scan.unpicked = new Set(); render(); } });
+      $("ds-choose-none").addEventListener("click", () => { if (scan && !plan) { scan.unpicked = new Set(readableFiles().map((f) => f.path)); render(); } });
+      // Ticks only the episodes whose dubbed video isn't in the series' export folder yet (the
+      // names queueAllTabsForSeries gives them) - also the ones that failed before.
+      $("ds-choose-new").addEventListener("click", async () => {
+        if (!scan || plan) return;
+        const dir = exportDirFor($("ds-name").value.trim() || scan.seriesName);
+        if (!dir) return showToast("Set the Save Path in the export settings first - that is where the dubbed episodes go.", "warning");
+        const files = readableFiles();
+        const lang = targetLanguage || "Khmer";
+        const paths = files.map((f) => pathJoin(dir, `${baseOf(f.path)}_${lang}_Dubbed.${f.video ? "mp4" : "mp3"}`));
+        try {
+          const r = await postJson(`${API}/series-checkpoint/files-exist`, { paths });
+          if (!r?.success) throw new Error(r?.error || "no answer");
+          scan.unpicked = new Set(files.filter((f, i) => r.exists[i]).map((f) => f.path));
+          const done = scan.unpicked.size;
+          showToast(done ? `${done} episode(s) already have a dubbed video in ${dir} - left out. ${files.length - done} to dub.` : `No episode has a dubbed video in ${dir} yet - all ${files.length} are ticked.`, "info");
+          render();
+        } catch (e) {
+          showToast(`Could not check the export folder: ${e.message}`, "error");
+        }
+      });
+
+      // The part's episodes (tabs) in the progress card: a dot per job, like the steps above but per
+      // episode, and how much of each is voiced. Tabs already closed (an exported part) show the
+      // part's own state.
+      function episodeRows(shown) {
+        const part = plan.parts[shown.index];
+        const pieces = (shown.index === unfinishedIndex() ? plan.pieces : plan.lastDone?.index === shown.index ? plan.lastDone.pieces : null) || [];
+        if (pieces.length < 2) return "";
+        const steps = shown.steps || {};
+        const step = seriesRun?.step;
+        const job = seriesExports.get(part);
+        const partDone = part.status === "done";
+        const dot = (state, what) => `<span><i class="ds-dot is-${state}" title="${what}: ${state}"></i></span>`;
+        let voicedEps = 0;
+        const rows = pieces.map((path) => {
+          const name = path.split(/[\\/]/).pop();
+          const p = projects.find((x) => x.videoFilePath === path);
+          const subs = p ? liveSubtitlesOf(p) : [];
+          const speak = subs.filter((s) => isSpeakableText(s.text));
+          const voiced = speak.filter((s) => s.audioStatus === "ready" && s.file).length;
+          const closed = partDone ? "done" : "pending";
+          const bgm = !wanted("isolate") ? "off" : !p ? closed : p.bgmError ? "failed" : p.bgmMethod ? (p.bgmMethod === "ffmpeg_fallback" ? "warn" : "done") : p.bgmJobId ? "running" : "pending";
+          const tr = !wanted("transcribe") ? "off" : !p ? closed : subs.length ? "done" : step === "transcribe" ? "running" : steps.transcribe?.state === "done" ? "failed" : "pending";
+          const vo = !wanted("generate") ? "off" : !p ? closed : speak.length && voiced === speak.length ? "done"
+            : step === "generate" && subs.length ? "running" : steps.generate?.state === "done" && voiced < speak.length ? "failed" : "pending";
+          const item = job?.items?.find((it) => it.projectLabel === name);
+          const ex = item ? ({ done: "done", running: "running", error: "failed", cancelled: "failed" }[item.status] || "pending")
+            : part.exported ? "done" : handsFree() ? "pending" : "off";
+          if (vo === "done") voicedEps++;
+          const pct = !p ? "" : `${speak.length ? Math.round((voiced / speak.length) * 100) : vo === "done" ? 100 : 0}%`;
+          return `<div class="ds-ep-row"><span class="ds-ep-name" title="${esc(name)}">${esc(baseOf(path))}</span>${dot(bgm, "BGM")}${dot(tr, "Transcribe")}${dot(vo, "Voice")}${dot(ex, "Export")}<span class="ds-ep-pct">${pct}</span></div>`;
+        });
+        return `<div class="ds-eps custom-scrollbar"><div class="ds-ep-row is-head"><span>${pieces.length} episodes · ${voicedEps} voiced</span><span>BGM</span><span>Transcribe</span><span>Voice</span><span>Export</span><span></span></div>${rows.join("")}</div>`;
+      }
+
       function render() {
         // Progress comes in every second for hours; a closed window is drawn when it opens.
         if (modal.classList.contains("hidden")) return;
@@ -16825,6 +16978,8 @@
         $("ds-merge").disabled = !handsFree();
         $("ds-merge-scope").disabled = !mergeWanted();
         $("ds-merge-row").classList.toggle("hidden", !handsFree()); // joining needs hands-free
+        // Episodes as tabs make no working files; the rest have joined parts and split tabs.
+        $("ds-clean-row").classList.toggle("hidden", !handsFree() || episodeTabsShown());
         const folder = plan?.folder || scan?.folder || "";
         $("ds-folder").textContent = folder || "No folder selected";
         $("ds-folder").title = folder;
@@ -16838,7 +16993,8 @@
         const parts = plan
           ? plan.parts
           : ready ? ready.map((jp) => ({ label: jp.label, episodes: jp.episodes, duration: jp.duration, status: "preview" }))
-          : scan ? planEpisodeParts(scan.files, joinMinutes()).map((g) => ({ label: `${epLabel(g[0])} – ${epLabel(g[g.length - 1])}`, episodes: g.length, duration: g.reduce((s, f) => s + f.duration, 0), status: "preview" })) : [];
+          : scan ? (episodeTabsWanted() ? episodeBatches() : planEpisodeParts(pickedFiles(), joinMinutes()))
+            .map((g) => ({ label: `${epLabel(g[0])} – ${epLabel(g[g.length - 1])}`, episodes: g.length, duration: g.reduce((s, f) => s + f.duration, 0), status: "preview" })) : [];
         const totalEpisodes = parts.reduce((s, p) => s + (p.episodes || 0), 0);
         const totalDur = parts.reduce((s, p) => s + p.duration, 0);
         if (parts.length) {
@@ -16858,8 +17014,14 @@
         const showMerged = !plan && !!scan && !scan.joinedParts && scan.files.some((f) => !f.error);
         $("ds-merged-row").classList.toggle("hidden", !showMerged);
         $("ds-merged-row").classList.toggle("flex", showMerged);
+        const showEpisodes = showMerged && !$("ds-merged").checked; // merged videos are cut into tabs
+        $("ds-episodes-row").classList.toggle("hidden", !showEpisodes);
+        $("ds-episodes-row").classList.toggle("flex", showEpisodes);
+        $("ds-choose").classList.toggle("hidden", !showEpisodes);
+        $("ds-choose").classList.toggle("flex", showEpisodes);
+        if (showEpisodes) drawChooser();
         $("ds-name").disabled = !!plan || running;
-        $("ds-split-minutes").disabled = running;
+        $("ds-split-minutes").disabled = running || episodeTabsShown(); // one tab per episode
 
         const u = unfinishedIndex();
         const box = $("ds-parts");
@@ -16878,7 +17040,7 @@
           else if (p.status === "done") {
             const report = p.report ? [
               ...(stepsTotalMs(p.report.steps) >= 1000 ? [`Steps took ${fmtDur(stepsTotalMs(p.report.steps) / 1000)} in all`] : []),
-              ...STEP_ORDER.filter((k) => p.report.steps[k]).map((k) => `${STEP_NAMES[k]}: ${p.report.steps[k].state}${tookText(p.report.steps[k]) ? ` in ${tookText(p.report.steps[k])}` : ""}${p.report.steps[k].note ? ` - ${p.report.steps[k].note}` : ""}`),
+              ...STEP_ORDER.filter((k) => p.report.steps[k]).map((k) => `${stepName(k)}: ${p.report.steps[k].state}${tookText(p.report.steps[k]) ? ` in ${tookText(p.report.steps[k])}` : ""}${p.report.steps[k].note ? ` - ${p.report.steps[k].note}` : ""}`),
             ].join("\n") : "";
             const job = plan && seriesExports.get(p);
             const r = job?.result;
@@ -16895,14 +17057,15 @@
             state = running ? pill("run", "working…") : pill("warn", "stopped - Continue");
             bar = stepsPercent(plan.stepState);
           }
-          else state = pill("wait", "joined, waiting");
-          const tabs = Math.max(1, Math.min(MAX_PROJECT_TABS, Math.round(p.duration / (splitMinutes() * 60))));
+          else state = pill("wait", episodeTabsShown() ? "waiting" : "joined, waiting");
+          const tabs = episodeTabsShown() && p.episodes ? p.episodes
+            : Math.max(1, Math.min(MAX_PROJECT_TABS, Math.round(p.duration / (splitMinutes() * 60))));
           const row = document.createElement("div");
           row.className = `ds-part${i === u ? " is-current" : ""}${p.status === "done" ? " is-done" : ""}`;
           row.innerHTML = `<span class="ds-part-num">${p.status === "done" ? "✓" : i + 1}</span>
             <div class="ds-part-main">
               <div class="ds-part-title" title="${esc(p.label)}">${esc(p.label)}</div>
-              <div class="ds-part-meta">${p.episodes ? `<span>${p.episodes} episodes</span>` : ""}<span>≈${tabs} tab${tabs === 1 ? "" : "s"}</span><span>${fmtDur(p.duration)}</span></div>
+              <div class="ds-part-meta">${p.episodes ? `<span>${p.episodes} episodes</span>` : ""}<span>${episodeTabsShown() ? "" : "≈"}${tabs} tab${tabs === 1 ? "" : "s"}</span><span>${fmtDur(p.duration)}</span></div>
             </div>
             ${state}
             ${bar !== null ? `<div class="ds-part-bar"><i style="width:${Math.max(0, Math.min(100, bar))}%"></i></div>` : ""}`;
@@ -16917,6 +17080,7 @@
         if (shown) {
           const pct = u >= 0 ? stepsPercent(shown.steps) : 100;
           const eyebrow = u < 0 ? "Last finished" : running ? "Now dubbing" : "Stopped";
+          const epsScroll = stepsBox.querySelector(".ds-eps")?.scrollTop || 0;
           stepsBox.innerHTML = `<div class="ds-progress-head">
               <div><div class="ds-eyebrow">${eyebrow}</div><div class="ds-progress-title">Part ${shown.index + 1} of ${plan.parts.length}</div></div>
               <div class="ds-progress-pct">${pct}%</div>
@@ -16928,8 +17092,11 @@
             const state = !st ? (off ? "off" : "pending")
               : st.state === "skipped" ? "off"
                 : ["done", "running", "stopped"].includes(st.state) ? st.state : "failed";
-            return stepRow(state, off ? `${STEP_NAMES[name]} (off)` : STEP_NAMES[name], st?.note || "", tookText(st));
-          }).join("") + exportStepLine(shown) + `</div>`;
+            return stepRow(state, off ? `${stepName(name)} (off)` : stepName(name), st?.note || "", tookText(st));
+          }).join("") + exportStepLine(shown) + `</div>` + episodeRows(shown);
+          // Redrawn every second: the episode list keeps where it was scrolled to.
+          const list = stepsBox.querySelector(".ds-eps");
+          if (list) list.scrollTop = epsScroll;
         }
 
         const nextIdx = nextPartIndex();
@@ -16964,7 +17131,10 @@
           btnNext.classList.add("hidden");
         } else if (!plan) {
           btnStart.classList.remove("hidden");
-          btnStart.textContent = !parts.length ? "Start" : ready ? `Start: dub part 1 of ${parts.length} (already ${scan.joinedParts ? "joined" : "merged"})` : `Start: join ${parts.length} part${parts.length === 1 ? "" : "s"} and dub part 1`;
+          btnStart.textContent = !parts.length ? "Start"
+            : ready ? `Start: dub part 1 of ${parts.length} (already ${scan.joinedParts ? "joined" : "merged"})`
+            : episodeTabsWanted() ? `Start: dub part 1 of ${parts.length} (${parts[0].episodes} episodes, one tab each)`
+            : `Start: join ${parts.length} part${parts.length === 1 ? "" : "s"} and dub part 1`;
           btnStart.disabled = !parts.length;
           btnNext.classList.add("hidden");
         } else if (joining.length) {
@@ -17237,7 +17407,7 @@
         seriesRun.step = name;
         plan.stepState[name] = { state: "running" };
         savePlan();
-        setLabel(`Part ${plan.current + 1}/${plan.parts.length} · ${STEP_NAMES[name]}`);
+        setLabel(`Part ${plan.current + 1}/${plan.parts.length} · ${stepName(name)}`);
         let note = "";
         const startedAt = Date.now(); // how long each step takes is kept with it (shown in the window)
         try {
@@ -17258,6 +17428,11 @@
 
       async function splitStep() {
         const part = plan.parts[plan.current];
+        if (part.episodeTabs) {
+          // Each episode is a tab as it is - nothing to cut.
+          plan.pieces = part.files.slice();
+          return `${plan.pieces.length} episode${plan.pieces.length === 1 ? "" : "s"}, one tab each`;
+        }
         const src = await postJson(`${API}/split/inspect`, { file: part.outPath });
         if (!src.success) throw new Error(`Could not read part ${plan.current + 1}: ${src.error}.`);
         let n = Math.max(1, Math.min(40, Math.round(src.duration / (splitMinutes() * 60))));
@@ -17286,7 +17461,9 @@
         if (st.status === "cancelled") throw stoppedError();
         if (st.status !== "done") throw new Error(`Splitting failed: ${st.error || "unknown error"}.`);
         plan.pieces = st.parts.map((p) => p.outPath);
-        return `${n} tabs of about ${fmtDur(src.duration / n)}${capped ? ` (limited to ${MAX_PROJECT_TABS} tabs)` : ""}`;
+        // Joined parts are cut where an episode ends, so a tab holds whole episodes.
+        const between = st.episodeCuts ? (st.episodeCuts === n - 1 ? ", cut between episodes" : `, ${st.episodeCuts} of ${n - 1} cuts between episodes`) : "";
+        return `${n} tabs of about ${fmtDur(src.duration / n)}${between}${capped ? ` (limited to ${MAX_PROJECT_TABS} tabs)` : ""}`;
       }
 
       async function loadStep() {
@@ -17305,7 +17482,6 @@
       }
 
       const QUOTA_MSG = "Google reports the daily Gemini quota used up on every key. Press Continue in 15 minutes (the app rechecks then), pick another Gemini model, or add a key from another Google project.";
-      const RETRY_PASSES = 2;
       const tabNumbers = (list) => list.map((p) => projects.indexOf(p) + 1).join(", ");
 
       // Every tab must come back with subtitles: tabs that failed or came back empty are
@@ -17337,8 +17513,8 @@
         // On Continue, tabs that already have subtitles are kept.
         const first = emptyTabs();
         if (first.length) await runTranscribe(first.length < projects.length ? first : null);
-        for (let pass = 1; pass <= RETRY_PASSES && emptyTabs().length; pass++) {
-          setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Transcribe again: tab ${tabNumbers(emptyTabs())} (${pass}/${RETRY_PASSES})`);
+        for (let pass = 1; pass <= seriesRetryPasses() && emptyTabs().length; pass++) {
+          setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Transcribe again: tab ${tabNumbers(emptyTabs())} (${pass}/${seriesRetryPasses()})`);
           await sleep(5000);
           checkStop();
           await runTranscribe(emptyTabs());
@@ -17346,7 +17522,7 @@
         const stillEmpty = emptyTabs();
         if (stillEmpty.length === projects.length) throw new Error("No tab could be transcribed.");
         if (stillEmpty.length) {
-          console.warn(`[Dub Whole Series] Tab ${tabNumbers(stillEmpty)} could not be transcribed after ${RETRY_PASSES + 1} tries.`);
+          console.warn(`[Dub Whole Series] Tab ${tabNumbers(stillEmpty)} could not be transcribed after ${seriesRetryPasses() + 1} tries.`);
           showToast(`Warning: Tab ${tabNumbers(stillEmpty)} had an issue - continuing with the other tabs.`, "warning");
         }
 
@@ -17436,8 +17612,8 @@
         let g = alreadyVoiced ? { vox: false } : await runGenerate();
         if (g.reason === "no-subtitles") return "no subtitles to voice";
         const voiceMissingLines = async () => {
-          for (let pass = 1; pass <= RETRY_PASSES && missingVoice(); pass++) {
-            setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Generate again: ${missingVoice()} line(s) (${pass}/${RETRY_PASSES})`);
+          for (let pass = 1; pass <= seriesRetryPasses() && missingVoice(); pass++) {
+            setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Generate again: ${missingVoice()} line(s) (${pass}/${seriesRetryPasses()})`);
             await sleep(5000);
             checkStop();
             g = await runGenerate();
@@ -17447,7 +17623,7 @@
           // hands-free asking again every 3 minutes).
           const refused = projects.some((p) => liveSubtitlesOf(p).some((s) => s.audioStatus === "error" && isEdgeTtsRefusal(s.audioError)));
           if (missing && refused) throw new Error(`${missing} line(s) have no voice: Microsoft's voice service (Edge TTS) refused the connection (403). Update DR Dubber Pro, or pick another voice engine in Settings, then press Continue.`);
-          if (missing) throw new Error(`${missing} line(s) still have no voice after ${RETRY_PASSES + 1} tries. Press Continue to try them again.`);
+          if (missing) throw new Error(`${missing} line(s) still have no voice after ${seriesRetryPasses() + 1} tries. Press Continue to try them again.`);
         };
         await voiceMissingLines();
 
@@ -17682,6 +17858,14 @@
         saveCurrentProjectState();
         projects.filter((p) => plan.pieces?.includes(p.videoFilePath)).forEach(resaveTranscribeSrt);
         const autoExport = handsFree();
+        // The working files this part made, for "Delete the joined and split working files": its
+        // split tabs (and their list), and the joined file when the app joined it. Episodes as
+        // tabs make none; parts the user brought (prejoined) are theirs.
+        const part = plan.parts[i];
+        if (!part.episodeTabs && plan.pieces?.length && !plan.pieces.includes(part.outPath)) {
+          part.workFiles = [...plan.pieces, pathJoin(dirOf(plan.pieces[0]), `${baseOf(part.outPath)}_parts.txt`)];
+          if (!part.prejoined) part.workFiles.push(part.outPath, part.outPath.replace(/\.(?:mp4|m4a)$/i, "_episodes.txt"));
+        }
         plan.parts[i].status = "done";
         if (autoExport) plan.parts[i].autoExport = true; // see lostExportsNote
         plan.lastDone = { index: i, steps: plan.stepState, pieces: plan.pieces }; // pieces: the part's tabs, for its export
@@ -17725,6 +17909,7 @@
             }
             await joinWholeSeries();
             checkStop();
+            await deleteWorkingFiles();
             const merged = plan.parts.filter((p) => p.merged).length;
             const joined = mergeScope() === "series"
               ? (plan.fullMerged ? `, joined into one video: ${plan.fullMerged.split(/[\\/]/).pop()}` : "")
@@ -17754,16 +17939,39 @@
       // Where the series is exported: a folder of its own in the export folder, "<Name>_Dubbed",
       // so every part's videos and the joined video are together and apart from other exports.
       // A series exported before keeps the folder its first videos went to.
+      // "Delete the joined and split working files": once every part is exported - and joined, when
+      // that was asked for - the files the parts recorded (workFiles) go. The backend deletes only
+      // files straight inside "DR Dubber Joined" / "DR Dubber Split". A failure only warns.
+      async function deleteWorkingFiles() {
+        if (!plan || plan.cleaned || !cleanWorkingWanted() || !handsFree()) return;
+        if (!plan.parts.every((p) => p.exported)) return;
+        if (mergeWanted() && (mergeScope() === "series" ? !plan.fullMerged : !plan.parts.every((p) => p.merged))) return; // keep them to join again
+        const paths = plan.parts.flatMap((p) => p.workFiles || []);
+        if (!paths.length) return;
+        try {
+          const r = await postJson(`${API}/episodes/delete-working`, { paths });
+          if (!r?.success) throw new Error(r?.error || "no answer");
+          plan.cleaned = true;
+          savePlan();
+          if (r.deleted) showToast(`Deleted ${r.deleted} working file(s) - ${(r.freed / 1024 ** 3).toFixed(1)} GB freed. The episodes and dubbed videos are kept.`, "success");
+        } catch (e) {
+          showToast(`The working files could not be deleted (${e.message}). They are in "DR Dubber Joined" next to the episodes.`, "warning");
+        }
+      }
+
+      // "<export folder>\<Name>_Dubbed" for a series name ("" without an export folder set).
+      function exportDirFor(seriesName) {
+        const base = (exportPath || "").trim().replace(/[\\/]+$/, "");
+        if (!base) return "";
+        const name = (seriesName || "Series").replace(/[<>:"/\\|?*\x00-\x1f]/g, " ").replace(/\s+/g, " ").trim().replace(/[. ]+$/, "") || "Series";
+        return pathJoin(base, `${name}_Dubbed`);
+      }
       function seriesExportDir() {
         if (!plan) return "";
         if (!plan.exportDir) {
           const done = plan.parts.find((p) => p.outputs?.[0])?.outputs[0];
-          const base = (exportPath || "").trim().replace(/[\\/]+$/, "");
           if (done) plan.exportDir = dirOf(done);
-          else if (base) {
-            const name = (plan.seriesName || "Series").replace(/[<>:"/\\|?*\x00-\x1f]/g, " ").replace(/\s+/g, " ").trim().replace(/[. ]+$/, "") || "Series";
-            plan.exportDir = pathJoin(base, `${name}_Dubbed`);
-          }
+          else plan.exportDir = exportDirFor(plan.seriesName) || undefined;
         }
         return plan.exportDir || "";
       }
@@ -17923,6 +18131,7 @@
           checkStop();
           if (plan.fullMerged) showToast(`The whole series is joined into one video: ${plan.fullMerged.split(/[\\/]/).pop()} ✓`, "success");
         }
+        await deleteWorkingFiles();
       }
 
       // "One video for the whole series": every part's exported tabs in order, joined once after
@@ -18098,7 +18307,8 @@
         if (!scan || seriesRun || !preflight()) return;
         cancelAutoResume();
         const ready = readyParts();
-        const groups = ready ? [] : planEpisodeParts(scan.files, joinMinutes());
+        const episodeTabs = !ready && episodeTabsWanted();
+        const groups = ready ? [] : episodeTabs ? episodeBatches() : planEpisodeParts(pickedFiles(), joinMinutes());
         if (!groups.length && !ready?.length) return;
         if (!(await closeOpenTabs("Dub Whole Series opens each part as new tabs."))) return;
         savePrefs();
@@ -18106,8 +18316,9 @@
           id: Date.now(), // this series run (its exports' tag)
           folder: scan.folder,
           seriesName: $("ds-name").value.trim() || scan.seriesName,
-          outDir: ready ? scan.folder : pathJoin(scan.folder, "DR Dubber Joined"),
+          outDir: ready || episodeTabs ? scan.folder : pathJoin(scan.folder, "DR Dubber Joined"),
           joinMinutes: joinMinutes(),
+          episodeTabs, // every episode its own tab: nothing is joined or split
           // A "DR Dubber Joined" folder or already merged videos: the parts are ready, nothing to join.
           parts: ready ? ready.map((jp) => ({
             label: jp.label,
@@ -18122,7 +18333,8 @@
             episodes: g.length,
             duration: g.reduce((s, f) => s + f.duration, 0),
             files: g.map((f) => f.path),
-            status: "planned",
+            // Episodes as tabs: ready to dub as they are (splitStep opens the files themselves).
+            ...(episodeTabs ? { episodeTabs: true, prejoined: true, status: "joined" } : { status: "planned" }),
           })),
           current: null,
           stepState: null,
@@ -18345,6 +18557,12 @@
       });
       OPTIONAL_STEPS.forEach((k) => $(`ds-step-${k}`).addEventListener("change", () => { savePrefs(); render(); }));
       $("ds-merged").addEventListener("change", render);
+      $("ds-episodes").addEventListener("change", () => {
+        // Episodes as tabs: the joined video worth having is the whole series (a part is only a batch).
+        if ($("ds-episodes").checked) $("ds-merge-scope").value = "series";
+        savePrefs();
+        render();
+      });
       render();
 
       // The app closed while the series worked (a power cut, a crash, closed by hand) or while it
@@ -19349,6 +19567,7 @@
       let keys = [];
       try { keys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]"); } catch (_) { keys = []; }
       keys = (Array.isArray(keys) ? keys : []).map((k) => String(k || "").trim()).filter(Boolean);
+      if (window.drPool) keys = window.drPool.merge(keys); // DR Router's ready accounts too
       return { keys, model: localStorage.getItem("aiDubberModel") || "gemini-3.8-flash" };
     }
 
@@ -24739,6 +24958,7 @@
               isOriginalAudioMuted,
               duckingEnabled: typeof isRenderDuckingEnabled === "function" ? isRenderDuckingEnabled() : true,
               normalizeLoudness: localStorage.getItem("aiDubberNormalizeLoudness") !== "false",
+              dialogueMastering: localStorage.getItem("aiDubberDialogueMastering") !== "false",
               duckingDepth: typeof getRenderDuckingDepth === "function" ? getRenderDuckingDepth() : "standard",
               subtitlePreset: typeof getSubtitleStylePreset === "function" ? getSubtitleStylePreset() : "classic",
               outputFileName: finalFileName,
@@ -25225,6 +25445,7 @@
               isOriginalAudioMuted: proj.isOriginalAudioMuted === true || (proj.currentVolume !== undefined ? proj.currentVolume === 0 : false),
               duckingEnabled: typeof isRenderDuckingEnabled === "function" ? isRenderDuckingEnabled() : true,
               normalizeLoudness: localStorage.getItem("aiDubberNormalizeLoudness") !== "false",
+              dialogueMastering: localStorage.getItem("aiDubberDialogueMastering") !== "false",
               duckingDepth: typeof getRenderDuckingDepth === "function" ? getRenderDuckingDepth() : "standard",
               subtitlePreset: typeof getSubtitleStylePreset === "function" ? getSubtitleStylePreset() : "classic",
               outputFileName: fileName,

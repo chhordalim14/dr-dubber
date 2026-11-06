@@ -1258,16 +1258,37 @@
     </button>
     <!-- Header actions, left to right: tools · output · app -->
     <div class="app-header__actions">
+      <button type="button" id="btn-open-dr-router" class="hdr-btn hdr-btn--outline" title="DR Router PRO - Multi-Account Router">
+        <!-- An icon, like Quick Tools: narrow windows hide the label (shell.css), which left this button empty. -->
+        <i data-lucide="router" class="w-4 h-4 text-amber-400"></i>
+        <span class="font-bold text-amber-300">DR Router PRO</span>
+      </button>
       <div class="hdr-menu-wrap">
-        <button type="button" class="hdr-btn hdr-btn--outline" data-hdr-menu="hdr-tools-menu" aria-haspopup="true" aria-expanded="false" title="Quick Tools">
-          <i data-lucide="zap" class="w-4 h-4"></i>
+        <button type="button" class="hdr-btn hdr-btn--outline" data-hdr-menu="hdr-tools-menu" aria-haspopup="true" aria-expanded="false" title="AI &amp; Creative Tools">
+          <i data-lucide="zap" class="w-4 h-4 text-amber-400"></i>
           <span>Quick Tools</span>
         </button>
         <div id="hdr-tools-menu" class="hdr-menu" hidden>
+          <p class="hdr-menu__title">AI Studio Tools</p>
+          <button id="btn-open-dr-router-tools" type="button" class="hdr-menu__item" title="DR Router PRO - Multi-Account Router">
+            <i data-lucide="layers" class="text-amber-400"></i><span>DR Router PRO</span>
+          </button>
           <button id="btn-open-title-ai" type="button" class="hdr-menu__item" title="Khmer Movie Title Suggestions">
             <i data-lucide="sparkles" class="hdr-menu__magic"></i><span>Movie Title Ideas</span>
           </button>
-          <!-- Shortcut: same file picker as Media › Import SRT -->
+          <button type="button" class="hdr-menu__item" data-click="btn-all-tabs-unify-names" title="Make character names and spelling consistent across all tabs">
+            <i data-lucide="spell-check" class="text-rose-400"></i><span>Make names consistent</span>
+          </button>
+          <button type="button" class="hdr-menu__item" data-click="btn-open-daitranscribe-deck" title="Open DAI-Transcribe Batch Studio">
+            <i data-lucide="sparkles" class="text-emerald-400"></i><span>DAI-Transcribe Studio</span>
+          </button>
+          <button type="button" class="hdr-menu__item" data-click="btn-dub-series" title="Dub Whole Series: join, split, transcribe, voice and isolate BGM">
+            <i data-lucide="library-big" class="text-violet-400"></i><span>Dub Whole Series</span>
+          </button>
+          <button type="button" class="hdr-menu__item" data-click="btn-vox-speakers" title="Speakers &amp; Cloned Voices">
+            <i data-lucide="users" class="text-sky-400"></i><span>Speakers</span>
+          </button>
+          <div class="hdr-menu__sep"></div>
           <button type="button" class="hdr-menu__item" data-click="btn-import-srt" title="Import SRT subtitles">
             <i data-lucide="file-down"></i><span>Import SRT</span>
           </button>
@@ -1287,10 +1308,10 @@
         </button>
         <div id="hdr-export-menu" class="hdr-menu hdr-menu--right" hidden>
           <button type="button" class="hdr-menu__item" data-click="btn-render" title="Final Studio Render">
-            <i data-lucide="film"></i><span>Render Video</span>
+            <i data-lucide="film"></i><span>Render Video (MP4)</span>
           </button>
           <button id="btn-export-srt" type="button" class="hdr-menu__item" title="Export SRT Subtitles">
-            <i data-lucide="file-up"></i><span>Export SRT</span>
+            <i data-lucide="file-up"></i><span>Export Subtitles (.SRT)</span>
           </button>
         </div>
       </div>
@@ -1645,7 +1666,13 @@
               </button>
               <div class="w-px h-3 bg-[var(--border-color)] mx-1 shrink-0"></div>
               <span
-                class="text-[9px] font-bold uppercase tracking-wide text-[var(--text-muted)] leading-none shrink-0 select-none">Crop</span>
+                class="text-[9px] font-bold uppercase tracking-wide text-[var(--text-muted)] leading-none shrink-0 select-none">Frame</span>
+              <button id="btn-aspect-ratio" style="--tile: var(--tile-amber)"
+                class="p-1.5 hover:text-sky-400 hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)] shrink-0"
+                title="Aspect Ratio">
+                <i data-lucide="ratio"></i>
+                <span class="tool-label">Ratio</span>
+              </button>
               <button id="btn-crop-mode" style="--tile: var(--tile-amber)"
                 class="p-1.5 hover:text-orange-500 hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)] shrink-0"
                 title="Crop Video">
@@ -1658,21 +1685,6 @@
                 <i data-lucide="rotate-ccw"></i>
                 <span class="tool-label">Reset</span>
               </button>
-              <button id="btn-vignette" style="--tile: var(--tile-amber)"
-                class="p-1.5 hover:text-[var(--text-bright)] hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)] shrink-0"
-                title="Vignette">
-                <i data-lucide="aperture"></i>
-                <span class="tool-label">Vignette</span>
-              </button>
-              <div class="w-px h-3 bg-[var(--border-color)] mx-1 shrink-0"></div>
-              <span
-                class="text-[9px] font-bold uppercase tracking-wide text-[var(--text-muted)] leading-none shrink-0 select-none">Overlay</span>
-              <button id="btn-add-free-text" style="--tile: var(--tile-mint)"
-                class="p-1.5 hover:text-blue-400 hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)] shrink-0"
-                title="Add Free Text">
-                <i data-lucide="type"></i>
-                <span class="tool-label">Text</span>
-              </button>
               <div class="w-px h-3 bg-[var(--border-color)] mx-1 shrink-0"></div>
               <span
                 class="text-[9px] font-bold uppercase tracking-wide text-[var(--text-muted)] leading-none shrink-0 select-none">Look</span>
@@ -1682,17 +1694,26 @@
                 <i data-lucide="palette"></i>
                 <span class="tool-label">Color</span>
               </button>
-              <button id="btn-aspect-ratio" style="--tile: var(--tile-lav)"
-                class="p-1.5 hover:text-sky-400 hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)] shrink-0"
-                title="Aspect Ratio">
-                <i data-lucide="ratio"></i>
-                <span class="tool-label">Ratio</span>
+              <button id="btn-vignette" style="--tile: var(--tile-lav)"
+                class="p-1.5 hover:text-[var(--text-bright)] hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)] shrink-0"
+                title="Vignette">
+                <i data-lucide="aperture"></i>
+                <span class="tool-label">Vignette</span>
               </button>
               <button id="btn-video-preset" style="--tile: var(--tile-lav)"
                 class="p-1.5 hover:text-purple-400 hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)] shrink-0"
                 title="Video Presets">
                 <i data-lucide="swatch-book"></i>
                 <span class="tool-label">Presets</span>
+              </button>
+              <div class="w-px h-3 bg-[var(--border-color)] mx-1 shrink-0"></div>
+              <span
+                class="text-[9px] font-bold uppercase tracking-wide text-[var(--text-muted)] leading-none shrink-0 select-none">Overlay</span>
+              <button id="btn-add-free-text" style="--tile: var(--tile-mint)"
+                class="p-1.5 hover:text-blue-400 hover:bg-[var(--bg-hover)] rounded transition-all duration-300 hover:-translate-y-0.5 hover:scale-110 active:scale-75 text-[var(--text-secondary)] shrink-0"
+                title="Add Free Text">
+                <i data-lucide="type"></i>
+                <span class="tool-label">Text</span>
               </button>
             </div>
             </div>
@@ -2075,7 +2096,7 @@
               <i data-lucide="mic"></i><span>Voice</span>
             </button>
           </div>
-          <!-- Subtitles: language · add · transcribe · edit -->
+          <!-- Subtitles: language · genre · add · transcribe · edit -->
           <div class="card-toolbar subs-pane" role="tabpanel" data-subs-pane="subs">
               <!-- Language Dropdown -->
               <div class="relative" id="lang-dropdown-container">
@@ -2101,49 +2122,12 @@
                   class="hidden absolute bottom-full mb-2 left-0 w-[140px] bg-studio-card border border-white/[0.12] shadow-2xl rounded-xl py-1.5 z-50 animate-dropdown origin-bottom-left overflow-y-auto max-h-[min(320px,50vh)]">
                 </div>
               </div>
-              <button id="btn-add-text" style="--tile: var(--tile-coral)"
-                class="btn-accent group h-8 px-3 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all active:scale-[0.97] shrink-0">
-                <i data-lucide="plus" class="w-3.5 h-3.5 group-hover:scale-110 transition-transform"></i>
-                <span>Add Text</span>
-              </button>
-              <!-- Transcribe: this tab, DAI studio, then every tab -->
-              <button id="btn-transcribe" disabled
-                class="h-8 px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-muted)] opacity-60 cursor-not-allowed">
-                <i id="icon-transcribe" data-lucide="sparkles" class="w-3.5 h-3.5 shrink-0"></i>
-                <span id="text-transcribe" class="hidden sm:inline">Transcribe</span>
-              </button>
-              <!-- Edit strip: Edit / Delete / Find & Replace -->
-              <div class="flex items-center bg-[var(--bg-hover)] border border-[var(--border-color)] rounded-lg p-0.5 shrink-0 flex-nowrap">
-                <button id="btn-edit-selected" style="--tile: var(--tile-sky)"
-                  class="group h-7 px-2.5 rounded-md text-xs font-medium flex items-center gap-1.5 text-[var(--text-secondary)] hover:text-blue-400 hover:bg-blue-500/10 transition-all shrink-0"
-                  title="Edit checked items">
-                  <i data-lucide="type-outline" class="w-3.5 h-3.5 group-hover:scale-110 transition-transform"></i>
-                  <span>Edit</span>
-                </button>
 
-                <button id="btn-delete-selected" style="--tile: var(--tile-red)"
-                  class="group h-7 px-2.5 rounded-md text-xs font-medium flex items-center gap-1.5 text-[var(--text-secondary)] hover:text-rose-400 hover:bg-rose-500/10 transition-all shrink-0"
-                  title="Delete checked items">
-                  <i data-lucide="trash-2" class="w-3.5 h-3.5 group-hover:scale-110 transition-transform"></i>
-                  <span>Delete</span>
-                </button>
-
-                <button id="btn-find-replace" style="--tile: var(--tile-amber)"
-                  class="group h-7 px-2.5 rounded-md text-xs font-medium flex items-center gap-1.5 text-[var(--text-secondary)] hover:text-amber-400 hover:bg-amber-500/10 transition-all shrink-0"
-                  title="Find & Replace (Ctrl+H)">
-                  <i data-lucide="search-code" class="w-3.5 h-3.5 group-hover:scale-110 transition-transform"></i>
-                  <span>Find</span>
-                </button>
-
-              </div>
-          </div>
-          <!-- AI Dubbing: drama genre · DAI studio · every tab · fixes -->
-          <div class="card-toolbar subs-pane" role="tabpanel" data-subs-pane="ai" hidden>
               <!-- Drama Style / Genre Selector -->
               <div class="relative">
                 <button id="btn-genre-select"
                   class="flex items-center gap-1.5 px-2.5 h-8 rounded-lg text-xs font-medium bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-primary)] hover:border-amber-400/50 hover:text-white transition-all cursor-pointer"
-                  title="Drama Genre Register for accurate Cambodian royal & conversational dubbing">
+                  title="Drama Genre Register for accurate Cambodian royal &amp; conversational dubbing">
                   <span id="genre-icon" class="text-sm">👑</span>
                   <span id="genre-label" class="hidden sm:inline font-khmer text-xs text-amber-400 font-semibold">បុរាណ/រាជវង្ស</span>
                   <i data-lucide="chevron-down" class="w-3 h-3 text-[var(--text-muted)] shrink-0"></i>
@@ -2188,6 +2172,45 @@
                   </button>
                 </div>
               </div>
+
+              <button id="btn-add-text" style="--tile: var(--tile-coral)"
+                class="btn-accent group h-8 px-3 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all active:scale-[0.97] shrink-0">
+                <i data-lucide="plus" class="w-3.5 h-3.5 group-hover:scale-110 transition-transform"></i>
+                <span>Add Text</span>
+              </button>
+              <!-- Transcribe: this tab, DAI studio, then every tab -->
+              <button id="btn-transcribe" disabled
+                class="h-8 px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-muted)] opacity-60 cursor-not-allowed">
+                <i id="icon-transcribe" data-lucide="sparkles" class="w-3.5 h-3.5 shrink-0"></i>
+                <span id="text-transcribe" class="hidden sm:inline">Transcribe</span>
+              </button>
+              <!-- Edit strip: Edit / Delete / Find & Replace -->
+              <div class="flex items-center bg-[var(--bg-hover)] border border-[var(--border-color)] rounded-lg p-0.5 shrink-0 flex-nowrap">
+                <button id="btn-edit-selected" style="--tile: var(--tile-sky)"
+                  class="group h-7 px-2.5 rounded-md text-xs font-medium flex items-center gap-1.5 text-[var(--text-secondary)] hover:text-blue-400 hover:bg-blue-500/10 transition-all shrink-0"
+                  title="Edit checked items">
+                  <i data-lucide="type-outline" class="w-3.5 h-3.5 group-hover:scale-110 transition-transform"></i>
+                  <span>Edit</span>
+                </button>
+
+                <button id="btn-delete-selected" style="--tile: var(--tile-red)"
+                  class="group h-7 px-2.5 rounded-md text-xs font-medium flex items-center gap-1.5 text-[var(--text-secondary)] hover:text-rose-400 hover:bg-rose-500/10 transition-all shrink-0"
+                  title="Delete checked items">
+                  <i data-lucide="trash-2" class="w-3.5 h-3.5 group-hover:scale-110 transition-transform"></i>
+                  <span>Delete</span>
+                </button>
+
+                <button id="btn-find-replace" style="--tile: var(--tile-amber)"
+                  class="group h-7 px-2.5 rounded-md text-xs font-medium flex items-center gap-1.5 text-[var(--text-secondary)] hover:text-amber-400 hover:bg-amber-500/10 transition-all shrink-0"
+                  title="Find &amp; Replace (Ctrl+H)">
+                  <i data-lucide="search-code" class="w-3.5 h-3.5 group-hover:scale-110 transition-transform"></i>
+                  <span>Find</span>
+                </button>
+
+              </div>
+          </div>
+          <!-- AI Dubbing: DAI studio · unify names · every tab · fixes -->
+          <div class="card-toolbar subs-pane" role="tabpanel" data-subs-pane="ai" hidden>
               <!-- DAI-Transcribe Toolbar Shortcut -->
               <button id="btn-open-daitranscribe-toolbar" title="Open DAI-Transcribe Batch Studio"
                 onclick="window.daiStudio && window.daiStudio.open('batch')"
@@ -2195,6 +2218,14 @@
                 <i data-lucide="sparkles" class="w-3.5 h-3.5 shrink-0 group-hover:scale-110 transition-transform"></i>
                 <span class="hidden md:inline">DAI-Transcribe</span>
                 <span class="md:hidden">DAI</span>
+              </button>
+
+              <!-- Quick Unify Names shortcut button -->
+              <button id="btn-quick-unify-names" type="button" data-click="btn-all-tabs-unify-names"
+                class="group h-8 px-2.5 sm:px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-rose-300 hover:border-rose-400/50 shadow-sm active:scale-[0.95]"
+                title="Make character names and spelling consistent across all tabs">
+                <i data-lucide="spell-check" class="w-3.5 h-3.5 text-rose-300 shrink-0 group-hover:scale-110 transition-transform"></i>
+                <span>Unify Names</span>
               </button>
               <!-- All Tabs menu: every action that runs on all open tabs -->
               <div class="relative">
@@ -3426,7 +3457,7 @@
         <!-- ① Episodes -->
         <div class="ds-sec-head">
           <span class="ds-sec-num">1</span>
-          <div class="ds-sec-text"><div class="ds-sec-title">Episodes</div><div class="ds-sec-hint">The folder with the episodes - they are joined into parts</div></div>
+          <div class="ds-sec-text"><div class="ds-sec-title">Episodes</div><div class="ds-sec-hint">The folder with the episodes - joined into parts, or each its own tab</div></div>
         </div>
         <!-- Folder: click to browse, or drop the folder (or one of its videos) here -->
         <div id="ds-drop" class="ds-drop">
@@ -3458,7 +3489,7 @@
           <div id="ds-stats" class="ds-stats"></div>
           <div id="ds-warnings" class="hidden ds-callout ds-callout--warn"></div>
           <div class="ds-grid3">
-            <label class="ds-field" title="Episodes are joined into parts of about this length. A part is dubbed as one batch of tabs."><span>Minutes per part</span>
+            <label class="ds-field" title="Episodes are joined into parts of about this length. A part is dubbed as one batch of tabs. With Each episode its own tab, nothing is joined: a part is a batch of whole episodes of about this length (at most 20)."><span>Minutes per part</span>
               <input id="ds-join-minutes" type="number" min="5" max="180" step="5" value="50"></label>
             <label class="ds-field" title="Each part is split into tabs of about this length."><span>Minutes per tab</span>
               <input id="ds-split-minutes" type="number" min="3" max="60" step="1" value="7"></label>
@@ -3467,10 +3498,24 @@
           </div>
           <div class="ds-sub-head">
             <span>Parts</span>
+            <label id="ds-episodes-row" class="hidden ds-inline-switch" title="Each episode is dubbed as its own tab, as it is: no joining and no cutting. A part is a batch of episodes (about Minutes per part, at most 20) dubbed together; each episode is exported as its own video. Uses about twice the Gemini requests of joined tabs.">
+              <input id="ds-episodes" type="checkbox" class="ds-switch ds-switch--sm" checked>
+              <span>Each episode its own tab</span>
+            </label>
             <label id="ds-merged-row" class="hidden ds-inline-switch" title="Each video in the folder is dubbed as one part, as it is: it is only split into tabs. Switched on by itself when every video is 20 minutes or longer.">
               <input id="ds-merged" type="checkbox" class="ds-switch ds-switch--sm">
               <span>Videos are already merged</span>
             </label>
+          </div>
+          <div id="ds-choose" class="hidden ds-choose">
+            <div class="ds-choose-head">
+              <span id="ds-choose-count">Episodes to dub</span>
+              <span class="flex-1"></span>
+              <button id="ds-choose-all" type="button" class="ds-chip-btn">All</button>
+              <button id="ds-choose-none" type="button" class="ds-chip-btn">None</button>
+              <button id="ds-choose-new" type="button" class="ds-chip-btn" title="Tick only the episodes without a dubbed video in the series' export folder yet - also the ones that failed before.">Not exported yet</button>
+            </div>
+            <div id="ds-choose-grid" class="ds-choose-grid custom-scrollbar"></div>
           </div>
           <div id="ds-parts" class="ds-parts custom-scrollbar"></div>
 
@@ -3485,6 +3530,29 @@
             <label class="ds-tile"><input id="ds-step-generate" type="checkbox" checked><i data-lucide="audio-lines"></i><span>Generate voices</span></label>
             <label class="ds-tile"><input id="ds-step-isolate" type="checkbox" checked><i data-lucide="music"></i><span>Isolate BGM</span></label>
             <label class="ds-tile" title="Find the burned-in (Chinese) subtitles and blur each one only while it shows. Runs while the part is transcribed and voiced."><input id="ds-step-blurtext" type="checkbox" checked><i data-lucide="eye-off"></i><span>Blur subtitles</span></label>
+          </div>
+          <div class="ds-grid2">
+            <label class="ds-field" title="How many tabs are transcribed (and checked for missing lines) at the same time. Each one uses a Gemini key of its own, so more keys allow more at once.">
+              <span>Episodes at once</span>
+              <select id="ds-parallel">
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="5">5</option>
+                <option value="8" selected>8</option>
+                <option value="10">10</option>
+              </select>
+            </label>
+            <label class="ds-field" title="A tab that fails for a passing reason (Google busy, a rate limit) is transcribed again this many times, and lines left without a voice are generated again this many times, before the series moves on or pauses.">
+              <span>Retry failed</span>
+              <select id="ds-retries">
+                <option value="0">Off</option>
+                <option value="1">1</option>
+                <option value="2" selected>2</option>
+                <option value="3">3</option>
+                <option value="5">5</option>
+              </select>
+            </label>
           </div>
 
           <!-- ③ Look -->
@@ -3536,6 +3604,12 @@
                 <option value="part">one video per part</option>
                 <option value="series">one video for the whole series</option>
               </select>
+            </div>
+            <div id="ds-clean-row" class="ds-hf-sub" title="Once every part is exported (and joined, if you asked for that), the joined parts in &quot;DR Dubber Joined&quot; and their split tabs in &quot;DR Dubber Split&quot; that this series made are deleted - they are copies of the episodes, often many GB. Your episodes and the dubbed videos are never touched.">
+              <label class="ds-inline-switch">
+                <input id="ds-clean" type="checkbox" class="ds-switch ds-switch--sm">
+                <span>Delete the joined and split working files when the series is exported</span>
+              </label>
             </div>
           </section>
 
@@ -4974,17 +5048,30 @@
                 <h3 class="text-base font-bold text-[var(--text-bright)] tracking-wide">Gemini API Keys</h3>
                 <p class="text-xs text-[var(--text-secondary)]">Failover setup for AI Transcription.</p>
               </div>
-              <button onclick="window.electronAPI?.openExternalUrl('https://aistudio.google.com/api-keys')"
-                class="group shrink-0 inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-md bg-[var(--accent-primary)]/15 border border-[var(--accent-primary)]/30 text-[var(--accent-text)] transition-all duration-300 ease-out hover:bg-[var(--accent-primary)]/25 hover:-translate-y-0.5 hover:shadow-lg active:scale-90">
-                <i data-lucide="key"
-                  class="w-3.5 h-3.5 transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-12 group-active:scale-90"></i>
-                Get API Key
-              </button>
+              <div class="flex items-center gap-2">
+                <button type="button" id="btn-check-key-limits" onclick="window.daiStudio?.checkKeyLimits?.(this)"
+                  title="Ask every key once (one tiny request on your Gemini model) which ones Google has limited today. A used-up key is refused at no cost; one that still works spends one request."
+                  class="shrink-0 inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-md border border-[var(--border-light)] text-[var(--text-secondary)] transition-all duration-300 hover:text-[var(--text-bright)] hover:bg-[var(--bg-hover)] disabled:opacity-50">
+                  <i data-lucide="gauge" class="w-3.5 h-3.5"></i>
+                  Check limits
+                </button>
+                <button type="button" onclick="window.openDRRouterModal?.()"
+                  class="group shrink-0 inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-md bg-amber-500/15 border border-amber-500/30 text-amber-300 transition-all duration-300 hover:bg-amber-500/25 hover:shadow-lg active:scale-95">
+                  <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+                  DR Router PRO
+                </button>
+                <button onclick="window.electronAPI?.openExternalUrl('https://aistudio.google.com/api-keys')"
+                  class="group shrink-0 inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-md bg-[var(--accent-primary)]/15 border border-[var(--accent-primary)]/30 text-[var(--accent-text)] transition-all duration-300 ease-out hover:bg-[var(--accent-primary)]/25 hover:-translate-y-0.5 hover:shadow-lg active:scale-90">
+                  <i data-lucide="key"
+                    class="w-3.5 h-3.5 transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-12 group-active:scale-90"></i>
+                  Get API Key
+                </button>
+              </div>
             </div>
 
             <div class="flex gap-2">
               <div class="relative flex-1">
-                <input type="password" id="input-new-apikey" placeholder="AIzaSy..."
+                <input type="password" id="input-new-apikey" placeholder="AIza... or AQ...."
                   class="w-full bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-primary)] text-sm rounded-lg focus:ring-[var(--accent-primary)] p-2.5 pr-10 outline-none font-mono" />
                 <button id="btn-paste-apikey" type="button" title="Paste"
                   class="absolute right-1.5 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-all active:scale-90">
@@ -5006,8 +5093,8 @@
 
             <div id="api-keys-list" class="flex flex-col gap-2 max-h-60 overflow-y-auto pr-1 custom-scrollbar"></div>
 
-            <!-- "Translate subtitles with": Google Gemini or CodeCraft API (filled by js/text-ai.js) -->
-            <div id="text-ai-settings"></div>
+            <!-- Text AI settings (CodeCraft removed, Google Gemini is used natively) -->
+            <div id="text-ai-settings" class="hidden"></div>
           </div>
 
           <div id="settings-shortcuts" class="settings-content-pane flex flex-col gap-6 hidden animate-tab-content">
@@ -5948,6 +6035,22 @@
           </div>
           <p class="text-[10px] text-[var(--text-muted)] -mt-1">Every export plays at the same volume as YouTube and
             Facebook expect, so parts and episodes don't jump in loudness.</p>
+          <div class="flex items-center justify-between pt-2 mt-1 border-t border-[var(--border-light)]">
+            <label for="toggle-render-mastering" class="text-xs text-[var(--text-secondary)] font-medium flex items-center gap-2">
+              <i data-lucide="sparkles" class="w-3.5 h-3.5 text-purple-400"></i>
+              Studio Dialogue Mastering
+            </label>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" id="toggle-render-mastering" class="sr-only peer" checked />
+              <div
+                class="w-9 h-5 bg-[var(--border-light)] rounded-full peer peer-checked:bg-[var(--accent-primary)] transition-colors duration-200">
+              </div>
+              <div
+                class="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200 peer-checked:translate-x-4">
+              </div>
+            </label>
+          </div>
+          <p class="text-[10px] text-[var(--text-muted)] -mt-1">Pro broadcast vocal strip (80Hz low-cut, 3.2kHz presence clarity, optical compressor) so dialogue sits cleanly in front of music.</p>
         </div>
 
         <!-- ── SUBTITLE VISUAL STYLE PRESETS ── -->
@@ -6499,6 +6602,7 @@
   <script src="js/timeline-visuals.js"></script>
   <script src="js/backend-jobs.js"></script>
   <script src="js/vox-groups.js"></script>
+<script src="js/transcribe-stepper.js"></script>
 <script src="js/studio-main.js"></script>
 <script src="js/vox-gallery.js"></script>
 <script src="js/voice-capture.js"></script>
@@ -6663,6 +6767,7 @@
     </div>
   </div>
   <script src="js/dai-transcribe-studio.js"></script>
+  <script src="js/dr-router-modal.js"></script>
   <!-- Last: translates the UI once the app has built it -->
   <script src="js/i18n-km.js"></script>
   <script src="js/i18n.js"></script>

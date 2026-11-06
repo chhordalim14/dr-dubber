@@ -21,6 +21,15 @@ if _SCRIPT_DIR not in sys.path:
 
 def ensure_ffmpeg_in_path():
     if os.name != "nt":
+        extra_mac = [
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            os.path.expanduser("~/homebrew/bin"),
+        ]
+        current_path = os.environ.get("PATH", "")
+        prepend = [p for p in extra_mac if os.path.isdir(p) and p not in current_path]
+        if prepend:
+            os.environ["PATH"] = os.pathsep.join(prepend + ([current_path] if current_path else []))
         return
     extra_paths = []
     py_dir = os.path.dirname(os.path.abspath(__file__))
@@ -124,6 +133,14 @@ def get_ffmpeg_executable():
     bin_path = shutil.which("ffmpeg")
     if bin_path and os.path.isfile(bin_path):
         return bin_path
+    mac_candidates = [
+        "/opt/homebrew/bin/ffmpeg",
+        "/usr/local/bin/ffmpeg",
+        os.path.expanduser("~/homebrew/bin/ffmpeg"),
+    ]
+    for c in mac_candidates:
+        if os.path.isfile(c):
+            return os.path.abspath(c)
     py_dir = os.path.dirname(os.path.abspath(__file__))
     candidates = [
         os.path.join(py_dir, "..", "bin", "ffmpeg.exe" if os.name == "nt" else "ffmpeg"),
@@ -142,16 +159,29 @@ def get_media_duration(file_path):
     try:
         ffmpeg_bin = get_ffmpeg_executable()
         ffprobe_bin = "ffprobe"
-        if ffmpeg_bin and "ffmpeg.exe" in ffmpeg_bin.lower():
-            probe_cand = ffmpeg_bin.lower().replace("ffmpeg.exe", "ffprobe.exe")
+        if ffmpeg_bin:
+            if "ffmpeg.exe" in ffmpeg_bin.lower():
+                probe_cand = ffmpeg_bin.lower().replace("ffmpeg.exe", "ffprobe.exe")
+            else:
+                probe_cand = ffmpeg_bin.replace("ffmpeg", "ffprobe")
             if os.path.isfile(probe_cand):
                 ffprobe_bin = probe_cand
+        import shutil
+        if not os.path.isfile(ffprobe_bin):
+            which_probe = shutil.which("ffprobe")
+            if which_probe:
+                ffprobe_bin = which_probe
+            else:
+                for p in ["/opt/homebrew/bin/ffprobe", "/usr/local/bin/ffprobe", os.path.expanduser("~/homebrew/bin/ffprobe")]:
+                    if os.path.isfile(p):
+                        ffprobe_bin = p
+                        break
         res = subprocess.run(
             [ffprobe_bin, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", file_path],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
-            timeout=5
+            timeout=10
         )
         if res.returncode == 0 and res.stdout.strip():
             return float(res.stdout.strip())

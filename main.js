@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, session } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, session, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -37,6 +37,8 @@ const ROOT_DIR = __dirname;
 const userDataDir = app.getPath('userData');
 const STORAGE_BASE = app.isPackaged ? path.join(userDataDir, 'storage') : path.join(ROOT_DIR, 'storage');
 process.env.APP_STORAGE_DIR = STORAGE_BASE;
+// Shared by the installed app and the repo copy (same userData): e.g. which Gemini keys are resting.
+process.env.APP_SHARED_DIR = userDataDir;
 
 const EXPORTS_DIR = path.join(STORAGE_BASE, 'exports');
 const AUDIO_CACHE_DIR = path.join(STORAGE_BASE, 'audio_cache');
@@ -677,6 +679,36 @@ handle('app:getDeviceFingerprint', async () => {
 
 handle('app:confirmQuit', async () => {
     return { confirmed: true };
+});
+
+// DR Router PRO - add a Gemini key from Google AI Studio, in the user's own browser.
+// AI Studio's API key page opens in the default browser (signed in as the user - no sign-in
+// inside the app, nothing clicked for them); the user creates or copies a key there, and the
+// first NEW key copied to the clipboard within 5 minutes is returned to DR Router. A key already
+// on the clipboard when this starts belongs to something earlier and doesn't count.
+const AI_STUDIO_KEYS_URL = 'https://aistudio.google.com/app/apikey';
+const GEMINI_KEY_RE = /(?:AIza[0-9A-Za-z_-]{35}|AQ[.][0-9A-Za-z_.-]{20,100})/;
+const KEY_WAIT_MS = 5 * 60 * 1000;
+let keyWatch = null; // the running watch: a second click reopens the page and shares it
+handle('dr-router:googleLogin', async () => {
+    const clipKey = () => ((clipboard.readText() || '').match(GEMINI_KEY_RE) || [])[0] || '';
+    await shell.openExternal(AI_STUDIO_KEYS_URL);
+    if (keyWatch) return keyWatch;
+    const before = clipKey();
+    keyWatch = new Promise((resolve) => {
+        const started = Date.now();
+        const timer = setInterval(() => {
+            const key = clipKey();
+            if (key && key !== before) {
+                clearInterval(timer);
+                resolve({ success: true, email: '', apiKey: key });
+            } else if (Date.now() - started > KEY_WAIT_MS) {
+                clearInterval(timer);
+                resolve({ success: false, error: 'No new API key was copied within 5 minutes. Copy a key in AI Studio, then press the button again.' });
+            }
+        }, 1000);
+    }).finally(() => { keyWatch = null; });
+    return keyWatch;
 });
 
 // Whisper Local Transcription Handlers

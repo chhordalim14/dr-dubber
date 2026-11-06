@@ -6,26 +6,29 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const serverSource = fs.readFileSync(path.join(__dirname, '..', 'backend', 'server.js'), 'utf8');
+const serverSource = fs.readFileSync(path.join(__dirname, '..', 'backend', 'routes', 'gemini.js'), 'utf8');
 const start = serverSource.indexOf('// Worth waiting and retrying:');
 const end = serverSource.indexOf('async function retranslateCues(');
 const block = serverSource.slice(start, end);
 const { createKeyRest } = require('../backend/lib/key-rest');
 
-function load() {
+function load({ pool = null } = {}) {
   const waits = [];
   // Backoff waits are recorded, not slept; the clock jumps ahead by each wait instead.
   let now = 1e12;
   const fastTimeout = (fn, ms) => { waits.push(ms); now += ms; return setTimeout(fn, 0); };
   const FakeDate = { now: () => now };
-  const api = new Function('setTimeout', 'console', 'Date', 'createKeyRest', `
+  const api = new Function('setTimeout', 'console', 'Date', 'createKeyRest', 'pool', `
     const formatWait = (ms) => Math.round(ms / 1000) + 's';
+    ${pool ? 'const notifyDRRouterRateLimited = (key, ms) => pool.parked.push(key);' : ''}
     const keyRest = createKeyRest({ now: () => Date.now() });
     const geminiModelCooldowns = new Map();
+    const geminiKeyAnswered = keyRest.answered;
+    const msUntilPacificMidnight = () => 6 * 3600 * 1000; // the daily reset was 18 h ago
     const isCodeCraftKey = (k) => /^cc_/i.test(k);
     ${block}
-    return { geminiWithKeys, geminiShouldRetry, tryKeysOnce, geminiKeyStatus, GEMINI_RETRY_DELAYS_MS, GEMINI_BUSY_RETRY_BUDGET_MS };
-  `)(fastTimeout, { warn: () => { }, log: () => { } }, FakeDate, createKeyRest);
+    return { geminiWithKeys, geminiShouldRetry, tryKeysOnce, geminiKeyStatus, geminiKeyAnswered, GEMINI_RETRY_DELAYS_MS, GEMINI_BUSY_RETRY_BUDGET_MS };
+  `)(fastTimeout, { warn: () => { }, log: () => { } }, FakeDate, createKeyRest, pool);
   return { ...api, waits, now: () => now };
 }
 
@@ -38,19 +41,37 @@ describe('geminiWithKeys', () => {
     assert.ok(start > 0 && end > start, 'markers moved - update this test');
   });
 
-  test('"high demand" is waited out on the own key; other keys are not asked (their quota is kept)', async () => {
+  test('"high demand" is waited out, not walked through every key (the model is busy for every key)', async () => {
     const { geminiWithKeys, waits } = load();
     const asked = [];
     const out = await geminiWithKeys(['own', 'k2', 'k3'], async (key) => { asked.push(key); return busy; }, null);
     assert.equal(out.ok, false);
-    assert.deepEqual(asked, ['own', 'own', 'own'], 'default: 3 rounds');
+    assert.equal(asked.length, 3, 'one key per round, a wait between rounds');
     assert.deepEqual(waits, [5000, 15000]);
+  });
+
+  test('"high demand", then Google answers: the next round gets it, without asking the other keys first', async () => {
+    const { geminiWithKeys, waits } = load();
+    let n = 0;
+    const out = await geminiWithKeys(['own', 'k2', 'k3'], async (key) => (++n === 1 ? busy : { ok: true, key }), null, { busyBudgetMs: 30 * 60 * 1000 });
+    assert.equal(out.ok, true);
+    assert.equal(n, 2);
+    assert.deepEqual(waits, [5000]);
+  });
+
+  test('"high demand" does not park DR Router pool accounts (it is Google busy, not the key); a 429 does', async () => {
+    const pool = { parked: [] };
+    const { geminiWithKeys } = load({ pool });
+    await geminiWithKeys(['p1', 'p2'], async () => busy, null);
+    assert.deepEqual(pool.parked, []);
+    await geminiWithKeys(['p1', 'p2'], async (key) => (key === 'p1' ? perMinute : { ok: true, key }), null);
+    assert.deepEqual(pool.parked, ['p1']);
   });
 
   test('retries option: the main pass\'s full backoff, and an answer after Google calms down', async () => {
     const { geminiWithKeys, GEMINI_RETRY_DELAYS_MS, waits } = load();
     let n = 0;
-    const out = await geminiWithKeys(['own', 'k2'], async (key) => (++n < 5 ? busy : { ok: true, key }), null, { retries: GEMINI_RETRY_DELAYS_MS.length });
+    const out = await geminiWithKeys(['own'], async (key) => (++n < 5 ? busy : { ok: true, key }), null, { retries: GEMINI_RETRY_DELAYS_MS.length });
     assert.equal(out.ok, true);
     assert.equal(out.key, 'own');
     assert.equal(n, 5);
@@ -158,8 +179,17 @@ describe('geminiWithKeys', () => {
 });
 
 describe('Shortening engine (Shorten rushed lines, Ultra-Short, a row\'s Shorten)', () => {
-  const engine = serverSource.slice(serverSource.indexOf('async function shortenLines('), serverSource.indexOf("app.post('/api/condense-fast-subtitles'"));
+  const condenseIdx = serverSource.indexOf("router.post('/condense-fast-subtitles'") >= 0
+    ? serverSource.indexOf("router.post('/condense-fast-subtitles'")
+    : serverSource.indexOf("app.post('/api/condense-fast-subtitles'");
+  const engine = serverSource.slice(serverSource.indexOf('async function shortenLines('), condenseIdx);
   const route = (name) => {
+    const rFrom = serverSource.indexOf(`router.post('/${name}'`);
+    if (rFrom >= 0) {
+      const next = serverSource.search(new RegExp(`\\n\\s*router\\.(?:post|get)\\('`));
+      const end = serverSource.indexOf('\n    router.', rFrom + 10);
+      return serverSource.slice(rFrom, end >= 0 ? end : rFrom + 2000);
+    }
     const from = serverSource.indexOf(`app.post('/api/${name}'`);
     return serverSource.slice(from, serverSource.indexOf('\napp.', from + 10));
   };
@@ -183,11 +213,11 @@ describe('Shortening engine (Shorten rushed lines, Ultra-Short, a row\'s Shorten
 });
 
 describe('short text requests time out sooner than audio', () => {
-  test('re-translate, names, shorten, the character sheet and missed subtitles use GEMINI_TEXT_TIMEOUT_MS; it is shorter than an audio attempt', () => {
+  test('re-translate, names, shorten, the character sheet, missed subtitles and Check limits use GEMINI_TEXT_TIMEOUT_MS; it is shorter than an audio attempt', () => {
     const text = Number(serverSource.match(/const GEMINI_TEXT_TIMEOUT_MS = (\d+);/)[1]);
     const audio = Number(serverSource.match(/const GEMINI_ATTEMPT_TIMEOUT_MS = (\d+);/)[1]);
     assert.ok(text < audio);
-    assert.equal((serverSource.match(/timeoutMs: GEMINI_TEXT_TIMEOUT_MS/g) || []).length, 5);
+    assert.equal((serverSource.match(/timeoutMs: GEMINI_TEXT_TIMEOUT_MS/g) || []).length, 6);
   });
 });
 
@@ -210,6 +240,19 @@ describe('geminiShouldRetry', () => {
   test('a daily quota is never retried', () => {
     const { geminiShouldRetry } = load();
     assert.equal(geminiShouldRetry(daily.result, 0, Date.now()), false);
+  });
+});
+
+describe('key status for Settings', () => {
+  test('"ok" is only "checked today" once Google answered the key after the daily reset', () => {
+    const { geminiKeyStatus, geminiKeyAnswered, now } = load();
+    assert.equal(geminiKeyStatus('never').checkedToday, false, 'no answer yet: not checked today');
+    geminiKeyAnswered.set('yesterday', now() - 20 * 3600 * 1000);
+    assert.equal(geminiKeyStatus('yesterday').checkedToday, false, 'answered before the reset');
+    geminiKeyAnswered.set('today', now() - 3600 * 1000);
+    const st = geminiKeyStatus('today');
+    assert.equal(st.state, 'ok');
+    assert.equal(st.checkedToday, true);
   });
 });
 

@@ -110,13 +110,20 @@
     return `http://localhost:${port}`;
   };
 
-  const getActiveApiKeys = () => {
+  // Settings keys, then DR Router's ready pool keys (window.drPool, dr-router-modal.js): with the
+  // pool linked, its accounts get tabs of their own like Settings keys, and replace a key that
+  // runs out - the batch no longer needs any key in Settings.
+  const getSettingsApiKeys = () => {
     try {
       const keys = JSON.parse(localStorage.getItem('aiDubberApiKeys') || '[]');
       if (Array.isArray(keys) && keys.length > 0) return keys.filter(k => k && k.trim());
     } catch (e) {}
     const single = (localStorage.getItem('aiDubberApiKey') || '').trim();
     return single ? [single] : [];
+  };
+  const getActiveApiKeys = () => {
+    const own = getSettingsApiKeys();
+    return window.drPool ? window.drPool.merge(own) : own;
   };
 
   const getActiveModel = () => {
@@ -282,24 +289,146 @@
   const KEY_STATUS_CLASSES = {
     emerald: { text: 'text-emerald-400', dot: 'bg-emerald-400', badge: 'bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400' },
     amber: { text: 'text-amber-400', dot: 'bg-amber-400', badge: 'bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400' },
-    rose: { text: 'text-rose-400', dot: 'bg-rose-400', badge: 'bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-400' }
+    rose: { text: 'text-rose-400', dot: 'bg-rose-400', badge: 'bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-400' },
+    gray: { text: 'text-gray-400', dot: 'bg-gray-500', badge: 'bg-gray-500/10 hover:bg-gray-500/20 border border-gray-500/30 text-gray-400' }
   };
 
-  function keyStatusView(s) {
+  // The app only learns a key's limits from Google's answers: "Ready" (green) is a key Google
+  // answered since its daily reset; one not asked since then is "Not checked today" (grey) -
+  // another computer may have used it up. elapsed: ms since the status was fetched (the
+  // countdowns go on between fetches).
+  function keyStatusView(s, elapsed = 0) {
     if (!s) return { color: 'emerald', text: 'Ready' };
+    const left = (ms) => formatWaitShort((ms || 0) - elapsed) || 'a moment';
     if (s.state === 'invalid') {
       const why = s.message ? ` (${s.message})` : '';
       return s.dead
-        ? { color: 'rose', text: `Refused by Google · not used, tried again in ${formatWaitShort(s.retryAfterMs)} or when added again`, title: `Google refused this key${why}. Delete it and add it again to try it sooner.` }
-        : { color: 'rose', text: 'Rejected by Google (invalid or expired key)', title: `Rejected by Google${why}` };
+        ? { color: 'rose', resting: true, text: `Refused by Google · not used, tried again in ${left(s.retryAfterMs)} or when added again`, title: `Google refused this key${why}. Delete it and add it again to try it sooner.` }
+        : { color: 'rose', resting: true, text: 'Rejected by Google (invalid or expired key)', title: `Rejected by Google${why}` };
     }
-    if (s.state === 'daily') return { color: 'rose', text: `Google reported daily limit · rechecking in ${formatWaitShort(s.retryAfterMs)}` };
-    if (s.state === 'cooling') return { color: 'amber', text: `Rate-limited · free again in ${formatWaitShort(s.retryAfterMs)}` };
+    if (s.state === 'daily') return { color: 'rose', resting: true, text: `Out for today · limit lifts in ${left(s.retryAfterMs)}`, title: 'Google said this key used up its daily quota. It is skipped until then (the app checks once or twice sooner, because Google sometimes says it too early).' };
+    if (s.state === 'cooling') return { color: 'amber', resting: true, text: `Rate-limited · limit lifts in ${left(s.retryAfterMs)}` };
     if (s.state === 'partial') {
-      const out = s.models.map(m => `${m.model.replace(/^gemini-/, '')} ${m.daily ? 'out today' : `wait ${formatWaitShort(m.retryAfterMs)}`}`);
-      return { color: 'amber', text: `Ready · ${out.join(', ')}` };
+      const out = s.models.map(m => `${m.model.replace(/^gemini-/, '')} ${m.daily ? 'out today' : 'busy'}, lifts in ${left(m.retryAfterMs)}`);
+      return { color: 'amber', text: `Ready · ${out.join(' · ')}`, title: 'Google counts each model on its own: this key still works on its other models.' };
     }
+    if (s.checkedToday === false) return { color: 'gray', text: 'Not checked today', title: 'Google has not answered this key since its daily reset, so the app does not know its limits yet - another computer may have used it up. "Check limits" asks every key once.' };
     return { color: 'emerald', text: 'Ready' };
+  }
+
+  // The last statuses, kept so the countdowns and the Ready / Resting groups update every
+  // second without asking the backend again.
+  let shownKeyStatuses = null; // { statuses, keys, at }
+  let deadKeys = []; // refused by Google for good (deleted service account, invalid / expired key)
+  function drawKeyStatuses() {
+    if (!shownKeyStatuses) return;
+    const elapsed = Date.now() - shownKeyStatuses.at;
+    const resting = new Set();
+    deadKeys = shownKeyStatuses.statuses.map((s, idx) => (s.state === 'invalid' && s.dead ? shownKeyStatuses.keys?.[idx] : null)).filter(Boolean);
+    shownKeyStatuses.statuses.forEach((s, idx) => {
+      const el = document.querySelector(`[data-dai-keystatus="${idx}"]`);
+      if (!el) return;
+      const v = keyStatusView(s, elapsed);
+      if (v.resting && !((s.retryAfterMs || 0) - elapsed <= 0 && s.state !== 'invalid')) resting.add(idx);
+      const c = KEY_STATUS_CLASSES[v.color];
+      el.className = `text-[10px] ${c.text} flex items-center gap-1 min-w-0`;
+      el.innerHTML = `<span class="w-1.5 h-1.5 rounded-full ${c.dot} shrink-0"></span> <span class="truncate">${escapeHtml(v.text)}</span>`;
+      el.title = v.title || v.text;
+    });
+    groupKeyRows(resting);
+  }
+
+  // Settings' key list: the keys that can work first, then a "Resting" group (skipped until
+  // their limit lifts). Only the rows move; each keeps its own number.
+  function groupKeyRows(resting) {
+    const list = document.getElementById('api-keys-list');
+    if (!list) return;
+    const rows = [...list.querySelectorAll('.api-key-row')].filter((r) => r.querySelector('[data-dai-keystatus]'));
+    if (!rows.length) return;
+    const idxOf = (r) => Number(r.querySelector('[data-dai-keystatus]').dataset.daiKeystatus);
+    const ordered = [...rows].sort((a, b) => (resting.has(idxOf(a)) - resting.has(idxOf(b))) || idxOf(a) - idxOf(b));
+    let head = document.getElementById('api-keys-resting-head');
+    if (resting.size && !head) {
+      head = document.createElement('div');
+      head.id = 'api-keys-resting-head';
+      head.className = 'text-[10px] font-semibold uppercase tracking-wide text-[var(--text-muted)] pt-2 pb-0.5 px-1';
+    }
+    if (head) {
+      head.className = 'flex items-center justify-between gap-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--text-muted)] pt-2 pb-0.5 px-1';
+      const html = `<span>Resting · ${resting.size} key${resting.size === 1 ? '' : 's'} skipped until the limit lifts</span>` +
+        (deadKeys.length ? `<button type="button" class="remove-dead-keys normal-case tracking-normal text-[11px] font-semibold px-2 py-0.5 rounded-md border border-rose-500/40 text-rose-400 hover:bg-rose-500/10" title="Google refused these keys for good (a deleted service account, an invalid or expired key) - they are retried every day and refused every time.">Remove ${deadKeys.length} dead key${deadKeys.length === 1 ? '' : 's'}</button>` : '');
+      if (head.dataset.html !== html) { head.innerHTML = html; head.dataset.html = html; }
+    }
+    const want = [];
+    ordered.forEach((r) => {
+      if (head && resting.size && resting.has(idxOf(r)) && !want.includes(head)) want.push(head);
+      want.push(r);
+    });
+    if (!resting.size && head) head.remove();
+    // Re-append only when the order changed (the list is redrawn every second).
+    const current = [...list.children].filter((el) => el.classList.contains('api-key-row') || el.id === 'api-keys-resting-head');
+    if (current.length === want.length && current.every((el, i) => el === want[i])) return;
+    want.forEach((el) => list.appendChild(el));
+  }
+
+  setInterval(() => {
+    if (shownKeyStatuses && document.querySelector('[data-dai-keystatus]')) drawKeyStatuses();
+  }, 1000);
+
+  document.addEventListener('click', async (e) => {
+    if (!e.target.closest('.remove-dead-keys') || !deadKeys.length || typeof window.removeGeminiApiKeys !== 'function') return;
+    const removed = await window.removeGeminiApiKeys(deadKeys);
+    if (removed) {
+      showToast(`Removed ${removed} dead key(s).`, 'success');
+      refreshKeyStatuses();
+    }
+  });
+
+  // Settings' "Check limits": asks every key once which ones Google limited today (one tiny
+  // request each on the transcribe model; a used-up key is refused at no cost).
+  // auto: the one retry it makes by itself when Google was overloaded (3 minutes later).
+  let recheckTimer = null;
+  const RECHECK_MS = 3 * 60 * 1000;
+  async function checkKeyLimits(btn, { auto = false } = {}) {
+    clearTimeout(recheckTimer); // pressed again by hand: that is the retry
+    recheckTimer = null;
+    const keys = getActiveApiKeys();
+    if (!keys.length) return showToast('Add a Gemini API key first.', 'warning');
+    if (btn) btn.disabled = true;
+    const model = $('dai-model-select')?.value || getActiveModel();
+    showToast(auto ? `Checking the keys again on ${model}…` : `Checking ${keys.length} key(s) on ${model}…`, 'info');
+    try {
+      const res = await fetch(`${getBackendBase()}/api/gemini-check-limits`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keys, model })
+      });
+      const d = await res.json();
+      if (!d.success) throw new Error(d.error || 'check failed');
+      shownKeyStatuses = { statuses: d.keys, keys, at: Date.now() };
+      drawKeyStatuses();
+      updateApiStatusDisplay();
+      if (d.stoppedBusy) {
+        // "High demand" says nothing about a key's limits: one more try by itself a little later.
+        if (!auto) {
+          recheckTimer = setTimeout(() => checkKeyLimits(null, { auto: true }), RECHECK_MS);
+          showToast(`Google is overloaded on ${model} right now - every key answered "high demand", which says nothing about its limits. Checking again by itself in 3 minutes.`, 'warning');
+        } else {
+          showToast(`Google is still overloaded on ${model}. Press Check limits again later - a series started now would be slow too.`, 'warning');
+        }
+        return;
+      }
+      const parts = [`${d.ready} ready`];
+      if (d.limited) parts.push(`${d.limited} out of quota`);
+      if (d.refused) parts.push(`${d.refused} refused`);
+      if (d.busy) parts.push(`${d.busy} not known (Google busy)`);
+      if (d.alreadyResting) parts.push(`${d.alreadyResting} already resting (not asked)`);
+      showToast(`Key check on ${model}: ${parts.join(', ')}.`, d.ready ? 'success' : 'warning');
+    } catch (e) {
+      showToast(`Could not check the keys: ${e.message}`, 'error');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   }
 
   let keyStatusFetchedAt = 0;
@@ -319,15 +448,8 @@
     if (!Array.isArray(statuses)) return;
 
     // Key list in the API key modal (rows are in the same order as the keys).
-    statuses.forEach((s, idx) => {
-      const el = document.querySelector(`[data-dai-keystatus="${idx}"]`);
-      if (!el) return;
-      const v = keyStatusView(s);
-      const c = KEY_STATUS_CLASSES[v.color];
-      el.className = `text-[10px] ${c.text} flex items-center gap-1 min-w-0`;
-      el.innerHTML = `<span class="w-1.5 h-1.5 rounded-full ${c.dot} shrink-0"></span> <span class="truncate">${escapeHtml(v.text)}</span>`;
-      el.title = v.title || v.text;
-    });
+    shownKeyStatuses = { statuses, keys, at: Date.now() };
+    drawKeyStatuses();
 
     // Header badge: how many keys can take work right now.
     const badge = $('dai-api-key-badge');
@@ -336,8 +458,9 @@
     const allDaily = statuses.every(s => s.state === 'daily' || s.state === 'invalid');
     const soonest = Math.min(...statuses.filter(s => s.retryAfterMs > 0).map(s => s.retryAfterMs));
     const color = ready === keys.length ? 'emerald' : ready > 0 ? 'amber' : 'rose';
+    const unchecked = statuses.filter(s => s.state === 'ok' && s.checkedToday === false).length;
     const label = ready === keys.length
-      ? `${keys.length} API Key${keys.length > 1 ? 's' : ''} Active`
+      ? `${keys.length} API Key${keys.length > 1 ? 's' : ''} Active${unchecked ? ` · ${keys.length - unchecked} checked today` : ''}`
       : ready > 0
         ? `${ready}/${keys.length} Keys Ready`
         : allDaily ? `Daily Limit Reported · rechecking in ${formatWaitShort(soonest)}` : `All Keys Rate-Limited · ${formatWaitShort(soonest)}`;
@@ -888,8 +1011,15 @@
   // Max files transcribed at the same time (also capped by the number of API keys).
   const BATCH_MAX_PARALLEL_FILES = 6;
   // Dub Whole Series (one key per tab): a part is often 7 tabs, and with a cap of 6 the 7th
-  // started only when another finished - 5-6 minutes later on a busy day.
+  // started only when another finished - 5-6 minutes later on a busy day. Its window's
+  // "Episodes at once" (1-10) and "Retry failed" (Off-5) change these for series runs.
   const SERIES_MAX_PARALLEL_FILES = 8;
+  const savedSeriesNumber = (key, lo, hi, dflt) => {
+    let n = NaN;
+    try { n = parseInt(localStorage.getItem(key), 10); } catch (e) { } // storage blocked: the default
+    return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt;
+  };
+  const seriesParallelFiles = () => savedSeriesNumber('aiDubberSeriesParallel', 1, 10, SERIES_MAX_PARALLEL_FILES);
 
   // How usable a key is for `model`, from /api/gemini-key-status: 0 ready, 1 maybe (limits on
   // other models, or not known yet), 9 resting (refused by Google, or out for the day).
@@ -905,6 +1035,7 @@
   // pass). Passing: Google busy or slow, a server hiccup (5xx), a per-minute rate limit. Not:
   // a bad key, the daily quota, blocked or too-large audio, no speech.
   const TAB_RETRIES = 2;
+  const seriesTabRetries = () => savedSeriesNumber('aiDubberSeriesRetries', 0, 5, TAB_RETRIES);
   function isRetryableTabError(err) {
     if (!err || err.name === 'AbortError' || err.isDailyQuota || err.code === 'INVALID_API_KEY') return false;
     const status = Number(err.status);
@@ -917,9 +1048,10 @@
     if (state.isBatchRunning) return;
     if (!(onlyIds instanceof Set)) onlyIds = null;
 
+    if (window.drPool) await window.drPool.refresh();
     const apiKeys = getActiveApiKeys();
     if (apiKeys.length === 0) {
-      showToast('Please add at least one Gemini API Key in Settings ➔ General.', 'error');
+      showToast('Please add at least one Gemini API Key in Settings ➔ General, or an account in DR Router.', 'error');
       document.getElementById('btn-open-settings')?.click();
       return;
     }
@@ -978,7 +1110,8 @@
         .map((c) => c.k);
       if (ready.length) ownKeyOrder = ready;
     }
-    const concurrency = Math.max(1, Math.min(maxParallel || (keyPerTab ? SERIES_MAX_PARALLEL_FILES : BATCH_MAX_PARALLEL_FILES), ownKeyOrder.length, pendingItems.length));
+    const retryLimit = keyPerTab ? seriesTabRetries() : TAB_RETRIES; // a tab that failed for a passing reason
+    const concurrency = Math.max(1, Math.min(maxParallel || (keyPerTab ? seriesParallelFiles() : BATCH_MAX_PARALLEL_FILES), ownKeyOrder.length, pendingItems.length));
     const keyStride = Math.max(1, Math.floor(apiKeys.length / concurrency));
     const batchAbort = state.batchAbortController;
     const todo = [...pendingItems];
@@ -1081,9 +1214,9 @@
             renderQueueTable();
             continue; // no spare: the top of the loop waits for one
           }
-          if (isRetryableTabError(err) && (item.retries || 0) < TAB_RETRIES && !quotaOut) {
+          if (isRetryableTabError(err) && (item.retries || 0) < retryLimit && !quotaOut) {
             item.retries = (item.retries || 0) + 1;
-            console.warn(`[DAI Batch] ${item.fileName} failed (${err.message}) - trying again now (${item.retries}/${TAB_RETRIES})`);
+            console.warn(`[DAI Batch] ${item.fileName} failed (${err.message}) - trying again now (${item.retries}/${retryLimit})`);
             Object.assign(item, { status: 'pending', error: null, progress: 0 });
             todo.unshift(item); // this worker takes it again next
             renderQueueTable();
@@ -2498,6 +2631,7 @@
     openApiKeyModal: openApiKeySettings,
     // Settings → API's key list asks for each key's quota state.
     refreshKeyStatuses,
+    checkKeyLimits,
     updateApiStatusDisplay
   };
 

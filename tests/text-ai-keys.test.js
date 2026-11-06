@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const serverSource = fs.readFileSync(path.join(__dirname, '..', 'backend', 'server.js'), 'utf8');
+const serverSource = fs.readFileSync(path.join(__dirname, '..', 'backend', 'routes', 'gemini.js'), 'utf8');
 const start = serverSource.indexOf('// ── Text AI provider');
 const end = serverSource.indexOf('// ── Khmer Dubbing & Subtitle Dialogue Engine');
 const block = serverSource.slice(start, end);

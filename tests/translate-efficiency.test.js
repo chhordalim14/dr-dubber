@@ -15,7 +15,7 @@ const {
     loadSeriesSheet, saveSeriesSheet, withSeriesLock
 } = require('../backend/lib/character-sheet');
 
-const serverSource = fs.readFileSync(path.join(__dirname, '..', 'backend', 'server.js'), 'utf8').replace(/\r\n/g, '\n');
+const serverSource = fs.readFileSync(path.join(__dirname, '..', 'backend', 'routes', 'gemini.js'), 'utf8').replace(/\r\n/g, '\n');
 
 // geminiThinkingConfig / addTokenUsage lifted out of server.js (requiring it starts the backend).
 function liftServer() {

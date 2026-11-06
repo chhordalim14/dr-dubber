@@ -3344,9 +3344,12 @@ body.kbd-nav .app-header button:focus-visible {
   background-color: rgb(0 0 0 / 0.6);
 }
 
-/* Window panel: flat, thin border, small radius, one modest shadow. */
-:is([id^="modal-"], [id$="-modal"]):not(#modal-settings) > div[class*="rounded-2xl"],
-:is([id^="modal-"], [id$="-modal"]):not(#modal-settings) > div[class*="rounded-xl"][class*="shadow"] {
+/* Window panel: flat, thin border, small radius, one modest shadow.
+   DR Router's windows (#dr-router-modal, #dr-add-modal, #dr-proxy-modal) are
+   drawn dark-only - fixed dark surfaces, light text - so they keep their own
+   panel: the light theme's white one left their text white on white. */
+:is([id^="modal-"], [id$="-modal"]):not(#modal-settings):not([id^="dr-"]) > div[class*="rounded-2xl"],
+:is([id^="modal-"], [id$="-modal"]):not(#modal-settings):not([id^="dr-"]) > div[class*="rounded-xl"][class*="shadow"] {
   border-radius: 12px;
   border-color: var(--border-light);
   background: var(--bg-panel);
@@ -3374,14 +3377,15 @@ body.kbd-nav .app-header button:focus-visible {
   color: var(--tile-neutral);
 }
 
-/* Gradients → flat. Coloured blocks with white text become coral; other
-   gradient surfaces become plain. Gradient text and the shine overlay keep
-   their own style. */
+/* Gradients → flat. Coloured blocks with white or dark text become coral
+   (dark text on a bright block, e.g. DR Router's amber buttons, would
+   otherwise be left black on the dark window); other gradient surfaces become
+   plain. Gradient text and the shine overlay keep their own style. */
 :is([id^="modal-"], [id$="-modal"], #queue-drawer, #title-ai-drawer):not(#modal-settings) [class*="bg-gradient-to-"] {
   background-image: none;
 }
 
-:is([id^="modal-"], [id$="-modal"], #queue-drawer, #title-ai-drawer):not(#modal-settings) [class*="bg-gradient-to-"]:is([class*="text-white"], [class*="text-slate-9"]) {
+:is([id^="modal-"], [id$="-modal"], #queue-drawer, #title-ai-drawer):not(#modal-settings) [class*="bg-gradient-to-"]:is([class*="text-white"], [class*="text-slate-9"], [class*="text-black"]) {
   color: #fff;
   background-color: var(--accent-primary);
 }
@@ -4250,6 +4254,126 @@ body.kbd-nav .app-header button:focus-visible {
 @keyframes ds-pulse {
   0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 60%, transparent); }
   50% { box-shadow: 0 0 0 4px transparent; }
+}
+
+/* Episodes to dub (picked before Start): a chip per episode, ticked ones dubbed. */
+#modal-dub-series .ds-choose {
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 11px;
+  background: var(--ds-card);
+}
+
+#modal-dub-series .ds-choose-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+#modal-dub-series .ds-chip-btn {
+  padding: 3px 9px;
+  border: 1px solid var(--border-light);
+  border-radius: 7px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+#modal-dub-series .ds-chip-btn:hover {
+  color: var(--text-bright);
+  background: var(--bg-hover);
+}
+
+#modal-dub-series .ds-choose-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  max-height: 132px;
+  overflow-y: auto;
+}
+
+#modal-dub-series .ds-ep-chip {
+  min-width: 44px;
+  padding: 3px 7px;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+#modal-dub-series .ds-ep-chip.is-on {
+  border-color: color-mix(in srgb, var(--accent-primary) 55%, var(--border-color));
+  background: var(--accent-soft);
+  color: var(--text-bright);
+  text-decoration: none;
+}
+
+/* The part's episodes in the progress card: BGM / Transcribe / Voice / Export per episode. */
+#modal-dub-series .ds-eps {
+  margin-top: 12px;
+  border-top: 1px solid var(--border-color);
+  padding-top: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+#modal-dub-series .ds-ep-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(4, 64px) 44px;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 2px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+#modal-dub-series .ds-ep-row.is-head {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+#modal-dub-series .ds-ep-row > span:not(:first-child) {
+  text-align: center;
+}
+
+#modal-dub-series .ds-ep-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+
+#modal-dub-series .ds-ep-pct {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+#modal-dub-series .ds-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text-muted) 35%, transparent);
+}
+
+#modal-dub-series .ds-dot.is-done { background: #34d399; }
+#modal-dub-series .ds-dot.is-warn { background: #fbbf24; }
+#modal-dub-series .ds-dot.is-failed { background: #fb7185; }
+#modal-dub-series .ds-dot.is-running { background: #fbbf24; animation: ds-dot-pulse 1.1s ease-in-out infinite; }
+#modal-dub-series .ds-dot.is-off { background: transparent; border: 1px dashed var(--border-light); }
+
+@keyframes ds-dot-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
 }
 
 /* Progress card: the part being dubbed (or the last finished one). */

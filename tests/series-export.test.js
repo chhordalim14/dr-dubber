@@ -58,7 +58,14 @@ function makeSeries({ parts = 3, outcome = () => 'done', renderMs = 10, dubMs = 
     const pathJoin = (...p) => p.join('/');
     const mergeWanted = () => merge;
     const mergeScope = () => scope;
+    // "Delete the joined and split working files" (off unless the test turns it on).
+    const cleanWorkingWanted = () => !!env.clean;
     const postJson = async (url, body) => {
+      if (/delete-working/.test(url)) {
+        env.deleted = (env.deleted || []).concat(body.paths);
+        env.log.push('delete working files');
+        return { success: true, deleted: body.paths.length, freed: body.paths.length * 1e9, refused: 0 };
+      }
       env.joins.push(body);
       env.log.push('join part' + body.partNumbers[0]);
       return { success: true, jobId: String(env.joins.length - 1) };
@@ -227,6 +234,29 @@ describe('Dub Whole Series hands-free export', () => {
     assert.equal(plan.fullMerged, 'D:/out/Show_Dubbed_full.mp4');
     assert.equal(api.wholeToRetry(), false);
     assert.equal(env.log.filter((l) => /^render /.test(l)).length, 6, 'the tabs are not rendered again');
+  });
+
+  test('"Delete the working files": only once every part is exported and the whole series joined', async () => {
+    const work = (k) => [`D:/Show/DR Dubber Joined/Show_part0${k + 1}.mp4`, `D:/Show/DR Dubber Joined/DR Dubber Split/Show_part0${k + 1}_part01.mp4`];
+    const { env, plan, api } = makeSeries({ parts: 2, merge: true, scope: 'series', joinError: 'disk full' });
+    plan.parts.forEach((p, k) => { p.workFiles = work(k); });
+    env.clean = true;
+    await api.exportAndContinue();
+    assert.equal(env.deleted, undefined, 'the join failed: the parts are kept to join again');
+    env.joinError = null;
+    await api.retryMerges();
+    assert.deepEqual(env.deleted, [...work(0), ...work(1)]);
+    assert.ok(lastIndex(env.log, /^join /) < firstIndex(env.log, /^delete working files$/), 'deleted after the join');
+    assert.equal(plan.cleaned, true);
+    assert.ok(env.toasts.some((t) => /Deleted 4 working file\(s\) - 3\.7 GB freed/.test(t.m)));
+  });
+
+  test('"Delete the working files" off (the default): nothing is deleted', async () => {
+    const { env, plan, api } = makeSeries({ parts: 2, merge: true, scope: 'series' });
+    plan.parts.forEach((p, k) => { p.workFiles = [`D:/Show/DR Dubber Joined/Show_part0${k + 1}.mp4`]; });
+    await api.exportAndContinue();
+    assert.ok(plan.fullMerged);
+    assert.equal(env.deleted, undefined);
   });
 
   test('a join that failed after the last part: Continue joins it again (nothing else is left to do)', async () => {

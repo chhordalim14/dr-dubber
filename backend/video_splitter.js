@@ -16,6 +16,9 @@ const { spawn, execFile } = require('child_process');
 const SEARCH_WINDOW_SEC = 90;   // look up to this far either side of each even-split point...
 const SEARCH_WINDOW_SHARE = 0.15; // ...but no more than 15% of a part, so short parts stay even
 const MIN_PART_SEC = 60;
+// An episode's start (from "<part>_episodes.txt", whole seconds) is cut on the keyframe this
+// close to it: every episode starts on a keyframe in a joined part.
+const EPISODE_SNAP_SEC = 1.5;
 const COPY_EXTS = new Set(['.mp4', '.m4v', '.mov', '.mkv', '.webm']); // other containers are re-wrapped as .mkv
 // Audio-only files (audio dramas): AAC and MP3 are cut by stream copy into their own
 // container; any other codec (WMA, AC3, FLAC, Opus...) is converted to AAC .m4a.
@@ -24,6 +27,40 @@ const AUDIO_COPY = { aac: '.m4a', mp3: '.mp3' };
 function fmtClock(sec) {
     const s = Math.max(0, Math.round(sec));
     return `${String(Math.floor(s / 3600)).padStart(2, '0')}:${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+}
+
+// Where each episode starts in a joined part (Join Episodes / Dub Whole Series write
+// "<part>_episodes.txt" beside it: "00:02:31 EP2" per line), in seconds from the part's start.
+// Empty for any other file.
+function episodeStartsFor(file) {
+    try {
+        const list = file.replace(/\.(?:mp4|m4a)$/i, '_episodes.txt');
+        if (list === file || !fs.existsSync(list)) return [];
+        return fs.readFileSync(list, 'utf8').split(/\r?\n/)
+            .map(l => /^(\d+):(\d{2}):(\d{2})\s/.exec(l.trim()))
+            .filter(Boolean)
+            .map(m => +m[1] * 3600 + +m[2] * 60 + +m[3])
+            .filter(t => t > 0);
+    } catch (e) {
+        return [];
+    }
+}
+
+// For each even-split point: the episode start to cut at instead, or null. A tab then holds
+// whole episodes - an episode's end is a natural break, while a cut inside one splits a scene
+// and Gemini hears its first line without the one before. Only an episode start within half
+// a tab of the point is taken, so long episodes are still split near the chosen tab length.
+function episodeAnchors(targetsRel, episodeStarts, duration) {
+    const tabLen = targetsRel.length ? duration / (targetsRel.length + 1) : duration;
+    let prev = 0;
+    return targetsRel.map((t) => {
+        const near = episodeStarts
+            .filter(s => Math.abs(s - t) <= tabLen / 2 && s >= prev + MIN_PART_SEC && s <= duration - MIN_PART_SEC)
+            .sort((a, b) => Math.abs(a - t) - Math.abs(b - t))[0];
+        if (near === undefined) return null;
+        prev = near;
+        return near;
+    });
 }
 
 function createVideoSplitter({ getFFmpegBinary, getFFprobeBinary, trackProcess }) {
@@ -175,11 +212,29 @@ function createVideoSplitter({ getFFmpegBinary, getFFprobeBinary, trackProcess }
             const targets = Array.from({ length: n - 1 }, (_, i) => src.startTime + (i + 1) * src.duration / n);
             const reach = Math.min(SEARCH_WINDOW_SEC, SEARCH_WINDOW_SHARE * src.duration / n);
             const windows = targets.map(t => [Math.max(src.startTime, t - reach), Math.min(src.startTime + src.duration, t + reach)]);
-            const keyframes = targets.length && !src.audioOnly ? await keyframesIn(job, src, windows) : [];
+            const anchors = episodeAnchors(targets.map(t => t - src.startTime), episodeStartsFor(src.path), src.duration)
+                .map(a => (a === null ? null : src.startTime + a));
+            const anchorWindows = anchors.filter(a => a !== null).map(a => [a - EPISODE_SNAP_SEC, a + EPISODE_SNAP_SEC]);
+            const keyframes = targets.length && !src.audioOnly ? await keyframesIn(job, src, [...windows, ...anchorWindows]) : [];
             if (job.cancelled) throw new Error('cancelled');
             const cuts = [];
             for (let i = 0; i < targets.length; i++) {
                 if (job.cancelled) throw new Error('cancelled');
+                const prevCut = cuts.length ? cuts[cuts.length - 1].time : src.startTime;
+                const a = anchors[i];
+                if (a !== null && a > prevCut + MIN_PART_SEC) {
+                    // Cut where the next episode starts (it begins on a keyframe); no loudness check
+                    // needed - an episode's end is a break by itself.
+                    const k = src.audioOnly ? { pts: a, dts: a }
+                        : keyframes.filter(kf => Math.abs(kf.pts - a) <= EPISODE_SNAP_SEC && kf.pts > prevCut + MIN_PART_SEC)
+                            .sort((x, y) => Math.abs(x.pts - a) - Math.abs(y.pts - a))[0];
+                    if (k) {
+                        cuts.push({ time: k.pts, dts: k.dts, quiet: true, episode: true });
+                        job.percent = Math.round((i + 1) / targets.length * 15);
+                        continue;
+                    }
+                    // No keyframe at the episode's start (rare): the usual quiet cut near the point.
+                }
                 const [from, to] = windows[i];
                 const loud = await loudnessIn(job, src, from, to);
                 const prev = cuts.length ? cuts[cuts.length - 1].time : src.startTime;
@@ -236,7 +291,10 @@ function createVideoSplitter({ getFFmpegBinary, getFFprobeBinary, trackProcess }
                 `${src.name}\nSplit into ${job.parts.length} parts. After dubbing, render each part and join them with Join Episodes to get the full movie back.\n\n${lines.join('\n')}\n`);
             job.percent = 100;
             job.status = 'done';
-            console.log(`[Split] ${src.name}: ${job.parts.length} parts (${cuts.filter(c => c.quiet).length}/${cuts.length} cuts on a quiet moment)`);
+            const atEpisode = cuts.filter(c => c.episode).length;
+            console.log(`[Split] ${src.name}: ${job.parts.length} parts (${cuts.filter(c => c.quiet).length}/${cuts.length} cuts on a quiet moment` +
+                `${atEpisode ? `, ${atEpisode} between episodes` : ''})`);
+            job.episodeCuts = atEpisode;
         } catch (e) {
             if (job.cancelled) {
                 job.status = 'cancelled';
@@ -269,7 +327,7 @@ function createVideoSplitter({ getFFmpegBinary, getFFprobeBinary, trackProcess }
         const job = jobs.get(jobId);
         if (!job) return null;
         return {
-            status: job.status, phase: job.phase, percent: job.percent, error: job.error, outDir: job.outDir,
+            status: job.status, phase: job.phase, percent: job.percent, error: job.error, outDir: job.outDir, episodeCuts: job.episodeCuts || 0,
             parts: job.parts.map(p => ({ outPath: p.outPath, start: p.start, duration: p.duration, quietCut: p.quietCut }))
         };
     }
@@ -285,4 +343,4 @@ function createVideoSplitter({ getFFmpegBinary, getFFprobeBinary, trackProcess }
     return { inspect, start, status, cancel };
 }
 
-module.exports = { createVideoSplitter };
+module.exports = { createVideoSplitter, episodeStartsFor, episodeAnchors };

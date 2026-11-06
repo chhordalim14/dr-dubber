@@ -53,7 +53,7 @@ test('linesWav and the page carry each line\'s character name and exact timing t
     assert.match(page, /name: s\.characterName \|\| null, exact: !!s\.screenMatched/);
     assert.match(page, /label: s\.english \|\| s\.name \|\| `Speaker \$\{\+\+number\}`/);
     assert.match(read('frontend', 'js', 'studio-main.js'), /\.\.\.\(characterName && \{ characterName \}\)/);
-    assert.match(read('backend', 'server.js'), /speaker: \{ type: 'STRING' \},/);
+    assert.match(read('backend', 'routes', 'gemini.js'), /speaker: \{ type: 'STRING' \},/);
 });
 
 test('refPieces: the clearest lines in order until about 6 s, never more than 10 s or 4 lines', () => {

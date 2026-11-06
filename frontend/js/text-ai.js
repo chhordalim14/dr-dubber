@@ -109,15 +109,14 @@
   }
 
   const state = {
-    provider: read(LS.provider) === 'codecraft' ? 'codecraft' : 'gemini',
-    // { key, state: unknown|checking|ok|refused|error|no-credit|cooling, message, retryAfterMs }
-    keys: readKeys().map((key) => ({ key, state: 'unknown', message: '', retryAfterMs: 0 })),
-    model: read(LS.model),
-    backup: read(LS.backup),
-    models: readJson(LS.models), // last list seen, so the card shows names and prices offline too
+    provider: 'gemini',
+    keys: [],
+    model: '',
+    backup: '',
+    models: [],
     checkedAt: 0,
-    open: null,       // 'main' | 'backup' while its list is open
-    draftKey: '',     // what was typed in the add box, kept when adding fails
+    open: null,
+    draftKey: '',
     adding: false,
     addError: '',
     note: ''
@@ -129,12 +128,10 @@
   const keyList = () => state.keys.map((k) => k.key);
 
   function ready() {
-    return state.provider === 'codecraft' && state.keys.length > 0 && !!state.model;
+    return false;
   }
   function label() {
-    if (!ready()) return 'Gemini';
-    const m = findModel(state.model);
-    return `CodeCraft · ${m ? m.name : state.model}`;
+    return 'Google Gemini';
   }
 
   // Send the choice to the backend. Retried for a few seconds: at start the backend may still be loading.
@@ -145,7 +142,7 @@
       await fetch(`${BACKEND}/api/text-ai`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: state.provider, keys: keyList(), model: state.model, backupModel: state.backup })
+        body: JSON.stringify({ provider: 'gemini', keys: [], model: '', backupModel: '' })
       });
     } catch (e) {
       if (tries > 1) syncTimer = setTimeout(() => sync(tries - 1), 2000);
@@ -360,25 +357,8 @@
 
   function render() {
     if (!root) return;
-    const active = document.activeElement;
-    const focusedSearch = active && root.contains(active) && active.classList.contains('tai-search');
-    const focusedKey = active && root.contains(active) && active.matches('[data-role="key-input"]');
-    const cc = state.provider === 'codecraft';
-    root.innerHTML = `<div class="tai">
-        <div class="tai-head">${icon('languages')}<span>Translate subtitles with</span></div>
-        <div class="tai-seg" role="radiogroup" aria-label="Translate subtitles with">
-          <button type="button" role="radio" aria-checked="${!cc}" class="tai-seg-btn${!cc ? ' is-on' : ''}" data-act="provider" data-value="gemini">${icon('sparkles')}Google Gemini</button>
-          <button type="button" role="radio" aria-checked="${cc}" class="tai-seg-btn${cc ? ' is-on' : ''}" data-act="provider" data-value="codecraft">${icon('boxes')}CodeCraft API</button>
-        </div>
-        <p class="tai-note">Used by Whisper + Translate, Fix Missing, shortening and rewriting lines, the name check and title ideas. Direct (Gemini) listens to the audio itself, so it always uses Gemini.</p>
-        ${cc ? keysCard() : ''}
-        ${cc && state.keys.length ? modelsCard() : ''}
-      </div>`;
-    if (window.lucide && typeof window.lucide.createIcons === 'function') {
-      try { window.lucide.createIcons({ root }); } catch (e) { }
-    }
-    if (focusedSearch) { const s = root.querySelector('.tai-search'); if (s) s.focus(); }
-    if (focusedKey) { const k = root.querySelector('[data-role="key-input"]'); if (k) { k.focus(); k.setSelectionRange(k.value.length, k.value.length); } }
+    root.innerHTML = '';
+    root.classList.add('hidden');
   }
 
   // Filtering hides rows in place (re-rendering would take the focus away from the search box).
@@ -460,26 +440,28 @@
   }
 
   function init() {
+    state.provider = 'gemini';
+    state.keys = [];
+    state.model = '';
+    state.backup = '';
+    try {
+      localStorage.setItem(LS.provider, 'gemini');
+      localStorage.removeItem(LS.keys);
+      localStorage.removeItem(LS.oldKey);
+      localStorage.removeItem(LS.model);
+      localStorage.removeItem(LS.backup);
+      localStorage.removeItem(LS.models);
+    } catch (e) { }
+
     root = document.getElementById('text-ai-settings');
     if (root) {
-      root.addEventListener('click', onClick);
-      root.addEventListener('keydown', onKeydown);
-      root.addEventListener('input', onInput);
-      render();
+      root.innerHTML = '';
+      root.classList.add('hidden');
     }
-    if (read(LS.oldKey)) save(); // move a single saved key into the list
-    else sync();
-    // Opening Settings → API shows fresh key states: a full check at most once a minute, otherwise
-    // what the app saw while working (out of credit, rate-limited).
-    const apiTab = document.querySelector('.settings-tab-btn[data-target="settings-api"]');
-    if (apiTab) apiTab.addEventListener('click', () => {
-      if (state.provider !== 'codecraft' || !state.keys.length) return;
-      checkKeys(state.keys, { probe: Date.now() - state.checkedAt > 60 * 1000 });
-    });
-    if (state.provider === 'codecraft' && state.keys.length) checkKeys();
+    sync();
   }
 
-  window.textAi = { ready, label, isCodeCraft: () => state.provider === 'codecraft', helpers };
+  window.textAi = { ready, label, isCodeCraft: () => false, helpers };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 })();
