@@ -4476,6 +4476,15 @@
     // Stops early when every key is out of its daily quota: the other tabs would only fail too.
     // Started from the "All Tabs" menu; resolves with { checked, fixedLines, quotaOut, stopped }.
     const FIX_MISSING_MAX_PARALLEL = 8; // tabs checked at once with keyPerTab (Dub Whole Series' Transcribe cap)
+    // Dub Whole Series' "Episodes at once" and "Retry failed", saved by its window
+    // (dai-transcribe-studio.js reads the same for the transcribe batch).
+    const savedSeriesNumber = (key, lo, hi, dflt) => {
+      let n = NaN;
+      try { n = parseInt(localStorage.getItem(key), 10); } catch (e) { } // storage blocked: the default
+      return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt;
+    };
+    const seriesParallel = () => savedSeriesNumber("aiDubberSeriesParallel", 1, 10, FIX_MISSING_MAX_PARALLEL);
+    const seriesRetryPasses = () => savedSeriesNumber("aiDubberSeriesRetries", 0, 5, 2);
 
     function stopFixMissingAll() {
       if (!fixMissingAllRun) return;
@@ -4510,7 +4519,7 @@
       fixMissingAllRun = run;
       const ownsJob = !allTabsJob; // inside "Transcribe, then Fix Missing" the pipeline owns the button
       if (ownsJob) allTabsJob = "fix";
-      const workerCount = keyPerTab ? Math.max(1, Math.min(FIX_MISSING_MAX_PARALLEL, apiKeys.length, targets.length)) : 1;
+      const workerCount = keyPerTab ? Math.max(1, Math.min(seriesParallel(), apiKeys.length, targets.length)) : 1;
       showToast(workerCount > 1 ? `Fix Missing: checking ${targets.length} tab(s) at once…` : `Fix Missing: checking ${targets.length} tab(s) one by one…`, "info");
       const results = [];
       let quotaMessage = "";
@@ -16244,20 +16253,22 @@
 
     // Greedy grouping of scanned episodes into parts of about `minutes`; a tiny last part is
     // merged into the one before. Shared by Join Episodes and Dub Whole Series.
-    function planEpisodeParts(scannedFiles, minutes) {
+    // maxCount: episodes in one part at most (Dub Whole Series' "Each episode its own tab" opens
+    // a part's episodes as tabs, so there it is the tab limit).
+    function planEpisodeParts(scannedFiles, minutes, maxCount = 80) {
       const target = Math.max(5, minutes || 60) * 60;
       const files = (scannedFiles || []).filter((f) => !f.error);
       const out = [];
       let cur = [], dur = 0;
       for (const f of files) {
-        if (cur.length && (dur + f.duration > target * 1.08 || cur.length >= 80)) { out.push(cur); cur = []; dur = 0; }
+        if (cur.length && (dur + f.duration > target * 1.08 || cur.length >= maxCount)) { out.push(cur); cur = []; dur = 0; }
         cur.push(f); dur += f.duration;
       }
       if (cur.length) out.push(cur);
       if (out.length > 1) {
         const last = out[out.length - 1], lastDur = last.reduce((s, f) => s + f.duration, 0);
         const prev = out[out.length - 2];
-        if (lastDur < target * 0.35 && prev.length + last.length <= 80) out.splice(out.length - 2, 2, prev.concat(last));
+        if (lastDur < target * 0.35 && prev.length + last.length <= maxCount) out.splice(out.length - 2, 2, prev.concat(last));
       }
       return out;
     }
@@ -16521,6 +16532,8 @@
       const splitMinutes = () => clampNum($("ds-split-minutes").value, 3, 60, 7);
       const STEP_NAMES = { split: "Split into tabs", load: "Open as tabs", transcribe: "Transcribe", match: "Match subtitles to video", generate: "Generate voices", isolate: "Isolate BGM", blurtext: "Blur subtitles" };
       const STEP_ORDER = ["split", "load", "transcribe", "match", "generate", "isolate", "blurtext"];
+      // A series of episodes as tabs has nothing to split: its first step only opens the episodes.
+      const stepName = (name) => (name === "split" && plan?.episodeTabs ? "Episodes as tabs" : STEP_NAMES[name]);
       const OPTIONAL_STEPS = ["transcribe", "match", "generate", "isolate", "blurtext"];
 
       let scan = null; // /api/episodes/scan result for a newly chosen folder
@@ -16529,6 +16542,12 @@
       const readyParts = () => scan?.joinedParts || (scan && $("ds-merged").checked
         ? scan.files.filter((f) => !f.error).map((f) => ({ path: f.path, label: f.name, episodes: 0, duration: f.duration }))
         : null);
+      // "Each episode its own tab": no joining and no cutting - every episode opens as a tab and
+      // is exported as its own video. A part is a batch of whole episodes of about "Minutes per
+      // part" (at most MAX_PROJECT_TABS), dubbed together like the joined mode's tabs.
+      const episodeTabsWanted = () => !!scan && !readyParts() && $("ds-episodes").checked;
+      const episodeTabsShown = () => (plan ? !!plan.episodeTabs : episodeTabsWanted());
+      const episodeBatches = () => planEpisodeParts(scan.files, joinMinutes(), MAX_PROJECT_TABS);
       let plan = null; // persisted: { folder, seriesName, outDir, joinMinutes, parts, current, stepState, pieces, lastDone }
       try {
         const saved = JSON.parse(localStorage.getItem(SERIES_KEY) || "null");
@@ -16694,10 +16713,24 @@
           if (typeof prefs.handsFree === "boolean" && $("ds-handsfree")) $("ds-handsfree").checked = prefs.handsFree;
           if (typeof prefs.merge === "boolean") $("ds-merge").checked = prefs.merge;
           if (prefs.mergeScope === "series" || prefs.mergeScope === "part") $("ds-merge-scope").value = prefs.mergeScope;
+          if (typeof prefs.episodeTabs === "boolean") $("ds-episodes").checked = prefs.episodeTabs;
+        }
+        // "Each episode its own tab" is new: the first time, every episode's own video plus the
+        // whole series joined once at the end (with Hands-free).
+        if (!prefs || typeof prefs.episodeTabs !== "boolean") {
+          $("ds-merge").checked = true;
+          $("ds-merge-scope").value = "series";
         }
       } catch (e) { }
+      // "Episodes at once" and "Retry failed": their own keys, read by the transcribe batch too.
+      [["ds-parallel", "aiDubberSeriesParallel"], ["ds-retries", "aiDubberSeriesRetries"]].forEach(([id, key]) => {
+        const sel = $(id);
+        const saved = localStorage.getItem(key);
+        if (saved !== null && [...sel.options].some((o) => o.value === saved)) sel.value = saved;
+        sel.addEventListener("change", () => { try { localStorage.setItem(key, sel.value); } catch (e) { } });
+      });
       const savePrefs = () => {
-        const prefs = { joinMinutes: joinMinutes(), splitMinutes: splitMinutes() };
+        const prefs = { joinMinutes: joinMinutes(), splitMinutes: splitMinutes(), episodeTabs: $("ds-episodes").checked };
         OPTIONAL_STEPS.forEach((k) => { prefs[k] = $(`ds-step-${k}`).checked; });
         prefs.handsFree = handsFree();
         prefs.merge = $("ds-merge").checked;
@@ -16857,7 +16890,8 @@
         const parts = plan
           ? plan.parts
           : ready ? ready.map((jp) => ({ label: jp.label, episodes: jp.episodes, duration: jp.duration, status: "preview" }))
-          : scan ? planEpisodeParts(scan.files, joinMinutes()).map((g) => ({ label: `${epLabel(g[0])} – ${epLabel(g[g.length - 1])}`, episodes: g.length, duration: g.reduce((s, f) => s + f.duration, 0), status: "preview" })) : [];
+          : scan ? (episodeTabsWanted() ? episodeBatches() : planEpisodeParts(scan.files, joinMinutes()))
+            .map((g) => ({ label: `${epLabel(g[0])} – ${epLabel(g[g.length - 1])}`, episodes: g.length, duration: g.reduce((s, f) => s + f.duration, 0), status: "preview" })) : [];
         const totalEpisodes = parts.reduce((s, p) => s + (p.episodes || 0), 0);
         const totalDur = parts.reduce((s, p) => s + p.duration, 0);
         if (parts.length) {
@@ -16877,8 +16911,11 @@
         const showMerged = !plan && !!scan && !scan.joinedParts && scan.files.some((f) => !f.error);
         $("ds-merged-row").classList.toggle("hidden", !showMerged);
         $("ds-merged-row").classList.toggle("flex", showMerged);
+        const showEpisodes = showMerged && !$("ds-merged").checked; // merged videos are cut into tabs
+        $("ds-episodes-row").classList.toggle("hidden", !showEpisodes);
+        $("ds-episodes-row").classList.toggle("flex", showEpisodes);
         $("ds-name").disabled = !!plan || running;
-        $("ds-split-minutes").disabled = running;
+        $("ds-split-minutes").disabled = running || episodeTabsShown(); // one tab per episode
 
         const u = unfinishedIndex();
         const box = $("ds-parts");
@@ -16897,7 +16934,7 @@
           else if (p.status === "done") {
             const report = p.report ? [
               ...(stepsTotalMs(p.report.steps) >= 1000 ? [`Steps took ${fmtDur(stepsTotalMs(p.report.steps) / 1000)} in all`] : []),
-              ...STEP_ORDER.filter((k) => p.report.steps[k]).map((k) => `${STEP_NAMES[k]}: ${p.report.steps[k].state}${tookText(p.report.steps[k]) ? ` in ${tookText(p.report.steps[k])}` : ""}${p.report.steps[k].note ? ` - ${p.report.steps[k].note}` : ""}`),
+              ...STEP_ORDER.filter((k) => p.report.steps[k]).map((k) => `${stepName(k)}: ${p.report.steps[k].state}${tookText(p.report.steps[k]) ? ` in ${tookText(p.report.steps[k])}` : ""}${p.report.steps[k].note ? ` - ${p.report.steps[k].note}` : ""}`),
             ].join("\n") : "";
             const job = plan && seriesExports.get(p);
             const r = job?.result;
@@ -16914,14 +16951,15 @@
             state = running ? pill("run", "working…") : pill("warn", "stopped - Continue");
             bar = stepsPercent(plan.stepState);
           }
-          else state = pill("wait", "joined, waiting");
-          const tabs = Math.max(1, Math.min(MAX_PROJECT_TABS, Math.round(p.duration / (splitMinutes() * 60))));
+          else state = pill("wait", episodeTabsShown() ? "waiting" : "joined, waiting");
+          const tabs = episodeTabsShown() && p.episodes ? p.episodes
+            : Math.max(1, Math.min(MAX_PROJECT_TABS, Math.round(p.duration / (splitMinutes() * 60))));
           const row = document.createElement("div");
           row.className = `ds-part${i === u ? " is-current" : ""}${p.status === "done" ? " is-done" : ""}`;
           row.innerHTML = `<span class="ds-part-num">${p.status === "done" ? "✓" : i + 1}</span>
             <div class="ds-part-main">
               <div class="ds-part-title" title="${esc(p.label)}">${esc(p.label)}</div>
-              <div class="ds-part-meta">${p.episodes ? `<span>${p.episodes} episodes</span>` : ""}<span>≈${tabs} tab${tabs === 1 ? "" : "s"}</span><span>${fmtDur(p.duration)}</span></div>
+              <div class="ds-part-meta">${p.episodes ? `<span>${p.episodes} episodes</span>` : ""}<span>${episodeTabsShown() ? "" : "≈"}${tabs} tab${tabs === 1 ? "" : "s"}</span><span>${fmtDur(p.duration)}</span></div>
             </div>
             ${state}
             ${bar !== null ? `<div class="ds-part-bar"><i style="width:${Math.max(0, Math.min(100, bar))}%"></i></div>` : ""}`;
@@ -16947,7 +16985,7 @@
             const state = !st ? (off ? "off" : "pending")
               : st.state === "skipped" ? "off"
                 : ["done", "running", "stopped"].includes(st.state) ? st.state : "failed";
-            return stepRow(state, off ? `${STEP_NAMES[name]} (off)` : STEP_NAMES[name], st?.note || "", tookText(st));
+            return stepRow(state, off ? `${stepName(name)} (off)` : stepName(name), st?.note || "", tookText(st));
           }).join("") + exportStepLine(shown) + `</div>`;
         }
 
@@ -16983,7 +17021,10 @@
           btnNext.classList.add("hidden");
         } else if (!plan) {
           btnStart.classList.remove("hidden");
-          btnStart.textContent = !parts.length ? "Start" : ready ? `Start: dub part 1 of ${parts.length} (already ${scan.joinedParts ? "joined" : "merged"})` : `Start: join ${parts.length} part${parts.length === 1 ? "" : "s"} and dub part 1`;
+          btnStart.textContent = !parts.length ? "Start"
+            : ready ? `Start: dub part 1 of ${parts.length} (already ${scan.joinedParts ? "joined" : "merged"})`
+            : episodeTabsWanted() ? `Start: dub part 1 of ${parts.length} (${parts[0].episodes} episodes, one tab each)`
+            : `Start: join ${parts.length} part${parts.length === 1 ? "" : "s"} and dub part 1`;
           btnStart.disabled = !parts.length;
           btnNext.classList.add("hidden");
         } else if (joining.length) {
@@ -17256,7 +17297,7 @@
         seriesRun.step = name;
         plan.stepState[name] = { state: "running" };
         savePlan();
-        setLabel(`Part ${plan.current + 1}/${plan.parts.length} · ${STEP_NAMES[name]}`);
+        setLabel(`Part ${plan.current + 1}/${plan.parts.length} · ${stepName(name)}`);
         let note = "";
         const startedAt = Date.now(); // how long each step takes is kept with it (shown in the window)
         try {
@@ -17277,6 +17318,11 @@
 
       async function splitStep() {
         const part = plan.parts[plan.current];
+        if (part.episodeTabs) {
+          // Each episode is a tab as it is - nothing to cut.
+          plan.pieces = part.files.slice();
+          return `${plan.pieces.length} episode${plan.pieces.length === 1 ? "" : "s"}, one tab each`;
+        }
         const src = await postJson(`${API}/split/inspect`, { file: part.outPath });
         if (!src.success) throw new Error(`Could not read part ${plan.current + 1}: ${src.error}.`);
         let n = Math.max(1, Math.min(40, Math.round(src.duration / (splitMinutes() * 60))));
@@ -17326,7 +17372,6 @@
       }
 
       const QUOTA_MSG = "Google reports the daily Gemini quota used up on every key. Press Continue in 15 minutes (the app rechecks then), pick another Gemini model, or add a key from another Google project.";
-      const RETRY_PASSES = 2;
       const tabNumbers = (list) => list.map((p) => projects.indexOf(p) + 1).join(", ");
 
       // Every tab must come back with subtitles: tabs that failed or came back empty are
@@ -17358,8 +17403,8 @@
         // On Continue, tabs that already have subtitles are kept.
         const first = emptyTabs();
         if (first.length) await runTranscribe(first.length < projects.length ? first : null);
-        for (let pass = 1; pass <= RETRY_PASSES && emptyTabs().length; pass++) {
-          setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Transcribe again: tab ${tabNumbers(emptyTabs())} (${pass}/${RETRY_PASSES})`);
+        for (let pass = 1; pass <= seriesRetryPasses() && emptyTabs().length; pass++) {
+          setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Transcribe again: tab ${tabNumbers(emptyTabs())} (${pass}/${seriesRetryPasses()})`);
           await sleep(5000);
           checkStop();
           await runTranscribe(emptyTabs());
@@ -17367,7 +17412,7 @@
         const stillEmpty = emptyTabs();
         if (stillEmpty.length === projects.length) throw new Error("No tab could be transcribed.");
         if (stillEmpty.length) {
-          console.warn(`[Dub Whole Series] Tab ${tabNumbers(stillEmpty)} could not be transcribed after ${RETRY_PASSES + 1} tries.`);
+          console.warn(`[Dub Whole Series] Tab ${tabNumbers(stillEmpty)} could not be transcribed after ${seriesRetryPasses() + 1} tries.`);
           showToast(`Warning: Tab ${tabNumbers(stillEmpty)} had an issue - continuing with the other tabs.`, "warning");
         }
 
@@ -17457,8 +17502,8 @@
         let g = alreadyVoiced ? { vox: false } : await runGenerate();
         if (g.reason === "no-subtitles") return "no subtitles to voice";
         const voiceMissingLines = async () => {
-          for (let pass = 1; pass <= RETRY_PASSES && missingVoice(); pass++) {
-            setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Generate again: ${missingVoice()} line(s) (${pass}/${RETRY_PASSES})`);
+          for (let pass = 1; pass <= seriesRetryPasses() && missingVoice(); pass++) {
+            setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Generate again: ${missingVoice()} line(s) (${pass}/${seriesRetryPasses()})`);
             await sleep(5000);
             checkStop();
             g = await runGenerate();
@@ -17468,7 +17513,7 @@
           // hands-free asking again every 3 minutes).
           const refused = projects.some((p) => liveSubtitlesOf(p).some((s) => s.audioStatus === "error" && isEdgeTtsRefusal(s.audioError)));
           if (missing && refused) throw new Error(`${missing} line(s) have no voice: Microsoft's voice service (Edge TTS) refused the connection (403). Update DR Dubber Pro, or pick another voice engine in Settings, then press Continue.`);
-          if (missing) throw new Error(`${missing} line(s) still have no voice after ${RETRY_PASSES + 1} tries. Press Continue to try them again.`);
+          if (missing) throw new Error(`${missing} line(s) still have no voice after ${seriesRetryPasses() + 1} tries. Press Continue to try them again.`);
         };
         await voiceMissingLines();
 
@@ -18119,7 +18164,8 @@
         if (!scan || seriesRun || !preflight()) return;
         cancelAutoResume();
         const ready = readyParts();
-        const groups = ready ? [] : planEpisodeParts(scan.files, joinMinutes());
+        const episodeTabs = !ready && episodeTabsWanted();
+        const groups = ready ? [] : episodeTabs ? episodeBatches() : planEpisodeParts(scan.files, joinMinutes());
         if (!groups.length && !ready?.length) return;
         if (!(await closeOpenTabs("Dub Whole Series opens each part as new tabs."))) return;
         savePrefs();
@@ -18127,8 +18173,9 @@
           id: Date.now(), // this series run (its exports' tag)
           folder: scan.folder,
           seriesName: $("ds-name").value.trim() || scan.seriesName,
-          outDir: ready ? scan.folder : pathJoin(scan.folder, "DR Dubber Joined"),
+          outDir: ready || episodeTabs ? scan.folder : pathJoin(scan.folder, "DR Dubber Joined"),
           joinMinutes: joinMinutes(),
+          episodeTabs, // every episode its own tab: nothing is joined or split
           // A "DR Dubber Joined" folder or already merged videos: the parts are ready, nothing to join.
           parts: ready ? ready.map((jp) => ({
             label: jp.label,
@@ -18143,7 +18190,8 @@
             episodes: g.length,
             duration: g.reduce((s, f) => s + f.duration, 0),
             files: g.map((f) => f.path),
-            status: "planned",
+            // Episodes as tabs: ready to dub as they are (splitStep opens the files themselves).
+            ...(episodeTabs ? { episodeTabs: true, prejoined: true, status: "joined" } : { status: "planned" }),
           })),
           current: null,
           stepState: null,
@@ -18366,6 +18414,12 @@
       });
       OPTIONAL_STEPS.forEach((k) => $(`ds-step-${k}`).addEventListener("change", () => { savePrefs(); render(); }));
       $("ds-merged").addEventListener("change", render);
+      $("ds-episodes").addEventListener("change", () => {
+        // Episodes as tabs: the joined video worth having is the whole series (a part is only a batch).
+        if ($("ds-episodes").checked) $("ds-merge-scope").value = "series";
+        savePrefs();
+        render();
+      });
       render();
 
       // The app closed while the series worked (a power cut, a crash, closed by hand) or while it

@@ -17,7 +17,11 @@ const keyStatusRank = eval(`(${rankBlock.trim()})`);
 
 // keyStatus: what the server reports per key ('ok' | 'daily' | 'invalid'); addLater: keys the
 // user adds in Settings while the batch runs ({ key, afterMs }).
-async function runBatch({ keys, tabs, deadKeys = [], keyStatus = {}, addLater = [] }) {
+// parallel / retries: Dub Whole Series' "Episodes at once" and "Retry failed" (unset: the defaults).
+async function runBatch({ keys, tabs, deadKeys = [], keyStatus = {}, addLater = [], parallel = null, retries = null }) {
+    const TAB_RETRIES = 2;
+    const seriesParallelFiles = () => parallel ?? SERIES_MAX_PARALLEL_FILES;
+    const seriesTabRetries = () => retries ?? TAB_RETRIES;
     const state = { isBatchRunning: true, batchAbortController: { signal: { aborted: false } }, runningItemIds: new Set() };
     const pendingItems = Array.from({ length: tabs }, (_, i) => ({ id: `i${i}`, fileName: `tab${i + 1}`, status: 'pending' }));
     const apiKeys = keys;
@@ -66,6 +70,15 @@ describe('Batch Transcribe, one key per tab', () => {
             assert.equal(c.maxLanes, 1);
             assert.equal(c.stayOnModel, true);
         }
+    });
+
+    test('"Episodes at once" limits how many tabs run together; 10 lets 10 run', async () => {
+        const keys = Array.from({ length: 12 }, (_, i) => `k${i + 1}`);
+        const three = await runBatch({ keys, tabs: 6, parallel: 3 });
+        assert.equal(three.maxParallel, 3);
+        assert.ok(three.items.every((i) => i.status === 'completed'));
+        const ten = await runBatch({ keys, tabs: 12, parallel: 10 });
+        assert.equal(ten.maxParallel, 10);
     });
 
     test('fewer keys than tabs: the extra tabs wait for a key', async () => {

@@ -3457,7 +3457,7 @@
         <!-- ① Episodes -->
         <div class="ds-sec-head">
           <span class="ds-sec-num">1</span>
-          <div class="ds-sec-text"><div class="ds-sec-title">Episodes</div><div class="ds-sec-hint">The folder with the episodes - they are joined into parts</div></div>
+          <div class="ds-sec-text"><div class="ds-sec-title">Episodes</div><div class="ds-sec-hint">The folder with the episodes - joined into parts, or each its own tab</div></div>
         </div>
         <!-- Folder: click to browse, or drop the folder (or one of its videos) here -->
         <div id="ds-drop" class="ds-drop">
@@ -3489,7 +3489,7 @@
           <div id="ds-stats" class="ds-stats"></div>
           <div id="ds-warnings" class="hidden ds-callout ds-callout--warn"></div>
           <div class="ds-grid3">
-            <label class="ds-field" title="Episodes are joined into parts of about this length. A part is dubbed as one batch of tabs."><span>Minutes per part</span>
+            <label class="ds-field" title="Episodes are joined into parts of about this length. A part is dubbed as one batch of tabs. With Each episode its own tab, nothing is joined: a part is a batch of whole episodes of about this length (at most 20)."><span>Minutes per part</span>
               <input id="ds-join-minutes" type="number" min="5" max="180" step="5" value="50"></label>
             <label class="ds-field" title="Each part is split into tabs of about this length."><span>Minutes per tab</span>
               <input id="ds-split-minutes" type="number" min="3" max="60" step="1" value="7"></label>
@@ -3498,6 +3498,10 @@
           </div>
           <div class="ds-sub-head">
             <span>Parts</span>
+            <label id="ds-episodes-row" class="hidden ds-inline-switch" title="Each episode is dubbed as its own tab, as it is: no joining and no cutting. A part is a batch of episodes (about Minutes per part, at most 20) dubbed together; each episode is exported as its own video. Uses about twice the Gemini requests of joined tabs.">
+              <input id="ds-episodes" type="checkbox" class="ds-switch ds-switch--sm" checked>
+              <span>Each episode its own tab</span>
+            </label>
             <label id="ds-merged-row" class="hidden ds-inline-switch" title="Each video in the folder is dubbed as one part, as it is: it is only split into tabs. Switched on by itself when every video is 20 minutes or longer.">
               <input id="ds-merged" type="checkbox" class="ds-switch ds-switch--sm">
               <span>Videos are already merged</span>
@@ -3516,6 +3520,29 @@
             <label class="ds-tile"><input id="ds-step-generate" type="checkbox" checked><i data-lucide="audio-lines"></i><span>Generate voices</span></label>
             <label class="ds-tile"><input id="ds-step-isolate" type="checkbox" checked><i data-lucide="music"></i><span>Isolate BGM</span></label>
             <label class="ds-tile" title="Find the burned-in (Chinese) subtitles and blur each one only while it shows. Runs while the part is transcribed and voiced."><input id="ds-step-blurtext" type="checkbox" checked><i data-lucide="eye-off"></i><span>Blur subtitles</span></label>
+          </div>
+          <div class="ds-grid2">
+            <label class="ds-field" title="How many tabs are transcribed (and checked for missing lines) at the same time. Each one uses a Gemini key of its own, so more keys allow more at once.">
+              <span>Episodes at once</span>
+              <select id="ds-parallel">
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="5">5</option>
+                <option value="8" selected>8</option>
+                <option value="10">10</option>
+              </select>
+            </label>
+            <label class="ds-field" title="A tab that fails for a passing reason (Google busy, a rate limit) is transcribed again this many times, and lines left without a voice are generated again this many times, before the series moves on or pauses.">
+              <span>Retry failed</span>
+              <select id="ds-retries">
+                <option value="0">Off</option>
+                <option value="1">1</option>
+                <option value="2" selected>2</option>
+                <option value="3">3</option>
+                <option value="5">5</option>
+              </select>
+            </label>
           </div>
 
           <!-- ③ Look -->

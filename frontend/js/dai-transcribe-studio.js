@@ -895,8 +895,15 @@
   // Max files transcribed at the same time (also capped by the number of API keys).
   const BATCH_MAX_PARALLEL_FILES = 6;
   // Dub Whole Series (one key per tab): a part is often 7 tabs, and with a cap of 6 the 7th
-  // started only when another finished - 5-6 minutes later on a busy day.
+  // started only when another finished - 5-6 minutes later on a busy day. Its window's
+  // "Episodes at once" (1-10) and "Retry failed" (Off-5) change these for series runs.
   const SERIES_MAX_PARALLEL_FILES = 8;
+  const savedSeriesNumber = (key, lo, hi, dflt) => {
+    let n = NaN;
+    try { n = parseInt(localStorage.getItem(key), 10); } catch (e) { } // storage blocked: the default
+    return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt;
+  };
+  const seriesParallelFiles = () => savedSeriesNumber('aiDubberSeriesParallel', 1, 10, SERIES_MAX_PARALLEL_FILES);
 
   // How usable a key is for `model`, from /api/gemini-key-status: 0 ready, 1 maybe (limits on
   // other models, or not known yet), 9 resting (refused by Google, or out for the day).
@@ -912,6 +919,7 @@
   // pass). Passing: Google busy or slow, a server hiccup (5xx), a per-minute rate limit. Not:
   // a bad key, the daily quota, blocked or too-large audio, no speech.
   const TAB_RETRIES = 2;
+  const seriesTabRetries = () => savedSeriesNumber('aiDubberSeriesRetries', 0, 5, TAB_RETRIES);
   function isRetryableTabError(err) {
     if (!err || err.name === 'AbortError' || err.isDailyQuota || err.code === 'INVALID_API_KEY') return false;
     const status = Number(err.status);
@@ -986,7 +994,8 @@
         .map((c) => c.k);
       if (ready.length) ownKeyOrder = ready;
     }
-    const concurrency = Math.max(1, Math.min(maxParallel || (keyPerTab ? SERIES_MAX_PARALLEL_FILES : BATCH_MAX_PARALLEL_FILES), ownKeyOrder.length, pendingItems.length));
+    const retryLimit = keyPerTab ? seriesTabRetries() : TAB_RETRIES; // a tab that failed for a passing reason
+    const concurrency = Math.max(1, Math.min(maxParallel || (keyPerTab ? seriesParallelFiles() : BATCH_MAX_PARALLEL_FILES), ownKeyOrder.length, pendingItems.length));
     const keyStride = Math.max(1, Math.floor(apiKeys.length / concurrency));
     const batchAbort = state.batchAbortController;
     const todo = [...pendingItems];
@@ -1089,9 +1098,9 @@
             renderQueueTable();
             continue; // no spare: the top of the loop waits for one
           }
-          if (isRetryableTabError(err) && (item.retries || 0) < TAB_RETRIES && !quotaOut) {
+          if (isRetryableTabError(err) && (item.retries || 0) < retryLimit && !quotaOut) {
             item.retries = (item.retries || 0) + 1;
-            console.warn(`[DAI Batch] ${item.fileName} failed (${err.message}) - trying again now (${item.retries}/${TAB_RETRIES})`);
+            console.warn(`[DAI Batch] ${item.fileName} failed (${err.message}) - trying again now (${item.retries}/${retryLimit})`);
             Object.assign(item, { status: 'pending', error: null, progress: 0 });
             todo.unshift(item); // this worker takes it again next
             renderQueueTable();
