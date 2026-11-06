@@ -35,9 +35,9 @@ describe('Each episode its own tab', () => {
     assert.equal(planEpisodeParts(episodes(60, 102), 180).length, 1);
   });
 
-  function startWith({ episodeTabs }) {
+  function startWith({ episodeTabs, unpicked = null }) {
     const env = { runPart: [], joined: 0, closed: 0 };
-    const scan = { folder: 'D:\\Show', seriesName: 'Show', files: episodes(30, 150) };
+    const scan = { folder: 'D:\\Show', seriesName: 'Show', files: episodes(30, 150), unpicked };
     const run = new Function('env', 'scan', 'episodeTabsOn', 'planEpisodeParts', 'MAX_PROJECT_TABS', `
       let plan = null, seriesRun = null;
       const preflight = () => true, cancelAutoResume = () => { }, savePrefs = () => { }, savePlan = () => { };
@@ -45,7 +45,8 @@ describe('Each episode its own tab', () => {
       const joinMinutes = () => 50;
       const readyParts = () => null;
       const episodeTabsWanted = () => episodeTabsOn;
-      const episodeBatches = () => planEpisodeParts(scan.files, joinMinutes(), MAX_PROJECT_TABS);
+      const pickedFiles = () => scan.files.filter((f) => !f.error && !scan.unpicked?.has(f.path));
+      const episodeBatches = () => planEpisodeParts(pickedFiles(), joinMinutes(), MAX_PROJECT_TABS);
       const pathJoin = (a, b) => a + '\\\\' + b;
       const epLabel = (f) => 'EP' + f.episode;
       const closeOpenTabs = async () => { env.closed++; return true; };
@@ -79,6 +80,15 @@ describe('Each episode its own tab', () => {
     assert.equal(plan.outDir, 'D:\\Show\\DR Dubber Joined');
     assert.ok(plan.parts.every((p) => p.status === 'planned' && !p.episodeTabs));
     assert.equal(env.joined, 1);
+  });
+
+  test('"Episodes to dub": unticked episodes are left out, in both modes', async () => {
+    const all = episodes(30, 150).map((f) => f.path);
+    const unpicked = new Set(all.slice(0, 5));
+    for (const episodeTabs of [true, false]) {
+      const { plan } = await startWith({ episodeTabs, unpicked });
+      assert.deepEqual(plan.parts.flatMap((p) => p.files), all.slice(5));
+    }
   });
 
   test('a batch opens its episode files as tabs - the splitter is not asked', async () => {

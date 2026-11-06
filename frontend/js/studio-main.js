@@ -16547,7 +16547,9 @@
       // part" (at most MAX_PROJECT_TABS), dubbed together like the joined mode's tabs.
       const episodeTabsWanted = () => !!scan && !readyParts() && $("ds-episodes").checked;
       const episodeTabsShown = () => (plan ? !!plan.episodeTabs : episodeTabsWanted());
-      const episodeBatches = () => planEpisodeParts(scan.files, joinMinutes(), MAX_PROJECT_TABS);
+      // "Episodes to dub": every readable episode unless it was unticked (scan.unpicked: paths).
+      const pickedFiles = () => (scan ? scan.files.filter((f) => !f.error && !scan.unpicked?.has(f.path)) : []);
+      const episodeBatches = () => planEpisodeParts(pickedFiles(), joinMinutes(), MAX_PROJECT_TABS);
       let plan = null; // persisted: { folder, seriesName, outDir, joinMinutes, parts, current, stepState, pieces, lastDone }
       try {
         const saved = JSON.parse(localStorage.getItem(SERIES_KEY) || "null");
@@ -16870,6 +16872,85 @@
 
 
       // ── Rendering ────────────────────────────────────────────────────────
+      // "Episodes to dub": a chip per readable episode; unticked ones are left out of the plan.
+      let chooserShown = "";
+      function drawChooser() {
+        const files = scan.files.filter((f) => !f.error);
+        $("ds-choose-count").textContent = `Episodes to dub: ${pickedFiles().length} of ${files.length}`;
+        $("ds-choose-new").classList.toggle("hidden", !episodeTabsWanted()); // only episodes are exported under their own names
+        const sig = files.map((f) => (scan.unpicked?.has(f.path) ? 0 : 1)).join("") + "|" + scan.folder;
+        if (sig === chooserShown) return;
+        chooserShown = sig;
+        $("ds-choose-grid").innerHTML = files.map((f, i) =>
+          `<button type="button" class="ds-ep-chip${scan.unpicked?.has(f.path) ? "" : " is-on"}" data-i="${i}" title="${esc(f.name)} · ${fmtDur(f.duration)}">${esc(epLabel(f))}</button>`).join("");
+      }
+      const readableFiles = () => (scan ? scan.files.filter((f) => !f.error) : []);
+      $("ds-choose-grid").addEventListener("click", (e) => {
+        const chip = e.target.closest(".ds-ep-chip");
+        const f = chip && readableFiles()[Number(chip.dataset.i)];
+        if (!f || plan) return;
+        scan.unpicked = scan.unpicked || new Set();
+        if (scan.unpicked.has(f.path)) scan.unpicked.delete(f.path);
+        else scan.unpicked.add(f.path);
+        render();
+      });
+      $("ds-choose-all").addEventListener("click", () => { if (scan && !plan) { scan.unpicked = new Set(); render(); } });
+      $("ds-choose-none").addEventListener("click", () => { if (scan && !plan) { scan.unpicked = new Set(readableFiles().map((f) => f.path)); render(); } });
+      // Ticks only the episodes whose dubbed video isn't in the series' export folder yet (the
+      // names queueAllTabsForSeries gives them) - also the ones that failed before.
+      $("ds-choose-new").addEventListener("click", async () => {
+        if (!scan || plan) return;
+        const dir = exportDirFor($("ds-name").value.trim() || scan.seriesName);
+        if (!dir) return showToast("Set the Save Path in the export settings first - that is where the dubbed episodes go.", "warning");
+        const files = readableFiles();
+        const lang = targetLanguage || "Khmer";
+        const paths = files.map((f) => pathJoin(dir, `${baseOf(f.path)}_${lang}_Dubbed.${f.video ? "mp4" : "mp3"}`));
+        try {
+          const r = await postJson(`${API}/series-checkpoint/files-exist`, { paths });
+          if (!r?.success) throw new Error(r?.error || "no answer");
+          scan.unpicked = new Set(files.filter((f, i) => r.exists[i]).map((f) => f.path));
+          const done = scan.unpicked.size;
+          showToast(done ? `${done} episode(s) already have a dubbed video in ${dir} - left out. ${files.length - done} to dub.` : `No episode has a dubbed video in ${dir} yet - all ${files.length} are ticked.`, "info");
+          render();
+        } catch (e) {
+          showToast(`Could not check the export folder: ${e.message}`, "error");
+        }
+      });
+
+      // The part's episodes (tabs) in the progress card: a dot per job, like the steps above but per
+      // episode, and how much of each is voiced. Tabs already closed (an exported part) show the
+      // part's own state.
+      function episodeRows(shown) {
+        const part = plan.parts[shown.index];
+        const pieces = (shown.index === unfinishedIndex() ? plan.pieces : plan.lastDone?.index === shown.index ? plan.lastDone.pieces : null) || [];
+        if (pieces.length < 2) return "";
+        const steps = shown.steps || {};
+        const step = seriesRun?.step;
+        const job = seriesExports.get(part);
+        const partDone = part.status === "done";
+        const dot = (state, what) => `<span><i class="ds-dot is-${state}" title="${what}: ${state}"></i></span>`;
+        let voicedEps = 0;
+        const rows = pieces.map((path) => {
+          const name = path.split(/[\\/]/).pop();
+          const p = projects.find((x) => x.videoFilePath === path);
+          const subs = p ? liveSubtitlesOf(p) : [];
+          const speak = subs.filter((s) => isSpeakableText(s.text));
+          const voiced = speak.filter((s) => s.audioStatus === "ready" && s.file).length;
+          const closed = partDone ? "done" : "pending";
+          const bgm = !wanted("isolate") ? "off" : !p ? closed : p.bgmError ? "failed" : p.bgmMethod ? (p.bgmMethod === "ffmpeg_fallback" ? "warn" : "done") : p.bgmJobId ? "running" : "pending";
+          const tr = !wanted("transcribe") ? "off" : !p ? closed : subs.length ? "done" : step === "transcribe" ? "running" : steps.transcribe?.state === "done" ? "failed" : "pending";
+          const vo = !wanted("generate") ? "off" : !p ? closed : speak.length && voiced === speak.length ? "done"
+            : step === "generate" && subs.length ? "running" : steps.generate?.state === "done" && voiced < speak.length ? "failed" : "pending";
+          const item = job?.items?.find((it) => it.projectLabel === name);
+          const ex = item ? ({ done: "done", running: "running", error: "failed", cancelled: "failed" }[item.status] || "pending")
+            : part.exported ? "done" : handsFree() ? "pending" : "off";
+          if (vo === "done") voicedEps++;
+          const pct = !p ? "" : `${speak.length ? Math.round((voiced / speak.length) * 100) : vo === "done" ? 100 : 0}%`;
+          return `<div class="ds-ep-row"><span class="ds-ep-name" title="${esc(name)}">${esc(baseOf(path))}</span>${dot(bgm, "BGM")}${dot(tr, "Transcribe")}${dot(vo, "Voice")}${dot(ex, "Export")}<span class="ds-ep-pct">${pct}</span></div>`;
+        });
+        return `<div class="ds-eps custom-scrollbar"><div class="ds-ep-row is-head"><span>${pieces.length} episodes · ${voicedEps} voiced</span><span>BGM</span><span>Transcribe</span><span>Voice</span><span>Export</span><span></span></div>${rows.join("")}</div>`;
+      }
+
       function render() {
         // Progress comes in every second for hours; a closed window is drawn when it opens.
         if (modal.classList.contains("hidden")) return;
@@ -16890,7 +16971,7 @@
         const parts = plan
           ? plan.parts
           : ready ? ready.map((jp) => ({ label: jp.label, episodes: jp.episodes, duration: jp.duration, status: "preview" }))
-          : scan ? (episodeTabsWanted() ? episodeBatches() : planEpisodeParts(scan.files, joinMinutes()))
+          : scan ? (episodeTabsWanted() ? episodeBatches() : planEpisodeParts(pickedFiles(), joinMinutes()))
             .map((g) => ({ label: `${epLabel(g[0])} – ${epLabel(g[g.length - 1])}`, episodes: g.length, duration: g.reduce((s, f) => s + f.duration, 0), status: "preview" })) : [];
         const totalEpisodes = parts.reduce((s, p) => s + (p.episodes || 0), 0);
         const totalDur = parts.reduce((s, p) => s + p.duration, 0);
@@ -16914,6 +16995,9 @@
         const showEpisodes = showMerged && !$("ds-merged").checked; // merged videos are cut into tabs
         $("ds-episodes-row").classList.toggle("hidden", !showEpisodes);
         $("ds-episodes-row").classList.toggle("flex", showEpisodes);
+        $("ds-choose").classList.toggle("hidden", !showEpisodes);
+        $("ds-choose").classList.toggle("flex", showEpisodes);
+        if (showEpisodes) drawChooser();
         $("ds-name").disabled = !!plan || running;
         $("ds-split-minutes").disabled = running || episodeTabsShown(); // one tab per episode
 
@@ -16974,6 +17058,7 @@
         if (shown) {
           const pct = u >= 0 ? stepsPercent(shown.steps) : 100;
           const eyebrow = u < 0 ? "Last finished" : running ? "Now dubbing" : "Stopped";
+          const epsScroll = stepsBox.querySelector(".ds-eps")?.scrollTop || 0;
           stepsBox.innerHTML = `<div class="ds-progress-head">
               <div><div class="ds-eyebrow">${eyebrow}</div><div class="ds-progress-title">Part ${shown.index + 1} of ${plan.parts.length}</div></div>
               <div class="ds-progress-pct">${pct}%</div>
@@ -16986,7 +17071,10 @@
               : st.state === "skipped" ? "off"
                 : ["done", "running", "stopped"].includes(st.state) ? st.state : "failed";
             return stepRow(state, off ? `${stepName(name)} (off)` : stepName(name), st?.note || "", tookText(st));
-          }).join("") + exportStepLine(shown) + `</div>`;
+          }).join("") + exportStepLine(shown) + `</div>` + episodeRows(shown);
+          // Redrawn every second: the episode list keeps where it was scrolled to.
+          const list = stepsBox.querySelector(".ds-eps");
+          if (list) list.scrollTop = epsScroll;
         }
 
         const nextIdx = nextPartIndex();
@@ -17820,16 +17908,19 @@
       // Where the series is exported: a folder of its own in the export folder, "<Name>_Dubbed",
       // so every part's videos and the joined video are together and apart from other exports.
       // A series exported before keeps the folder its first videos went to.
+      // "<export folder>\<Name>_Dubbed" for a series name ("" without an export folder set).
+      function exportDirFor(seriesName) {
+        const base = (exportPath || "").trim().replace(/[\\/]+$/, "");
+        if (!base) return "";
+        const name = (seriesName || "Series").replace(/[<>:"/\\|?*\x00-\x1f]/g, " ").replace(/\s+/g, " ").trim().replace(/[. ]+$/, "") || "Series";
+        return pathJoin(base, `${name}_Dubbed`);
+      }
       function seriesExportDir() {
         if (!plan) return "";
         if (!plan.exportDir) {
           const done = plan.parts.find((p) => p.outputs?.[0])?.outputs[0];
-          const base = (exportPath || "").trim().replace(/[\\/]+$/, "");
           if (done) plan.exportDir = dirOf(done);
-          else if (base) {
-            const name = (plan.seriesName || "Series").replace(/[<>:"/\\|?*\x00-\x1f]/g, " ").replace(/\s+/g, " ").trim().replace(/[. ]+$/, "") || "Series";
-            plan.exportDir = pathJoin(base, `${name}_Dubbed`);
-          }
+          else plan.exportDir = exportDirFor(plan.seriesName) || undefined;
         }
         return plan.exportDir || "";
       }
@@ -18165,7 +18256,7 @@
         cancelAutoResume();
         const ready = readyParts();
         const episodeTabs = !ready && episodeTabsWanted();
-        const groups = ready ? [] : episodeTabs ? episodeBatches() : planEpisodeParts(scan.files, joinMinutes());
+        const groups = ready ? [] : episodeTabs ? episodeBatches() : planEpisodeParts(pickedFiles(), joinMinutes());
         if (!groups.length && !ready?.length) return;
         if (!(await closeOpenTabs("Dub Whole Series opens each part as new tabs."))) return;
         savePrefs();

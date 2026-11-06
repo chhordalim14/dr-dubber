@@ -3507,6 +3507,16 @@
               <span>Videos are already merged</span>
             </label>
           </div>
+          <div id="ds-choose" class="hidden ds-choose">
+            <div class="ds-choose-head">
+              <span id="ds-choose-count">Episodes to dub</span>
+              <span class="flex-1"></span>
+              <button id="ds-choose-all" type="button" class="ds-chip-btn">All</button>
+              <button id="ds-choose-none" type="button" class="ds-chip-btn">None</button>
+              <button id="ds-choose-new" type="button" class="ds-chip-btn" title="Tick only the episodes without a dubbed video in the series' export folder yet - also the ones that failed before.">Not exported yet</button>
+            </div>
+            <div id="ds-choose-grid" class="ds-choose-grid custom-scrollbar"></div>
+          </div>
           <div id="ds-parts" class="ds-parts custom-scrollbar"></div>
 
           <!-- ② What to do -->
