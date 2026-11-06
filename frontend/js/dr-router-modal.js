@@ -65,9 +65,9 @@
             </div>
 
             <!-- Action buttons -->
-            <button id="dr-btn-google-login" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg shrink-0 bg-white hover:bg-gray-100 text-gray-900 font-semibold text-xs transition-all shadow-sm" title="Sign into Gmail directly without copying API keys">
+            <button id="dr-btn-google-login" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg shrink-0 bg-white hover:bg-gray-100 text-gray-900 font-semibold text-xs transition-all shadow-sm" title="Opens Google AI Studio in your browser. Create or copy a key there - it is added to the pool as soon as you copy it.">
               <svg class="w-3.5 h-3.5" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg>
-              <span>Sign in</span>
+              <span>AI Studio key</span>
             </button>
 
             <button id="dr-btn-send-test" title="Send a test request through a ready account" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg shrink-0 bg-gray-900 hover:bg-gray-800 border border-gray-700/80 hover:border-amber-400/50 text-xs font-medium text-gray-200 transition-all shadow-sm">
@@ -306,10 +306,10 @@
               <button id="dr-add-close" class="text-gray-400 hover:text-white text-base">✕</button>
             </div>
 
-            <!-- Instant Google Sign-In Button -->
+            <!-- Get a key from AI Studio (opens the browser; a copied key is added) -->
             <button id="dr-add-btn-google" type="button" class="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white hover:bg-gray-100 text-gray-900 font-bold text-xs shadow-md hover:shadow-lg transition-all active:scale-98">
               <svg class="w-4 h-4" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg>
-              <span>Sign in with Google (Instant &amp; No API Key Needed)</span>
+              <span>Get a key from Google AI Studio (copy it - it is added)</span>
             </button>
 
             <div class="flex items-center gap-2 my-0.5">
@@ -1277,13 +1277,14 @@
     // Google Sign-In Handlers
     async function triggerGoogleLogin() {
       if (!window.electronAPI || typeof window.electronAPI.drRouterGoogleLogin !== 'function') {
-        alert('Google direct sign-in is available in the DR Dubber Pro desktop application.');
+        alert('Getting a key from AI Studio works in the DR Dubber Pro desktop app.');
         return;
       }
       const btn1 = document.getElementById('dr-btn-google-login');
       const btn2 = document.getElementById('dr-add-btn-google');
-      if (btn1) btn1.innerHTML = `<span>⏳</span> <span>Signing in...</span>`;
-      if (btn2) btn2.innerHTML = `<span>⏳</span> <span>Signing in...</span>`;
+      // AI Studio opens in the browser; the first key copied there in 5 minutes comes back.
+      if (btn1) btn1.innerHTML = `<span>⏳</span> <span>Copy a key in AI Studio…</span>`;
+      if (btn2) btn2.innerHTML = `<span>⏳</span> <span>Copy a key in AI Studio… (it is added when you copy it)</span>`;
 
       try {
         const result = await window.electronAPI.drRouterGoogleLogin();
@@ -1297,18 +1298,18 @@
           if (d.success) {
             if (addModal) addModal.classList.add('hidden');
             fetchDRRouterData();
-            alert(`Account ${result.email} linked and added to the pool successfully!`);
+            alert(`Key …${String(result.apiKey).slice(-4)} added to the pool${d.account && d.account.email ? ` as ${d.account.email}` : ''}. You can rename it in Accounts.`);
           } else {
             alert(d.error || 'Failed to add account.');
           }
-        } else if (result && result.error && result.error !== 'Login window closed.') {
-          alert(`Sign-in error: ${result.error}`);
+        } else if (result && result.error) {
+          alert(result.error);
         }
       } catch (err) {
-        alert(`Google Sign-In failed: ${err.message}`);
+        alert(`Could not get a key from AI Studio: ${err.message}`);
       } finally {
-        if (btn1) btn1.innerHTML = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg><span>Sign in</span>`;
-        if (btn2) btn2.innerHTML = `<svg class="w-4 h-4" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg><span>Sign in with Google (Instant &amp; No API Key Needed)</span>`;
+        if (btn1) btn1.innerHTML = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg><span>AI Studio key</span>`;
+        if (btn2) btn2.innerHTML = `<svg class="w-4 h-4" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg><span>Get a key from Google AI Studio (copy it - it is added)</span>`;
       }
     }
 

@@ -491,6 +491,33 @@ test('a request given a proxy goes through it, never direct', async (t) => {
     assert.ok(seen.some(s => s.startsWith('CONNECT generativelanguage.googleapis.com:443')), 'the proxy was asked to connect');
 });
 
+test('a socks5:// proxy is really spoken to as SOCKS5 (not as an HTTP proxy)', async (t) => {
+    const seen = [];
+    const target = http.createServer((req, res) => res.end('through socks'));
+    const socks = net.createServer((c) => {
+        c.once('data', (greet) => {
+            seen.push(`greeting ${greet[0]}`);
+            if (greet[0] !== 5) return c.destroy();
+            c.write(Buffer.from([5, 0])); // no auth
+            c.once('data', (req) => {
+                const port = req.readUInt16BE(req.length - 2);
+                seen.push(`connect ${port}`);
+                const up = net.connect(port, '127.0.0.1', () => {
+                    c.write(Buffer.from([5, 0, 0, 1, 0, 0, 0, 0, 0, 0]));
+                    c.pipe(up); up.pipe(c);
+                });
+                up.on('error', () => c.destroy());
+            });
+        });
+    });
+    await new Promise(r => target.listen(0, '127.0.0.1', r));
+    await new Promise(r => socks.listen(0, '127.0.0.1', r));
+    t.after(() => { target.close(); socks.close(); });
+    const res = await secureFetch(`http://127.0.0.1:${target.address().port}/`, { proxy: `socks5://127.0.0.1:${socks.address().port}`, signal: AbortSignal.timeout(5000) });
+    assert.equal(await res.text(), 'through socks');
+    assert.deepEqual(seen, ['greeting 5', `connect ${target.address().port}`]);
+});
+
 test('local proxy: a rate-limited account hands the request to the next one; key in a header', async (t) => {
     const asked = [];
     const google = http.createServer((req, res) => {

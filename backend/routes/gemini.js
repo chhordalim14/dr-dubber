@@ -468,6 +468,7 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { 
                 const err = new Error('Aborted'); err.name = 'AbortError'; throw err;
             }
             let res;
+            const sentAt = Date.now(); // see the 429 below: was this key+model resting already?
             try {
                 const proxy = getDRRouterProxyForKey(apiKey);
                 const fetchOpts = {
@@ -593,6 +594,13 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { 
                 break; // model can't do this request: next model, and don't mask the real error (e.g. quota)
             }
             if (res.status === 429) {
+                // A limit answer to a request sent while this key+model was already resting means
+                // something asked it anyway (the check at the top of the loop is meant to stop that).
+                // One sent before the rest began was simply already on its way - normal with many tabs.
+                const prior = geminiModelCooldowns.get(`${apiKey}|${m}`);
+                if (prior && prior.until > sentAt && (prior.at || 0) < sentAt) {
+                    console.warn(`[Gemini] ${m} on key …${apiKey.slice(-4)} was asked while resting (rest set ${Math.round((sentAt - prior.at) / 1000)}s before this request) - please report`);
+                }
                 sawRateLimit = true;
                 if (!rateLimitMsg) rateLimitMsg = errMsg;
                 const quota = parseGeminiQuotaError(errData, errMsg);
