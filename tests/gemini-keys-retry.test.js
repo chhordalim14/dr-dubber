@@ -23,9 +23,11 @@ function load({ pool = null } = {}) {
     ${pool ? 'const notifyDRRouterRateLimited = (key, ms) => pool.parked.push(key);' : ''}
     const keyRest = createKeyRest({ now: () => Date.now() });
     const geminiModelCooldowns = new Map();
+    const geminiKeyAnswered = keyRest.answered;
+    const msUntilPacificMidnight = () => 6 * 3600 * 1000; // the daily reset was 18 h ago
     const isCodeCraftKey = (k) => /^cc_/i.test(k);
     ${block}
-    return { geminiWithKeys, geminiShouldRetry, tryKeysOnce, geminiKeyStatus, GEMINI_RETRY_DELAYS_MS, GEMINI_BUSY_RETRY_BUDGET_MS };
+    return { geminiWithKeys, geminiShouldRetry, tryKeysOnce, geminiKeyStatus, geminiKeyAnswered, GEMINI_RETRY_DELAYS_MS, GEMINI_BUSY_RETRY_BUDGET_MS };
   `)(fastTimeout, { warn: () => { }, log: () => { } }, FakeDate, createKeyRest, pool);
   return { ...api, waits, now: () => now };
 }
@@ -211,11 +213,11 @@ describe('Shortening engine (Shorten rushed lines, Ultra-Short, a row\'s Shorten
 });
 
 describe('short text requests time out sooner than audio', () => {
-  test('re-translate, names, shorten, the character sheet and missed subtitles use GEMINI_TEXT_TIMEOUT_MS; it is shorter than an audio attempt', () => {
+  test('re-translate, names, shorten, the character sheet, missed subtitles and Check limits use GEMINI_TEXT_TIMEOUT_MS; it is shorter than an audio attempt', () => {
     const text = Number(serverSource.match(/const GEMINI_TEXT_TIMEOUT_MS = (\d+);/)[1]);
     const audio = Number(serverSource.match(/const GEMINI_ATTEMPT_TIMEOUT_MS = (\d+);/)[1]);
     assert.ok(text < audio);
-    assert.equal((serverSource.match(/timeoutMs: GEMINI_TEXT_TIMEOUT_MS/g) || []).length, 5);
+    assert.equal((serverSource.match(/timeoutMs: GEMINI_TEXT_TIMEOUT_MS/g) || []).length, 6);
   });
 });
 
@@ -238,6 +240,19 @@ describe('geminiShouldRetry', () => {
   test('a daily quota is never retried', () => {
     const { geminiShouldRetry } = load();
     assert.equal(geminiShouldRetry(daily.result, 0, Date.now()), false);
+  });
+});
+
+describe('key status for Settings', () => {
+  test('"ok" is only "checked today" once Google answered the key after the daily reset', () => {
+    const { geminiKeyStatus, geminiKeyAnswered, now } = load();
+    assert.equal(geminiKeyStatus('never').checkedToday, false, 'no answer yet: not checked today');
+    geminiKeyAnswered.set('yesterday', now() - 20 * 3600 * 1000);
+    assert.equal(geminiKeyStatus('yesterday').checkedToday, false, 'answered before the reset');
+    geminiKeyAnswered.set('today', now() - 3600 * 1000);
+    const st = geminiKeyStatus('today');
+    assert.equal(st.state, 'ok');
+    assert.equal(st.checkedToday, true);
   });
 });
 

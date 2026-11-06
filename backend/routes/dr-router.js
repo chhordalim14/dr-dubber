@@ -8,6 +8,20 @@ function createDRRouter(options = {}) {
     if (!mgr) {
         throw new Error('createDRRouter requires drRouterManager instance');
     }
+    // What the Gemini routes know about each account's key (routes/gemini.js geminiKeyStatus):
+    // a model out for today, a whole key resting, or not answered since the daily reset. The
+    // pool itself only knows whole-key rests, so an account out on its main model looked "Ready".
+    const keyStatus = typeof options.keyStatus === 'function' ? options.keyStatus : null;
+    const withGemini = (list) => (keyStatus ? list.map((a) => {
+        const acc = mgr.accounts.find((x) => x.id === a.id);
+        if (!acc || !acc.apiKey) return a;
+        try {
+            const s = keyStatus(acc.apiKey);
+            return { ...a, gemini: { state: s.state, retryAfterMs: s.retryAfterMs || 0, checkedToday: s.checkedToday !== false, models: (s.models || []).map((m) => ({ model: m.model, daily: !!m.daily, retryAfterMs: m.retryAfterMs })) } };
+        } catch (e) {
+            return a;
+        }
+    }) : list);
 
     // Pool status and metrics
     router.get('/status', (req, res) => {
@@ -23,7 +37,7 @@ function createDRRouter(options = {}) {
         mgr.touchClient();
         res.json({
             success: true,
-            accounts: mgr.getMaskedAccounts(),
+            accounts: withGemini(mgr.getMaskedAccounts()),
             stats: mgr.getStats(),
             activity: mgr.getEvents(req.query && req.query.since)
         });

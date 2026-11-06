@@ -290,9 +290,8 @@ let defaultKeyRest = null;
 function getDefaultKeyRest() {
     if (!defaultKeyRest) {
         if (typeof keyRest !== 'undefined' && keyRest) return keyRest;
-        const p = typeof path !== 'undefined' ? path : require('path');
-        const base = typeof STORAGE_BASE !== 'undefined' ? STORAGE_BASE : require('../lib/paths').STORAGE_BASE;
-        defaultKeyRest = createKeyRest({ file: p.join(base, 'gemini_key_rest.json') });
+        const { KEY_REST_FILE, KEY_REST_LEGACY_FILES } = require('../lib/paths');
+        defaultKeyRest = createKeyRest({ file: KEY_REST_FILE, legacyFiles: KEY_REST_LEGACY_FILES });
     }
     return defaultKeyRest;
 }
@@ -367,7 +366,13 @@ function msUntilPacificMidnight(now = Date.now()) {
 // sidelined the whole pool for hours, so recheck after 15 min, then 1 h, and only
 // trust it until the reset once Google repeats it three times in a row.
 const DAILY_RECHECK_MS = [15 * 60 * 1000, 60 * 60 * 1000];
-const geminiDailyStrikes = new Map(); // `${key}|${model}` -> { count, at }
+// `${key}|${model}` -> { count, at }; kept on disk (key-rest), so a restart doesn't start over.
+let geminiDailyStrikes = (typeof keyRest !== 'undefined' && keyRest ? keyRest : getDefaultKeyRest()).dailyStrikes;
+// key -> when Google last answered it (any answer that says how the key stands: an answer, a
+// limit, a refusal - not "busy"). Settings shows a key not answered since the daily reset as
+// "Not checked today" instead of "Ready".
+let geminiKeyAnswered = (typeof keyRest !== 'undefined' && keyRest ? keyRest : getDefaultKeyRest()).answered;
+const noteKeyAnswered = (key) => { if (key) geminiKeyAnswered.set(key, Date.now()); };
 
 function dailyCooldownUntil(strikeKey, now = Date.now()) {
     const prev = geminiDailyStrikes.get(strikeKey);
@@ -497,6 +502,8 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { 
                 continue;
             }
 
+            // Google answered (not "busy"): the key's state is known today.
+            if (res.status < 500) noteKeyAnswered(apiKey);
             if (res.ok) {
                 geminiDailyStrikes.delete(`${apiKey}|${m}`);
                 let json;
@@ -1315,11 +1322,16 @@ function geminiRetryWaitMs(result, retry) {
     return isGeminiBusy(result) ? Math.min(wait, GEMINI_BUSY_MAX_WAIT_MS) : wait;
 }
 
+// checkedToday: Google answered this key since its last daily reset (midnight Pacific), so
+// "ok" means ready - not just "no limit seen" (another computer may have used the key up).
 function geminiKeyStatus(key) {
     const now = Date.now();
+    const answeredAt = geminiKeyAnswered.get(key) || null;
+    const lastReset = now - (24 * 3600 * 1000 - msUntilPacificMidnight(now));
+    const known = { answeredAt, checkedToday: !!answeredAt && answeredAt >= lastReset };
     if (isGeminiKeyInvalid(key)) {
         const e = invalidGeminiKeys.get(key);
-        return { state: 'invalid', dead: !!e.dead, message: e.message || '', retryAfterMs: e.until - now };
+        return { state: 'invalid', dead: !!e.dead, message: e.message || '', retryAfterMs: e.until - now, ...known };
     }
     const models = [];
     for (const [id, c] of geminiModelCooldowns) {
@@ -1328,9 +1340,9 @@ function geminiKeyStatus(key) {
     }
     const parked = rateLimitedGeminiKeys.get(key);
     if (parked && parked.until > now) {
-        return { state: parked.daily ? 'daily' : 'cooling', retryAfterMs: parked.until - now, models };
+        return { state: parked.daily ? 'daily' : 'cooling', retryAfterMs: parked.until - now, models, ...known };
     }
-    return { state: models.length ? 'partial' : 'ok', models };
+    return { state: models.length ? 'partial' : 'ok', models, ...known };
 }
 
 const geminiKeyInFlight = new Map();
@@ -1928,6 +1940,8 @@ function createGeminiRouter(options = {}) {
     geminiModelCooldowns = keyRest.modelLimits;
     invalidGeminiKeys = keyRest.invalid;
     rateLimitedGeminiKeys = keyRest.keyLimits;
+    if (keyRest.dailyStrikes) geminiDailyStrikes = keyRest.dailyStrikes;
+    if (keyRest.answered) geminiKeyAnswered = keyRest.answered;
 
     const router = express.Router();
 
@@ -2085,9 +2099,9 @@ function createGeminiRouter(options = {}) {
                     let out = transcribeCacheGet(cacheKey);
                     if (out) console.log(`[Transcribe] Chunk ${i + 1}/${chunks.length} reused from cache`);
                     if (!out) {
-                        let busyRounds = 0;
                         out = await geminiWithKeys(keys, (key) => {
-                            const holdModel = !!stayOnModel && busyRounds < 2 && !isGeminiModelBusy(resolveGeminiModel(model));
+                            // Stay on the chosen model unless Google just said it is busy.
+                            const holdModel = !!stayOnModel && !isGeminiModelBusy(resolveGeminiModel(model));
                             return transcribeClipWithGemini({
                                 apiKey: key,
                                 model,
@@ -2898,6 +2912,46 @@ ${JSON.stringify(chunk)}`;
     router.post('/gemini-key-status', (req, res) => {
         const keys = (Array.isArray(req.body?.keys) ? req.body.keys : []).map(k => String(k || '').trim()).filter(Boolean);
         res.json({ success: true, keys: keys.map(k => ({ suffix: k.slice(-4), ...geminiKeyStatus(k) })) });
+    });
+
+    // ── Check limits: one tiny request per key on the chosen model ──
+    // The app only learns a key's limits from Google's answers, so a key another computer used up
+    // shows as "Not checked today" until it is asked. This asks every key once (6 at a time): a
+    // key out of quota is refused at no cost and rests like any other limit; one that still has
+    // quota spends a single request. Keys already resting are not asked.
+    router.post('/gemini-check-limits', async (req, res) => {
+        const keys = [...new Set((Array.isArray(req.body?.keys) ? req.body.keys : []).map(k => String(k || '').trim()).filter(Boolean))];
+        const model = String(req.body?.model || 'gemini-3.8-flash');
+        const payload = { contents: [{ role: 'user', parts: [{ text: 'Reply with OK.' }] }], generationConfig: { maxOutputTokens: 8 } };
+        const resting = (k) => ['invalid', 'daily', 'cooling'].includes(geminiKeyStatus(k).state);
+        const todo = keys.filter(k => !resting(k));
+        const results = new Map();
+        let next = 0;
+        await Promise.all(Array.from({ length: Math.min(6, todo.length) }, async () => {
+            while (next < todo.length) {
+                const key = todo[next++];
+                try {
+                    const r = await executeGeminiGenerate(key, model, payload, null, { stayOnModel: true, timeoutMs: GEMINI_TEXT_TIMEOUT_MS });
+                    // A whole-key refusal is parked the way tryKeysOnce does it.
+                    if (!r.success && r.error === 'INVALID_API_KEY') {
+                        const dead = isDeadKeyAnswer(key, r);
+                        invalidGeminiKeys.set(key, { until: Date.now() + (dead ? DEAD_KEY_REST_MS : INVALID_KEY_REST_MS), dead, message: r.message || '' });
+                    }
+                    results.set(key, r.success ? 'ok' : (r.code === 'OVERLOADED' || Number(r.status) === 503) ? 'busy' : r.error === 'RATE_LIMIT_EXCEEDED' ? 'limited' : 'refused');
+                } catch (e) {
+                    results.set(key, 'error');
+                }
+            }
+        }));
+        const count = (v) => [...results.values()].filter(x => x === v).length;
+        console.log(`[Gemini] Check limits on ${model}: ${keys.length} key(s), ${keys.length - todo.length} already resting, ${count('ok')} ready, ${count('limited')} limited, ${count('refused')} refused, ${count('busy')} busy`);
+        res.json({
+            success: true,
+            asked: todo.length,
+            alreadyResting: keys.length - todo.length,
+            ready: count('ok'), limited: count('limited'), refused: count('refused'), busy: count('busy'),
+            keys: keys.map(k => ({ suffix: k.slice(-4), ...geminiKeyStatus(k) }))
+        });
     });
 
     // ── Gemini keys added ──

@@ -9,6 +9,12 @@ const { isNetworkPath } = require('./security');
 
 const ROOT_DIR = path.resolve(__dirname, '..', '..');
 const STORAGE_BASE = process.env.APP_STORAGE_DIR || path.join(ROOT_DIR, 'storage');
+// Files both copies of the app share (the installed app and the one started from the repo keep
+// their own storage, but run as the same Electron app): main.js points this at its userData.
+const SHARED_DIR = process.env.APP_SHARED_DIR || STORAGE_BASE;
+// Which Gemini keys are resting (key-rest.js), shared; the per-app file from before is read in too.
+const KEY_REST_FILE = path.join(SHARED_DIR, 'gemini_key_rest.json');
+const KEY_REST_LEGACY_FILES = SHARED_DIR === STORAGE_BASE ? [] : [path.join(STORAGE_BASE, 'gemini_key_rest.json')];
 const UPLOADS_DIR = path.join(STORAGE_BASE, 'uploads');
 const AUDIO_CACHE_DIR = path.join(STORAGE_BASE, 'audio_cache');
 const SEPARATED_DIR = path.join(STORAGE_BASE, 'separated');
@@ -138,6 +144,9 @@ function resolveLocalFilePath(inputPath) {
 module.exports = {
     ROOT_DIR,
     STORAGE_BASE,
+    SHARED_DIR,
+    KEY_REST_FILE,
+    KEY_REST_LEGACY_FILES,
     UPLOADS_DIR,
     AUDIO_CACHE_DIR,
     SEPARATED_DIR,

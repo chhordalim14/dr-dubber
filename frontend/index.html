@@ -5033,6 +5033,12 @@
                 <p class="text-xs text-[var(--text-secondary)]">Failover setup for AI Transcription.</p>
               </div>
               <div class="flex items-center gap-2">
+                <button type="button" id="btn-check-key-limits" onclick="window.daiStudio?.checkKeyLimits?.(this)"
+                  title="Ask every key once (one tiny request on your Gemini model) which ones Google has limited today. A used-up key is refused at no cost; one that still works spends one request."
+                  class="shrink-0 inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-md border border-[var(--border-light)] text-[var(--text-secondary)] transition-all duration-300 hover:text-[var(--text-bright)] hover:bg-[var(--bg-hover)] disabled:opacity-50">
+                  <i data-lucide="gauge" class="w-3.5 h-3.5"></i>
+                  Check limits
+                </button>
                 <button type="button" onclick="window.openDRRouterModal?.()"
                   class="group shrink-0 inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-md bg-amber-500/15 border border-amber-500/30 text-amber-300 transition-all duration-300 hover:bg-amber-500/25 hover:shadow-lg active:scale-95">
                   <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
@@ -5049,7 +5055,7 @@
 
             <div class="flex gap-2">
               <div class="relative flex-1">
-                <input type="password" id="input-new-apikey" placeholder="AIzaSy..."
+                <input type="password" id="input-new-apikey" placeholder="AIza... or AQ...."
                   class="w-full bg-[var(--bg-base)] border border-[var(--border-light)] text-[var(--text-primary)] text-sm rounded-lg focus:ring-[var(--accent-primary)] p-2.5 pr-10 outline-none font-mono" />
                 <button id="btn-paste-apikey" type="button" title="Paste"
                   class="absolute right-1.5 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-all active:scale-90">

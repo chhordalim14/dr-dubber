@@ -85,4 +85,70 @@ describe('resting Gemini keys', () => {
     assert.equal(createKeyRest({ file }).invalid.has('k'), false);
     assert.equal(createKeyRest({ file: path.join(path.dirname(file), 'none.json') }).invalid.has('k'), false);
   });
+
+  test('the "daily quota" strike count and when Google last answered survive a restart', () => {
+    const file = tmpFile();
+    let t = 1e12;
+    const a = createKeyRest({ file, now: () => t });
+    a.dailyStrikes.set('k1|gemini-3.8-flash', { count: 2, at: t });
+    a.answered.set('k1', t);
+    a.save();
+    t += HOUR;
+    const b = createKeyRest({ file, now: () => t });
+    assert.equal(b.dailyStrikes.get('k1|gemini-3.8-flash').count, 2, 'the next "daily" answer is the third, not the first');
+    assert.equal(b.answered.get('k1'), 1e12);
+    t += 7 * HOUR; // strikes 6 h apart start over anyway
+    const c = createKeyRest({ file, now: () => t });
+    assert.equal(c.dailyStrikes.get('k1|gemini-3.8-flash'), undefined);
+  });
+});
+
+describe('one file shared by two copies of the app', () => {
+  test('a limit one app finds reaches the other, and neither save wipes the other\'s', () => {
+    const file = tmpFile();
+    const t = 1e12;
+    const installed = createKeyRest({ file, now: () => t });
+    const repo = createKeyRest({ file, now: () => t });
+    installed.keyLimits.get('k-a'); // both apps know the keys already
+    repo.keyLimits.get('k-a');
+    installed.modelLimits.set('k-a|gemini-3.8-flash', { until: t + 5 * HOUR, daily: true, msg: 'quota' });
+    installed.save();
+    repo.keyLimits.set('k-b', { until: t + 3 * HOUR, daily: true });
+    repo.save(); // must not drop the installed app's k-a
+    repo.sync();
+    assert.equal(repo.modelLimits.get('k-a|gemini-3.8-flash').daily, true, 'the repo copy skips k-a too');
+    installed.sync();
+    assert.equal(installed.keyLimits.get('k-b').daily, true);
+    const fresh = createKeyRest({ file, now: () => t });
+    assert.ok(fresh.modelLimits.get('k-a|gemini-3.8-flash') && fresh.keyLimits.get('k-b'));
+  });
+
+  test('a refusal cleared in one app (key added again) is not brought back by the other\'s older copy', () => {
+    const file = tmpFile();
+    let t = 1e12;
+    const a = createKeyRest({ file, now: () => t });
+    const b = createKeyRest({ file, now: () => t });
+    a.invalid.set('k-dead', { until: t + 24 * HOUR, dead: true, message: 'deleted' });
+    a.save();
+    b.sync();
+    b.invalid.get('k-dead');
+    t += 1000;
+    assert.equal(b.invalid.delete('k-dead'), true);
+    b.save();
+    a.save(); // a still holds the old refusal in memory
+    a.sync();
+    assert.equal(a.invalid.has('k-dead'), false, 'cleared in the other app: gone here too');
+    assert.equal(createKeyRest({ file, now: () => t }).invalid.has('k-dead'), false);
+  });
+
+  test('the per-app file from before is read in once', () => {
+    const shared = tmpFile();
+    const legacy = tmpFile();
+    const t = 1e12;
+    const old = createKeyRest({ file: legacy, now: () => t });
+    old.keyLimits.set('k-old', { until: t + 2 * HOUR, daily: true });
+    old.save();
+    const now = createKeyRest({ file: shared, legacyFiles: [legacy], now: () => t });
+    assert.equal(now.keyLimits.get('k-old').daily, true);
+  });
 });

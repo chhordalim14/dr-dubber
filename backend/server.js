@@ -74,7 +74,9 @@ require('./lib/server-log').installServerLog(LOGS_DIR);
 const { hasForeignText, stripForeignScript, collapseRepeatedPartSuffix, buildTtsArgv } = require('./lib/text-rules');
 const { trackProcess } = require('./lib/process-tracker');
 // Which Gemini keys are resting (refused, or over a limit) - kept on disk across restarts.
-const keyRest = require('./lib/key-rest').createKeyRest({ file: path.join(STORAGE_BASE, 'gemini_key_rest.json') });
+// Shared with the other copy of the app (installed / repo), so one doesn't re-ask keys the other found resting.
+const { KEY_REST_FILE, KEY_REST_LEGACY_FILES } = require('./lib/paths');
+const keyRest = require('./lib/key-rest').createKeyRest({ file: KEY_REST_FILE, legacyFiles: KEY_REST_LEGACY_FILES });
 process.on('exit', () => keyRest.save());
 const { createTtsWorker } = require('./lib/tts-worker');
 const { secureFetch, fetchBackend } = require('./lib/secure-fetch');
@@ -2007,7 +2009,8 @@ app.use('/api', pronunciationRouter);
 const { getDRRouterManager } = require('./lib/dr-router');
 const drRouterManager = getDRRouterManager();
 if (drRouterManager.proxyEnabled) drRouterManager.startProxy();
-const drRouterApi = require('./routes/dr-router')({ drRouterManager });
+// keyStatus: the Gemini routes' view of each pool key (a model out for today, not checked yet).
+const drRouterApi = require('./routes/dr-router')({ drRouterManager, keyStatus: (k) => require('./routes/gemini').geminiKeyStatus(k) });
 app.use('/api/dr-router', drRouterApi);
 app.use('/api/dapool', drRouterApi);
 

@@ -37,6 +37,8 @@ const ROOT_DIR = __dirname;
 const userDataDir = app.getPath('userData');
 const STORAGE_BASE = app.isPackaged ? path.join(userDataDir, 'storage') : path.join(ROOT_DIR, 'storage');
 process.env.APP_STORAGE_DIR = STORAGE_BASE;
+// Shared by the installed app and the repo copy (same userData): e.g. which Gemini keys are resting.
+process.env.APP_SHARED_DIR = userDataDir;
 
 const EXPORTS_DIR = path.join(STORAGE_BASE, 'exports');
 const AUDIO_CACHE_DIR = path.join(STORAGE_BASE, 'audio_cache');

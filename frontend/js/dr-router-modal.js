@@ -456,6 +456,8 @@
     if (acc.enabled === false) return '#4b5563';
     if (acc.status === 'invalid') return '#ef4444';
     if (acc.status === 'cooling') return '#f59e0b';
+    const limit = geminiLimit(acc); // out for today / a model out / not checked since the reset
+    if (limit) return { bad: '#ef4444', warn: '#f59e0b', unknown: '#9ca3af' }[limit.tone];
     return '#10b981';
   }
 
@@ -586,6 +588,31 @@
     ctx.setLineDash([]);
   }
 
+  const waitText = (ms) => {
+    const min = Math.ceil((ms || 0) / 60000);
+    if (ms < 60000) return `${Math.max(1, Math.ceil((ms || 0) / 1000))}s`;
+    return min < 60 ? `${min}m` : `${Math.floor(min / 60)}h ${String(min % 60).padStart(2, '0')}m`;
+  };
+
+  // What the Gemini routes know beyond the pool's own state, for an account the pool calls ready:
+  // the whole key out for today, one model out (Google counts models apart), or not asked
+  // since the daily reset (another computer may have used it up). null: nothing to add.
+  // tone: 'bad' | 'warn' | 'unknown'.
+  function geminiLimit(acc) {
+    const g = acc.gemini;
+    if (!g || acc.enabled === false || acc.status === 'invalid' || acc.status === 'cooling') return null;
+    if (g.state === 'daily') return { tone: 'bad', short: 'Out for today', text: `Out for today · lifts in ${waitText(g.retryAfterMs)}` };
+    if (g.state === 'invalid') return { tone: 'bad', short: 'Refused', text: 'Refused by Google' };
+    if (g.state === 'cooling') return { tone: 'warn', short: `Limit ${waitText(g.retryAfterMs)}`, text: `Rate-limited · lifts in ${waitText(g.retryAfterMs)}` };
+    const out = (g.models || []).filter((m) => m.daily);
+    if (out.length) {
+      const names = out.map((m) => m.model.replace(/^gemini-/, '')).join(', ');
+      return { tone: 'warn', short: `${names} out`, text: `${names} out today · lifts in ${waitText(Math.min(...out.map((m) => m.retryAfterMs)))}` };
+    }
+    if (g.checkedToday === false) return { tone: 'unknown', short: 'Not checked', text: 'Not checked today' };
+    return null;
+  }
+
   function statusWord(acc) {
     if (acc.enabled === false) return 'Off';
     if (acc.status === 'invalid') return 'Invalid';
@@ -594,7 +621,8 @@
       return sec > 0 ? `Cooling ${sec}s` : 'Cooling';
     }
     if ((acc.inFlight || 0) > 0) return 'Working';
-    return 'Ready';
+    const limit = geminiLimit(acc);
+    return limit ? limit.short : 'Ready';
   }
 
   function drawGrid(w, h) {
@@ -936,6 +964,10 @@
             statusBadge = `<span class="px-2 py-0.5 rounded text-[10px] bg-amber-950 text-amber-400 border border-amber-500/30">Cooling (${sec}s)</span>`;
           } else if (acc.status === 'invalid') {
             statusBadge = `<span class="px-2 py-0.5 rounded text-[10px] bg-red-950 text-red-400 border border-red-500/30">Invalid</span>`;
+          } else {
+            const limit = geminiLimit(acc);
+            const look = limit && { bad: 'bg-red-950 text-red-400 border-red-500/30', warn: 'bg-amber-950 text-amber-400 border-amber-500/30', unknown: 'bg-gray-900 text-gray-400 border-gray-700' }[limit.tone];
+            if (limit) statusBadge = `<span class="px-2 py-0.5 rounded text-[10px] border ${look}" title="${escapeHtml(limit.text)}">${escapeHtml(limit.text)}</span>`;
           }
 
           const proxyPill = acc.proxyHost
@@ -945,7 +977,7 @@
           return `
             <tr class="hover:bg-gray-900/40 transition-colors">
               <td class="px-4 py-3 font-medium text-white flex items-center gap-2">
-                <span class="w-2 h-2 rounded-full ${acc.status === 'ready' ? 'bg-emerald-400' : (acc.status === 'cooling' ? 'bg-amber-400' : 'bg-red-400')}"></span>
+                <span class="w-2 h-2 rounded-full" style="background:${statusColor(acc)}"></span>
                 <span>${escapeHtml(acc.email)}</span>
               </td>
               <td class="px-4 py-3 font-mono text-gray-400">${escapeHtml(acc.maskedKey)}</td>
