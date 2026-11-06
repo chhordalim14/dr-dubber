@@ -404,7 +404,9 @@ test('a 429 rests the account as long as Google asks; "daily quota" is rechecked
     const { mgr, cleanup } = tempManager();
     t.after(cleanup);
     const acc = mgr.addAccount({ email: 'a@gmail.com', apiKey: 'AIzaSyQuotaTest00000001' });
-    const now = Date.now();
+    // Noon Pacific: the daily reset is 12 h away, so the 15 min / 1 h rechecks aren't cut short
+    // by it (near midnight Pacific they are, rightly).
+    const now = Date.parse('2026-11-06T20:00:00Z');
     const rest = (body) => mgr.restFromQuota(acc.id, JSON.stringify(body), now);
 
     assert.equal(rest({ error: { details: [{ retryDelay: '30s' }] } }), 30500);

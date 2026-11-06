@@ -16716,6 +16716,7 @@
           if (typeof prefs.merge === "boolean") $("ds-merge").checked = prefs.merge;
           if (prefs.mergeScope === "series" || prefs.mergeScope === "part") $("ds-merge-scope").value = prefs.mergeScope;
           if (typeof prefs.episodeTabs === "boolean") $("ds-episodes").checked = prefs.episodeTabs;
+          if (typeof prefs.cleanWorking === "boolean") $("ds-clean").checked = prefs.cleanWorking;
         }
         // "Each episode its own tab" is new: the first time, every episode's own video plus the
         // whole series joined once at the end (with Hands-free).
@@ -16737,17 +16738,21 @@
         prefs.handsFree = handsFree();
         prefs.merge = $("ds-merge").checked;
         prefs.mergeScope = mergeScope();
+        prefs.cleanWorking = $("ds-clean").checked;
         prefs.colorFilter = colorSel.value;
         try { localStorage.setItem("aiDubberSeriesPrefs", JSON.stringify(prefs)); } catch (e) { }
       };
       // Hands-free: each finished part is exported and the next part starts by itself.
       const handsFree = () => !!$("ds-handsfree")?.checked;
+      // "Delete the joined and split working files when the series is exported".
+      const cleanWorkingWanted = () => !!$("ds-clean")?.checked;
       // Hands-free: each exported part's tab videos are joined into one video.
       const mergeWanted = () => handsFree() && $("ds-merge").checked;
       // "part": one video per part, joined as each part is exported. "series": the whole series in
       // one video - every part's tabs joined once, after the last part.
       const mergeScope = () => ($("ds-merge-scope")?.value === "series" ? "series" : "part");
       $("ds-merge").addEventListener("change", () => { savePrefs(); render(); });
+      $("ds-clean").addEventListener("change", savePrefs);
       $("ds-merge-scope")?.addEventListener("change", () => { savePrefs(); render(); });
       // A finished part whose hands-free export didn't complete, with its tabs still open (tabs
       // open after its own were closed belong to something else).
@@ -16958,6 +16963,8 @@
         $("ds-merge").disabled = !handsFree();
         $("ds-merge-scope").disabled = !mergeWanted();
         $("ds-merge-row").classList.toggle("hidden", !handsFree()); // joining needs hands-free
+        // Episodes as tabs make no working files; the rest have joined parts and split tabs.
+        $("ds-clean-row").classList.toggle("hidden", !handsFree() || episodeTabsShown());
         const folder = plan?.folder || scan?.folder || "";
         $("ds-folder").textContent = folder || "No folder selected";
         $("ds-folder").title = folder;
@@ -17836,6 +17843,14 @@
         saveCurrentProjectState();
         projects.filter((p) => plan.pieces?.includes(p.videoFilePath)).forEach(resaveTranscribeSrt);
         const autoExport = handsFree();
+        // The working files this part made, for "Delete the joined and split working files": its
+        // split tabs (and their list), and the joined file when the app joined it. Episodes as
+        // tabs make none; parts the user brought (prejoined) are theirs.
+        const part = plan.parts[i];
+        if (!part.episodeTabs && plan.pieces?.length && !plan.pieces.includes(part.outPath)) {
+          part.workFiles = [...plan.pieces, pathJoin(dirOf(plan.pieces[0]), `${baseOf(part.outPath)}_parts.txt`)];
+          if (!part.prejoined) part.workFiles.push(part.outPath, part.outPath.replace(/\.(?:mp4|m4a)$/i, "_episodes.txt"));
+        }
         plan.parts[i].status = "done";
         if (autoExport) plan.parts[i].autoExport = true; // see lostExportsNote
         plan.lastDone = { index: i, steps: plan.stepState, pieces: plan.pieces }; // pieces: the part's tabs, for its export
@@ -17879,6 +17894,7 @@
             }
             await joinWholeSeries();
             checkStop();
+            await deleteWorkingFiles();
             const merged = plan.parts.filter((p) => p.merged).length;
             const joined = mergeScope() === "series"
               ? (plan.fullMerged ? `, joined into one video: ${plan.fullMerged.split(/[\\/]/).pop()}` : "")
@@ -17908,6 +17924,26 @@
       // Where the series is exported: a folder of its own in the export folder, "<Name>_Dubbed",
       // so every part's videos and the joined video are together and apart from other exports.
       // A series exported before keeps the folder its first videos went to.
+      // "Delete the joined and split working files": once every part is exported - and joined, when
+      // that was asked for - the files the parts recorded (workFiles) go. The backend deletes only
+      // files straight inside "DR Dubber Joined" / "DR Dubber Split". A failure only warns.
+      async function deleteWorkingFiles() {
+        if (!plan || plan.cleaned || !cleanWorkingWanted() || !handsFree()) return;
+        if (!plan.parts.every((p) => p.exported)) return;
+        if (mergeWanted() && (mergeScope() === "series" ? !plan.fullMerged : !plan.parts.every((p) => p.merged))) return; // keep them to join again
+        const paths = plan.parts.flatMap((p) => p.workFiles || []);
+        if (!paths.length) return;
+        try {
+          const r = await postJson(`${API}/episodes/delete-working`, { paths });
+          if (!r?.success) throw new Error(r?.error || "no answer");
+          plan.cleaned = true;
+          savePlan();
+          if (r.deleted) showToast(`Deleted ${r.deleted} working file(s) - ${(r.freed / 1024 ** 3).toFixed(1)} GB freed. The episodes and dubbed videos are kept.`, "success");
+        } catch (e) {
+          showToast(`The working files could not be deleted (${e.message}). They are in "DR Dubber Joined" next to the episodes.`, "warning");
+        }
+      }
+
       // "<export folder>\<Name>_Dubbed" for a series name ("" without an export folder set).
       function exportDirFor(seriesName) {
         const base = (exportPath || "").trim().replace(/[\\/]+$/, "");
@@ -18080,6 +18116,7 @@
           checkStop();
           if (plan.fullMerged) showToast(`The whole series is joined into one video: ${plan.fullMerged.split(/[\\/]/).pop()} ✓`, "success");
         }
+        await deleteWorkingFiles();
       }
 
       // "One video for the whole series": every part's exported tabs in order, joined once after
