@@ -154,7 +154,16 @@ function createDRRouter(options = {}) {
     // The pool's ready keys for the app's own batch (only answered to the app's window:
     // server.js's host/origin guard and launch token cover every /api route)
     router.get('/dubber-keys', (req, res) => {
-        res.json({ success: true, linked: mgr.linked, keys: mgr.batchKeys() });
+        // Plus the Gemini Web Router's ready Gmails ("gweb:<id>"), so a batch gives them tabs too.
+        let web = [];
+        let routerFirst = false;
+        try {
+            const gw = require('../lib/gemini-web-router').getGeminiWebRouter();
+            web = gw.keysForDubber();
+            routerFirst = gw.settings().routerFirst !== false;
+        } catch (e) { }
+        const keys = mgr.batchKeys();
+        res.json({ success: true, linked: mgr.linked, routerFirst, keys: [...keys, ...web.filter(k => !keys.includes(k))] });
     });
 
     // Link / unlink DR Dubber's own jobs from the pool

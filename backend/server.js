@@ -1644,142 +1644,8 @@ app.post('/api/generate-audio', (req, res) => {
     });
 });
 
-// 5b. High-Speed Batch Speech Generation (Processes all dialogue cues concurrently)
-app.post('/api/generate-batch-audio', async (req, res) => {
-    const { subtitles = [], defaultVoice = 'km-KH-PisethNeural', tempPath } = req.body;
-    if (!Array.isArray(subtitles) || subtitles.length === 0) {
-        return res.status(400).json({ success: false, error: 'Empty subtitles array' });
-    }
-
-    const uncachedTasks = [];
-    const updatedSubtitles = [...subtitles];
-
-    for (let i = 0; i < updatedSubtitles.length; i++) {
-        const sub = updatedSubtitles[i];
-        const text = (sub.dubbedText || sub.text || sub.originalText || '').trim();
-        if (!text) continue;
-
-        const charPreset = resolveCharacterPreset(sub.character || sub.gender);
-        let voice = sub.voice;
-        if (!voice) {
-            voice = charPreset.baseVoice;
-        }
-        const effectivePitch = (sub.pitch && sub.pitch !== '+0Hz') ? sub.pitch : charPreset.pitch;
-        const effectiveRate = (sub.rate && sub.rate !== '+0%') ? sub.rate : charPreset.rate;
-        const prosody = getEmotionProsody(sub.emotion, effectivePitch, sub.volume, sub.speed, effectiveRate);
-        const cacheKey = getTtsCacheKey(text, voice, prosody.rate, prosody.pitch, prosody.volume, sub.speed, sub.emotion);
-
-        if (ttsCache.has(cacheKey)) {
-            const cached = ttsCache.get(cacheKey);
-            if (cached && fs.existsSync(cached.file)) {
-                sub.audioPath = cached.file;
-                sub.file = cached.file;
-                sub.audioUrl = cached.url;
-                sub.generatedDuration = cached.duration;
-                sub.audioStatus = 'ready';
-                continue;
-            }
-        }
-
-        const outFile = resolveAudioOutputFile(tempPath, sub.id || i + 1);
-        uncachedTasks.push({
-            id: sub.id || `sub_${i}`,
-            subIndex: i,
-            text,
-            voice,
-            rate: prosody.rate,
-            pitch: prosody.pitch,
-            volume: prosody.volume,
-            output: outFile,
-            cacheKey
-        });
-    }
-
-    if (uncachedTasks.length === 0) {
-        return res.json({
-            success: true,
-            count: updatedSubtitles.length,
-            subtitles: updatedSubtitles
-        });
-    }
-
-    // spawn(null, ...) throws synchronously (not via the 'error' event), which
-    // Express's default handler turns into an HTML error page instead of JSON.
-    // Only check this once we know we actually need to spawn — an all-cached
-    // batch above should still succeed with no Python environment at all.
-    if (!PYTHON_CMD) {
-        return res.status(500).json({
-            success: false,
-            error: 'No working Python environment found for text-to-speech. Install Python 3.9-3.11 (with "Add to PATH" checked) and run: pip install edge-tts'
-        });
-    }
-
-    const batchJsonPath = path.join(AUDIO_CACHE_DIR, `batch_${Date.now()}_${Math.round(Math.random() * 1e6)}.json`);
-    fs.writeFileSync(batchJsonPath, JSON.stringify(uncachedTasks), 'utf8');
-
-    const pyScript = getPythonScriptPath('tts_generator.py');
-    const child = spawn(PYTHON_CMD, [pyScript, '--batch', batchJsonPath, '--concurrency', String(TTS_LINES_AT_ONCE)], { env: { ...PYTHON_ENV, DR_FFMPEG_PATH: getFFmpegBinary() } }); // FFmpeg trims each clip's silence
-    trackProcess(child);
-
-    let output = '';
-    let stderr = '';
-    const stdoutDecoder = new StringDecoder('utf8');
-    const stderrDecoder = new StringDecoder('utf8');
-    child.stdout.on('data', d => output += stdoutDecoder.write(d));
-    child.stderr.on('data', d => stderr += stderrDecoder.write(d));
-
-    // A child with zero 'error' listeners that emits 'error' (e.g. PYTHON_CMD
-    // missing/ENOENT) is an uncaught exception in Node and crashes the whole
-    // backend process, not just this request. This was previously unguarded.
-    child.on('error', (err) => {
-        console.error('[Batch TTS Error]', err);
-        try { fs.unlinkSync(batchJsonPath); } catch (e) {}
-        if (!res.headersSent) res.status(500).json({ success: false, error: err.message });
-    });
-
-    child.on('close', (code) => {
-        if (res.headersSent) return;
-        try { fs.unlinkSync(batchJsonPath); } catch (e) {}
-        try {
-            const parsed = JSON.parse(output);
-            if (parsed.success && Array.isArray(parsed.results)) {
-                logTtsTrimNotes(stderr);
-                const taskById = new Map(uncachedTasks.map(t => [t.id, t]));
-                for (const r of parsed.results) {
-                    if (r.success) {
-                        const task = taskById.get(r.id);
-                        if (task) {
-                            const sub = updatedSubtitles[task.subIndex];
-                            const freshUrl = `/api/audio?path=${encodeURIComponent(r.file)}`;
-                            sub.audioPath = r.file;
-                            sub.file = r.file;
-                            sub.audioUrl = freshUrl;
-                            sub.generatedDuration = r.duration;
-                            sub.audioStatus = 'ready';
-
-                            setTtsCache(task.cacheKey, {
-                                file: r.file,
-                                duration: r.duration,
-                                size: r.size,
-                                url: freshUrl
-                            });
-                        }
-                    }
-                }
-                res.json({
-                    success: true,
-                    count: updatedSubtitles.length,
-                    subtitles: updatedSubtitles
-                });
-            } else {
-                res.status(500).json({ success: false, error: parsed.error || 'Batch generation failed' });
-            }
-        } catch (e) {
-            console.error('[Batch TTS Error]', e.message, output, stderr);
-            res.status(500).json({ success: false, error: output || stderr || e.message });
-        }
-    });
-});
+// (5b. /api/generate-batch-audio was removed 2026-11-08: nothing called it, and it passed a line's
+// voice / pitch / rate straight to Edge. Every voice goes through /api/generate-audio.)
 
 app.post('/api/generate-voxcmp2', async (req, res) => {
     const { text, serverUrl = 'http://127.0.0.1:8808', tempPath, profile, index, speed = 1.0, emotion = 'Neutral' } = req.body;
@@ -2012,6 +1878,8 @@ if (drRouterManager.proxyEnabled) drRouterManager.startProxy();
 // keyStatus: the Gemini routes' view of each pool key (a model out for today, not checked yet).
 const drRouterApi = require('./routes/dr-router')({ drRouterManager, keyStatus: (k) => require('./routes/gemini').geminiKeyStatus(k) });
 app.use('/api/dr-router', drRouterApi);
+// Gemini Web Router: spare Gmail accounts on gemini.google.com instead of API keys.
+app.use('/api/gemini-web', require('./routes/gemini-web')());
 app.use('/api/dapool', drRouterApi);
 
 const geminiRouter = require('./routes/gemini')({

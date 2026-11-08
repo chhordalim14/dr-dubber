@@ -1320,10 +1320,14 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         });
 
         // 1. Pre-assemble dialogue stem
+        // Timed in the log: a real export took ~75 s more than its video work alone (measured
+        // 2026-10-24) and this step, plus the final mix, are where that time can be.
         let dialogueStemPath = null;
+        const stemStartedAt = Date.now();
         if (validSubs.length > 0) {
             try {
                 dialogueStemPath = await assembleDialogueStem(validSubs, tempDir, voiceVolume);
+                console.log(`[Render] Dialogue track: ${validSubs.length} voice line(s) in ${((Date.now() - stemStartedAt) / 1000).toFixed(1)} s`);
             } catch (stemErr) {
                 console.warn('[Render Warning] Fast dialogue stem pre-assembly failed:', stemErr.message);
                 dialogueStemPath = null;
@@ -1907,6 +1911,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         stopIfCancelled();
         const ffmpeg = spawn(getFFmpegBinary(), args, { windowsHide: true });
         activeRenderProcess = ffmpeg;
+        const renderStartedAt = Date.now();
 
         function cleanupTempDir() {
             try {
@@ -1939,6 +1944,8 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             activeRenderProcess = null;
             cleanupTempDir();
             if (code === 0 && fs.existsSync(outputPath)) {
+                const now = Date.now();
+                console.log(`[Render] Finished ${path.basename(outputPath)}: video + mix ${((now - renderStartedAt) / 1000).toFixed(1)} s, whole export ${((now - stemStartedAt) / 1000).toFixed(1)} s`);
                 currentRenderJob.status = 'done';
                 currentRenderJob.progress = 100;
                 currentRenderJob.eta = '0s';

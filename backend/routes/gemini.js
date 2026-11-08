@@ -406,6 +406,10 @@ function formatWait(ms) {
 // thinking: 'low' asks for little thinking (geminiThinkingConfig) - text jobs only.
 async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { stayOnModel = false, timeoutMs = GEMINI_ATTEMPT_TIMEOUT_MS, thinking = null } = {}) {
     apiKey = String(apiKey || '').trim();
+    if (typeof isGeminiWebKey === 'function' && isGeminiWebKey(apiKey)) {
+        const ctx = keyAttemptContext && keyAttemptContext.getStore();
+        return geminiWeb().generate(apiKey, payload, signal, { timeoutMs: Math.max(timeoutMs || 0, 10 * 60 * 1000), noWait: !!(ctx && ctx.apiBackup) });
+    }
     const listed = await getCandidateModels(apiKey, requestedModel, signal);
     // A model that answered 404 for this key is left out (unless nothing else is left).
     const reachable = listed.filter(m => !isGeminiModelGone(apiKey, m));
@@ -688,13 +692,40 @@ function codecraftKeysByLoad() {
         .map(x => x.k);
 }
 function getDRRouterKeys() {
+    const keys = [];
     try {
         const { getDRRouterManager } = require('../lib/dr-router');
-        const dr = getDRRouterManager();
-        return dr.keysForDubber();
+        keys.push(...getDRRouterManager().keysForDubber());
     } catch (e) {}
-    return [];
+    // Gemini Web Router: each ready Gmail is a "gweb:<id>" key (lib/gemini-web-router.js).
+    try { keys.push(...geminiWeb().keysForDubber()); } catch (e) {}
+    return keys;
 }
+function geminiWeb() { return require('../lib/gemini-web-router').getGeminiWebRouter(); }
+function isGeminiWebKey(key) { return typeof key === 'string' && key.startsWith('gweb:'); }
+// "Router first" (Gemini Web Router page, on by default): the Gmails go before every other key
+// and a job gets one lane per Gmail; API keys stay as backups, used when a Gmail is busy with
+// another job, out of credits or signed out.
+function geminiWebFirst() {
+    try { return geminiWeb().settings().routerFirst !== false; } catch (e) { return false; }
+}
+function orderPool(keys) {
+    if (!geminiWebFirst()) return keys;
+    const web = keys.filter(isGeminiWebKey);
+    if (!web.length) return keys;
+    // "Gmails only" (router page): no API key while a Gmail is there - a job waits for a free
+    // Gmail instead. With no Gmail at all (none signed in) the API keys still do the work.
+    let gmailOnly = false;
+    try { gmailOnly = geminiWeb().settings().gmailOnly === true; } catch (e) { }
+    return gmailOnly ? web : [...web, ...keys.filter(k => !isGeminiWebKey(k))];
+}
+function webLaneCount(keys) {
+    return geminiWebFirst() ? keys.filter(isGeminiWebKey).length : 0;
+}
+// Set around each key attempt (tryKeysOnce): whether a non-Gmail key is there to fall back to.
+// Only then does a busy Gmail say "busy" at once instead of queueing the request.
+// (Tests run parts of this file with no `require`: then there is simply no context.)
+const keyAttemptContext = typeof require === 'function' ? new (require('async_hooks').AsyncLocalStorage)() : null;
 const getDaPoolKeys = getDRRouterKeys;
 
 // DR Router Fast mode: transcribe every chunk at once (one chunk per key) and skip API saver's
@@ -755,7 +786,7 @@ function textKeys(geminiKeys, enabled = true) {
     const rawKeys = Array.isArray(geminiKeys) ? geminiKeys : (geminiKeys ? [geminiKeys] : []);
     const drKeys = getDRRouterKeys();
     const combined = rawKeys.filter(Boolean).length ? [...rawKeys, ...drKeys] : drKeys;
-    const keys = combined.map(k => String(k || '').trim()).filter((k, i, a) => k && a.indexOf(k) === i);
+    const keys = orderPool(combined.map(k => String(k || '').trim()).filter((k, i, a) => k && a.indexOf(k) === i));
     if (!(enabled && codecraftActive())) return keys;
     return [...codecraftKeysByLoad(), ...keys.filter(k => !textAi.keys.includes(k))];
 }
@@ -768,7 +799,7 @@ function textLaneKeys(keys, lane) {
 }
 function textLaneCount(keys) {
     const cc = keys.filter(isCodeCraftKey).length;
-    return cc ? cc * CODECRAFT_LANES_PER_KEY : keys.length;
+    return cc ? cc * CODECRAFT_LANES_PER_KEY : (webLaneCount(keys) || keys.length);
 }
 
 // executeGeminiGenerate for text-only jobs: a CodeCraft key goes to CodeCraft (with the model
@@ -1100,6 +1131,7 @@ async function transcribeClipWithGemini({ apiKey, model, audioBase64, mimeType, 
     };
 
     const usage = promptOpts && promptOpts.usage;
+    if (typeof isGeminiWebKey === 'function' && isGeminiWebKey(apiKey)) return transcribeClipWithGeminiWeb({ apiKey, payload, audioBase64, mimeType, clipSec, signal, timeoutMs, usage });
     let lastRaw = '';
     let lowAnswer = null; // the low-thinking answer, if the normal-thinking try does no better
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -1125,6 +1157,63 @@ async function transcribeClipWithGemini({ apiKey, model, audioBase64, mimeType, 
     }
     if (lowAnswer) return { ...lowAnswer, truncated: true };
     return { ok: false, result: { status: 502, error: 'Gemini returned an unreadable transcript. Please try again.', message: `Gemini returned an unreadable transcript. Please try again. Reply began: ${lastRaw.slice(0, 160)}` }, raw: lastRaw };
+}
+
+// Gemini Web Router: the website writes the lines but guesses their times (seconds off), so
+// while it works the PC hears the same clip and each line gets the time of its own Chinese
+// characters (lib/gemini-web-timing.js). Without the VoxCPM2 install the website's times stay.
+async function transcribeClipWithGeminiWeb({ apiKey, payload, audioBase64, mimeType, clipSec, signal, timeoutMs, usage }) {
+    const timing = require('../lib/gemini-web-timing');
+    // Router first: a Gmail busy with another job hands this clip to an API key at once,
+    // before any PC timing is started for it.
+    const ctx = keyAttemptContext && keyAttemptContext.getStore();
+    if (ctx && ctx.apiBackup) {
+        const busy = geminiWeb().busyResult(apiKey);
+        if (busy) return { ok: false, result: busy };
+    }
+    let timelineP = null;
+    if (timing.available()) {
+        const ext = /video/.test(mimeType || '') ? '.mp4' : /wav/.test(mimeType || '') ? '.wav' : /ogg/.test(mimeType || '') ? '.ogg' : '.mp3';
+        const clipFile = path.join(require('os').tmpdir(), `gweb_clip_${crypto.randomBytes(5).toString('hex')}${ext}`);
+        fs.writeFileSync(clipFile, Buffer.from(audioBase64, 'base64'));
+        timelineP = timing.timelineFor(clipFile, { ffmpeg: _getFFmpegBinary() })
+            .catch((e) => { console.warn(`[Transcribe] PC timing failed, keeping Gemini Web's own times: ${e.message}`); return null; })
+            .finally(() => fs.promises.unlink(clipFile).catch(() => {}));
+    }
+    // The website's answers vary: now and then it skips half the clip (seen: 13 lines where the
+    // next try gave 35). The PC heard the clip too, so an answer covering under 75% of the speech
+    // it heard is asked once more, and the fuller answer is kept.
+    let best = null;
+    let lastFailure = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+        const result = await executeGeminiGenerate(apiKey, null, payload, signal, { timeoutMs });
+        if (!result.success) { lastFailure = { ok: false, result }; break; }
+        addTokenUsage(usage, result);
+        const raw = result.text || '';
+        const parsed = parseJsonArrayLoose(raw);
+        if (!parsed) {
+            console.error('[Transcribe] Unparseable Gemini Web output:', raw.slice(0, 500));
+            lastFailure = { ok: false, result: { status: 502, error: 'Gemini Web returned an unreadable transcript.', message: `Gemini Web returned an unreadable transcript. Reply began: ${raw.slice(0, 160)}` }, raw };
+            continue;
+        }
+        const timeline = timelineP ? await timelineP : null;
+        let items = parsed;
+        let coverage = null;
+        if (timeline && timeline.length) {
+            const retimed = timing.retimeLines(parsed, timeline);
+            coverage = retimed.coverage;
+            const byPc = retimed.filter(l => l.timedBy === 'pc').length;
+            items = retimed.map(({ gStart, gEnd, timedBy, ...l }) => l);
+            console.log(`[Transcribe] Gemini Web (${result.gweb && result.gweb.email}): ${items.length} line(s) in ${((result.gweb && result.gweb.ms) || 0) / 1000}s, covering ${Math.round(coverage * 100)}% of the speech; times from the PC for ${byPc}`);
+        }
+        const answer = { ok: true, items, raw, modelUsed: result.modelUsed || 'gemini-web', fellBack: false, truncated: false, coverage };
+        if (!best || (coverage != null && coverage > (best.coverage || 0)) || (coverage == null && items.length > best.items.length)) best = answer;
+        const short = coverage != null ? coverage < 0.75 : looksIncomplete(items, clipSec, false);
+        if (!short) break;
+        if (attempt === 0) console.warn(`[Transcribe] Gemini Web answer looks incomplete (${items.length} line(s)${coverage != null ? `, ${Math.round(coverage * 100)}% of the speech` : ''}) - asking again`);
+    }
+    if (best) { delete best.coverage; return best; }
+    return lastFailure;
 }
 
 function looksIncomplete(items, clipSec, truncated) {
@@ -1378,7 +1467,10 @@ async function tryKeysOnce(keys, call) {
         if (typeof notifyDRRouterInFlight === 'function') notifyDRRouterInFlight(key, 1);
         let out;
         try {
-            out = await call(key);
+            // (Guarded like the DR Router hooks: tests run this block without the Gemini Web parts.)
+            const attempt = typeof keyAttemptContext !== 'undefined' && keyAttemptContext && typeof isGeminiWebKey === 'function'
+                ? { apiBackup: usableGeminiKeys(keys).some(k => !isGeminiWebKey(k) && !tried.has(k)) } : null;
+            out = attempt ? await keyAttemptContext.run(attempt, () => call(key)) : await call(key);
         } finally {
             const left = (geminiKeyInFlight.get(key) || 1) - 1;
             if (left > 0) geminiKeyInFlight.set(key, left); else geminiKeyInFlight.delete(key);
@@ -1550,7 +1642,7 @@ async function repairTranscript({ cues, sourceFile, totalSec, keys, model, promp
                 }
             }
         };
-        await Promise.all(Array.from({ length: Math.max(1, Math.min(keys.length, TRANSCRIBE_MAX_LANES, maxLanes, toCheck.length)) }, (_, lane) => worker(lane)));
+        await Promise.all(Array.from({ length: Math.max(1, Math.min(webLaneCount(keys) || keys.length, TRANSCRIBE_MAX_LANES, maxLanes, toCheck.length)) }, (_, lane) => worker(lane)));
         cues.sort((a, b) => a._start - b._start);
     }
 
@@ -2141,10 +2233,11 @@ function createGeminiRouter(options = {}) {
                 .map(k => String(k || '').trim())
                 .filter((k, i, a) => k && a.indexOf(k) === i);
             const dpKeys = getDRRouterKeys();
-            const keyPool = rawKeys.length ? [...rawKeys, ...dpKeys.filter(k => !rawKeys.includes(k))] : dpKeys;
+            const keyPool = orderPool(rawKeys.length ? [...rawKeys, ...dpKeys.filter(k => !rawKeys.includes(k))] : dpKeys);
             // Normally a lane does two chunks in a row (the second sees the first one's last lines);
             // Fast mode gives every chunk its own key so the whole film is asked at once.
-            const laneCount = Math.max(1, Math.min(keyPool.length, laneCap, fastMode ? chunks.length : Math.ceil(chunks.length / 2)));
+            // Router first: one lane per Gmail; the API keys stay behind them as backups.
+            const laneCount = Math.max(1, Math.min(webLaneCount(keyPool) || keyPool.length, laneCap, fastMode ? chunks.length : Math.ceil(chunks.length / 2)));
             const chunkCues = new Array(chunks.length);
             const rawParts = new Array(chunks.length);
             // phase: 'translate' while the chunks are with Gemini, 'polish' for the checks after.
@@ -2338,7 +2431,7 @@ function createGeminiRouter(options = {}) {
         const laneCap = Math.max(1, Math.min(TRANSCRIBE_MAX_LANES, parseInt(maxLanes, 10) || TRANSCRIBE_MAX_LANES));
         const rawKeys = [apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])].map(k => String(k || '').trim()).filter((k, i, a) => k && a.indexOf(k) === i);
         const dpKeys = getDRRouterKeys();
-        const keyPool = rawKeys.length ? [...rawKeys, ...dpKeys.filter(k => !rawKeys.includes(k))] : dpKeys;
+        const keyPool = orderPool(rawKeys.length ? [...rawKeys, ...dpKeys.filter(k => !rawKeys.includes(k))] : dpKeys);
         if (!keyPool.length && !codecraftActive()) return res.status(400).json({ success: false, error: 'INVALID_API_KEY', message: 'Gemini API key is required.' });
 
         const abortCtrl = new AbortController();
@@ -3299,5 +3392,7 @@ Object.assign(module.exports, {
     GEMINI_RETRY_DELAYS_MS,
     GEMINI_BUSY_RETRY_BUDGET_MS,
     activeTranscribeRequests,
-    transcribeProgress
+    transcribeProgress,
+    buildTranscribePrompt,
+    parseJsonArrayLoose
 });

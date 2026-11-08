@@ -392,7 +392,9 @@
   async function checkKeyLimits(btn, { auto = false } = {}) {
     clearTimeout(recheckTimer); // pressed again by hand: that is the retry
     recheckTimer = null;
-    const keys = getActiveApiKeys();
+    // Gemini Web Router Gmails ("gweb:") show their credits in the router page; asking them here
+    // would only spend those credits.
+    const keys = getActiveApiKeys().filter((k) => !String(k).startsWith('gweb:'));
     if (!keys.length) return showToast('Add a Gemini API key first.', 'warning');
     if (btn) btn.disabled = true;
     const model = $('dai-model-select')?.value || getActiveModel();

@@ -188,6 +188,44 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
     }
     const fitFilter = (W, H, fps) => `scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${fps},format=yuv420p`;
 
+    // Most episodes identical, a few not (2026-11-08: 137 dubbed episodes at 25 fps, 7 at 30
+    // because their sources were): only the odd ones are encoded, with the export's own NVENC
+    // settings at the others' size and frame rate, and kept only if their codec headers then
+    // match the others byte for byte - the whole part is then joined without re-encoding (that
+    // series: 20 min of converting all 144 -> ~9 s per odd episode). Any mismatch: false, and
+    // the part is converted as before. eps' pieces are replaced in place on success.
+    async function matchOddEpisodes(job, eps, pieces, workDir, progress) {
+        const counts = new Map();
+        eps.forEach(e => counts.set(e.video.signature, (counts.get(e.video.signature) || 0) + 1));
+        const [sig, n] = [...counts].sort((a, b) => b[1] - a[1])[0];
+        if (n < eps.length * 0.75) return false;
+        const ref = eps.find(e => e.video.signature === sig).video;
+        if (ref.codec !== 'h264') return false;
+        let enc = {};
+        try { enc = await detectAvailableEncoders(); } catch (e) { }
+        if (!enc.nvenc) return false;
+        const bitrate = ref.width * ref.height >= 1280 * 720 ? '6500k' : '4500k'; // render_service's applyEncoderSettings
+        const replaced = [];
+        for (let i = 0; i < eps.length; i++) {
+            if (eps[i].video.signature === sig) continue;
+            if (aborted(job)) throw new Error('cancelled');
+            const out = path.join(workDir, `odd${String(i).padStart(4, '0')}.mp4`);
+            const r = await runFFmpeg(job, ['-hide_banner', '-nostdin', '-y', '-i', eps[i].path, '-map', '0:v:0', '-an', '-sn', '-dn',
+                '-vf', fitFilter(ref.width, ref.height, ref.fps), '-threads', '8', '-c:v', 'h264_nvenc', '-preset', 'p4', '-tune', 'hq', '-b:v', bitrate,
+                '-pix_fmt', 'yuv420p', '-t', eps[i].duration.toFixed(6), out]);
+            if (r.code !== 0) return false;
+            const got = describe(await probe(out));
+            if (!got.video || got.video.signature !== sig) {
+                console.log(`[Join] ${eps[i].name}: re-encoded, but its video headers still differ from the others - converting the whole part`);
+                return false;
+            }
+            replaced.push([i, out]);
+        }
+        for (const [i, out] of replaced) pieces[i] = { file: out, duration: eps[i].duration };
+        console.log(`[Join] ${replaced.length} of ${eps.length} episode(s) had other video settings: re-encoded to match, the rest joined as they are`);
+        return true;
+    }
+
     // One continuous AAC track for the whole part, sample-accurate per episode. The fast coder:
     // the default one took twice as long, and with the video copied the sound was most of a
     // join's time (17 min: 23 s), for no difference heard at 192k.
@@ -235,10 +273,14 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
         // An episode with no picture (an audio file in a video series) is filled with black
         // frames, which means every episode is converted to the same settings.
         const withVideo = eps.filter(e => e.video);
-        const sameVideo = withVideo.length === eps.length && eps.every(e => e.video.signature === eps[0].video.signature);
-        const copyable = sameVideo && ['h264', 'hevc'].includes(eps[0].video.codec);
+        let sameVideo = withVideo.length === eps.length && eps.every(e => e.video.signature === eps[0].video.signature);
         // Each episode's file in the joined video.
         const pieces = eps.map(e => ({ file: e.path, duration: e.duration }));
+        if (!sameVideo && withVideo.length === eps.length && await matchOddEpisodes(job, eps, pieces, workDir, progress)) {
+            sameVideo = true;
+            job.oddConverted = true;
+        }
+        const copyable = sameVideo && ['h264', 'hevc'].includes(eps[0].video.codec);
         if (!copyable) {
             job.videoMode = 'converted';
             // Encode every episode with identical settings, so the pieces can then be joined

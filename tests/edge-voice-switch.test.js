@@ -68,6 +68,26 @@ test('a voice that was deleted falls back as before', () => {
     assert.equal(edgeVoiceOf({ gender: 'ffffffff', character: 'Female' }, profiles), 'Female');
 });
 
+test('a woman whose cloned voice was deleted (speaker cleanup, merge) is still Sreymom', () => {
+    // Clone Voices wrote the id into gender (and character after a pick); speaker keeps the
+    // Male/Female she was heard as. The id alone read as "Male": Piseth.
+    assert.equal(oldEdgeVoice({ gender: 'ffffffff', character: 'ffffffff', speaker: 'Female' }), 'Male', 'was Piseth');
+    assert.equal(edgeVoiceOf({ gender: 'ffffffff', character: 'ffffffff', speaker: 'Female' }, profiles), 'Female');
+    assert.equal(edgeVoiceOf({ gender: 'deadbeef', speaker: 'Female' }, profiles), 'Female', 'an id with "dad"/"dead" in it too');
+    assert.equal(edgeVoiceOf({ gender: 'ffffffff', speaker: 'Male' }, profiles), 'Male');
+    assert.equal(edgeVoiceOf({ gender: 'a3f2dad0', speaker: 'Male' }, profiles), 'Female', 'a live voice still wins');
+});
+
+test('VoxCPM2 switched off during a run: the rest goes to Edge, not 8 retries on a stopped server', () => {
+    const gen = source.slice(source.indexOf('async function generateStandardAudioForProject('), source.indexOf('async function voxCmp2RunProjectQueue('));
+    assert.match(gen, /const voxStillOn = \(\) =>/);
+    assert.match(gen, /if \(isVoxCmp2Enabled && voxStillOn\(\)\) \{\s*const matchedProfile/, 'checked before each attempt');
+    const qAt = source.indexOf('async function voxCmp2RunQueueLoop(');
+    const q = source.slice(qAt, source.indexOf('mainVideo.addEventListener("loadedmetadata"', qAt));
+    assert.equal((q.match(/if \(!voxQueueStillOn\(\)\) \{ switchedOff = true; break; \}/g) || []).length, 2, 'before each line and each retry');
+    assert.match(q, /for \(const h of handOff\) await generateStandardAudioForProject\(h\.proj, h\.ids, true\);/, 'the lines left go to Edge');
+});
+
 test('VoxCPM2 on again: a line set back to Male/Female gets its speaker\'s voice back', () => {
     assert.equal(voxVoiceTagOf({ gender: 'Female', voxSpeaker: 'a3f2dad0' }, profiles), 'a3f2dad0');
     assert.equal(voxVoiceTagOf({ gender: 'Male', voxSpeaker: '0e5b8f13' }, profiles), '0e5b8f13');

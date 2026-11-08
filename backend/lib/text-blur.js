@@ -2,14 +2,14 @@
 // while they show. A segment is { start, end, x, y, w, h }: seconds, and % of the source frame.
 //
 // The blur goes on the source picture before anything else (flip, crop, scale, pan), so it
-// stays on the text whatever the export settings. Segments with the same box share one chain:
-// crop the box, blur it, feather its edges (a hard-edged blurred box shows), and overlay it
-// back only during that box's times (FFmpeg timeline `enable`, so it costs nothing in between).
+// stays on the text whatever the export settings. Segments with the same box share one box;
+// boxes on the same rows share a strip, and each strip is ONE chain (buildTextBlurFilters):
+// blurred once, put back through a soft-edged mask that shows each box only during its times
+// (FFmpeg timeline `enable`, so it costs nothing in between).
 //
-// Boxes on the same rows are blurred on a strip cut out of the frame, and the strip goes back
-// with one overlay: every overlay copies the picture it draws on, so 30 boxes overlaid on the
-// whole frame made the export about 4x slower. The frame stays yuv420p (no alpha plane): FFmpeg
-// would otherwise give the whole picture the blurred boxes' alpha, which is slower to overlay.
+// Every overlay copies the picture it draws on (30 boxes overlaid on the whole frame made the
+// export about 4x slower), so a strip goes back with one overlay. The frame stays yuv420p (no
+// alpha plane): FFmpeg would otherwise give the whole picture the alpha, slower to overlay.
 const fs = require('fs');
 const { execFile } = require('child_process');
 
@@ -80,8 +80,19 @@ function groupStrips(groups, height) {
     });
 }
 
+const median = (a) => { const s = [...a].sort((p, q) => p - q); return s[Math.floor(s.length / 2)]; };
+
 // Filter-graph parts that blur the segments on [inTag] and output [outTag], or null (nothing
 // to blur). width/height: the frame size [inTag] has (after FFmpeg's auto-rotation).
+//
+// One chain per strip (row of boxes), not one per box: the strip is cut out and blurred once
+// (while any of its boxes shows); a mask made from the strip's own frames (so it keeps the
+// video's timing) gets a white rectangle per box, switched on only during that box's times,
+// then its edges are softened; the blurred strip goes back through that mask with one overlay.
+// Per box only a drawbox is left, which costs next to nothing while it is off. Measured
+// 2026-11-08 on a 7:36 tab with 51 boxes in one row (NVENC 6500k, NVIDIA decoding): 125 s ->
+// 77 s for the blur alone, 170 s -> 116 s with the export's colour and sharpen chain; the old and
+// new outputs differ by 54 dB on average (49 dB worst frame) - the same picture to the eye.
 function buildTextBlurFilters(segments, { width, height, inTag = '0:v', outTag = 'v_textblur' }) {
     if (!(width > 0 && height > 0)) return null;
     const groups = groupBoxes(segments, width, height);
@@ -90,26 +101,26 @@ function buildTextBlurFilters(segments, { width, height, inTag = '0:v', outTag =
     const parts = [];
     parts.push(`[${inTag}]format=yuv420p,split=${strips.length + 1}[tb_main]${strips.map((s, k) => `[tb_full${k}]`).join('')}`);
     let cur = 'tb_main';
-    let i = 0;
     strips.forEach((s, k) => {
-        parts.push(`[tb_full${k}]crop=${s.w}:${s.h}:${s.x}:${s.y},split=${s.boxes.length + 1}[tb_strip${k}]${s.boxes.map((g, j) => `[tb_src${i + j}]`).join('')}`);
-        let strip = `tb_strip${k}`;
-        for (const g of s.boxes) {
-            const minSide = Math.min(g.w, g.h);
-            const luma = Math.max(1, Math.min(Math.round(g.h * BLUR_OF_HEIGHT), Math.floor(minSide / 2) - 1));
-            const chroma = Math.max(1, Math.min(Math.round(luma / 2), Math.floor(minSide / 4) - 1));
-            const feather = Math.max(2, Math.min(Math.round(g.h * FEATHER_OF_HEIGHT), Math.floor(minSide / 2) - 1));
-            const enable = enableExpr(g.ranges);
-            // One frame of mask is enough: the merge keeps using the last mask frame.
-            parts.push(`nullsrc=s=${g.w}x${g.h}:r=1:d=1,format=gray,geq=lum='255*min(1\\,min(X\\,W-1-X)/${feather})*min(1\\,min(Y\\,H-1-Y)/${feather})'[tb_mask${i}]`);
-            parts.push(`[tb_src${i}]crop=${g.w}:${g.h}:${g.x - s.x}:${g.y - s.y},boxblur=${luma}:2:${chroma}:2:enable='${enable}',format=yuva420p[tb_blur${i}]`);
-            parts.push(`[tb_blur${i}][tb_mask${i}]alphamerge[tb_soft${i}]`);
-            parts.push(`[${strip}][tb_soft${i}]overlay=${g.x - s.x}:${g.y - s.y}:enable='${enable}'[tb_s${i}]`);
-            strip = `tb_s${i}`;
-            i++;
-        }
+        // One blur strength per strip, from its typical box height (subtitle lines in a row
+        // share a font size); FFmpeg needs the radius under half the strip's shorter side.
+        const h = median(s.boxes.map((g) => g.h));
+        const side = Math.min(s.w, s.h);
+        const luma = Math.max(1, Math.min(Math.round(h * BLUR_OF_HEIGHT), Math.floor(side / 2) - 1));
+        const chroma = Math.max(1, Math.min(Math.round(luma / 2), Math.floor(side / 4) - 1));
+        const feather = Math.max(2, Math.min(Math.round(h * FEATHER_OF_HEIGHT), Math.floor(side / 2) - 1));
+        const r = Math.max(1, Math.round(feather / 2));
+        const on = enableExpr(s.ranges);
+        parts.push(`[tb_full${k}]crop=${s.w}:${s.h}:${s.x}:${s.y},split=2[tb_src${k}][tb_mbase${k}]`);
+        parts.push(`[tb_src${k}]boxblur=${luma}:2:${chroma}:2:enable='${on}',format=yuva420p[tb_blur${k}]`);
+        // Each box's rectangle is drawn r inside its edges and the mask blurred by r: clear at
+        // the box edge, full about `feather` inside, as the old per-box mask. drawbox on gray
+        // draws 235 (TV range): x1.09 makes it 255 - at 92% the text's dark outline showed.
+        const boxes = s.boxes.map((g) => `drawbox=x=${g.x - s.x + r}:y=${g.y - s.y + r}:w=${Math.max(2, g.w - 2 * r)}:h=${Math.max(2, g.h - 2 * r)}:color=white:t=fill:enable='${enableExpr(g.ranges)}'`).join(',');
+        parts.push(`[tb_mbase${k}]format=gray,lut=c0=0,${boxes},lut=c0=val*1.09,boxblur=${r}:1:enable='${on}'[tb_mask${k}]`);
+        parts.push(`[tb_blur${k}][tb_mask${k}]alphamerge[tb_soft${k}]`);
         const next = k === strips.length - 1 ? outTag : `tb_out${k}`;
-        parts.push(`[${cur}][${strip}]overlay=${s.x}:${s.y}:enable='${enableExpr(s.ranges)}'[${next}]`);
+        parts.push(`[${cur}][tb_soft${k}]overlay=${s.x}:${s.y}:enable='${on}'[${next}]`);
         cur = next;
     });
     return { parts, outTag, boxes: groups.length, segments: groups.reduce((n, g) => n + g.ranges.length, 0) };

@@ -192,6 +192,11 @@
         const profile = v && (profiles || []).find((p) => p.id === v);
         if (profile && (profile.gender === "Male" || profile.gender === "Female")) return profile.gender;
       }
+      // A cloned voice that was deleted since (speaker cleanup, merge): its id reads as no role
+      // and fell back to "Male" - a woman voiced by Piseth. `speaker` keeps the line's heard
+      // Male/Female (Transcribe, and the speaker finder re-tags it from the voice).
+      const heard = sub.speaker && window.CHARACTER_PRESETS[String(sub.speaker).trim()];
+      if (heard) return heard.gender;
       return window.resolveCharacterKey(sub.character || sub.gender);
     };
 
@@ -11640,7 +11645,11 @@
     });
 
     // --- BULK VOICE LOGIC (selection-aware) ---
-    const setBulkVoice = (gender, label) => {
+    // profile: a VoxCPM2 voice picked in the bulk dropdown. Like the voice pill, its id goes in
+    // gender (what VoxCPM2 voices) and its Male/Female in character (what Edge uses if VoxCPM2
+    // is switched off) - read as a role word, the id turned into "Male"/"Female" and the
+    // picked voice was lost (the group's first voice of that gender was used instead).
+    const setBulkVoice = (gender, label, profile = null) => {
       if (subtitles.length === 0) return showToast("No subtitles to modify.", "error");
 
       const selectedIds = [...new Set(selectedItems.map((i) => i.split("-")[1]))].filter(Boolean);
@@ -11654,7 +11663,10 @@
       // Save undo state before modifying
       saveStateToPast();
 
-      const charKey = typeof window.resolveCharacterKey === "function" ? window.resolveCharacterKey(gender) : gender;
+      const profileId = profile && (profile.id || profile.name);
+      const charKey = profileId
+        ? (profile.gender === "Female" || profile.gender === "Male" ? profile.gender : window.resolveCharacterKey(profile.gender || "Male"))
+        : (typeof window.resolveCharacterKey === "function" ? window.resolveCharacterKey(gender) : gender);
       const charPreset = window.CHARACTER_PRESETS ? window.CHARACTER_PRESETS[charKey] : null;
       const displayLabel = label || (charPreset ? charPreset.label : charKey); // a VoxCPM2 profile passes its own name
 
@@ -11663,7 +11675,7 @@
           // Apply character AND gender AND clear existing audio
           return {
             ...s,
-            gender: charKey,
+            gender: profileId || charKey,
             character: charKey,
             genderUnknown: undefined, // picked by hand: a translation keeps it
             audioStatus: "idle",
@@ -11739,7 +11751,8 @@
         if (!profileId) return showToast(`Please pick a ${sw.gender.toLowerCase()} voice profile first.`, "warning");
         const voxData = typeof voxCmp2Load === "function" ? voxCmp2Load() : null;
         const profile = voxData?.profiles?.find((p) => (p.id || p.name) === profileId);
-        setBulkVoice(profileId, profile?.label || profileId);
+        if (!profile) return showToast("That voice profile is no longer there.", "warning");
+        setBulkVoice(profileId, profile.label || profileId, profile);
       });
     });
 
@@ -20948,6 +20961,15 @@
             profiles: [],
           };
       const isVoxCmp2Enabled = voxCmp2Data.enabled === true;
+      // VoxCPM2 switched off in Settings while this run goes (its server is stopped then): the
+      // rest of the lines go to Edge (Piseth / Sreymom) instead of retrying a dead server
+      // 8 times each (~1.5-2 min per line), checked again before every attempt.
+      const voxStillOn = () => {
+        try {
+          const now = typeof voxCmp2Load === "function" ? voxCmp2Load() : JSON.parse(localStorage.getItem("voxcmp2_settings") || "{}");
+          return now.enabled === true;
+        } catch (e) { return isVoxCmp2Enabled; }
+      };
 
       if (isVoxCmp2Enabled && (!voxCmp2Data.serverUrl || voxCmp2Data.serverUrl.trim() === "")) {
         showToast("Please enter your VoxCMP2 AI Server URL in Settings first.", "error");
@@ -21084,7 +21106,7 @@
           try {
             let data;
 
-            if (isVoxCmp2Enabled) {
+            if (isVoxCmp2Enabled && voxStillOn()) {
               const matchedProfile = resolveSmartVoxCpmProfile(voxVoiceTagOf(sub, voxCmp2Data.profiles), voxCmp2Data.profiles, voxCmp2ScopedProfiles(voxCmp2Data, targetProject));
               data = await executeVoxCpm2Synthesis({
                 text: sub.text,
@@ -21662,9 +21684,22 @@
 
       voxQueueRunning = true;
 
+      // VoxCPM2 switched off in Settings while the queue runs (its server is stopped then): the
+      // lines not voiced yet go to Edge (Piseth / Sreymom) instead of 8 retries each against a
+      // dead server (~1.5-2 min per line). Checked before every line and every retry.
+      const voxQueueStillOn = () => {
+        try {
+          const now = typeof voxCmp2Load === "function" ? voxCmp2Load() : JSON.parse(localStorage.getItem("voxcmp2_settings") || "{}");
+          return now.enabled === true;
+        } catch (e) { return true; }
+      };
+      let switchedOff = false;
+      const handOff = []; // [{ proj, ids }] voiced with Edge once the queue stops
+
       // Dynamic loop: keep running as long as there are queued projects
       // This handles projects added to the queue AFTER the loop already started
       while (true) {
+        if (switchedOff) break;
         const proj = projects.find((p) => p._voxQueued && p.subtitles && p.subtitles.some((s) => (s.audioStatus === "idle" || s.audioStatus === "error") && (p._selectedIds ? p._selectedIds.includes(s.id) : true)));
         if (!proj) break;
 
@@ -21718,6 +21753,7 @@
         const voxMetaPromises = [];
         for (const sub of pendingSubs) {
           if (cancelRef.cancelled) break;
+          if (!voxQueueStillOn()) { switchedOff = true; break; }
 
           const subIdx = () => proj.subtitles.findIndex((s) => s.id === sub.id);
 
@@ -21727,6 +21763,7 @@
 
           while (attempt < maxRetries && !success && !cancelRef.cancelled) {
             attempt++;
+            if (!voxQueueStillOn()) { switchedOff = true; break; }
 
             const idx = subIdx();
             if (idx === -1) break;
@@ -21889,6 +21926,19 @@
               }
             }
           }
+          if (switchedOff) break;
+        }
+
+        if (switchedOff) {
+          // This tab's lines not voiced yet: back to idle, handed to Edge after the queue stops.
+          const ids = [];
+          for (const s of pendingSubs) {
+            const live = proj.subtitles.find((x) => x.id === s.id);
+            if (!live || live.audioStatus === "ready") continue;
+            if (live.audioStatus === "generating") live.audioStatus = "idle";
+            ids.push(s.id);
+          }
+          if (ids.length) handOff.push({ proj, ids });
         }
 
         // ⏳ Wait for all background metadata loads to finish before running Auto-Fit
@@ -22000,6 +22050,24 @@
           renderProjectTabs();
         }
         renderProjectTabs();
+      }
+
+      if (switchedOff) {
+        // Tabs still waiting in the queue go to Edge as well, with the lines they were queued for.
+        for (const p of projects) {
+          if (!p._voxQueued) continue;
+          const ids = p.subtitles.filter((s) => (s.audioStatus === "idle" || s.audioStatus === "error") && (p._selectedIds ? p._selectedIds.includes(s.id) : true)).map((s) => s.id);
+          if (ids.length) handOff.push({ proj: p, ids });
+          p._voxQueued = false;
+          p._selectedIds = null;
+        }
+        voxQueueRunning = false;
+        updateGenerateButtonState();
+        const lines = handOff.reduce((n, h) => n + h.ids.length, 0);
+        showToast(`VoxCPM2 was switched off: the other ${lines} line(s) are voiced with Piseth / Sreymom.`, "info");
+        for (const h of handOff) await generateStandardAudioForProject(h.proj, h.ids, true);
+        setTimeout(() => auditAllProjectsPostGeneration(), 200);
+        return;
       }
 
       voxQueueRunning = false;
