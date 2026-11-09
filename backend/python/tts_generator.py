@@ -383,8 +383,12 @@ async def _generate_speech_core(text: str, voice: str, rate: str, pitch: str, vo
                 last_error = str(e)
 
             if attempt < max_attempts:
-                # Exponential backoff with small sleep before retry
-                await asyncio.sleep(0.4 * attempt)
+                # "No audio was received" is Microsoft turning lines away for a few seconds when
+                # many arrive at once (2026-11-09: 228 of ~1800 series lines; the app's own retry
+                # 1.5 s later got through on the first try for 210 of them, and 0.4/0.8 s here
+                # was too soon). Wait long enough here, so the line does not go back to the app.
+                busy = "no audio was received" in last_error.lower()
+                await asyncio.sleep((1.5 if busy else 0.4) * attempt)
 
         # Ensure no corrupt 0-byte file lingers on disk
         if os.path.exists(output_path) and os.path.getsize(output_path) == 0:

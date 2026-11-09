@@ -80,12 +80,101 @@ def mask_proxy(url):
     return re.sub(r"//([^:@/]*):[^@/]*@", r"//\1:****@", url)
 
 
-async def outside_ip(proxy):
+async def outside_ip(proxy, timeout=20):
     """The public address requests leave from (through the proxy, if any)."""
     from curl_cffi.requests import AsyncSession
     async with AsyncSession(proxy=proxy, impersonate="chrome") as s:
-        r = await s.get("https://api.ipify.org?format=json", timeout=20)
+        r = await s.get("https://api.ipify.org?format=json", timeout=timeout)
         return r.json().get("ip")
+
+
+_direct_ip_cache = {"ip": None, "at": 0}
+
+
+async def direct_outside_ip():
+    now = time.time()
+    if _direct_ip_cache["ip"] and now - _direct_ip_cache["at"] < 300:
+        return _direct_ip_cache["ip"]
+    try:
+        ip = await outside_ip(None, timeout=6)
+        if ip:
+            _direct_ip_cache["ip"] = ip
+            _direct_ip_cache["at"] = now
+        return ip
+    except Exception:
+        return _direct_ip_cache["ip"]
+
+
+async def test_proxies(body):
+    """Checks candidate proxies in parallel: each must give one steady outside IP that no other
+    Gmail (and not this PC) has, open gemini.google.com, and do it twice within maxMs.
+
+    No Gmail's cookies are ever sent here: testing 200 free proxies with a session would show
+    Google that Gmail from 200 addresses in a minute. The chosen proxy meets the session only
+    when the account is started through it (one address at a time)."""
+    from curl_cffi.requests import AsyncSession
+    candidates = [p for p in (body.get("proxies") or []) if isinstance(p, str) and p.strip()]
+    need = max(1, int(body.get("need") or 3))
+    timeout_sec = max(2.0, float(body.get("timeoutSec") or 5.0))
+    max_ms = max(1000, int(body.get("maxMs") or 6000))
+    rounds = max(1, min(3, int(body.get("rounds") or 2)))
+    acc_id = body.get("account") or None
+    avoid_ips = set(str(x).strip() for x in (body.get("avoidIps") or []) if x)
+    direct_ip = await direct_outside_ip()
+    if direct_ip:
+        avoid_ips.add(direct_ip)
+    for aid, acc in accounts.items():
+        if acc.ip and (not acc_id or aid != acc_id or acc.proxy):
+            avoid_ips.add(acc.ip)
+
+    seen_ips = set(avoid_ips)
+    working = []
+    batch_size = 60
+
+    async def one_round(s):
+        t0 = time.time()
+        r = await s.get("https://api.ipify.org?format=json", timeout=timeout_sec)
+        if r.status_code != 200:
+            return None, None
+        ip = (r.json() or {}).get("ip")
+        g = await s.get("https://gemini.google.com/app", timeout=timeout_sec + 2, allow_redirects=True)
+        if g.status_code != 200 or "gemini" not in g.text.lower():
+            return None, None
+        return ip, int((time.time() - t0) * 1000)
+
+    async def check_one(p):
+        try:
+            async with AsyncSession(proxy=p, impersonate="chrome") as s:
+                ip = None
+                times = []
+                for k in range(rounds):
+                    if k:
+                        await asyncio.sleep(1.5)
+                    got, ms = await one_round(s)
+                    # A proxy whose address changes between two asks (a rotating gateway) would
+                    # show the Gmail from a new place on every request.
+                    if not got or got in seen_ips or (ip and got != ip) or ms > max_ms:
+                        return None
+                    ip = got
+                    times.append(ms)
+                return {"proxy": p, "ip": ip, "ms": int(sum(times) / len(times))}
+        except Exception:
+            return None
+
+    for i in range(0, len(candidates), batch_size):
+        if len(working) >= need:
+            break
+        chunk = candidates[i:i + batch_size]
+        res = await asyncio.gather(*(check_one(p) for p in chunk))
+        for item in sorted((x for x in res if x), key=lambda x: x["ms"]):
+            if item["ip"] in seen_ips:
+                continue
+            seen_ips.add(item["ip"])
+            working.append(item)
+            if len(working) >= need:
+                break
+
+    return {"ok": True, "proxies": working, "directIp": direct_ip}
 
 
 class Account:
@@ -159,13 +248,18 @@ class Account:
             return
         cookies = read_json(self.cookie_file(), {})
         if not cookies.get("__Secure-1PSID"):
+            if self.proxy:
+                try:
+                    self.ip = await outside_ip(self.proxy, timeout=8)
+                except Exception:
+                    self.ip = None
             self.state, self.error = "signed_out", "Not signed in yet"
             return
         self.state, self.error = "starting", None
         try:
             if self.proxy:
                 try:
-                    self.ip = await outside_ip(self.proxy)
+                    self.ip = await outside_ip(self.proxy, timeout=10)
                 except Exception as e:
                     self.ip = None
                     self.state, self.error = "error", f"The proxy does not work: {type(e).__name__}: {str(e)[:160]}"
@@ -173,13 +267,13 @@ class Account:
                     return
             else:
                 try:
-                    self.ip = await outside_ip(None)
+                    self.ip = await direct_outside_ip()
                 except Exception:
                     self.ip = None
             # Only the two sign-in cookies: with every Google cookie loaded, Gemini answered
             # "Gemini Apps Activity is off" and ignored the attached audio (tested 2026-11-07).
             c = GeminiClient(cookies["__Secure-1PSID"], cookies.get("__Secure-1PSIDTS"), proxy=self.proxy)
-            await c.init(timeout=600, auto_close=False, auto_refresh=True, refresh_interval=540)
+            await asyncio.wait_for(c.init(timeout=600, auto_close=False, auto_refresh=True, refresh_interval=540), 45)
             # A session Google ended still "starts": Gemini answers text signed out (model
             # "gemini-flash-lite", no credits) but refuses uploads. Seen 2026-11-08: four Gmails
             # ran a whole series like that, every episode silently going to an API key.
@@ -427,6 +521,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/quota":
                 run_coro(refresh_quota(b.get("account")))
                 return self.reply(200, {"ok": True, "accounts": [accounts[i].info() for i in order if i in accounts]})
+            if self.path == "/test-proxies":
+                return self.reply(200, run_coro(test_proxies(b), timeout=170))
             self.reply(404, {"ok": False})
         except Exception as e:
             traceback.print_exc()

@@ -25,6 +25,7 @@ const DIR = path.join(STORAGE_BASE, 'gemini_web');
 const ACCOUNTS_FILE = path.join(DIR, 'accounts.json');
 const SETTINGS_FILE = path.join(DIR, 'settings.json');
 const COOKIE_DIR = path.join(DIR, 'cookies');
+const PROXY_HISTORY_FILE = path.join(DIR, 'proxy_history.json'); // free proxies that worked before
 const ENV_DIR = path.join(os.homedir(), 'DR Dubber Gemini Web');
 const isWin = process.platform === 'win32';
 // The sign-in Chrome profiles live here, outside the app folder: Chrome puts its built-in
@@ -128,6 +129,9 @@ class GeminiWebRouter {
         this.inFlight = new Map(); // account id -> requests from this app being answered right now
         this.refreshTried = new Map(); // account id -> last refresh from its Chrome profile (ms)
         this.refreshFailed = new Set(); // Gmails whose Chrome profile is signed out too (need Sign in again)
+        this.proxyRotateTried = new Map(); // account id -> last auto-proxy rotation (ms)
+        this.proxyDeadSince = new Map(); // account id -> when its proxy was first seen dead (ms)
+        this.publicProxyCache = { at: 0, list: [] }; // cached candidate proxy URLs from public feeds
         this.failLogged = new Map(); // "id|code" -> last time that failure was logged
         this.install = { running: false, lines: [], error: null };
         this.serviceError = null;
@@ -140,7 +144,7 @@ class GeminiWebRouter {
     // request, so cached for a few seconds.
     settings() {
         if (this._settings && Date.now() - this._settings.at < 3000) return this._settings.value;
-        const value = { useForDubbing: true, model: '', thinking: 'standard', routerFirst: true, gmailOnly: false, ...readJson(SETTINGS_FILE, {}) };
+        const value = { useForDubbing: true, model: '', thinking: 'standard', routerFirst: true, gmailOnly: false, freeProxies: true, ...readJson(SETTINGS_FILE, {}) };
         this._settings = { at: Date.now(), value };
         return value;
     }
@@ -149,6 +153,7 @@ class GeminiWebRouter {
         if ('useForDubbing' in patch) clean.useForDubbing = !!patch.useForDubbing;
         if ('routerFirst' in patch) clean.routerFirst = !!patch.routerFirst;
         if ('gmailOnly' in patch) clean.gmailOnly = !!patch.gmailOnly;
+        if ('freeProxies' in patch) clean.freeProxies = !!patch.freeProxies;
         if ('model' in patch) clean.model = String(patch.model || '').slice(0, 80);
         if ('thinking' in patch) clean.thinking = patch.thinking === 'extended' ? 'extended' : 'standard';
         const s = { ...this.settings(), ...clean };
@@ -182,24 +187,365 @@ class GeminiWebRouter {
         } catch (e) { return []; }
     }
 
-    addAccount(email, proxy) {
+    // ---- proxies ---------------------------------------------------------------------------
+    // Every Gmail gets its own outside address, so Google cannot tie them together. Your own
+    // proxies (DR Router PRO's list: bought ones, or a phone running a proxy app) come first;
+    // free public proxies only fill the gap, when settings.freeProxies is on. A Gmail keeps its
+    // proxy while it works - jumping between addresses is what looks like a stolen session - and
+    // moves only when the proxy itself is dead. One Gmail may stay on this PC's own address.
+
+    // One proxy = host + port + user (a sticky residential gateway is one host with a user per IP).
+    proxyKey(u) {
+        const { parseProxyString } = require('./dr-router');
+        const p = u && parseProxyString(String(u));
+        return p ? `${p.host}:${p.port}:${p.username || ''}`.toLowerCase() : String(u || '').toLowerCase();
+    }
+    ownProxies() {
+        try {
+            const { getDRRouterManager } = require('./dr-router');
+            return (getDRRouterManager().proxies || []).filter(p => p.enabled !== false && p.url);
+        } catch (e) { return []; }
+    }
+    isOwnProxy(url) {
+        const k = this.proxyKey(url);
+        return !!url && this.ownProxies().some(p => this.proxyKey(p.url) === k);
+    }
+    // own | free | typed | null (no proxy). Gmails moved by the old auto proxy were all on free ones.
+    proxySourceOf(acc) {
+        if (!acc || !acc.proxy) return null;
+        if (this.isOwnProxy(acc.proxy)) return 'own';
+        if (acc.proxySource) return acc.proxySource;
+        return acc.autoProxy ? 'free' : 'typed';
+    }
+    chromeCanUse(url) {
+        const p = url && require('./dr-router').parseProxyString(String(url));
+        return !!p && !(/^socks/.test(p.protocol) && (p.username || p.password));
+    }
+    // The sign-in and refresh Chrome goes through the Gmail's proxy, so Google sees one address
+    // from the start - except a free one, which can die in the middle of a sign-in.
+    chromeProxyFor(acc) {
+        if (!acc || !acc.proxy || this.proxySourceOf(acc) === 'free') return null;
+        const p = require('./dr-router').parseProxyString(String(acc.proxy));
+        if (p && /^socks/.test(p.protocol) && (p.username || p.password)) {
+            throw new Error('Chrome cannot sign in through a SOCKS proxy with a password. Use an http proxy for this Gmail, or none.');
+        }
+        return p || null;
+    }
+
+    // Free proxies a Gmail worked through before are tried first next time.
+    proxyHistory() { return readJson(PROXY_HISTORY_FILE, {}); }
+    noteProxy(url, ok) {
+        if (!url) return;
+        const h = this.proxyHistory();
+        const k = this.proxyKey(url);
+        const e = h[k] || { url, ok: 0, fail: 0 };
+        e.url = url;
+        if (ok) { e.ok++; e.lastOk = Date.now(); } else { e.fail++; e.lastFail = Date.now(); }
+        h[k] = e;
+        const keys = Object.keys(h).sort((a, b) => Math.max(h[b].lastOk || 0, h[b].lastFail || 0) - Math.max(h[a].lastOk || 0, h[a].lastFail || 0));
+        for (const old of keys.slice(300)) delete h[old];
+        writeJson(PROXY_HISTORY_FILE, h);
+    }
+    provenFreeProxies() {
+        const h = this.proxyHistory();
+        const week = Date.now() - 7 * 24 * 3600 * 1000;
+        return Object.values(h)
+            .filter(e => e.ok > 0 && e.ok >= e.fail && (e.lastOk || 0) > week && !this.isOwnProxy(e.url))
+            .sort((a, b) => (b.lastOk || 0) - (a.lastOk || 0))
+            .map(e => e.url);
+    }
+
+    async fetchPublicProxyCandidates() {
+        if (this.publicProxyCache.list.length && Date.now() - this.publicProxyCache.at < 3 * 60 * 1000) {
+            return this.publicProxyCache.list;
+        }
+        const feeds = [
+            ['http', 'https://raw.githubusercontent.com/vakhov/fresh-proxy-list/master/https.txt'],
+            ['http', 'https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=3000&country=all&ssl=yes&anonymity=elite'],
+            ['http', 'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt'],
+            ['socks5', 'https://raw.githubusercontent.com/vakhov/fresh-proxy-list/master/socks5.txt'],
+            ['socks5', 'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt']
+        ];
+        const httpList = [];
+        const socksList = [];
+        await Promise.all(feeds.map(async ([proto, url]) => {
+            const ctrl = new AbortController();
+            const t = setTimeout(() => ctrl.abort(), 6000);
+            try {
+                const res = await fetch(url, { signal: ctrl.signal });
+                if (!res.ok) return;
+                const txt = await res.text();
+                for (const raw of txt.split(/\r?\n/)) {
+                    const s = raw.trim();
+                    if (!/^\d+\.\d+\.\d+\.\d+:\d+$/.test(s)) continue;
+                    (proto === 'http' ? httpList : socksList).push(`${proto}://${s}`);
+                }
+            } catch (e) { } finally { clearTimeout(t); }
+        }));
+        const uniq = [...new Set([...httpList.slice(0, 300), ...socksList.slice(0, 150)])];
+        if (uniq.length) this.publicProxyCache = { at: Date.now(), list: uniq };
+        return uniq;
+    }
+
+    // Tested without any Gmail's cookies (see test_proxies in gemini_web_server.py).
+    async testProxies(proxies, { accountId = null, avoidIps = [], need = 3, timeoutSec = 5, maxMs = 5000 } = {}) {
+        if (!proxies.length) return [];
+        const r = await this.call('/test-proxies', {
+            proxies, avoidIps, account: accountId, need, timeoutSec, maxMs, rounds: 2
+        }, 180000).catch(() => null);
+        return (r && r.proxies) || [];
+    }
+
+    // Working proxies no other Gmail uses (by proxy and by outside IP), own ones first.
+    // ownOnly: only DR Router PRO's; forChrome: one the sign-in Chrome can use too.
+    async findWorkingProxies({ accountId = null, need = 3, avoidProxies = [], avoidIps = [], ownOnly = false, forChrome = false } = {}) {
+        if (!(await this.ensureService())) throw new Error(this.serviceError || 'Gemini Web Router service is not running.');
+        const usedKeys = new Set(avoidProxies.filter(Boolean).map(u => this.proxyKey(u)));
+        for (const a of this.accounts()) if (a.proxy) usedKeys.add(this.proxyKey(a.proxy));
+        const usedIps = new Set(avoidIps.filter(Boolean));
+        for (const live of (this.statusCache.accounts || [])) {
+            if (live.ip && live.id !== accountId) usedIps.add(live.ip);
+        }
+        const results = [];
+        const take = (found, source) => {
+            for (const item of found) {
+                if (results.length >= need) break;
+                const k = this.proxyKey(item.proxy);
+                if (usedKeys.has(k) || usedIps.has(item.ip)) continue;
+                usedKeys.add(k);
+                usedIps.add(item.ip);
+                results.push({ ...item, source });
+            }
+        };
+
+        const own = this.ownProxies()
+            .filter(p => p.status !== 'offline' && !usedKeys.has(this.proxyKey(p.url)) && (!forChrome || this.chromeCanUse(p.url)))
+            .map(p => p.url);
+        // Bought proxies can be far away: more time, still checked twice.
+        take(await this.testProxies(own, { accountId, avoidIps: [...usedIps], need, timeoutSec: 8, maxMs: 10000 }), 'own');
+        if (results.length >= need || ownOnly || this.settings().freeProxies === false) return results;
+
+        const seen = new Set();
+        const free = [];
+        for (const u of [...this.provenFreeProxies(), ...(await this.fetchPublicProxyCandidates())]) {
+            const k = this.proxyKey(u);
+            if (seen.has(k) || usedKeys.has(k)) continue;
+            seen.add(k);
+            free.push(u);
+        }
+        // Free ones must be quick both times: the slow ones are the ones that die next.
+        take(await this.testProxies(free.slice(0, 360), { accountId, avoidIps: [...usedIps], need: need - results.length + 2, timeoutSec: 5, maxMs: 5000 }), 'free');
+        return results;
+    }
+
+    // Saves `cand` as the Gmail's proxy and starts it through it. A Gmail with no cookies yet
+    // (signing in next) is not checked: the proxy itself was just tested.
+    async tryProxyOn(id, cand, hadCookies) {
+        this.saveAccounts(this.accounts().map(a => (a.id === id ? { ...a, proxy: cand.proxy, autoProxy: true, proxySource: cand.source } : a)));
+        const st = await this.reload();
+        const live = st && Array.isArray(st.accounts) && st.accounts.find(a => a.id === id);
+        const ok = !hadCookies || !!(live && live.state === 'ready');
+        if (hadCookies && cand.source === 'free') this.noteProxy(cand.proxy, ok);
+        return { ok, live };
+    }
+
+    proxyShortfallMessage() {
+        const gmails = this.accounts().filter(a => a.enabled).length;
+        const own = this.ownProxies().length;
+        const freeOff = this.settings().freeProxies === false;
+        return `No working proxy with a new address is free right now (you have ${own} proxy${own === 1 ? '' : 'ies'} of your own for ${gmails} Gmail${gmails === 1 ? '' : 's'}). `
+            + (freeOff ? 'Add proxies in DR Router PRO, or turn on free proxies.' : 'Add proxies in DR Router PRO, or try again in a few minutes (free ones come and go).');
+    }
+
+    // Gives Gmail `id` a working proxy no other Gmail uses, and checks it comes up ready on it.
+    async assignAutoProxy(id, { avoidProxies = [], avoidIps = [], ownOnly = false } = {}) {
+        const prevAcc = this.accounts().find(a => a.id === id);
+        if (!prevAcc) throw new Error('Unknown account.');
+        const hadCookies = fs.existsSync(path.join(COOKIE_DIR, `${id}.json`));
+        const candidates = await this.findWorkingProxies({ accountId: id, need: 3, avoidProxies, avoidIps, ownOnly, forChrome: !hadCookies });
+        if (!candidates.length) throw new Error(this.proxyShortfallMessage());
+        // At most 3 tries, one address at a time: each try shows Google the session from that address.
+        for (const cand of candidates) {
+            const { ok, live } = await this.tryProxyOn(id, cand, hadCookies);
+            if (ok) return { id, email: prevAcc.email, proxy: maskProxy(cand.proxy), ip: (live && live.ip) || cand.ip, source: cand.source };
+        }
+        this.saveAccounts(this.accounts().map(a => (a.id === id ? { ...a, proxy: prevAcc.proxy || null, autoProxy: !!prevAcc.autoProxy, proxySource: prevAcc.proxySource || null } : a)));
+        await this.reload();
+        throw new Error('The proxies passed the test, but Google did not accept this Gmail through them. Try again later.');
+    }
+
+    // A new Gmail set to Auto: one of your own proxies before it signs in, so the sign-in goes
+    // through the address it will work from. Without one it signs in from this PC and gets a
+    // proxy afterwards (runSignIn).
+    async prepareAutoProxyForSignIn(id) {
+        const cands = await this.findWorkingProxies({ accountId: id, need: 1, ownOnly: true, forChrome: true }).catch(() => []);
+        if (!cands.length) return null;
+        this.saveAccounts(this.accounts().map(a => (a.id === id ? { ...a, proxy: cands[0].proxy, autoProxy: true, proxySource: 'own' } : a)));
+        return cands[0];
+    }
+
+    // "Give each Gmail its own address": Gmails that share an address, have none, or whose proxy
+    // is dead get one; a Gmail on a free proxy moves to one of your own when one is spare; a
+    // working Gmail with its own address is left alone. One Gmail may keep this PC's address.
+    async autoAssignAllProxies() {
+        const list = this.accounts().filter(a => a.enabled);
+        if (!list.length) throw new Error('No Gmail accounts in the router yet.');
+        if (!(await this.ensureService())) throw new Error(this.serviceError || 'Gemini Web Router service is not running.');
+        await this.call('/status').catch(() => null);
+        const liveById = new Map(((this.statusCache && this.statusCache.accounts) || []).map(a => [a.id, a]));
+        const working = (live) => live && ['ready', 'limited'].includes(live.state);
+        const seenKeys = new Set();
+        const seenIps = new Set();
+        const kept = [];
+        const todo = [];
+        const upgrade = [];
+        let pcTaken = false;
+        // Own proxies first, so a Gmail on a bought proxy keeps it over a free one with the same IP.
+        const rank = (a) => ({ own: 0, typed: 1, free: 2 }[this.proxySourceOf(a)] ?? 3);
+        for (const acc of [...list].sort((a, b) => rank(a) - rank(b))) {
+            const live = liveById.get(acc.id);
+            const ip = (live && live.ip) || '';
+            if (!acc.proxy) {
+                if (!pcTaken && (!ip || !seenIps.has(ip))) { pcTaken = true; if (ip) seenIps.add(ip); kept.push({ acc, live, source: 'pc' }); }
+                else todo.push(acc);
+                continue;
+            }
+            const k = this.proxyKey(acc.proxy);
+            if (working(live) && !seenKeys.has(k) && (!ip || !seenIps.has(ip))) {
+                seenKeys.add(k);
+                if (ip) seenIps.add(ip);
+                kept.push({ acc, live, source: this.proxySourceOf(acc) });
+                if (this.proxySourceOf(acc) === 'free') upgrade.push(acc);
+            } else {
+                todo.push(acc);
+            }
+        }
+        const avoidProxies = kept.filter(x => x.acc.proxy).map(x => x.acc.proxy);
+        const avoidIps = kept.map(x => x.live && x.live.ip).filter(Boolean);
+        const prevOf = new Map(list.map(a => [a.id, { proxy: a.proxy || null, autoProxy: !!a.autoProxy, proxySource: a.proxySource || null }]));
+        const assigned = [];
+        const upgraded = [];
+
+        // Several Gmails at once: save every pick, start them all with one reload, then check each.
+        const applyBatch = async (accs, opts) => {
+            const cands = await this.findWorkingProxies({ accountId: accs[0].id, need: accs.length + 2, avoidProxies, avoidIps, ...opts }).catch(() => []);
+            const picks = new Map();
+            for (const acc of accs) {
+                const c = cands.shift();
+                if (!c) break;
+                picks.set(acc.id, c);
+                avoidProxies.push(c.proxy);
+                if (c.ip) avoidIps.push(c.ip);
+            }
+            if (!picks.size) return { done: [], left: accs, refused: [] };
+            this.saveAccounts(this.accounts().map(a => {
+                const c = picks.get(a.id);
+                return c ? { ...a, proxy: c.proxy, autoProxy: true, proxySource: c.source } : a;
+            }));
+            const st = await this.reload();
+            const cur = new Map(((st && st.accounts) || []).map(a => [a.id, a]));
+            const done = [];
+            const left = [];
+            const refused = []; // given a proxy that Google then did not accept
+            for (const acc of accs) {
+                const c = picks.get(acc.id);
+                if (!c) { left.push(acc); continue; }
+                const hadCookies = fs.existsSync(path.join(COOKIE_DIR, `${acc.id}.json`));
+                const live = cur.get(acc.id);
+                const ok = !hadCookies || !!(live && live.state === 'ready');
+                if (hadCookies && c.source === 'free') this.noteProxy(c.proxy, ok);
+                if (ok) done.push({ id: acc.id, email: acc.email, proxy: maskProxy(c.proxy), ip: (live && live.ip) || c.ip, source: c.source });
+                else { left.push(acc); refused.push(acc); }
+            }
+            return { done, left, refused };
+        };
+        const restore = async (accs) => {
+            if (!accs.length) return;
+            const ids = new Set(accs.map(a => a.id));
+            this.saveAccounts(this.accounts().map(a => (ids.has(a.id) ? { ...a, ...prevOf.get(a.id) } : a)));
+            await this.reload();
+        };
+
+        let pending = todo;
+        for (let pass = 0; pass < 3 && pending.length; pass++) {
+            const { done, left } = await applyBatch(pending, {});
+            assigned.push(...done);
+            if (!done.length) break;
+            pending = left;
+        }
+        // Not given one: back to what they had (they may still share - the page says so).
+        await restore(pending);
+
+        // Free -> own, only when one of your own proxies is spare (a working Gmail is not moved to
+        // another free one).
+        if (upgrade.length) {
+            const { done, refused } = await applyBatch(upgrade, { ownOnly: true });
+            upgraded.push(...done);
+            await restore(refused); // back on the free proxy that worked
+        }
+
+        return {
+            assigned,
+            upgraded,
+            kept: kept.length,
+            failed: pending.map(a => ({ id: a.id, email: a.email, error: this.proxyShortfallMessage() })),
+            summary: this.proxySummary()
+        };
+    }
+
+    // For the page: how the Gmails reach Google, and which ones share an address.
+    proxySummary() {
+        const live = new Map(((this.statusCache && this.statusCache.accounts) || []).map(a => [a.id, a]));
+        const list = this.accounts().filter(a => a.enabled);
+        const count = { own: 0, free: 0, typed: 0, pc: 0 };
+        const byIp = new Map();
+        for (const a of list) {
+            const src = this.proxySourceOf(a) || 'pc';
+            count[src]++;
+            const ip = live.get(a.id) && live.get(a.id).ip;
+            if (ip) byIp.set(ip, [...(byIp.get(ip) || []), a.email]);
+        }
+        const shared = [...byIp.entries()].filter(([, emails]) => emails.length > 1).map(([ip, emails]) => ({ ip, emails }));
+        // This PC's address counts as one; every other Gmail needs a proxy of your own.
+        const needMore = Math.max(0, list.length - 1 - this.ownProxies().length);
+        return { gmails: list.length, ...count, ownProxies: this.ownProxies().length, shared, needMore, freeProxies: this.settings().freeProxies !== false };
+    }
+
+    // A proxy that does not answer (not a Gmail Google signed out).
+    proxyDead(live) {
+        return !!live && live.state === 'error' && /proxy|timed? ?out|timeout|connect|tunnel|curl|ssl|refused|reset/i.test(String(live.error || ''));
+    }
+
+    // autoProxy: the app picks and changes this Gmail's proxy. proxy === undefined: keep its own.
+    addAccount(email, proxy, { autoProxy = false } = {}) {
         email = String(email || '').trim().toLowerCase();
         if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error('Type a full Gmail address.');
         const list = this.accounts();
         const have = list.find(a => a.email === email);
         if (have) {
-            if (proxy !== undefined) { have.proxy = proxy || null; this.saveAccounts(list); }
+            if (autoProxy) have.autoProxy = true;
+            else if (proxy !== undefined) {
+                have.proxy = proxy || null;
+                have.autoProxy = false;
+                have.proxySource = proxy ? (this.isOwnProxy(proxy) ? 'own' : 'typed') : null;
+            }
+            this.saveAccounts(list);
             return have;
         }
-        const acc = { id: `g${crypto.randomBytes(4).toString('hex')}`, email, enabled: true, addedAt: Date.now(), proxy: proxy || null };
+        const acc = {
+            id: `g${crypto.randomBytes(4).toString('hex')}`, email, enabled: true, addedAt: Date.now(),
+            proxy: (!autoProxy && proxy) || null, autoProxy: !!autoProxy,
+            proxySource: (!autoProxy && proxy) ? (this.isOwnProxy(proxy) ? 'own' : 'typed') : null
+        };
         list.push(acc);
         this.saveAccounts(list);
         return acc;
     }
 
+    // A proxy picked or typed by hand: the app does not change it.
     async setProxy(id, proxy) {
         if (!this.accounts().some(a => a.id === id)) throw new Error('Unknown account.');
-        this.saveAccounts(this.accounts().map(a => (a.id === id ? { ...a, proxy: proxy || null } : a)));
+        this.saveAccounts(this.accounts().map(a => (a.id === id ? { ...a, proxy: proxy || null, autoProxy: false, proxySource: proxy ? (this.isOwnProxy(proxy) ? 'own' : 'typed') : null } : a)));
         await this.reload();
     }
 
@@ -330,6 +676,29 @@ class GeminiWebRouter {
             for (const live of st.accounts) {
                 const acc = list.find((a) => a.id === live.id);
                 if (!acc || !acc.enabled || this.signIns.has(acc.id)) continue;
+                // A dead proxy: tried once more on the next check (a short drop), then the Gmail
+                // moves to another one - at most every 10 minutes. Any other error keeps the proxy.
+                if (acc.autoProxy && acc.proxy && this.proxyDead(live)) {
+                    const since = this.proxyDeadSince.get(acc.id);
+                    if (!since) {
+                        this.proxyDeadSince.set(acc.id, Date.now());
+                        this.reload().catch(() => {});
+                        continue;
+                    }
+                    if (Date.now() - since >= 3 * 60 * 1000 && Date.now() - (this.proxyRotateTried.get(acc.id) || 0) >= 10 * 60 * 1000) {
+                        this.proxyRotateTried.set(acc.id, Date.now());
+                        if (this.proxySourceOf(acc) === 'free') this.noteProxy(acc.proxy, false);
+                        try {
+                            const r = await this.assignAutoProxy(acc.id);
+                            this.proxyDeadSince.delete(acc.id);
+                            console.log(`[GeminiWeb] ${acc.email}: its proxy stopped working -> ${r.source} proxy ${r.proxy} (IP ${r.ip || '?'})`);
+                        } catch (e) {
+                            console.warn(`[GeminiWeb] ${acc.email}: its proxy stopped working and no other was found: ${e.message}`);
+                        }
+                    }
+                    continue;
+                }
+                this.proxyDeadSince.delete(acc.id);
                 if (!fs.existsSync(path.join(PROFILE_DIR, acc.id))) continue; // nothing to refresh from
                 // Only a Gmail Google signed out. A planned refresh of working ones (every 2 h)
                 // was tried and did harm: 2026-11-08 it caught Chrome before it had renewed the
@@ -351,12 +720,14 @@ class GeminiWebRouter {
         const chromePath = findChrome();
         const profile = path.join(PROFILE_DIR, id);
         if (!acc || !chromePath || !fs.existsSync(profile) || this.signIns.has(id)) return false;
+        let chromeProxy = null;
+        try { chromeProxy = this.chromeProxyFor(acc); } catch (e) { chromeProxy = null; }
         const port = await freePort();
         const chrome = spawn(chromePath, [
             `--user-data-dir=${profile}`, `--remote-debugging-port=${port}`, '--no-first-run', '--no-default-browser-check',
             '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling',
             '--window-position=-32000,-32000', '--window-size=1000,900', '--lang=en-US',
-            ...(acc.proxy ? (() => { const p = require('./dr-router').parseProxyString(acc.proxy); return p && !(/^socks/.test(p.protocol) && (p.username || p.password)) ? [`--proxy-server=${p.protocol.replace(/^socks5h$/, 'socks5')}://${p.host}:${p.port}`] : []; })() : []),
+            ...(chromeProxy ? [`--proxy-server=${chromeProxy.protocol.replace(/^socks5h$/, 'socks5')}://${chromeProxy.host}:${chromeProxy.port}`, '--proxy-bypass-list=<-loopback>'] : []),
             'about:blank'
         ], { windowsHide: false, stdio: 'ignore' });
         trackProcess(chrome);
@@ -367,9 +738,9 @@ class GeminiWebRouter {
                 try { session = await new GeminiWebSession({ port, match: null }).connect(); } catch (e) { }
             }
             if (!session) return false;
-            if (acc.proxy) {
-                const p = require('./dr-router').parseProxyString(acc.proxy);
-                if (p && (p.username || p.password)) {
+            if (chromeProxy) {
+                const p = chromeProxy;
+                if (p.username || p.password) {
                     session.cdp.listeners.add((msg) => {
                         if (msg.sessionId !== session.sid) return;
                         if (msg.method === 'Fetch.authRequired') session.cdp.send('Fetch.continueWithAuth', { requestId: msg.params.requestId, authChallengeResponse: msg.params.authChallenge && msg.params.authChallenge.source === 'Proxy' ? { response: 'ProvideCredentials', username: p.username, password: p.password } : { response: 'Default' } }, session.sid).catch(() => {});
@@ -434,8 +805,10 @@ class GeminiWebRouter {
             chrome: !!findChrome(),
             timing: require('./gemini-web-timing').available(),
             proxyChoices: this.proxyChoices(),
+            proxySummary: this.proxySummary(),
             accounts: this.accounts().map(a => ({
                 ...a,
+                proxySource: this.proxySourceOf(a),
                 ...(live.get(a.id) || { state: fs.existsSync(path.join(COOKIE_DIR, `${a.id}.json`)) ? 'starting' : 'signed_out' }),
                 proxy: maskProxy(a.proxy), // never the password
                 signIn: this.signInInfo(a.id)
@@ -445,16 +818,25 @@ class GeminiWebRouter {
 
     // Pool keys for DR Dubber's jobs: ready accounts, when the router is switched on.
     keysForDubber() {
-        if (!this.settings().useForDubbing) return [];
-        if (!this.proc && !this.external) { this.ensureService().catch(() => {}); return []; }
-        if (Date.now() - this.statusCache.at > 15000) this.call('/status').catch(() => {});
+        if (!this.settings().useForDubbing || !this.envReady()) return [];
+        const gmailOnly = this.settings().gmailOnly === true;
+        const canRefresh = (id) => !this.refreshFailed.has(id) && fs.existsSync(path.join(PROFILE_DIR, id));
+        if (!this.proc && !this.external) this.ensureService().catch(() => {});
+        else if (Date.now() - this.statusCache.at > 15000) this.call('/status').catch(() => {});
+        // Before the service's first /status comes back (cold start), offer the enabled Gmails that
+        // have saved cookies (or a Chrome profile to refresh from): generate() awaits ensureService()
+        // so the first job waits for the Gmails instead of falling back to API keys.
+        if (!this.statusCache.at) {
+            return this.accounts()
+                .filter(a => a.enabled && (fs.existsSync(path.join(COOKIE_DIR, `${a.id}.json`)) || (gmailOnly && canRefresh(a.id))))
+                .map(a => KEY_PREFIX + a.id);
+        }
         // Most credits left first, so the work spreads over the Gmails instead of draining the
         // first one in the list (a job's first lane takes the first key).
         const left = (a) => (a.quota && a.quota.total ? a.quota.remaining / a.quota.total : 1);
-        // Gmails only: a Gmail Google just signed out stays in the list while its Chrome profile
-        // signs it back in (seconds) - its requests wait and retry instead of going to API keys.
-        const gmailOnly = this.settings().gmailOnly === true;
-        const usable = (a) => a.state === 'ready' || (gmailOnly && a.state === 'signed_out' && !this.refreshFailed.has(a.id) && fs.existsSync(path.join(PROFILE_DIR, a.id)));
+        // Gmails only: a Gmail Google just signed out (or reconnecting) stays in the list while its
+        // Chrome profile signs it back in (seconds) - its requests wait and retry instead of going to API keys.
+        const usable = (a) => a.state === 'ready' || (gmailOnly && (a.state === 'signed_out' || a.state === 'starting') && canRefresh(a.id));
         return this.statusCache.accounts.filter(a => a.enabled && usable(a))
             .sort((a, b) => (a.state === 'ready' ? 0 : 1) - (b.state === 'ready' ? 0 : 1) || left(b) - left(a))
             .map(a => KEY_PREFIX + a.id);
@@ -595,15 +977,10 @@ class GeminiWebRouter {
         const profile = path.join(PROFILE_DIR, id);
         fs.mkdirSync(profile, { recursive: true });
         const port = await freePort();
-        // The sign-in goes through the Gmail's proxy too, so Google sees one address from the start.
+        // Your own or a typed proxy: the sign-in goes through it too. A free one (or none yet):
+        // the sign-in is from this PC, and an Auto Gmail gets its proxy once the cookies are saved.
         const acc = this.accounts().find(a => a.id === id) || {};
-        let proxy = null;
-        if (acc.proxy) {
-            proxy = require('./dr-router').parseProxyString(acc.proxy);
-            if (proxy && /^socks/.test(proxy.protocol) && (proxy.username || proxy.password)) {
-                throw new Error('Chrome cannot sign in through a SOCKS proxy with a password. Use an http proxy for this Gmail, or none.');
-            }
-        }
+        const proxy = this.chromeProxyFor(acc);
         s.chrome = spawn(chromePath, [
             `--user-data-dir=${profile}`, `--remote-debugging-port=${port}`, '--no-first-run', '--no-default-browser-check',
             '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling',
@@ -723,11 +1100,22 @@ class GeminiWebRouter {
         if (!jar['__Secure-1PSID']) throw new Error('Signed in, but Google gave no sign-in cookie. Try again.');
         writeJson(path.join(COOKIE_DIR, `${id}.json`), jar);
         await this.closeChrome(s);
-        s.state = 'done';
-        s.message = 'Signed in';
         this.refreshFailed.delete(id);
         this.saveAccounts(this.accounts().map(a => (a.id === id ? { ...a, signedInAt: Date.now() } : a)));
-        await this.reload();
+        const freshAcc = this.accounts().find(a => a.id === id);
+        if (freshAcc && freshAcc.autoProxy && !freshAcc.proxy) {
+            s.message = 'Signed in. Giving it its own proxy address…';
+            try {
+                await this.assignAutoProxy(id);
+            } catch (e) {
+                console.warn(`[GeminiWeb] ${freshAcc.email}: no proxy after sign-in, it uses this PC's address: ${e.message}`);
+                await this.reload();
+            }
+        } else {
+            await this.reload();
+        }
+        s.state = 'done';
+        s.message = 'Signed in';
         setTimeout(() => { if (this.signIns.get(id) === s) this.signIns.delete(id); }, 60000);
     }
 }

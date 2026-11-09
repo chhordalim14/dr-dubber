@@ -14,25 +14,37 @@ module.exports = function createGeminiWebRoutes() {
 
     router.post('/install', wrap(async () => { gw.installEnv(); return { install: gw.install }; }));
 
-    // { useForDubbing?, model?, thinking? } - only the fields sent change.
+    // { useForDubbing?, routerFirst?, gmailOnly?, freeProxies?, model?, thinking? } - only the fields sent change.
     router.post('/settings', wrap(async (req) => ({ settings: gw.setSettings(req.body || {}) })));
 
-    // Add a Gmail (optionally with its proxy: { proxyId } from DR Router PRO or { proxy } typed)
+    // Add a Gmail (optionally with its proxy: { autoProxy }, { proxyId } from DR Router PRO or { proxy } typed)
     // and start its hidden sign-in at once.
     router.post('/accounts', wrap(async (req) => {
-        const { email, password, proxyId, proxy } = req.body || {};
+        const { email, password, proxyId, proxy, autoProxy } = req.body || {};
         if (!gw.envReady()) throw new Error('Install the Gemini Web part first.');
+        const wantAuto = autoProxy === true || proxy === 'auto' || proxyId === 'auto';
         // No proxy chosen: a new Gmail gets none, one signing in again keeps its own.
-        const proxyUrl = (proxyId || (proxy && String(proxy).trim())) ? gw.resolveProxy({ proxyId, proxy }) : undefined;
-        const acc = gw.addAccount(email, proxyUrl);
+        const proxyUrl = wantAuto
+            ? undefined
+            : ((proxyId || (proxy && String(proxy).trim())) ? gw.resolveProxy({ proxyId, proxy }) : undefined);
+        const acc = gw.addAccount(email, proxyUrl, { autoProxy: wantAuto });
+        // Auto: one of your own proxies before the sign-in, so Google sees one address from the start.
+        if (wantAuto && !acc.proxy) await gw.prepareAutoProxyForSignIn(acc.id);
         const signIn = await gw.startSignIn(acc.id, password);
         return { account: { id: acc.id, email: acc.email }, signIn };
     }));
 
     router.post('/accounts/:id/proxy', wrap(async (req) => {
-        await gw.setProxy(req.params.id, gw.resolveProxy(req.body || {}));
+        const body = req.body || {};
+        if (body.autoProxy === true || body.proxy === 'auto' || body.proxyId === 'auto') {
+            return await gw.assignAutoProxy(req.params.id);
+        }
+        await gw.setProxy(req.params.id, gw.resolveProxy(body));
         return {};
     }));
+
+    router.post('/accounts/:id/auto-proxy', wrap(async (req) => gw.assignAutoProxy(req.params.id)));
+    router.post('/auto-proxy-all', wrap(async () => gw.autoAssignAllProxies()));
 
     router.post('/accounts/:id/signin', wrap(async (req) => ({ signIn: await gw.startSignIn(req.params.id, (req.body || {}).password) })));
     router.post('/accounts/:id/code', wrap(async (req) => ({ signIn: gw.submitCode(req.params.id, (req.body || {}).code) })));

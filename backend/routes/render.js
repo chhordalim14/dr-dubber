@@ -8,12 +8,27 @@ const path = require('path');
 const { resolveLocalFilePath, EXPORTS_DIR } = require('../lib/paths');
 const { isNetworkPath, safeOutputFileName } = require('../lib/security');
 
-module.exports = function createRenderRouter({ upload, renderVideo, cancelRender, getRenderProgress, audioRepair }) {
+// Exports at once. Measured 2026-11-08 (7.6-min tab, NVENC): 1 alone 119 s, 2 side by side 90 s
+// each, 3 87 s each - two is where the gain is.
+const MAX_RENDERS = 2;
+// A new export waits while a subtitle search runs (render_service.js: they slow each other down
+// many times over), but never longer than this - a search that hangs must not stop the exports.
+const SEARCH_HOLD_MAX_MS = 20 * 60 * 1000;
+
+module.exports = function createRenderRouter({
+    upload, renderVideo, cancelRender, getRenderProgress, audioRepair,
+    renderingCount = () => (getRenderProgress().status === 'rendering' ? 1 : 0),
+    renderingOutputs = () => [],
+    searchBusy = () => false,
+    now = () => Date.now(),
+}) {
     const router = express.Router();
-    // A render the server took but hasn't started yet (it checks the video's own audio first).
-    // It counts as going: a page whose request was lost on the way (see /render-progress) must
-    // wait for it, not send it again - two renders of one file at once.
-    let pendingRender = null;
+    // Renders the server took but hasn't started yet (it checks the video's own audio first),
+    // by token. They count as going: a page whose request was lost on the way (see
+    // /render-progress) must wait for its own, not send it again - two renders of one file.
+    const pendingRenders = new Map();
+    // When each held export first asked (by its token, else its output file).
+    const heldSince = new Map();
 
     router.post('/render', upload.any(), async (req, res) => {
         // Disable HTTP timeout for long render operations
@@ -41,8 +56,21 @@ module.exports = function createRenderRouter({ upload, renderVideo, cancelRender
             }
         }
 
-        // Guard against simultaneous renders
-        if (getRenderProgress().status === 'rendering' || pendingRender) {
+        // Up to MAX_RENDERS at once; the page waits and sends again when all are busy.
+        const renderToken = renderOpts.renderToken ? String(renderOpts.renderToken).slice(0, 64) : null;
+        // A subtitle search is running: the export waits its turn (the page asks again shortly).
+        const holdKey = renderToken || String(renderOpts.outputFileName || renderOpts.outputPath || '');
+        if (searchBusy()) {
+            const since = heldSince.get(holdKey) || now();
+            heldSince.set(holdKey, since);
+            if (now() - since < SEARCH_HOLD_MAX_MS) {
+                return res.status(409).json({ success: false, held: 'search', error: 'Waiting for the subtitle search to finish.' });
+            }
+        }
+        heldSince.delete(holdKey);
+        for (const [k, t] of heldSince) if (now() - t > 2 * SEARCH_HOLD_MAX_MS) heldSince.delete(k);
+        if (renderingCount() + pendingRenders.size >= MAX_RENDERS
+            || (renderToken && (pendingRenders.has(renderToken) || getRenderProgress(renderToken).status === 'rendering'))) {
             return res.status(409).json({ success: false, error: 'A render is already in progress. Wait for it to finish or cancel it first.' });
         }
 
@@ -110,13 +138,19 @@ module.exports = function createRenderRouter({ upload, renderVideo, cancelRender
 
         // Only when the video's own audio is actually mixed in (same rule as render_service):
         // checking/repairing a 2-hour track for a muted or audio-only export is wasted time.
-        pendingRender = { token: renderOpts.renderToken ? String(renderOpts.renderToken).slice(0, 64) : null };
+        // The same file already being written by the other export: both would break it.
+        const sameFile = (p) => path.resolve(p).toLowerCase() === path.resolve(outputPath).toLowerCase();
+        if (renderingOutputs().some(sameFile) || [...pendingRenders.values()].some((p) => sameFile(p.outputPath))) {
+            return res.status(409).json({ success: false, error: 'This file is already being exported. Wait for it to finish or cancel it first.' });
+        }
+        const pendingKey = renderToken || `p_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        pendingRenders.set(pendingKey, { token: renderToken, outputPath });
         let originalAudioPath = null;
         try {
             originalAudioPath = (videoPath && !isAudioOnly && !(renderOpts.isOriginalAudioMuted !== undefined ? renderOpts.isOriginalAudioMuted : (renderOpts.muteOriginal !== undefined ? renderOpts.muteOriginal : true)))
                 ? (await audioRepair.getAudioSource(videoPath).catch(() => ({ path: videoPath }))).path : null;
         } finally {
-            pendingRender = null; // renderVideo takes over in this same tick (it marks its job first)
+            pendingRenders.delete(pendingKey); // renderVideo takes over in this same tick (it marks its job first)
         }
 
         // 5. Run render and wait for completion
@@ -167,7 +201,10 @@ module.exports = function createRenderRouter({ upload, renderVideo, cancelRender
     });
 
     router.get('/render-progress', (req, res) => {
-        const progress = pendingRender ? { status: 'rendering', progress: 0, eta: 'Calculating...', token: pendingRender.token } : getRenderProgress();
+        // ?token=: that render (two can run at once); none: the one started last, as before.
+        const token = req.query && req.query.token ? String(req.query.token).slice(0, 64) : null;
+        const pending = token ? (pendingRenders.get(token) || null) : [...pendingRenders.values()].pop();
+        const progress = pending ? { status: 'rendering', progress: 0, eta: 'Calculating...', token: pending.token } : getRenderProgress(token);
         res.json({
             status: progress.status === 'rendering' ? 'processing' : progress.status,
             percent: progress.progress,
@@ -179,7 +216,8 @@ module.exports = function createRenderRouter({ upload, renderVideo, cancelRender
     });
 
     router.post('/cancel-render', (req, res) => {
-        const ok = cancelRender();
+        const token = (req.body && req.body.token) || (req.query && req.query.token) || null;
+        const ok = cancelRender(token ? String(token) : undefined);
         res.json({ success: ok });
     });
 

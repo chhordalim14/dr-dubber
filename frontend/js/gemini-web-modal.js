@@ -13,12 +13,15 @@
   const codeDrafts = {};
   let proxyEdit = null; // account id whose proxy is being changed
 
-  // <select> of proxies: none, DR Router PRO's list, or typed in.
-  function proxySelect(id, current) {
+  // <select> of proxies: auto, none, DR Router PRO's list, or typed in.
+  function proxySelect(id, current, isAuto = false) {
     const choices = (data && data.proxyChoices) || [];
-    return `<select data-proxy-select="${esc(id)}" class="px-2 py-1.5 rounded-lg bg-gray-950 border border-gray-800 text-white text-[12px] outline-none focus:border-sky-400 max-w-[260px]">
-      <option value="">No proxy (this PC's address)</option>
-      ${choices.map((p) => `<option value="id:${esc(p.id)}" ${current === p.label ? 'selected' : ''}>${esc(p.label)}${p.status === 'offline' ? ' (offline)' : ''}</option>`).join('')}
+    // A new Gmail: Auto by default - its own address (your proxies first, free ones only if allowed).
+    const defaultAuto = id === 'new' && !current;
+    return `<select data-proxy-select="${esc(id)}" class="px-2 py-1.5 rounded-lg bg-gray-950 border border-gray-800 text-white text-[12px] outline-none focus:border-sky-400 max-w-[280px]">
+      <option value="auto" ${(defaultAuto || isAuto) ? 'selected' : ''}>Auto: its own address (your proxies first)</option>
+      <option value="" ${(!defaultAuto && !isAuto && !current) ? 'selected' : ''}>No proxy (this PC's address)</option>
+      ${choices.map((p) => `<option value="id:${esc(p.id)}" ${(!isAuto && current === p.label) ? 'selected' : ''}>${esc(p.label)}${p.status === 'offline' ? ' (offline)' : ''}</option>`).join('')}
       <option value="custom">Type a proxy…</option>
     </select>
     <input data-proxy-custom="${esc(id)}" placeholder="host:port:user:pass or http://user:pass@host:port" class="hidden mt-1 w-full px-2 py-1.5 rounded-lg bg-gray-950 border border-gray-800 text-white text-[12px] outline-none focus:border-sky-400" />`;
@@ -26,6 +29,7 @@
   function readProxy(root, id) {
     const sel = root.querySelector(`[data-proxy-select="${CSS.escape(id)}"]`);
     const v = sel ? sel.value : '';
+    if (v === 'auto') return { autoProxy: true };
     if (v.startsWith('id:')) return { proxyId: v.slice(3) };
     if (v === 'custom') return { proxy: (root.querySelector(`[data-proxy-custom="${CSS.escape(id)}"]`) || {}).value || '' };
     return { proxy: '' };
@@ -92,20 +96,28 @@
   function row(a) {
     const last = a.lastMs ? `${(a.lastMs / 1000).toFixed(0)} s` : '–';
     const needsSignIn = a.state === 'signed_out' && !(a.signIn && a.signIn.state !== 'failed');
-    const route = a.proxy
-      ? `via proxy ${esc(String(a.proxy).replace(/^\w+:\/\//, ''))}${a.ip ? ` · IP ${esc(a.ip)}` : ''}`
-      : `no proxy${a.ip ? ` · IP ${esc(a.ip)}` : ''}`;
+    const SRC = {
+      own: ['your proxy', 'text-emerald-300 border-emerald-500/40'],
+      typed: ['typed proxy', 'text-sky-300 border-sky-500/40'],
+      free: ['free proxy', 'text-amber-300 border-amber-500/40']
+    };
+    const [srcLabel, srcCls] = SRC[a.proxySource] || ['this PC', 'text-gray-300 border-gray-600'];
+    const badge = `<span class="inline-block px-1.5 rounded border text-[10px] font-semibold ${srcCls}">${srcLabel}${a.autoProxy ? ' · auto' : ''}</span>`;
+    const route = `${badge} ${a.proxy ? esc(String(a.proxy).replace(/^\w+:\/\//, '')) : ''}${a.ip ? ` · IP ${esc(a.ip)}` : ''}`;
+    // Another Gmail Google sees from the same address.
+    const sameIp = a.ip && a.enabled ? (data.accounts || []).filter((b) => b.id !== a.id && b.enabled && b.ip === a.ip).map((b) => b.email.split('@')[0]) : [];
+    const sharedWarn = sameIp.length ? `<div class="text-[11px] text-rose-300 mt-0.5">Same address as ${esc(sameIp.join(', '))}: Google can tie them together.</div>` : '';
     const models = (a.models || []).filter((m) => m.available).map((m) => m.display || m.name);
     const editing = proxyEdit === a.id ? `<tr><td colspan="5" class="pb-3"><div class="rounded-lg border border-gray-800 bg-gray-900/60 px-3 py-2">
         <div class="text-[12px] text-gray-300 mb-1.5">Proxy for ${esc(a.email)}</div>
-        <div class="flex flex-wrap items-start gap-2"><div>${proxySelect(a.id, a.proxy)}</div>
+        <div class="flex flex-wrap items-start gap-2"><div>${proxySelect(a.id, a.proxy, !!a.autoProxy)}</div>
           <button data-act="proxy-save" data-id="${esc(a.id)}" class="px-3 py-1.5 rounded bg-sky-500/20 border border-sky-500/40 text-sky-200 text-xs font-semibold hover:bg-sky-500/30">Save</button>
           <button data-act="proxy-cancel" data-id="${esc(a.id)}" class="px-3 py-1.5 rounded border border-gray-700 text-gray-300 text-xs hover:bg-gray-800">Cancel</button></div>
         <div class="text-[11px] text-gray-500 mt-1.5">Google then sees this Gmail only from the proxy's address. Signing in again uses it too.</div>
       </div></td></tr>` : '';
     return `<tr class="border-t border-gray-800/80 align-top">
       <td class="py-2.5 pr-3"><div class="text-[13px] text-white font-medium">${esc(a.email)}</div>
-        <div class="text-[11px] text-gray-500 mt-0.5">${route}</div>
+        <div class="text-[11px] text-gray-500 mt-0.5">${route}</div>${sharedWarn}
         ${models.length ? `<div class="text-[11px] text-gray-500">models: ${esc(models.join(', '))}</div>` : ''}
         ${a.error && a.state !== 'ready' ? `<div class="text-[11px] text-rose-300/80 mt-0.5 max-w-[260px] break-words">${esc(a.error)}</div>` : ''}</td>
       <td class="py-2.5 pr-3">${chip(a)}</td>
@@ -114,10 +126,38 @@
       <td class="py-2.5 text-right whitespace-nowrap">
         ${needsSignIn ? `<button data-act="signin" data-id="${esc(a.id)}" class="px-2 py-1 rounded bg-sky-500/20 border border-sky-500/40 text-sky-200 text-[11px] font-semibold hover:bg-sky-500/30">Sign in again</button>` : ''}
         ${a.state === 'ready' ? `<button data-act="test" data-id="${esc(a.id)}" class="px-2 py-1 rounded border border-gray-700 text-gray-300 text-[11px] hover:bg-gray-800">Test</button>` : ''}
+        <button data-act="auto-proxy" data-id="${esc(a.id)}" title="Give this Gmail another working address no other Gmail uses (your proxies first)" class="px-2 py-1 rounded bg-amber-500/15 border border-amber-500/40 text-amber-200 text-[11px] font-semibold hover:bg-amber-500/25">Change proxy</button>
         <button data-act="proxy" data-id="${esc(a.id)}" class="px-2 py-1 rounded border border-gray-700 text-gray-300 text-[11px] hover:bg-gray-800">Proxy</button>
         <button data-act="toggle" data-id="${esc(a.id)}" data-on="${a.enabled ? 1 : 0}" class="px-2 py-1 rounded border border-gray-700 text-gray-300 text-[11px] hover:bg-gray-800">${a.enabled ? 'Turn off' : 'Turn on'}</button>
         <button data-act="remove" data-id="${esc(a.id)}" class="px-2 py-1 rounded border border-rose-900/60 text-rose-300 text-[11px] hover:bg-rose-500/10">Remove</button>
       </td></tr>${editing}${signInBlock(a)}`;
+  }
+
+  // How the Gmails reach Google: one address each is the goal.
+  function proxyPanel(accs) {
+    if (!accs.length) return '';
+    const p = data.proxySummary || {};
+    const parts = [
+      p.own ? `${p.own} on your proxies` : '',
+      p.typed ? `${p.typed} on typed proxies` : '',
+      p.free ? `${p.free} on free proxies` : '',
+      p.pc ? `${p.pc} on this PC's address` : ''
+    ].filter(Boolean).join(' · ');
+    const shared = (p.shared || []).length;
+    const advice = p.needMore
+      ? `For every Gmail to have its own good address, add ${p.needMore} more prox${p.needMore === 1 ? 'y' : 'ies'} in DR Router PRO (bought static/residential ones, or a spare phone with mobile data running a proxy app). You have ${p.ownProxies || 0}.`
+      : 'You have enough proxies of your own for every Gmail.';
+    return `<div class="mt-3 rounded-xl border ${shared ? 'border-rose-500/40 bg-rose-500/5' : 'border-gray-800 bg-gray-900/60'} px-3 py-2.5">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div class="text-[12px] text-gray-200"><b>Addresses:</b> ${esc(parts || '–')}${shared ? ` · <span class="text-rose-300 font-semibold">${shared} address${shared === 1 ? ' is' : 'es are'} shared</span>` : ''}</div>
+        <button id="gw-auto-proxy-all" title="Gmails that share an address, have none, or whose proxy is dead get one no other Gmail uses. Working Gmails keep theirs (a Gmail on a free proxy moves to one of yours when one is spare). One Gmail may keep this PC's address." class="px-2.5 py-1 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-200 text-[11px] font-semibold hover:bg-amber-500/25">Give each Gmail its own address</button>
+      </div>
+      <div class="text-[11px] text-gray-400 mt-1">${esc(advice)}</div>
+      <label class="flex items-center gap-2 mt-1.5 text-[12px] text-gray-300 cursor-pointer select-none" title="Free public proxies are unknown servers, mostly cloud addresses Google trusts less, and they die often. They are tested without your Gmail and kept while they work.">
+        <input id="gw-free" type="checkbox" ${p.freeProxies !== false ? 'checked' : ''} class="w-4 h-4 accent-amber-400" />
+        Fill the gap with free public proxies (riskier than your own)
+      </label>
+    </div>`;
   }
 
   // Model menu: each Gmail's default, or a model some Gmails offer (the others keep their default).
@@ -192,6 +232,7 @@
         </label>
         <div class="text-[12px] text-gray-400">${ready} of ${accs.length} ready${data.running ? '' : ' · <span class="text-rose-300">service not running</span>'}</div>
       </div>
+      ${proxyPanel(accs)}
       ${modelControls(accs)}
       ${data.serviceError ? `<div class="mt-2 text-[12px] text-rose-300">${esc(data.serviceError)}</div>` : ''}
       ${data.timing ? '' : '<div class="mt-2 text-[12px] text-amber-300">PC timing is off: it needs the VoxCPM2 install. Without it, line times come from the website and can be seconds off.</div>'}
@@ -206,7 +247,7 @@
           <input id="gw-pass" type="password" autocomplete="new-password" placeholder="Password" class="flex-1 min-w-[150px] px-3 py-2 rounded-lg bg-gray-950 border border-gray-800 text-white text-sm outline-none focus:border-sky-400" />
           <button id="gw-add" class="px-4 py-2 rounded-lg bg-sky-500/20 border border-sky-500/40 text-sky-200 text-sm font-semibold hover:bg-sky-500/30">Add</button>
         </div>
-        <div class="mt-2"><div class="text-[11px] text-gray-400 mb-1">Proxy (optional; the sign-in uses it too)</div>${proxySelect('new', null)}</div>
+        <div class="mt-2"><div class="text-[11px] text-gray-400 mb-1">Address (a proxy of yours: the sign-in uses it too)</div>${proxySelect('new', null)}</div>
         <div id="gw-msg" class="text-[12px] mt-2 text-gray-400"></div>
       </div>
       <div class="mt-4 text-[11px] text-gray-500 leading-relaxed">Uses gemini.google.com the way a person does, with free accounts (about 600 credits each, one 3-minute clip costs about 6). Google's terms do not allow this: use spare Gmails only, they can be banned.</div>`;
@@ -245,11 +286,28 @@
     try {
       if (t.id === 'gw-close') return close();
       if (t.id === 'gw-install') { await api('/install', { body: {} }); return refresh(); }
+      if (t.id === 'gw-auto-proxy-all') {
+        t.disabled = true; t.textContent = 'Finding proxies…';
+        busy = true;
+        try {
+          const r = await api('/auto-proxy-all', { body: {} });
+          const moved = [...(r.assigned || []), ...(r.upgraded || [])];
+          const failed = r.failed || [];
+          const SRC = { own: 'your proxy', free: 'free proxy' };
+          const lines = [
+            moved.length ? `${moved.length} Gmail${moved.length === 1 ? '' : 's'} got an address: ${moved.map((x) => `${x.email.split('@')[0]} → ${x.ip || x.proxy} (${SRC[x.source] || x.source})`).join(', ')}.` : '',
+            r.kept ? `${r.kept} kept theirs.` : '',
+            failed.length ? `${failed.length} still without one: ${failed[0].error}` : ''
+          ].filter(Boolean);
+          message(lines.join(' ') || 'Every Gmail already has its own address.', failed.length ? 'text-amber-300' : 'text-emerald-300');
+        } finally { busy = false; }
+        return refresh();
+      }
       if (t.id === 'gw-add') {
         const email = el.querySelector('#gw-email').value.trim();
         const password = el.querySelector('#gw-pass').value;
         if (!email || !password) return message('Type the Gmail and its password.', 'text-amber-300');
-        t.disabled = true;
+        t.disabled = true; t.textContent = 'Starting…';
         await api('/accounts', { body: { email, password, ...readProxy(el, 'new') } });
         el._keep = { msg: { text: `Signing in ${email}…`, cls: 'text-sky-300' } };
         delete proxyDrafts['select|new'];
@@ -262,6 +320,13 @@
         const code = (el.querySelector(`[data-code="${CSS.escape(id)}"]`) || {}).value || '';
         await api(`/accounts/${id}/code`, { body: { code } });
         delete codeDrafts[id];
+      } else if (act === 'auto-proxy') {
+        t.disabled = true; t.textContent = 'Switching…';
+        busy = true;
+        try {
+          const r = await api(`/accounts/${id}/auto-proxy`, { body: {} });
+          message(`${r.email || 'Gmail'} now goes through ${r.source === 'own' ? 'your proxy' : 'a free proxy'} ${r.proxy}${r.ip ? ` (IP ${r.ip})` : ''}.`, 'text-emerald-300');
+        } finally { busy = false; }
       } else if (act === 'proxy') { proxyEdit = proxyEdit === id ? null : id; render(); return; }
       else if (act === 'proxy-cancel') { proxyEdit = null; delete proxyDrafts[`select|${id}`]; delete proxyDrafts[`custom|${id}`]; render(); return; }
       else if (act === 'proxy-save') {
@@ -318,6 +383,12 @@
     if (t.id === 'gw-only' && e.type === 'change') {
       api('/settings', { body: { gmailOnly: t.checked, ...(t.checked ? { routerFirst: true } : {}) } })
         .then(() => { message(t.checked ? 'Gmails only: API keys are used only if no Gmail can sign in.' : 'API keys are a backup again when the Gmails are busy.', 'text-emerald-300'); refresh(); })
+        .catch((err) => message(err.message, 'text-rose-300'));
+      return;
+    }
+    if (t.id === 'gw-free' && e.type === 'change') {
+      api('/settings', { body: { freeProxies: t.checked } })
+        .then(() => { message(t.checked ? 'Free proxies fill in when your own run out.' : 'Only your own proxies are used now. Gmails on free proxies keep them until they stop working.', 'text-emerald-300'); refresh(); })
         .catch((err) => message(err.message, 'text-rose-300'));
       return;
     }

@@ -228,3 +228,36 @@ describe('text_detector.py: reading the strip fast', () => {
         assert.match(py, /proc, first = open_strip\(video, vf, frame_bytes\)/);
     });
 });
+
+describe('subtitle search tells the exports when it is busy', () => {
+    test('true when a search is queued or running, false once none is left', async () => {
+        const changes = [];
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'textdetect-busy-'));
+        const videos = ['a', 'b'].map((n) => { const f = path.join(dir, `${n}.mp4`); fs.writeFileSync(f, n); return f; });
+        const children = [];
+        const svc = createTextDetectService({
+            pythonCmd: 'python', pythonEnv: {}, scriptPath: 'x.py', requirementsPath: 'r.txt', ffmpegPath: 'ffmpeg',
+            cacheDir: path.join(dir, 'cache'),
+            spawn: () => { const c = fakeChild(); children.push(c); return c; },
+            execFile: (cmd, args, opts, cb) => cb(null, '', ''),
+            log: { log: () => { }, warn: () => { } },
+            maxRunning: 1,
+            onBusyChange: (b) => changes.push(b),
+        });
+        svc.start(videos[0]);
+        svc.start(videos[1]);
+        assert.deepEqual(changes, [true]);
+        await tick();
+        children[0].done(result);
+        await tick();
+        assert.deepEqual(changes, [true], 'the second is still to do');
+        assert.equal(svc.busy(), true);
+        children[1].done(result);
+        await tick();
+        assert.deepEqual(changes, [true, false]);
+        assert.equal(svc.busy(), false);
+        // A cached video does not make it busy.
+        svc.start(videos[0]);
+        assert.deepEqual(changes, [true, false]);
+    });
+});

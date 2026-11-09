@@ -97,14 +97,18 @@ describe('a render taken by the server counts as going before FFmpeg starts', ()
     });
     after(() => server.close());
 
-    test('while the audio is checked: shown as rendering with its token, and a second render is refused', async () => {
+    test('while the audio is checked: shown as rendering with its token; the same render or file again is refused', async () => {
         const first = post(`${base}/api/render`, { videoFilePath: __filename, isOriginalAudioMuted: false, renderToken: 'tok1', exportPath: os.tmpdir(), outputFileName: 'x.mp4' });
         await sleep(30);
-        const st = await (await fetch(`${base}/api/render-progress`)).json();
-        assert.equal(st.status, 'processing');
-        assert.equal(st.token, 'tok1');
-        const second = await fetch(`${base}/api/render`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ videoFilePath: __filename, renderToken: 'tok2' }) });
-        assert.equal(second.status, 409);
+        for (const url of [`${base}/api/render-progress`, `${base}/api/render-progress?token=tok1`]) {
+            const st = await (await fetch(url)).json();
+            assert.equal(st.status, 'processing', url);
+            assert.equal(st.token, 'tok1', url);
+        }
+        // Two exports can run at once, but never the same one twice, nor two into one file.
+        const send = (body) => fetch(`${base}/api/render`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        assert.equal((await send({ videoFilePath: __filename, renderToken: 'tok1', exportPath: os.tmpdir(), outputFileName: 'y.mp4' })).status, 409, 'same token');
+        assert.equal((await send({ videoFilePath: __filename, renderToken: 'tok2', exportPath: os.tmpdir(), outputFileName: 'x.mp4' })).status, 409, 'same file');
         releaseAudio();
         assert.equal((await first).success, true);
         assert.deepEqual(started, ['tok1']);
@@ -115,7 +119,7 @@ describe('a render taken by the server counts as going before FFmpeg starts', ()
 });
 
 describe('the page waits for a render whose request was lost', () => {
-    const block = cut('        const waitForServerRender = async (signal) => {', '        const formatSrtTime = (seconds) => {');
+    const block = cut('        // token: wait for that render (two can run at once); none: for the one started last.', '        const formatSrtTime = (seconds) => {');
     // server: { progress: [answers of /api/render-progress, in turn], posts: [answers of /api/render: 'lost' | status | object] }
     function make(server) {
         const calls = [];
@@ -152,6 +156,18 @@ describe('the page waits for a render whose request was lost', () => {
         const r = await api.sendRender({}, 'me', null);
         assert.equal(r.success, true);
         assert.equal(calls.filter((c) => c === 'render').length, 2);
+    });
+
+    test('lost before it reached the server, asked by token: the server has none by it ("idle") - sent again', async () => {
+        const { api, calls } = make({ posts: ['lost', { success: true, outputPath: 'D:/out/ep1.mp4' }], progress: [{ status: 'idle', token: 'me' }] });
+        assert.equal((await api.sendRender({}, 'me', null)).success, true);
+        assert.equal(calls.filter((c) => c === 'render').length, 2);
+    });
+
+    test('both export slots busy many times over: waited out, never counted as failed tries', async () => {
+        const { api, calls } = make({ posts: [409, 409, 409, 409, 409, { success: true, outputPath: 'x' }], progress: [{ status: 'done', token: 'other' }] });
+        assert.equal((await api.sendRender({}, 'me', null)).success, true);
+        assert.equal(calls.filter((c) => c === 'render').length, 6);
     });
 
     test('its render failed on the server: the failure, not a resend', async () => {
@@ -268,5 +284,51 @@ describe('the open part\'s tabs are saved and put back', () => {
         assert.match(startup, /armAutoResume\(wait, /);
         assert.match(src, /plan\.running = true;/);
         assert.match(src, /plan\.running = false;\n\s*\}\n\s*savePlan\(\);/);
+    });
+});
+
+describe('exports wait their turn while a subtitle search runs', () => {
+    const createRenderRouter = require('../backend/routes/render');
+    let server, base, searching, clock, started;
+    before(async () => {
+        searching = true;
+        clock = 1000;
+        started = [];
+        const app = express();
+        app.use(express.json());
+        app.use('/api', createRenderRouter({
+            upload: { any: () => (req, res, next) => next() },
+            audioRepair: { getAudioSource: async () => ({ path: __filename }) },
+            renderVideo: (opts, onProgress, onComplete) => { started.push(opts.renderToken); onComplete(opts.outputPath); },
+            getRenderProgress: () => ({ status: 'idle' }),
+            cancelRender: () => true,
+            searchBusy: () => searching,
+            now: () => clock,
+        }));
+        ({ server, base } = await listen(app));
+    });
+    after(() => server.close());
+    const send = (body) => fetch(`${base}/api/render`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+
+    test('held (409, held: search) while searching; goes once the search is done', async () => {
+        const body = { videoFilePath: __filename, renderToken: 'h1', exportPath: os.tmpdir(), outputFileName: 'held1.mp4' };
+        const r = await send(body);
+        assert.equal(r.status, 409);
+        assert.equal((await r.json()).held, 'search');
+        assert.deepEqual(started, []);
+        searching = false;
+        assert.equal((await send(body)).status, 200);
+        assert.deepEqual(started, ['h1']);
+    });
+
+    test('a search that never ends holds an export 20 minutes at most', async () => {
+        searching = true;
+        const body = { videoFilePath: __filename, renderToken: 'h2', exportPath: os.tmpdir(), outputFileName: 'held2.mp4' };
+        assert.equal((await send(body)).status, 409);
+        clock += 19 * 60 * 1000;
+        assert.equal((await send(body)).status, 409);
+        clock += 2 * 60 * 1000;
+        assert.equal((await send(body)).status, 200);
+        assert.ok(started.includes('h2'));
     });
 });

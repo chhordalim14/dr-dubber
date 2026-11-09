@@ -35,6 +35,7 @@ const {
     buildReviewUserPrompt, estimateSpeechSeconds, findOverlongLines
 } = require('../lib/khmer-prompts');
 const { MISSING_RESPONSE_SCHEMA, buildMissingLinesPrompt, checkMissingLine } = require('../lib/missing-lines');
+const { SPLIT_RESPONSE_SCHEMA, buildSplitLinesPrompt, checkSplitLine } = require('../lib/split-lines');
 const {
     CHARACTER_SHEET_SCHEMA, normalizeSheet, mergeSheets, sheetSize,
     applyGlossaryToSheet, formatSheetForPrompt, buildCharacterSheetPrompt,
@@ -408,7 +409,9 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { 
     apiKey = String(apiKey || '').trim();
     if (typeof isGeminiWebKey === 'function' && isGeminiWebKey(apiKey)) {
         const ctx = keyAttemptContext && keyAttemptContext.getStore();
-        return geminiWeb().generate(apiKey, payload, signal, { timeoutMs: Math.max(timeoutMs || 0, 10 * 60 * 1000), noWait: !!(ctx && ctx.apiBackup) });
+        const r = await geminiWeb().generate(apiKey, payload, signal, { timeoutMs: Math.max(timeoutMs || 0, 10 * 60 * 1000), noWait: !!(ctx && ctx.apiBackup) });
+        if (r && (r.success || r.status < 500)) noteKeyAnswered(apiKey);
+        return r;
     }
     const listed = await getCandidateModels(apiKey, requestedModel, signal);
     // A model that answered 404 for this key is left out (unless nothing else is left).
@@ -822,11 +825,14 @@ async function generateText(key, model, payload, signal, opts = {}) {
     return r;
 }
 
-// For routes that were given a single Gemini key: with CodeCraft on, CodeCraft first and that
-// Gemini key as the backup; otherwise exactly the old single-key call.
+// For routes that were given a single Gemini key: with CodeCraft or pool/Gmail keys active,
+// try the full pool with that Gemini key as backup; otherwise the direct single-key call.
 async function generateTextForKey(apiKey, model, payload, signal, opts = {}) {
-    if (!codecraftActive()) return executeGeminiGenerate(apiKey, model, payload, signal, opts);
-    const out = await tryKeysOnce(textKeys([apiKey]), async (key) => {
+    const keys = textKeys([apiKey]);
+    if (!codecraftActive() && keys.length <= 1 && keys[0] === String(apiKey || '').trim()) {
+        return executeGeminiGenerate(apiKey, model, payload, signal, opts);
+    }
+    const out = await tryKeysOnce(keys, async (key) => {
         const r = await generateText(key, model, payload, signal, opts);
         return r.success ? { ok: true, r } : { ok: false, result: r };
     });
@@ -1162,23 +1168,34 @@ async function transcribeClipWithGemini({ apiKey, model, audioBase64, mimeType, 
 // Gemini Web Router: the website writes the lines but guesses their times (seconds off), so
 // while it works the PC hears the same clip and each line gets the time of its own Chinese
 // characters (lib/gemini-web-timing.js). Without the VoxCPM2 install the website's times stay.
+const gwebTimelineCache = new Map(); // clipHash -> Promise<timeline>
 async function transcribeClipWithGeminiWeb({ apiKey, payload, audioBase64, mimeType, clipSec, signal, timeoutMs, usage }) {
     const timing = require('../lib/gemini-web-timing');
-    // Router first: a Gmail busy with another job hands this clip to an API key at once,
-    // before any PC timing is started for it.
+    // Router first / multiple Gmails: a Gmail busy with another job hands this clip to the next
+    // free Gmail (or API backup) at once, before any PC timing is started for it.
     const ctx = keyAttemptContext && keyAttemptContext.getStore();
-    if (ctx && ctx.apiBackup) {
+    if (ctx && (ctx.apiBackup || ctx.hasAlternativeKey)) {
         const busy = geminiWeb().busyResult(apiKey);
         if (busy) return { ok: false, result: busy };
     }
     let timelineP = null;
     if (timing.available()) {
-        const ext = /video/.test(mimeType || '') ? '.mp4' : /wav/.test(mimeType || '') ? '.wav' : /ogg/.test(mimeType || '') ? '.ogg' : '.mp3';
-        const clipFile = path.join(require('os').tmpdir(), `gweb_clip_${crypto.randomBytes(5).toString('hex')}${ext}`);
-        fs.writeFileSync(clipFile, Buffer.from(audioBase64, 'base64'));
-        timelineP = timing.timelineFor(clipFile, { ffmpeg: _getFFmpegBinary() })
-            .catch((e) => { console.warn(`[Transcribe] PC timing failed, keeping Gemini Web's own times: ${e.message}`); return null; })
-            .finally(() => fs.promises.unlink(clipFile).catch(() => {}));
+        const clipHash = crypto.createHash('md5').update(audioBase64).digest('hex');
+        timelineP = gwebTimelineCache.get(clipHash) || null;
+        if (!timelineP) {
+            const ext = /video/.test(mimeType || '') ? '.mp4' : /wav/.test(mimeType || '') ? '.wav' : /ogg/.test(mimeType || '') ? '.ogg' : '.mp3';
+            const clipFile = path.join(require('os').tmpdir(), `gweb_clip_${crypto.randomBytes(5).toString('hex')}${ext}`);
+            fs.writeFileSync(clipFile, Buffer.from(audioBase64, 'base64'));
+            timelineP = timing.timelineFor(clipFile, { ffmpeg: _getFFmpegBinary() })
+                .catch((e) => {
+                    gwebTimelineCache.delete(clipHash);
+                    console.warn(`[Transcribe] PC timing failed, keeping Gemini Web's own times: ${e.message}`);
+                    return null;
+                })
+                .finally(() => fs.promises.unlink(clipFile).catch(() => {}));
+            if (gwebTimelineCache.size >= 24) gwebTimelineCache.delete(gwebTimelineCache.keys().next().value);
+            gwebTimelineCache.set(clipHash, timelineP);
+        }
     }
     // The website's answers vary: now and then it skips half the clip (seen: 13 lines where the
     // next try gave 35). The PC heard the clip too, so an answer covering under 75% of the speech
@@ -1273,7 +1290,7 @@ function geminiRetryLimit(result) {
 const GEMINI_BUSY_RETRY_BUDGET_MS = 30 * 60 * 1000;
 const GEMINI_BUSY_MAX_WAIT_MS = 30 * 1000;
 function isGeminiBusy(result) {
-    return !!result && result.code !== 'NETWORK_ERROR' && (result.code === 'OVERLOADED' || Number(result.status) === 503);
+    return !!result && result.code !== 'NETWORK_ERROR' && (result.code === 'OVERLOADED' || result.code === 'GWEB_BUSY' || result.code === 'GWEB_SIGNED_OUT' || Number(result.status) === 503);
 }
 
 function geminiShouldRetry(result, otherRetries, startedAt, busyBudgetMs = GEMINI_BUSY_RETRY_BUDGET_MS) {
@@ -1781,7 +1798,7 @@ async function flushReviewGroup(groupKey) {
             addTokenUsage(first.usage, r); // counted once, on the first tab's total
             const parsed = parseJsonArrayLoose(r.text);
             return Array.isArray(parsed) ? { ok: true, parsed } : { ok: false, result: { status: 502, error: 'JSON_PARSE_ERROR' } };
-        }, null, { retries: GEMINI_RETRY_DELAYS_MS.length });
+        }, null, { retries: GEMINI_RETRY_DELAYS_MS.length, busyBudgetMs: REPAIR_BUSY_BUDGET_MS });
     } catch (e) {
         out = { ok: false, result: { error: e.message } };
     }
@@ -1834,7 +1851,7 @@ async function reviewKhmerLines({ lines, texts, apply, genre, glossary, glossary
                 addTokenUsage(usage, r);
                 const parsed = parseJsonArrayLoose(r.text);
                 return Array.isArray(parsed) ? { ok: true, parsed } : { ok: false, result: { status: 502, error: 'JSON_PARSE_ERROR' } };
-            }, signal, { retries: GEMINI_RETRY_DELAYS_MS.length });
+            }, signal, { retries: GEMINI_RETRY_DELAYS_MS.length, busyBudgetMs: REPAIR_BUSY_BUDGET_MS });
         }
         if (!out.ok) {
             failed += idx.length;
@@ -2004,7 +2021,7 @@ async function shortenLines({ items, targetLanguage = 'Khmer', genre = 'historic
             const parsed = parseJsonArrayLoose(r.text);
             if (!Array.isArray(parsed)) return { ok: false, result: { status: 502, error: 'JSON_PARSE_ERROR', message: 'The AI did not return a list of lines.' } };
             return { ok: true, parsed };
-        }, signal, { retries: GEMINI_RETRY_DELAYS_MS.length });
+        }, signal, { retries: GEMINI_RETRY_DELAYS_MS.length, busyBudgetMs: REPAIR_BUSY_BUDGET_MS });
         if (!out.ok) return { ok: false, result: out.result, results };
 
         const requestedIds = new Set(chunk.map(l => l.id));
@@ -2174,7 +2191,12 @@ function createGeminiRouter(options = {}) {
             console.warn('[Outputs] Error saving transcribe chunk:', err.message);
         }
 
-        if (!apiKey || !apiKey.trim()) {
+        const rawKeys = [apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])]
+            .map(k => String(k || '').trim())
+            .filter((k, i, a) => k && a.indexOf(k) === i);
+        const dpKeys = getDRRouterKeys();
+        const keyPool = orderPool(rawKeys.length ? [...rawKeys, ...dpKeys.filter(k => !rawKeys.includes(k))] : dpKeys);
+        if (!keyPool.length) {
             return res.status(400).json({
                 success: false,
                 error: 'INVALID_API_KEY',
@@ -2212,7 +2234,10 @@ function createGeminiRouter(options = {}) {
 
             const totalSec = (await probeAudioDuration(inputFile)) || Number(duration) || 0;
             const fastMode = typeof drRouterFastMode === 'function' && drRouterFastMode();
-            const saverOn = apiSaver && !fastMode;
+            const webLanes = webLaneCount(keyPool);
+            // Gemini Web Router has its own credits and shorter output window on gemini.google.com,
+            // so 3-minute chunks avoid truncated web replies and run faster through PC timing.
+            const saverOn = apiSaver && !fastMode && !webLanes;
             const chunkPlan = saverOn ? { singleMax: SAVER_SINGLE_MAX_SEC, target: SAVER_CHUNK_TARGET_SEC } : {};
             const silences = totalSec > (chunkPlan.singleMax || TRANSCRIBE_SINGLE_MAX_SEC) ? await detectSilences(inputFile, abortCtrl.signal) : [];
             const chunks = totalSec > 0 ? planTranscribeChunks(totalSec, silences, chunkPlan) : [{ start: 0, end: 0 }];
@@ -2229,15 +2254,10 @@ function createGeminiRouter(options = {}) {
             const castParts = videoSource ? seriesCastParts(castDir(CHARACTER_SHEETS_DIR, sourceFilePath), seriesSpeakers, seriesSheet) : [];
             if (videoSource) console.log(`[Transcribe] Gemini sees the video (who talks)${castParts.length ? `, with pictures of ${castParts.filter(p => p.text && p.text.endsWith('):')).length} known speaker(s)` : ''}`);
 
-            const rawKeys = [apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])]
-                .map(k => String(k || '').trim())
-                .filter((k, i, a) => k && a.indexOf(k) === i);
-            const dpKeys = getDRRouterKeys();
-            const keyPool = orderPool(rawKeys.length ? [...rawKeys, ...dpKeys.filter(k => !rawKeys.includes(k))] : dpKeys);
             // Normally a lane does two chunks in a row (the second sees the first one's last lines);
             // Fast mode gives every chunk its own key so the whole film is asked at once.
             // Router first: one lane per Gmail; the API keys stay behind them as backups.
-            const laneCount = Math.max(1, Math.min(webLaneCount(keyPool) || keyPool.length, laneCap, fastMode ? chunks.length : Math.ceil(chunks.length / 2)));
+            const laneCount = Math.max(1, Math.min(webLanes || keyPool.length, laneCap, fastMode ? chunks.length : Math.ceil(chunks.length / 2)));
             const chunkCues = new Array(chunks.length);
             const rawParts = new Array(chunks.length);
             // phase: 'translate' while the chunks are with Gemini, 'polish' for the checks after.
@@ -2279,11 +2299,16 @@ function createGeminiRouter(options = {}) {
                 const to = Math.floor((lane + 1) * chunks.length / laneCount);
                 const keys = [...keyPool.slice(lane), ...keyPool.slice(0, lane)];
                 let laneCues = [];
+                let nextClipP = from < to ? cutClip(from) : null;
+                if (nextClipP) nextClipP.catch(() => {});
                 for (let i = from; i < to; i++) {
                     if (failure || abortCtrl.signal.aborted) return;
                     const chunk = chunks[i];
                     const clipSec = chunk.end - chunk.start;
-                    const { clipBase64, clipMime } = await cutClip(i);
+                    const curClipP = nextClipP || cutClip(i);
+                    nextClipP = (i + 1 < to) ? cutClip(i + 1) : null;
+                    if (nextClipP) nextClipP.catch(() => {});
+                    const { clipBase64, clipMime } = await curClipP;
                     const cacheKey = transcribeCacheKey(clipBase64, [promptOpts.genreGuidance, promptOpts.glossaryHint, laneCues.slice(-2)]);
                     let out = transcribeCacheGet(cacheKey);
                     if (out) console.log(`[Transcribe] Chunk ${i + 1}/${chunks.length} reused from cache`);
@@ -2746,7 +2771,8 @@ function createGeminiRouter(options = {}) {
             return res.status(400).json({ success: false, error: 'No dialogue text provided.' });
         }
 
-        if ((!apiKey || !apiKey.trim()) && !codecraftActive()) {
+        const keyPool = textKeys([apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])]);
+        if (!keyPool.length) {
             return res.status(400).json({ success: false, error: 'INVALID_API_KEY', message: 'API key is required.' });
         }
 
@@ -2756,7 +2782,7 @@ function createGeminiRouter(options = {}) {
             try {
                 const out = await shortenLines({
                     items: [{ id: '0', text, seconds: lineSeconds(req.body), originalText }],
-                    genre, glossary, keyPool: textKeys([apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])]), model,
+                    genre, glossary, keyPool, model,
                     signal: abortCtrl.signal, strength: 'shorter'
                 });
                 if (!out.ok) return res.status(out.result.status || 500).json({ success: false, error: out.result.message || out.result.error || 'REWRITE_FAILED' });
@@ -2851,7 +2877,8 @@ Respond ONLY with a JSON object: { "rewrittenText": "..." }`;
             return res.status(400).json({ success: false, error: 'No subtitles provided for refactoring.' });
         }
 
-        if ((!apiKey || !apiKey.trim()) && !codecraftActive()) {
+        const keyPool = textKeys([apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])]);
+        if (!keyPool.length) {
             return res.status(400).json({ success: false, error: 'INVALID_API_KEY', message: 'Gemini API key is required in Settings.' });
         }
 
@@ -2864,7 +2891,7 @@ Respond ONLY with a JSON object: { "rewrittenText": "..." }`;
                     .filter(s => s.text.trim());
                 const out = await shortenLines({
                     items, genre: genre || dramaRegister || 'historical', glossary,
-                    keyPool: textKeys([apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])]), model, signal: abortCtrl.signal, strength: 'shorter'
+                    keyPool, model, signal: abortCtrl.signal, strength: 'shorter'
                 });
                 if (!out.ok) return geminiFailureResponse(res, out.result);
                 const byId = new Map(out.results.map(r => [r.id, r.text]));
@@ -3016,7 +3043,8 @@ ${JSON.stringify(chunk)}`;
             return res.status(400).json({ success: false, error: 'No subtitles provided for condensing.' });
         }
 
-        if ((!apiKey || !apiKey.trim()) && !codecraftActive()) {
+        const keyPool = textKeys([apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])]);
+        if (!keyPool.length) {
             return res.status(400).json({ success: false, error: 'INVALID_API_KEY', message: 'API key is required in Settings.' });
         }
 
@@ -3029,7 +3057,7 @@ ${JSON.stringify(chunk)}`;
                 .filter(s => s.text.trim());
             const out = await shortenLines({
                 items, targetLanguage, genre: genre || dramaRegister || 'historical', glossary,
-                keyPool: textKeys([apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])]), model, signal: abortCtrl.signal, strength: 'fit'
+                keyPool, model, signal: abortCtrl.signal, strength: 'fit'
             });
             if (!out.ok) return geminiFailureResponse(res, out.result);
             const byId = new Map(out.results.map(r => [r.id, r.text]));
@@ -3048,7 +3076,7 @@ ${JSON.stringify(chunk)}`;
 
     // ── Translate missing lines route ──
     router.post('/translate-missing-lines', async (req, res) => {
-        const { lines: rawLines = [], targetLanguage = 'Khmer', genre = 'historical', glossary, apiKey, apiKeys, model = 'gemini-3.8-flash', sourceFilePath, requestId } = req.body || {};
+        const { lines: rawLines = [], targetLanguage = 'Khmer', genre = 'historical', glossary, apiKey, apiKeys, model = 'gemini-3.8-flash', sourceFilePath, requestId, lastResortKeys } = req.body || {};
         const items = (Array.isArray(rawLines) ? rawLines : []).filter(l => l && l.id !== undefined && String(l.onScreen || '').trim()).slice(0, 200);
         if (!items.length) return res.json({ success: true, results: [] });
         const keyPool = textKeys([apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])]);
@@ -3067,14 +3095,30 @@ ${JSON.stringify(chunk)}`;
                 contents: [{ role: 'user', parts: [{ text: buildMissingLinesPrompt({ items, targetLanguage, registerGuidance, glossaryHint }) }] }],
                 generationConfig: { responseMimeType: 'application/json', responseSchema: MISSING_RESPONSE_SCHEMA }
             };
-            const out = await geminiWithKeys(keyPool, async (key) => {
+            const ask = (pool) => geminiWithKeys(pool, async (key) => {
                 const r = await generateText(key, model, payload, abortCtrl.signal, { timeoutMs: GEMINI_TEXT_TIMEOUT_MS, thinking: 'low' });
                 if (!r.success) return { ok: false, result: r };
                 const parsed = parseJsonArrayLoose(r.text);
                 if (!Array.isArray(parsed)) return { ok: false, result: { status: 502, error: 'JSON_PARSE_ERROR', message: 'The AI did not return a list of lines.' } };
                 return { ok: true, parsed };
             }, abortCtrl.signal, { retries: GEMINI_RETRY_DELAYS_MS.length });
-            if (!out.ok) return geminiFailureResponse(res, out.result);
+            let out = await ask(keyPool);
+            // The series' last check before export (every subtitle on screen has a voice): no Gmail
+            // answered, so an API key from Settings does - even with "Gmails only" on. A few short
+            // lines a series; the other way is a silent line in the export (2026-11-09: 6 subtitles
+            // in a row at the end of a piece went out silent).
+            let via = 'pool';
+            const rescue = (Array.isArray(lastResortKeys) ? lastResortKeys : []).map(k => String(k || '').trim())
+                .filter((k, i, a) => k && a.indexOf(k) === i && !isGeminiWebKey(k) && !keyPool.includes(k));
+            if (!out.ok && !abortCtrl.signal.aborted && rescue.length) {
+                console.warn(`[Missing lines] no Gmail answered (${(out.result && (out.result.error || out.result.code)) || 'failed'}) - asking an API key`);
+                out = await ask(rescue);
+                via = 'API key';
+            }
+            if (!out.ok) {
+                console.warn(`[Missing lines] ${items.length} subtitle(s) got no answer: ${(out.result && (out.result.message || out.result.error)) || 'failed'}`);
+                return geminiFailureResponse(res, out.result);
+            }
             const asked = new Set(items.map(it => String(it.id)));
             const results = [];
             for (const answer of out.parsed) {
@@ -3085,6 +3129,53 @@ ${JSON.stringify(chunk)}`;
                 if (glossary) text = applyGlossary(text, glossary);
                 if (text) results.push({ ...ok, text });
             }
+            console.log(`[Missing lines] ${items.length} subtitle(s) with no line: ${results.length} got one, ${items.length - results.length} not speech${via === 'pool' ? '' : ` (via ${via})`}`);
+            res.json({ success: true, results });
+        } catch (e) {
+            if (e.name === 'AbortError') return res.json({ success: false, error: 'CANCELLED' });
+            res.status(500).json({ success: false, error: e.message });
+        } finally {
+            if (requestId) activeTranscribeRequests.delete(requestId);
+        }
+    });
+
+    // Joined lines cut at their pauses (lib/split-lines.js): { items: [{ id, line, original, parts }] }
+    // -> { results: [{ id, parts }] }; an item whose split did not pass checkSplitLine is left out
+    // (the line stays as it was).
+    router.post('/split-joined-lines', async (req, res) => {
+        const { items: rawItems = [], targetLanguage = 'Khmer', apiKey, apiKeys, model = 'gemini-3.8-flash', requestId } = req.body || {};
+        const items = (Array.isArray(rawItems) ? rawItems : []).filter(it => it && it.id !== undefined && String(it.line || '').trim() && Array.isArray(it.parts) && it.parts.length >= 2).slice(0, 120);
+        if (!items.length) return res.json({ success: true, results: [] });
+        const keyPool = textKeys([apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])]);
+        if (keyPool.length === 0) {
+            return res.status(400).json({ success: false, error: 'INVALID_API_KEY', message: 'Gemini API key is required in Settings.' });
+        }
+        const abortCtrl = new AbortController();
+        if (requestId) activeTranscribeRequests.set(requestId, abortCtrl);
+        try {
+            const isKhmer = /khmer|^km/i.test(String(targetLanguage));
+            const payload = {
+                contents: [{ role: 'user', parts: [{ text: buildSplitLinesPrompt({ items, targetLanguage }) }] }],
+                generationConfig: { responseMimeType: 'application/json', responseSchema: SPLIT_RESPONSE_SCHEMA }
+            };
+            const out = await geminiWithKeys(keyPool, async (key) => {
+                const r = await generateText(key, model, payload, abortCtrl.signal, { timeoutMs: GEMINI_TEXT_TIMEOUT_MS, thinking: 'low' });
+                if (!r.success) return { ok: false, result: r };
+                const parsed = parseJsonArrayLoose(r.text);
+                if (!Array.isArray(parsed)) return { ok: false, result: { status: 502, error: 'JSON_PARSE_ERROR', message: 'The AI did not return a list of lines.' } };
+                return { ok: true, parsed };
+            }, abortCtrl.signal, { retries: GEMINI_RETRY_DELAYS_MS.length });
+            if (!out.ok) return geminiFailureResponse(res, out.result);
+            const byId = new Map(items.map(it => [String(it.id), it]));
+            const results = [];
+            for (const answer of out.parsed) {
+                const item = answer && byId.get(String(answer.id));
+                const parts = checkSplitLine(answer, item, { isKhmer });
+                if (!parts) continue;
+                byId.delete(String(answer.id));
+                results.push({ id: String(answer.id), parts: isKhmer ? parts.map(p => sanitizeKhmerDialogue(p) || p) : parts });
+            }
+            console.log(`[Split lines] ${items.length} joined line(s) with pauses: ${results.length} cut into parts`);
             res.json({ success: true, results });
         } catch (e) {
             if (e.name === 'AbortError') return res.json({ success: false, error: 'CANCELLED' });

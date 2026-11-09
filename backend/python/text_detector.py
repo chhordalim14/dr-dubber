@@ -303,17 +303,27 @@ def tidy_lines(found):
                 and text_alike(Counter(prev['texts']).most_common(1)[0][0], Counter(ln['texts']).most_common(1)[0][0]) >= 0.6):
             prev.update(end=ln['end'], safe_end=ln['safe_end'], x0=min(prev['x0'], ln['x0']), x1=max(prev['x1'], ln['x1']))
             prev['texts'] += ln['texts']
+            prev['ys'] += ln['ys']
             continue
         out.append(ln)
     for ln in out:
         ln['text'] = Counter(ln['texts']).most_common(1)[0][0]
+        # Where the line's letters are: the typical top and bottom of its reads (the text does not
+        # move while it shows; one odd read does not stretch it).
+        ln['y0'] = float(np.median([y[0] for y in ln['ys']]))
+        ln['y1'] = float(np.median([y[1] for y in ln['ys']]))
     return out
 
 
-def blur_segments(lines, duration, pad_x):
+def blur_segments(lines, duration, pad_x, pad_y):
     """What the render blurs: each line from the last read without it to the first read
     without it again (sure to hold every frame of the text, even if a change was put a
-    frame off), a little wider than the text. -> [{'start','end','x0','x1'}]"""
+    frame off), a little wider and taller than its own letters.
+    -> [{'start','end','x0','x1','y0','y1'}]
+
+    Each line its own height: one height for the whole video (every box seen anywhere on the
+    row) blurred one-line subtitles 2-5 lines tall when the row moved between episodes or a
+    two-line subtitle showed once (measured 2026-11-09: 41 of 575 videos 1.4x-5.4x too tall)."""
     out = []
     for ln in lines:
         end = ln['safe_end'] + END_EXTRA
@@ -322,6 +332,8 @@ def blur_segments(lines, duration, pad_x):
             'end': min(duration, end) if duration else end,
             'x0': max(0.0, ln['x0'] - pad_x),
             'x1': min(100.0, ln['x1'] + pad_x),
+            'y0': max(0.0, ln['y0'] - pad_y),
+            'y1': min(100.0, ln['y1'] + pad_y),
         })
     # A short pause between two lines stays blurred: the blur switching off and on again
     # for a moment shows more than an empty strip blurred a little longer.
@@ -432,6 +444,7 @@ def main():
                 # Reading order: top row first (a two-row subtitle), then left to right.
                 texts.sort(key=lambda r: (round(r[0][1] / max(1.0, line_px)), r[0][0]))
                 line = {'x0': min(r[0][0] for r in texts), 'x1': max(r[0][2] for r in texts),
+                        'y0': min(r[0][1] for r in texts), 'y1': max(r[0][3] for r in texts),
                         'text': ''.join(r[1] for r in texts)}
                 letters_seen = letters_seen or int(glyphs[:, int(line['x0']):int(line['x1']) + 1].sum()) >= 4 * MIN_GLYPH_PIXELS
 
@@ -439,6 +452,8 @@ def main():
         if before and line and (line is before or same_line(before, line, prev['gray'], gray)):
             cur['x0'], cur['x1'] = min(cur['x0'], line['x0']), max(cur['x1'], line['x1'])
             cur['texts'].append(line['text'])
+            if line is not before:
+                cur['ys'].append((line['y0'], line['y1']))
         elif before or line:
             spans = [s for s in (before, line) if s]
             at = change_frame(prev, {'t': t, 'thumb': thumb}, between,
@@ -449,7 +464,7 @@ def main():
                 cur = None
             if line:
                 cur = {'start': at, 'safe_start': prev['t'] if prev else 0.0, 'x0': line['x0'], 'x1': line['x1'],
-                       'texts': [line['text']]}
+                       'texts': [line['text']], 'ys': [(line['y0'], line['y1'])]}
         prev = {'t': t, 'gray': gray, 'thumb': thumb, 'small': small, 'glyphs': glyphs, 'line': line}
         between = []
         done += 1
@@ -461,21 +476,29 @@ def main():
         found.append(cur)
 
     to_pct = 100.0 / STRIP_WIDTH
+    # strip pixels -> % of the frame height (the strip is the frame's rows from crop_y, scaled to out_h)
+    y_pct = lambda v: (crop_y + v * crop_h / out_h) / height * 100.0
     lines = tidy_lines(found)
     for ln in lines:
         ln['x0'], ln['x1'] = ln['x0'] * to_pct, ln['x1'] * to_pct
+        ln['y0'], ln['y1'] = y_pct(ln['y0']), y_pct(ln['y1'])
     pad_x = max(1.2, line_h * height / width * 0.35)  # a little more than the text, in % of width
-    segs = blur_segments(lines, duration, pad_x)
+    segs = blur_segments(lines, duration, pad_x, line_h * 0.3)
     y = max(0.0, ry0 - line_h * 0.3)
     h = min(100.0, ry1 + line_h * 0.3) - y
+    # The typical one-line subtitle (the page centers its Khmer subtitle on it).
+    one = [ln for ln in lines if (ln['y1'] - ln['y0']) <= 1.5 * line_h] or lines
+    text_y = float(np.median([ln['y0'] for ln in one])) if one else ry0
+    text_h = float(np.median([ln['y1'] - ln['y0'] for ln in one])) if one else ry1 - ry0
     progress(total, total)
     emit({
         'success': True, 'width': width, 'height': height, 'duration': round(duration, 3),
-        'row': {'y': round(y, 2), 'h': round(h, 2), 'textY': round(ry0, 2), 'textH': round(ry1 - ry0, 2)},
+        'row': {'y': round(y, 2), 'h': round(h, 2), 'textY': round(text_y, 2), 'textH': round(text_h, 2)},
         'lines': [{'start': round(ln['start'], 3), 'end': round(ln['end'], 3), 'x': round(ln['x0'], 2),
-                   'w': round(ln['x1'] - ln['x0'], 2), 'text': ln['text']} for ln in lines],
+                   'w': round(ln['x1'] - ln['x0'], 2), 'y': round(ln['y0'], 2), 'h': round(ln['y1'] - ln['y0'], 2),
+                   'text': ln['text']} for ln in lines],
         'segments': [{'start': round(s['start'], 2), 'end': round(s['end'], 2), 'x': round(s['x0'], 2),
-                      'y': round(y, 2), 'w': round(s['x1'] - s['x0'], 2), 'h': round(h, 2)} for s in segs],
+                      'y': round(s['y0'], 2), 'w': round(s['x1'] - s['x0'], 2), 'h': round(s['y1'] - s['y0'], 2)} for s in segs],
         'seconds': round(time.time() - t_start, 1),
     })
     return 0

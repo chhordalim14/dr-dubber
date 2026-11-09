@@ -93,9 +93,12 @@ function makeSeries({ parts = 3, outcome = () => 'done', renderMs = 10, dubMs = 
       savePlan();
     };
 
-    // The render queue: runs pending items one at a time; Stop cancels what hasn't finished.
+    // The render queue as the app runs it: two items at once, in queue order; a part asking while a
+    // run is going joins it (queueWanted); Stop cancels what hasn't finished.
     const renderQueue = env.renderQueue;
-    let queueRunning = false, queueStops = 0, queueStopRequested = false;
+    let queueRunning = false, queueStops = 0, queueStopRequested = false, queueWorkers = 0;
+    const queueWanted = new Set();
+    const cancelItemRender = async (item) => { item._stopRequested = true; };
     // The server: cancel-render, and the series checkpoints (backend/routes/series-checkpoint.js).
     const fetch = async (url, opts) => {
       const body = opts && opts.body ? JSON.parse(opts.body) : null;
@@ -107,29 +110,40 @@ function makeSeries({ parts = 3, outcome = () => 'done', renderMs = 10, dubMs = 
     };
     const renderQueueList = () => { };
     const updateQueueBadge = () => { };
-    const runRenderQueue = async (only) => {
-      if (queueRunning) return;
-      queueRunning = true;
-      queueStopRequested = false;
-      for (const item of renderQueue) {
-        if (queueStopRequested) break;
-        if (item.status !== 'pending' || (only && !only.has(item))) continue;
+    const queueWorker = async () => {
+      for (;;) {
+        const item = queueStopRequested ? null : renderQueue.find((i) => i.status === 'pending' && queueWanted.has(i));
+        if (!item) {
+          queueWorkers--;
+          if (queueWorkers === 0) { queueRunning = false; queueStopRequested = false; queueWanted.clear(); }
+          return;
+        }
         item.status = 'running';
+        item._stopRequested = false;
         item.tries = (item.tries || 0) + 1;
         const tab = item.tab || item.projectLabel; // a queue item made from a checkpoint has no fake tab
         env.log.push('render ' + tab);
         await sleep(renderMs);
-        item.status = queueStopRequested ? 'cancelled' : outcome(item);
+        item.status = queueStopRequested || item._stopRequested ? 'cancelled' : outcome(item);
         if (item.status === 'done') item.outputPath = 'D:/out/' + tab + '.mp4';
       }
-      queueRunning = false;
-      queueStopRequested = false;
+    };
+    const runRenderQueue = async (only) => {
+      while (queueRunning && queueStopRequested) await sleep(1);
+      const asked = renderQueue.filter((i) => i.status === 'pending' && (!only || only.has(i)));
+      if (!asked.length) return;
+      asked.forEach((i) => queueWanted.add(i));
+      if (!queueRunning) { queueRunning = true; queueStopRequested = false; }
+      const start = Math.min(2, renderQueue.filter((i) => i.status === 'pending' && queueWanted.has(i)).length) - queueWorkers;
+      for (let k = 0; k < start; k++) { queueWorkers++; queueWorker(); }
+      while (asked.some((i) => i.status === 'pending' || i.status === 'running')) await sleep(1);
     };
     const stopRenderQueue = async () => {
       if (!queueRunning) return;
       queueStopRequested = true;
       queueStops++;
       renderQueue.forEach((i) => { if (i.status === 'pending') i.status = 'cancelled'; });
+      queueWanted.clear();
     };
     ${renderBlock}
     const window = { seriesRenderApi: {
@@ -141,6 +155,7 @@ function makeSeries({ parts = 3, outcome = () => 'done', renderMs = 10, dubMs = 
       },
       renderItems: renderSeriesItems,
       stop: stopRenderQueue,
+      stops: () => queueStops,
       stopItems: stopSeriesItems, // the real one (in renderBlock)
       restoreItems: restoreSeriesItems, // the real one (in renderBlock)
     } };
@@ -176,7 +191,7 @@ describe('Dub Whole Series hands-free export', () => {
     assert.ok(firstIndex(log, /^dub part2/) < lastIndex(log, /^render part1_/), log.join('\n'));
     // Part 1's tabs were closed (they are in the queue) before part 2 opened.
     assert.ok(lastIndex(log, /^close part1_/) < firstIndex(log, /^dub part2/));
-    // Part 2's export starts only after part 1's is complete, and so on.
+    // Exports start in part order (two render at once, but part 1's tabs are taken first).
     assert.ok(lastIndex(log, /^render part1_/) < firstIndex(log, /^render part2_/));
     assert.ok(lastIndex(log, /^render part2_/) < firstIndex(log, /^render part3_/));
     assert.ok(plan.parts.every((p) => p.status === 'done' && p.exported));
@@ -272,25 +287,28 @@ describe('Dub Whole Series hands-free export', () => {
     assert.equal(env.log.filter((l) => /^render /.test(l)).length, 6, 'the tabs are not rendered again');
   });
 
-  test('a tab that fails twice in the background is rendered again before the next export', async () => {
+  test('a tab that fails twice in the background is rendered again before the series is joined', async () => {
     const outcome = (item) => (item.tab === 'part1_tab2' && item.tries <= 2 ? 'error' : 'done');
     const { env, plan, api } = makeSeries({ parts: 2, outcome });
     await api.exportAndContinue();
     assert.ok(plan.parts.every((p) => p.exported));
     assert.equal(env.renderQueue.find((i) => i.tab === 'part1_tab2').tries, 3);
-    assert.ok(env.toasts.some((t) => t.type === 'warning' && /Part 1: 2 of 3/.test(t.m)));
-    assert.ok(lastIndex(env.log, /^render part1_/) < firstIndex(env.log, /^render part2_/));
+    assert.ok(env.toasts.some((t) => t.type === 'warning' && /Part 1: 2 of 3/.test(t.m) && /before the whole series is joined/.test(t.m)));
+    // Part 2 did not wait for it: its tabs rendered before part 1's third try.
+    assert.ok(firstIndex(env.log, /^render part2_/) < lastIndex(env.log, /^render part1_tab2/));
   });
 
-  test('a tab that keeps failing pauses the series before the next export; Continue finishes both', async () => {
+  test('a tab that keeps failing does not hold up the next part; the series pauses before the join; Continue finishes both', async () => {
     let broken = true;
     const outcome = (item) => (item.tab === 'part1_tab2' && broken ? 'error' : 'done');
-    const { env, plan, projects, api } = makeSeries({ parts: 2, outcome });
+    const { env, plan, api } = makeSeries({ parts: 2, outcome });
     await assert.rejects(api.exportAndContinue(), /Part 1: 2 of 3 tab\(s\) exported \(1 failed\)/);
     assert.equal(plan.parts[0].exported, undefined);
     assert.equal(plan.parts[1].status, 'done');
-    assert.deepEqual(projects.map((p) => p.name), ['part2_tab1', 'part2_tab2', 'part2_tab3'], 'part 2 is still open');
-    assert.equal(firstIndex(env.log, /^queue .*part2/), -1, 'part 2 is not in the queue yet');
+    // Part 2 was dubbed and exported anyway (the failed tab of part 1 did not hold it up).
+    assert.ok(plan.parts[1].exported, 'part 2 exported');
+    assert.ok(firstIndex(env.log, /^render part2_/) >= 0);
+    assert.equal(firstIndex(env.log, /^join series/), -1, 'not joined with a tab missing');
 
     broken = false; // fixed; Continue
     api.newRun();
@@ -323,9 +341,9 @@ describe('Dub Whole Series hands-free export', () => {
   test('the render queue\'s own Stop while the series waits: the series pauses instead of rendering it again', async () => {
     const { env, plan, api } = makeSeries({ parts: 2, renderMs: 30, dubMs: 5 });
     const run = api.exportAndContinue();
-    await sleep(45); // part 2 is dubbed; the series waits for part 1's second tab
+    await sleep(45); // part 2 is dubbed; part 1's third tab renders (two render at once: 1 and 2 are done)
     await api.stopQueue();
-    await assert.rejects(run, /Part 1's export was stopped \(1 of 3 tab\(s\) exported\)\. Press Continue to export the rest\./);
+    await assert.rejects(run, /Part 1's export was stopped \(2 of 3 tab\(s\) exported\)\. Press Continue to export the rest\./);
     const part1 = env.renderQueue.filter((i) => /^part1_/.test(i.tab));
     assert.ok(part1.every((i) => (i.tries || 0) <= 1), 'nothing rendered again after the Stop');
     assert.ok(part1.some((i) => i.status === 'cancelled'));

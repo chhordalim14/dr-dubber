@@ -1705,7 +1705,7 @@
     try {
       const res = await fetch(`${API_BASE}/dubber-keys`);
       const d = await res.json();
-      if (d && d.success && Array.isArray(d.keys)) { pool.keys = d.keys.filter(Boolean); pool.routerFirst = !!d.routerFirst; }
+      if (d && d.success && Array.isArray(d.keys)) { pool.keys = d.keys.filter(Boolean); pool.routerFirst = !!d.routerFirst; pool.gmailOnly = !!d.gmailOnly; }
     } catch (e) { /* backend not up yet: keep the last list */ }
     return pool.keys.slice();
   }
@@ -1717,9 +1717,10 @@
       const own = (Array.isArray(keys) ? keys : []).map((k) => String(k || '').trim()).filter(Boolean);
       const rest = pool.keys.filter((k) => !own.includes(k));
       // Gemini Web Router "Router first": its Gmails ("gweb:") lead, so a batch gives them the
-      // first tabs and Settings keys follow as backups.
+      // first tabs and Settings keys follow as backups (or Gmails only when gmailOnly is on).
       if (pool.routerFirst) {
         const web = rest.filter((k) => k.startsWith('gweb:'));
+        if (pool.gmailOnly && web.length) return web;
         return [...web, ...own, ...rest.filter((k) => !k.startsWith('gweb:'))];
       }
       return [...own, ...rest];

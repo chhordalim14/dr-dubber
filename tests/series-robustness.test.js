@@ -23,9 +23,10 @@ test('a blur that can\'t be placed fails the render instead of showing the old s
 });
 
 test('Stop before FFmpeg starts marks the job; the render checks before every FFmpeg start', () => {
-    assert.match(renderSrc, /if \(!activeRenderProcess && currentRenderJob && currentRenderJob\.status === 'rendering'\) \{\n\s+currentRenderJob\.cancelRequested = true;/);
+    // Each export has its own job (two can run at once): Stop marks that one before FFmpeg starts.
+    assert.match(renderSrc, /if \(!job\.proc\) \{\n\s+job\.cancelRequested = true;/);
     assert.equal((renderSrc.match(/stopIfCancelled\(\);\n\s+const ffmpeg = spawn\(/g) || []).length, 2);
-    assert.match(renderSrc, /currentRenderJob\.status = err\.cancelled \? 'cancelled' : 'error';/);
+    assert.match(renderSrc, /job\.status = err\.cancelled \? 'cancelled' : 'error';/);
 });
 
 test('separated music is cleaned up every hour, FFmpeg stems after 2 days', () => {

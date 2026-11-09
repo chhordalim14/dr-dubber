@@ -14,7 +14,9 @@ const fs = require('fs');
 const { execFile } = require('child_process');
 
 const GRID = 0.02;         // box sides snap to 2% of the width, so lines of similar length share a chain
-const BLUR_OF_HEIGHT = 0.17;    // blur radius as a share of the box height: text gone, scene still there
+const BLUR_OF_HEIGHT = 0.25;    // blur radius as a share of the box height: text gone, scene still there (0.17 when
+                                // every box was a whole row tall; a box the size of its own line needs more, or
+                                // each letter shows as a soft blob - seen 2026-11-09)
 const FEATHER_OF_HEIGHT = 0.13; // soft edge as a share of the box height
 
 const num = (v) => (typeof v === 'number' ? v : parseFloat(v));

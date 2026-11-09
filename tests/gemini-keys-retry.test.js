@@ -176,6 +176,23 @@ describe('geminiWithKeys', () => {
     assert.equal(out.key, 'g1');
     assert.deepEqual(asked, ['cc_a', 'cc_b', 'g1']);
   });
+
+  test('Gemini Web Router: a signed-out or busy Gmail tries the next Gmail in the same round, and waits out profile refresh when all are signed out', async () => {
+    const { geminiWithKeys, waits } = load();
+    const gwebSignedOut = { ok: false, result: { success: false, status: 502, code: 'GWEB_SIGNED_OUT', error: 'signed out' } };
+    const asked = [];
+    let round = 0;
+    const out = await geminiWithKeys(['gweb:a', 'gweb:b'], async (key) => {
+      asked.push(key);
+      // Both Gmails are refreshing on rounds 1-3 (~50s), then gweb:b comes back on round 4
+      if (++round < 8) return gwebSignedOut;
+      return { ok: true, key };
+    }, null, { busyBudgetMs: 5 * 60 * 1000 });
+    assert.equal(out.ok, true);
+    assert.equal(out.key, 'gweb:b');
+    assert.deepEqual(asked, ['gweb:a', 'gweb:b', 'gweb:a', 'gweb:b', 'gweb:a', 'gweb:b', 'gweb:a', 'gweb:b']);
+    assert.deepEqual(waits, [5000, 15000, 30000]);
+  });
 });
 
 describe('Shortening engine (Shorten rushed lines, Ultra-Short, a row\'s Shorten)', () => {
@@ -213,11 +230,11 @@ describe('Shortening engine (Shorten rushed lines, Ultra-Short, a row\'s Shorten
 });
 
 describe('short text requests time out sooner than audio', () => {
-  test('re-translate, names, shorten, the character sheet, missed subtitles and Check limits use GEMINI_TEXT_TIMEOUT_MS; it is shorter than an audio attempt', () => {
+  test('re-translate, names, shorten, the character sheet, missed subtitles, split lines and Check limits use GEMINI_TEXT_TIMEOUT_MS; it is shorter than an audio attempt', () => {
     const text = Number(serverSource.match(/const GEMINI_TEXT_TIMEOUT_MS = (\d+);/)[1]);
     const audio = Number(serverSource.match(/const GEMINI_ATTEMPT_TIMEOUT_MS = (\d+);/)[1]);
     assert.ok(text < audio);
-    assert.equal((serverSource.match(/timeoutMs: GEMINI_TEXT_TIMEOUT_MS/g) || []).length, 6);
+    assert.equal((serverSource.match(/timeoutMs: GEMINI_TEXT_TIMEOUT_MS/g) || []).length, 7);
   });
 });
 

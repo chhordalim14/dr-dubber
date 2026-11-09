@@ -14,7 +14,7 @@ const crypto = require('crypto');
 const { spawn: realSpawn, execFile: realExecFile } = require('child_process');
 const { StringDecoder } = require('string_decoder');
 
-const DETECTOR_VERSION = 5; // bump when text_detector.py's results change: old cached results are ignored
+const DETECTOR_VERSION = 6; // bump when text_detector.py's results change: old cached results are ignored
 const JOB_KEEP_MS = 30 * 60 * 1000;
 const DETECTOR_THREADS = 2;
 // Detections at once: about one per 4 CPU threads (each keeps ~2.6 busy), leaving room for the
@@ -26,12 +26,23 @@ function createTextDetectService({
     trackProcess = () => { }, killProcessTree = (c) => { try { c.kill(); } catch (e) { } },
     spawn = realSpawn, execFile = realExecFile, log = console,
     maxRunning = defaultMaxRunning(os.cpus().length),
+    // Called with true when a search is queued or running and false when none is left (the
+    // exports wait their turn meanwhile - render_service.js setSearchBusy).
+    onBusyChange = () => { },
 }) {
     const jobs = new Map();      // id -> job
     const byVideo = new Map();   // cache key -> id of the job queued/running for it
     const queue = [];
     const running = new Set();
     let depsReady = null;        // Promise<true | error message>
+    let wasBusy = false;
+    const busy = () => running.size > 0 || queue.length > 0;
+    function noteBusy() {
+        const b = busy();
+        if (b === wasBusy) return;
+        wasBusy = b;
+        try { onBusyChange(b); } catch (e) { }
+    }
 
     try { fs.mkdirSync(cacheDir, { recursive: true }); } catch (e) { }
 
@@ -78,13 +89,14 @@ function createTextDetectService({
         running.delete(job);
         setTimeout(() => jobs.delete(job.id), JOB_KEEP_MS).unref?.();
         pump();
+        noteBusy();
     }
 
     async function runJob(job) {
         running.add(job);
         job.status = 'running';
         const deps = await ensureDeps();
-        if (job.status === 'cancelled') { running.delete(job); pump(); return; }
+        if (job.status === 'cancelled') { running.delete(job); pump(); noteBusy(); return; }
         if (deps !== true) return finish(job, { status: 'error', error: deps });
 
         const child = spawn(pythonCmd, [scriptPath, job.videoPath, '--fps', '4', '--threads', String(DETECTOR_THREADS)], {
@@ -92,9 +104,9 @@ function createTextDetectService({
         });
         job.child = child;
         trackProcess(child);
-        // Below normal: an export running beside it gets the CPU first (four detections for the
-        // next part left a render 1.5 of 16 cores). The FFmpeg it starts inherits the priority.
-        try { if (child.pid) os.setPriority(child.pid, os.constants.priority.PRIORITY_BELOW_NORMAL); } catch (e) { }
+        // Normal priority: the next part's voices wait for this search, while an export is not
+        // needed until the end - exports drop to below normal meanwhile (onBusyChange). It was
+        // the other way round: with exports first the searches crawled 33x slower (2026-11-09).
         const dec = new StringDecoder('utf8');
         let buf = '', last = null, stderr = '';
         child.stdout.on('data', (d) => {
@@ -151,6 +163,7 @@ function createTextDetectService({
         byVideo.set(key, id);
         queue.push(job);
         pump();
+        noteBusy();
         return publicJob(job);
     }
 
@@ -170,7 +183,7 @@ function createTextDetectService({
         return { success: true };
     }
 
-    return { start, status, cancel, ensureDeps, _jobs: jobs, _queue: queue };
+    return { start, status, cancel, ensureDeps, busy, _jobs: jobs, _queue: queue };
 }
 
 module.exports = { createTextDetectService, DETECTOR_VERSION, defaultMaxRunning };

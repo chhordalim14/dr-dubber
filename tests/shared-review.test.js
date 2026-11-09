@@ -18,6 +18,7 @@ function load({ waitScale = 1 / 200, fail = false } = {}) {
     const KHMER_CHAR_RE = /[\\u1780-\\u17FF]/;
     const TRANSCRIBE_MAX_LANES = 8;
     const GEMINI_RETRY_DELAYS_MS = [1];
+    const REPAIR_BUSY_BUDGET_MS = 1;
     const console = { log: () => { }, warn: () => { } };
     const realSetTimeout = setTimeout;
     const setTimeoutFast = (fn, ms) => realSetTimeout(fn, ms * waitScale);

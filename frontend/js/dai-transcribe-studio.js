@@ -1021,7 +1021,7 @@
     try { n = parseInt(localStorage.getItem(key), 10); } catch (e) { } // storage blocked: the default
     return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt;
   };
-  const seriesParallelFiles = () => savedSeriesNumber('aiDubberSeriesParallel', 1, 10, SERIES_MAX_PARALLEL_FILES);
+  const seriesParallelFiles = () => savedSeriesNumber('aiDubberSeriesParallel', 1, 20, SERIES_MAX_PARALLEL_FILES);
 
   // How usable a key is for `model`, from /api/gemini-key-status: 0 ready, 1 maybe (limits on
   // other models, or not known yet), 9 resting (refused by Google, or out for the day).
@@ -1186,9 +1186,10 @@
         try {
           await processSingleBatchItem(item, {
             // keyPerTab: own key first, the others only as backups (one request at a time), so a
-            // rate-limited key passes the next chunk to an idle key instead of waiting.
+            // rate-limited key passes the next chunk to an idle key instead of waiting. When there
+            // are fewer tabs than Gmails (e.g. 1-2 tabs and 5 Gmails), spare Gmails share the tab's lanes.
             apiKeys: ownKey ? [ownKey, ...liveKeys.filter((k) => k !== ownKey)] : [...liveKeys.slice(offset), ...liveKeys.slice(0, offset)],
-            maxLanes: keyPerTab ? 1 : null,
+            maxLanes: keyPerTab ? (String(ownKey || '').startsWith('gweb:') ? Math.max(1, Math.floor(ownKeyOrder.filter((k) => String(k).startsWith('gweb:')).length / concurrency)) : 1) : null,
             stayOnModel: keyPerTab,
             forSeries: keyPerTab,
             model,

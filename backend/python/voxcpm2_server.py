@@ -41,7 +41,7 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MODEL_ID = os.environ.get("VOXCPM_MODEL", "openbmb/VoxCPM2")
-DEFAULT_STEPS = int(os.environ.get("VOXCPM_STEPS", "10"))
+DEFAULT_STEPS = int(os.environ.get("VOXCPM_STEPS", "10"))  # measured 2026-10-18/26: 20 is 1.6-3x slower, no gain
 MAX_BODY = 64 * 1024 * 1024  # a reference clip is a few hundred KB
 MAX_SPEAKERS_BODY = 512 * 1024 * 1024  # a long movie's lines, sent by a remote app as base64
 
@@ -194,6 +194,36 @@ def frame_db(wav, sr, step=0.02):
     return hop, 20 * np.log10(rms)
 
 
+def deess(wav, sr):
+    """Softens harsh sibilance spikes ('s', 'sh') typical of 48 kHz neural vocoders."""
+    import numpy as np
+    from scipy.signal import butter, sosfilt
+
+    if sr < 16000 or len(wav) < int(sr * 0.1):
+        return wav
+    high_edge = min(9000.0, sr * 0.45)
+    if high_edge <= 5500.0:
+        return wav
+    try:
+        sos_sib = butter(2, [5500.0, high_edge], "bandpass", fs=sr, output="sos")
+        sib = sosfilt(sos_sib, wav).astype(np.float32)
+        hop = max(1, int(sr * 0.005))
+        n = len(wav) // hop
+        if n < 4:
+            return wav
+        rms_main = np.sqrt(np.mean(wav[: n * hop].reshape(n, hop) ** 2, axis=1) + 1e-12)
+        rms_sib = np.sqrt(np.mean(sib[: n * hop].reshape(n, hop) ** 2, axis=1) + 1e-12)
+        excess = np.maximum(0.0, (rms_sib / (rms_main + 1e-6)) - 0.40)
+        cut_db = np.minimum(5.0, excess * 12.0)
+        if not np.any(cut_db > 0.5):
+            return wav
+        gain_sib = 10 ** (-cut_db / 20.0)
+        gain_curve = np.interp(np.arange(len(wav)), (np.arange(len(gain_sib)) + 0.5) * hop, gain_sib)
+        return (wav - sib * (1.0 - gain_curve)).astype(np.float32)
+    except Exception:
+        return wav
+
+
 def voice_over(wav, sr):
     """Cut the rumble under the voice and press its loudest syllables gently down."""
     import numpy as np
@@ -213,6 +243,8 @@ def voice_over(wav, sr):
         cur = k * cur + (1 - k) * w
         cut[i] = cur
     gain = np.interp(np.arange(len(wav)), (np.arange(len(cut)) + 0.5) * hop, 10 ** (cut / 20))
+    # deess() is not used: dubs measured duller than the actors (2026-10-26), not harsher -
+    # turn it on only after an A/B on real lines says it helps.
     return (wav * gain).astype(np.float32)
 
 
@@ -249,8 +281,8 @@ def finish_line(wav, sr, level_db=LINE_LEVEL_DB):
         level = 20 * np.log10(np.mean(10 ** (speech / 20)))
         wav = wav * 10 ** (max(-16.0, min(20.0, level_db - level)) / 20)
     peak = float(np.abs(wav).max()) if len(wav) else 0.0
-    if peak > 0.95:
-        wav = wav * (0.95 / peak)
+    if peak > 0.92:
+        wav = wav * (0.92 / peak)
     return wav.astype(np.float32)
 
 
@@ -677,8 +709,16 @@ def synthesize(payload):
         base = {}
         if "cfg_value" in params:
             base["cfg_value"] = max(0.5, min(5.0, cfg))
+
+        # Steps: the request's own, else DEFAULT_STEPS (10, measured).
+        try:
+            req_steps = int(payload.get("inference_timesteps") or payload.get("steps") or 0)
+        except (TypeError, ValueError):
+            req_steps = 0
+        steps = req_steps if req_steps > 0 else (DEFAULT_STEPS if DEFAULT_STEPS > 0 else 10)
         if "inference_timesteps" in params:
-            base["inference_timesteps"] = DEFAULT_STEPS
+            base["inference_timesteps"] = max(4, min(50, steps))
+
         if ref_path:
             if "reference_wav_path" in params:
                 base["reference_wav_path"] = ref_path
@@ -688,18 +728,23 @@ def synthesize(payload):
 
         sr = state["sr"]
         t0 = time.time()
+        custom_prompt_text = str(payload.get("prompt_text") or "").strip()
         anchor = None
-        if (ref_path and "reference_wav_path" in base and "prompt_text" in params
-                and payload.get("anchor", True) is not False):
-            anchor = voice_anchor(model, base, ref_bytes, style, voice, sr)
-        if feeling_path and "reference_wav_path" in base:
-            base = {**base, "reference_wav_path": feeling_path}
-        if anchor:
-            # Continue from the anchor: it already carries the voice and the style.
-            kwargs = {**base, "text": spoken, "prompt_wav_path": anchor, "prompt_text": ANCHOR_TEXT}
+        if custom_prompt_text and "prompt_text" in params and ref_path:
+            # High-fidelity continuation using real human audio + exact transcript
+            kwargs = {**base, "text": spoken, "prompt_wav_path": ref_path, "prompt_text": custom_prompt_text}
         else:
-            # VoxCPM2 takes a voice / style description in brackets before the text.
-            kwargs = {**base, "text": f"({style}){spoken}" if style else spoken}
+            if (ref_path and "reference_wav_path" in base and "prompt_text" in params
+                    and payload.get("anchor", True) is not False):
+                anchor = voice_anchor(model, base, ref_bytes, style, voice, sr)
+            if feeling_path and "reference_wav_path" in base:
+                base = {**base, "reference_wav_path": feeling_path}
+            if anchor:
+                # Continue from the anchor: it already carries the voice and the style.
+                kwargs = {**base, "text": spoken, "prompt_wav_path": anchor, "prompt_text": ANCHOR_TEXT}
+            else:
+                # VoxCPM2 takes a voice / style description in brackets before the text.
+                kwargs = {**base, "text": f"({style}){spoken}" if style else spoken}
         try:
             fit = float(payload.get("fit_seconds") or 0) or None
         except (TypeError, ValueError):
@@ -710,7 +755,7 @@ def synthesize(payload):
         buf = io.BytesIO()
         sf.write(buf, wav, sr, format="WAV", subtype="PCM_16")
         dur = len(wav) / float(sr)
-        log(f"Spoke {len(spoken)} chars -> {dur:.1f}s audio in {time.time() - t0:.1f}s"
+        log(f"Spoke {len(spoken)} chars -> {dur:.1f}s audio in {time.time() - t0:.1f}s (steps={base.get('inference_timesteps', '?')}, cfg={base.get('cfg_value', '?')})"
             f"{' (cloned)' if ref_path else ''}{' from its anchor' if anchor else ''}{f' [{style}]' if style else ''}"
             f"{f' as said in the {FEELING_SOURCES.get(feeling_from, feeling_from)}' if feeling_path else ''}")
         return {"success": True, "audio_base64": base64.b64encode(buf.getvalue()).decode("ascii"),
@@ -839,8 +884,12 @@ def main():
     ap.add_argument("--port", type=int, default=8808)
     ap.add_argument("--host", default="127.0.0.1")
     args = ap.parse_args()
+    try:
+        httpd = ThreadingHTTPServer((args.host, args.port), Handler)
+    except OSError as e:
+        log(f"Cannot bind to http://{args.host}:{args.port} - is another server already running? ({e})")
+        return 1
     threading.Thread(target=load_model, daemon=True).start()
-    httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     log(f"Listening on http://{args.host}:{args.port} (model loading in the background)")
     try:
         httpd.serve_forever()

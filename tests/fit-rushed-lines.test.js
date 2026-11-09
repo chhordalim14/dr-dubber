@@ -18,12 +18,12 @@ const ScreenSync = require('../frontend/js/screen-sync.js');
 
 // keys: the API keys in Settings. delayMs: how long each fake Gemini answer takes (to see
 // requests overlap). env.maxParallel: most requests that were running at once.
-function makeEnv({ condense, missing = () => [], keys = ['k1'], delayMs = 0 }) {
+function makeEnv({ condense, missing = () => [], split = () => [], keys = ['k1'], delayMs = 0 }) {
   const env = {
     projects: [], activeProjectIndex: -1, subtitles: [], activeAudios: {}, duration: 0,
     requests: [], running: 0, maxParallel: 0, cancelled: [],
   };
-  const factory = new Function('env', 'condense', 'missing', 'keysJson', 'delayMs', 'KhmerSpeech', 'ScreenSync', `
+  const factory = new Function('env', 'condense', 'missing', 'split', 'keysJson', 'delayMs', 'KhmerSpeech', 'ScreenSync', `
     let { projects, activeProjectIndex, subtitles, activeAudios, duration } = env;
     const saveCurrentProjectState = () => { }, renderSubtitles = () => { }, updateContextualControls = () => { };
     const showToast = () => { }, saveStateToPast = () => { }, saveProjectStateDirectly = () => { };
@@ -40,7 +40,14 @@ function makeEnv({ condense, missing = () => [], keys = ['k1'], delayMs = 0 }) {
         return { json: async () => ({ success: true }) };
       }
       env.requests.push(body);
-      if (url.endsWith('/api/translate-missing-lines')) return { json: async () => ({ success: true, results: missing(body.lines, body) }) };
+      if (url.endsWith('/api/split-joined-lines')) {
+        const r = split(body.items, body);
+        return { json: async () => (r === null ? { success: false, error: 'GWEB_BUSY' } : { success: true, results: r }) };
+      }
+      if (url.endsWith('/api/translate-missing-lines')) {
+        const r = missing(body.lines, body); // null: Google did not answer
+        return { json: async () => (r === null ? { success: false, error: 'GWEB_BUSY' } : { success: true, results: r }) };
+      }
       env.running++;
       env.maxParallel = Math.max(env.maxParallel, env.running);
       await new Promise((r) => setTimeout(r, delayMs));
@@ -49,9 +56,9 @@ function makeEnv({ condense, missing = () => [], keys = ['k1'], delayMs = 0 }) {
     };
     ${voiceSlotSrc}
     ${fastBlock}
-    return { shortenForVoxCpm2, fillMissingScreenLinesAllTabs, fitFastLinesAllTabs, refitShortenedLinesAllTabs, countRushedLinesAllTabs, fillShortVoicesAllTabs, nativePaceAllTabs, refitPacedLinesAllTabs, boostVoicesOverMusic, musicLevelDb, analyzeSubPace, settleMatchedSubtitles, setProjects: (p) => { projects = p; }, setActive: (i, live) => { activeProjectIndex = i; subtitles = live; }, getLive: () => subtitles };
+    return { shortenForVoxCpm2, fillMissingScreenLinesAllTabs, splitJoinedLinesAllTabs, joinedLinesOf, fitFastLinesAllTabs, refitShortenedLinesAllTabs, countRushedLinesAllTabs, fillShortVoicesAllTabs, nativePaceAllTabs, refitPacedLinesAllTabs, boostVoicesOverMusic, musicLevelDb, analyzeSubPace, settleMatchedSubtitles, setProjects: (p) => { projects = p; }, setActive: (i, live) => { activeProjectIndex = i; subtitles = live; }, getLive: () => subtitles };
   `);
-  return { env, api: factory(env, condense, missing, JSON.stringify(keys), delayMs, KhmerSpeech, ScreenSync) };
+  return { env, api: factory(env, condense, missing, split, JSON.stringify(keys), delayMs, KhmerSpeech, ScreenSync) };
 }
 
 // A line: text slot [start, end], voice of baseDur seconds.
@@ -498,6 +505,38 @@ describe('every subtitle on screen has a voice', () => {
     assert.equal(t2.subtitles.length, 2);
   });
 
+  test('a subtitle Gemini called not speech is not asked again; one nobody answered for is', async () => {
+    let answer = null; // Google busy
+    const { env, api } = makeEnv({ condense: () => [], missing: () => answer });
+    const tab = tabOf();
+    api.setProjects([tab]);
+    assert.deepEqual(await api.fillMissingScreenLinesAllTabs(), { added: 0, missing: 2 });
+    assert.equal(tab.screenChecked, undefined, 'no answer: nothing is taken as checked');
+    answer = []; // answered: both are not speech
+    assert.deepEqual(await api.fillMissingScreenLinesAllTabs(), { added: 0, missing: 2 });
+    assert.equal(tab.screenChecked.length, 2);
+    assert.deepEqual(await api.fillMissingScreenLinesAllTabs(), { added: 0, missing: 0 }, 'not asked a third time');
+    assert.equal(env.requests.filter((b) => b.lines).length, 2);
+  });
+
+  test("the series' last check sends the Settings keys as the last resort (also with Gmails only)", async () => {
+    const { env, api } = makeEnv({ condense: () => [], missing: () => [], keys: ['k1', 'k2'] });
+    api.setProjects([tabOf()]);
+    await api.fillMissingScreenLinesAllTabs({ lastResort: true });
+    assert.deepEqual(env.requests.find((b) => b.lines).lastResortKeys, ['k1', 'k2']);
+    const plain = makeEnv({ condense: () => [], missing: () => [] });
+    plain.api.setProjects([tabOf()]);
+    await plain.api.fillMissingScreenLinesAllTabs();
+    assert.equal(plain.env.requests.find((b) => b.lines).lastResortKeys, undefined, 'Match itself: no last resort');
+  });
+
+  test('before export: subtitles still silent are asked again, voiced, and what stays silent pauses the series', () => {
+    const gen = src.slice(src.indexOf('      async function generateStep() {'), src.indexOf('      function noEngineInstalled(p) {'));
+    assert.match(gen, /await fillMissingScreenLinesAllTabs\(\{ checkStop, lastResort: true \}\)/);
+    assert.match(gen, /g = await runGenerate\(\);\s*await voiceMissingLines\(\);\s*fillShortVoicesAllTabs\(\);/);
+    assert.match(gen, /throw new Error\(`\$\{silent\.length\} subtitle\(s\) on screen still have no Khmer voice/);
+  });
+
   test('Dub Whole Series gives the missed subtitles a line in the Match step, before voices; Stop cancels it', () => {
     const match = src.slice(src.indexOf('      async function matchStep() {'), src.indexOf('      async function generateStep() {'));
     assert.match(match, /await fillMissingScreenLinesAllTabs\(\{\s*checkStop,/);
@@ -564,5 +603,56 @@ describe('VoxCPM2: rushed lines shortened before voicing', () => {
     const gen = main.slice(main.indexOf('    async function generateStandardAudioForProject('));
     assert.match(gen, /if \(isVoxCmp2Enabled && \(isBatch \|\| !explicitIds \|\| explicitIds\.length >= targetProject\.subtitles\.length\)\) \{\n\s+try \{\n\s+await shortenForVoxCpm2\(targetProject, idsToProcess, \(\) => cancelRef\.cancelled\);/);
     assert.match(main, /if \(!proj\._selectedIds\) \{\n\s+try \{\n\s+await shortenForVoxCpm2\(proj, pendingSubs\.map\(\(s\) => s\.id\), \(\) => cancelRef\.cancelled\);/);
+  });
+});
+
+describe('a joined line is cut at its pauses', () => {
+  // One line over three subtitles: 10-11.5, a 1.5 s pause, 13-14, 14-15.2 (back to back).
+  const shown = [{ start: 10, end: 11.5, text: '什么东西' }, { start: 13, end: 14, text: '石头' }, { start: 14, end: 15.2, text: '活的' }];
+  const tabOf = (extra = {}) => ({
+    duration: 60, textBlur: { lines: shown },
+    subtitles: [{ ...line('a', 10, 15.2, 0), audioStatus: 'idle', text: 'អ្វីគេ? ថ្ម? មានជីវិត?', originalText: '什么东西? 石头? 活的?', gender: 'Male', character: 'Male', emotion: 'Excited', screenMatched: true, screenLen: '5.2', ...extra }],
+  });
+
+  test('cut only at the pause (not where the subtitles are back to back); each part on its own subtitles', async () => {
+    const { env, api } = makeEnv({ condense: () => [], split: (items) => items.map((it) => ({ id: it.id, parts: ['អ្វីគេ?', 'ថ្ម? មានជីវិត?'] })) });
+    const tab = tabOf();
+    api.setProjects([tab]);
+    const r = await api.splitJoinedLinesAllTabs();
+    assert.deepEqual(r, { found: 1, cut: 1, parts: 2 });
+    const req = env.requests.find((b) => b.items);
+    assert.deepEqual(req.items[0].parts, ['什么东西', '石头 活的'], 'two parts: the back-to-back subtitles stay together');
+    assert.deepEqual(tab.subtitles.map((s) => [s.text, s.textStart, s.textEnd, s.originalText, s.gender, s.emotion, s.audioStatus, s._splitFrom]), [
+      ['អ្វីគេ?', '10.00', '11.50', '什么东西', 'Male', 'Excited', 'idle', 'a'],
+      ['ថ្ម? មានជីវិត?', '13.00', '15.20', '石头 活的', 'Male', 'Excited', 'idle', 'a'],
+    ]);
+    assert.deepEqual(api.joinedLinesOf(tab), [], 'not cut again');
+  });
+
+  test('a part too long for its time is joined back: the line stays whole', async () => {
+    const long = 'អ្វីគេនៅទីនេះ តើវាជាអ្វីទៅ ខ្ញុំមិនដែលឃើញរបស់បែបនេះពីមុនមកសោះ';
+    const { api } = makeEnv({ condense: () => [], split: (items) => items.map((it) => ({ id: it.id, parts: [long, 'ថ្ម?'] })) });
+    const tab = tabOf();
+    api.setProjects([tab]);
+    assert.deepEqual(await api.splitJoinedLinesAllTabs(), { found: 1, cut: 0, parts: 0 });
+    assert.equal(tab.subtitles.length, 1);
+    assert.equal(tab.subtitles[0].id, 'a');
+  });
+
+  test('a voiced line, a line over one subtitle, or no answer: nothing changes', async () => {
+    const { env, api } = makeEnv({ condense: () => [], split: () => null });
+    const voiced = tabOf({ audioStatus: 'ready' });
+    const one = tabOf();
+    one.textBlur.lines = shown.slice(0, 1);
+    const busy = tabOf();
+    api.setProjects([voiced, one, busy]);
+    assert.deepEqual(await api.splitJoinedLinesAllTabs(), { found: 1, cut: 0, parts: 0 });
+    assert.equal(env.requests.filter((b) => b.items).length, 1, 'only the third tab is asked');
+    assert.equal(busy.subtitles.length, 1);
+  });
+
+  test('Dub Whole Series cuts them in Match, after the subtitles with no line, before the voices', () => {
+    const match = src.slice(src.indexOf('      async function matchStep() {'), src.indexOf('      async function generateStep() {'));
+    assert.ok(match.indexOf('splitJoinedLinesAllTabs({ checkStop })') > match.indexOf('fillMissingScreenLinesAllTabs({'));
   });
 });

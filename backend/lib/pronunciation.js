@@ -193,6 +193,7 @@ function createPronunciationChecker({ storageDir, batchDir, scriptPath, ffmpegPa
     const modelDir = path.join(voxDir, 'models', 'whisper-small-khmer');
     let state = load();
     let worker = null;
+    let workerStarting = null;
     let running = false;
     let again = false;
     let idleTimer = null;
@@ -266,11 +267,17 @@ function createPronunciationChecker({ storageDir, batchDir, scriptPath, ffmpegPa
     }
     async function hear(text, voice) {
         if (hearFn) return hearFn(text, voice); // tests
-        if (!worker) worker = await startWorker();
+        if (!worker) {
+            if (!workerStarting) {
+                workerStarting = startWorker().then((w) => { worker = w; return w; }).finally(() => { workerStarting = null; });
+            }
+            await workerStarting;
+        }
         return worker.hear(text, voice);
     }
     function stopWorker() {
         if (worker) { try { worker.child.stdin.end(); } catch (e) { } worker = null; }
+        workerStarting = null;
     }
 
     // ---- what to check

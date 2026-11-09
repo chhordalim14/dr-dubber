@@ -4488,7 +4488,7 @@
       try { n = parseInt(localStorage.getItem(key), 10); } catch (e) { } // storage blocked: the default
       return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt;
     };
-    const seriesParallel = () => savedSeriesNumber("aiDubberSeriesParallel", 1, 10, FIX_MISSING_MAX_PARALLEL);
+    const seriesParallel = () => savedSeriesNumber("aiDubberSeriesParallel", 1, 20, FIX_MISSING_MAX_PARALLEL);
     const seriesRetryPasses = () => savedSeriesNumber("aiDubberSeriesRetries", 0, 5, 2);
 
     function stopFixMissingAll() {
@@ -16843,13 +16843,13 @@
       const partsToJoin = () => (plan ? plan.parts.map((p, k) => k).filter((k) => (plan.parts[k].status === "planned" || plan.parts[k].status === "failed") && !joiningIndices().includes(k)) : []);
       const piecesOpen = () => !!(plan && plan.pieces && plan.pieces.length && projects.length === plan.pieces.length && plan.pieces.every((p, k) => projects[k] && projects[k].videoFilePath === p));
 
-      // How far a part's export is: tabs rendered, and the whole part in percent (the tab that is
-      // rendering counts part-way).
+      // How far a part's export is: tabs rendered, and the whole part in percent (tabs that are
+      // rendering - up to two at once - count part-way).
       function exportProgress(job) {
         const total = job.items.length;
         const done = job.items.filter((it) => it.status === "done").length;
-        const running = job.items.find((it) => it.status === "running");
-        const percent = total ? Math.floor(((done + (running ? (running.progress || 0) / 100 : 0)) / total) * 100) : 0;
+        const partly = job.items.filter((it) => it.status === "running").reduce((s, it) => s + (it.progress || 0) / 100, 0);
+        const percent = total ? Math.floor(((done + partly) / total) * 100) : 0;
         return { total, done, percent };
       }
 
@@ -17597,7 +17597,13 @@
           checkStop,
           onProgress: (done, total) => setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Subtitles with no line ${done}/${total}`),
         });
+        // A line said over several subtitles with pauses between them: cut at the pauses, so the
+        // voice does not end long before the actor (splitJoinedLinesAllTabs).
+        setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Lines with pauses`);
+        const split = await splitJoinedLinesAllTabs({ checkStop });
+        checkStop();
         const added = (fill.added ? ` · ${fill.added} subtitle(s) Transcribe missed got a line` : "")
+          + (split.cut ? ` · ${split.cut} line(s) with pauses said in ${split.parts} parts` : "")
           + (fill.missing > fill.added ? ` · ${fill.missing - fill.added} subtitle(s) still have no voice (Google did not answer)` : "");
         const few = r.weak?.length ? ` · tab ${tabNumbers(r.weak)}: under half matched, the rest keep Transcribe's guessed times` : "";
         return `${r.matched} of ${r.total} subtitle(s) matched in ${r.tabs} tab(s)${added}${left}${few}`;
@@ -17669,6 +17675,35 @@
             slowed = fillShortVoicesAllTabs();
           }
         }
+        // Last check: no subtitle on screen goes out silent. Match's "Subtitles with no line" asked
+        // Gemini once; if it did not answer (2026-11-09: Gmails signed out, "Gmails only" on), the
+        // export went out with the actor's lines silent - 6 subtitles in a row at a piece's end.
+        // Asked again (an API key from Settings when no Gmail answers), the new lines voiced;
+        // what is still silent pauses the series with where it is, instead of being exported.
+        let rescued = 0;
+        const silentNow = () => projects.flatMap((p, k) => missingScreenLinesOf(p).map((l) => ({ tab: k + 1, l })));
+        for (let pass = 1; pass <= 2 && silentNow().length; pass++) {
+          checkStop();
+          const n = silentNow().length;
+          setLabel(`Part ${plan.current + 1}/${plan.parts.length} · ${n} subtitle(s) with no voice: asking again (${pass}/2)`);
+          const fill = await fillMissingScreenLinesAllTabs({ checkStop, lastResort: true });
+          if (fill.added) {
+            rescued += fill.added;
+            setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Voicing ${fill.added} line(s) for subtitles that had none`);
+            g = await runGenerate();
+            await voiceMissingLines();
+            fillShortVoicesAllTabs();
+          } else if (silentNow().length) {
+            await sleep(15000); // nobody answered: give the Gmails a moment before the last try
+          }
+        }
+        const silent = silentNow();
+        if (silent.length) {
+          const mmss = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
+          const where = silent.slice(0, 6).map(({ tab, l }) => `tab ${tab} at ${mmss(l.start)} "${l.text}"`).join(", ");
+          throw new Error(`${silent.length} subtitle(s) on screen still have no Khmer voice (Google did not answer): ${where}${silent.length > 6 ? ", ..." : ""}. Press Continue to try them again.`);
+        }
+
         const stillRushed = countRushedLinesAllTabs();
 
         const voiced = projects.reduce((n, p) => n + liveSubtitlesOf(p).filter((s) => isSpeakableText(s.text)).length, 0);
@@ -17678,6 +17713,7 @@
         if (stillRushed) note += ` · ${stillRushed} still fast (the "N rushed" chip lists them)`;
         if (paced) note += ` · ${paced} line(s) said at their own pace to fit the actor`;
         if (slowed) note += ` · ${slowed} short voice(s) slowed to last as long as the actor`;
+        if (rescued) note += ` · ${rescued} subtitle(s) that had no voice got one`;
         return note;
       }
 
@@ -17901,20 +17937,49 @@
       // Hands-free: export each finished part through the render queue and dub the next part
       // while it renders - until every part is done. The part's tabs are put in the render queue
       // first (a queue item holds everything its render needs), so closing them can't change
-      // what is rendered. Exports run one at a time in part order: a part's export starts only
-      // once the one before it is complete. A tab that fails is rendered again; if it still
-      // fails, the series pauses before the next export with the newest part's tabs open, and
-      // Continue tries the rest again.
+      // what is rendered. Parts don't wait for each other's exports: the queue renders two tabs
+      // at once in queue order (an earlier part's first). The next part used to wait for the
+      // whole export of the one before it (2026-11-08: part 3 "waiting" while part 1 exported
+      // and part 2 sat dubbed). A tab that fails is rendered again; one that still fails is
+      // tried once more at the end, and if it fails then, the series pauses before the whole
+      // series is joined, and Continue tries the rest again.
       async function exportAndContinue() {
+        // The render queue's own Stop while the series runs: no new part's export starts after it
+        // (parts no longer wait for each other's exports, so nothing else would hold it back).
+        const stopsAtStart = window.seriesRenderApi?.stops ? window.seriesRenderApi.stops() : 0;
+        const queueStopped = () => (window.seriesRenderApi?.stops ? window.seriesRenderApi.stops() : 0) !== stopsAtStart;
         // Parts exported this session whose join was stopped or failed: joined again.
         if (plan) plan.parts.forEach((p, k) => { if (p.exported) mergePartExport(k, seriesExports.get(p)?.result?.outputs); });
-        while (handsFree() && plan?.lastDone && !plan.parts[plan.lastDone.index].exported) {
+        // Also when the newest part is exported but an earlier one is not (Continue after a tab
+        // that kept failing): that one is finished, then the series goes on or is joined.
+        while (handsFree() && plan?.lastDone && (!plan.parts[plan.lastDone.index].exported || unfinishedExports().length)) {
           const i = plan.lastDone.index;
+          const iExported = !!plan.parts[i].exported;
           if (!window.seriesRenderApi) throw new Error("The render queue is not ready.");
-          for (const k of unfinishedExports()) if (k !== i) await finishPartExport(k);
-          queuePartExport(i);
+          if (queueStopped()) {
+            // Pauses with the stopped part's own message (Continue picks it up).
+            for (const k of unfinishedExports()) await finishPartExport(k, { again: false });
+            throw new Error("The render queue was stopped. Press Continue to export the rest.");
+          }
+          // Earlier parts not exported yet go on in the background (one stopped by a closed app is
+          // started again); their failed tabs are tried again before the series is joined.
+          for (const k of unfinishedExports()) if (k !== i && !seriesExports.get(plan.parts[k])?.run) renderPartExport(k).catch(() => { });
+          if (!iExported) queuePartExport(i);
           if (![nextPartIndex(), ...joiningIndices(), ...partsToJoin()].some((k) => k >= 0)) {
-            await finishPartExport(i);
+            // The last part starts rendering at once; then every part is waited for (its failed
+            // tabs tried again). A part still missing tabs doesn't keep the others from finishing:
+            // the first such failure is reported once all of them have been tried.
+            if (!iExported) renderPartExport(i).catch(() => { });
+            let failed = null;
+            for (const k of [...unfinishedExports().filter((k) => k !== i), ...(iExported ? [] : [i])]) {
+              try {
+                await finishPartExport(k);
+              } catch (e) {
+                if (e.seriesStopped) throw e;
+                failed = failed || e;
+              }
+            }
+            if (failed) throw failed;
             const merging = plan.parts.map((p) => seriesExports.get(p)?.merging).filter(Boolean);
             if (merging.length) {
               setLabel("Joining the last part's tabs into one video");
@@ -17932,19 +17997,21 @@
             modal.classList.remove("hidden");
             return;
           }
-          // Waited for (and what failed tried again) before the next part is exported.
-          renderPartExport(i).then((r) => {
-            if (!exportComplete(r) && !r.stopped) showToast(`Part ${i + 1}: ${r.done} of ${r.total} tab(s) exported (${r.failed} failed). They are tried again before the next part is exported.`, "warning");
-          }).catch(() => { });
-          // In the render queue: safe to close. Only the part's own tabs.
-          const own = plan.lastDone?.index === i ? plan.lastDone.pieces : null;
-          for (let k = projects.length - 1; k >= 0; k--) if (!own || own.includes(projects[k].videoFilePath)) closeProjectTab(k);
-          seriesExports.get(plan.parts[i]).tabsClosed = true;
+          if (!iExported) {
+            // In the background (what failed is tried again before the whole series is joined).
+            renderPartExport(i).then((r) => {
+              if (!exportComplete(r) && !r.stopped) showToast(`Part ${i + 1}: ${r.done} of ${r.total} tab(s) exported (${r.failed} failed). They are tried again before the whole series is joined.`, "warning");
+            }).catch(() => { });
+            // In the render queue: safe to close. Only the part's own tabs.
+            const own = plan.lastDone?.index === i ? plan.lastDone.pieces : null;
+            for (let k = projects.length - 1; k >= 0; k--) if (!own || own.includes(projects[k].videoFilePath)) closeProjectTab(k);
+            seriesExports.get(plan.parts[i]).tabsClosed = true;
+          }
           await ensureNextPartJoined();
           await startBackgroundJoin(partsToJoin());
           const idx = nextPartIndex();
           if (idx < 0) return;
-          showToast(`Part ${i + 1} is exporting in the background. Starting part ${idx + 1}.`, "success");
+          if (!iExported) showToast(`Part ${i + 1} is exporting in the background. Starting part ${idx + 1}.`, "success");
           await runPart(idx);
         }
       }
@@ -18056,13 +18123,14 @@
       // Waits until part i is exported: for the render already going, then renders what is
       // missing once more - unless the render queue was stopped while waiting. Throws when tabs
       // are still missing (Continue tries them again).
-      async function finishPartExport(i) {
+      // again: false - only report (the render queue was stopped: nothing is rendered again).
+      async function finishPartExport(i, { again = true } = {}) {
         const job = seriesExports.get(plan.parts[i]);
         setLabel(`Part ${i + 1}/${plan.parts.length} · Exporting ${job.items.length} tab(s)`);
         const waited = !!job.run;
         let r = waited ? await job.run : job.result;
         checkStop();
-        if (!exportComplete(r) && !(waited && r.stopped)) {
+        if (again && !exportComplete(r) && !(waited && r.stopped)) {
           if (!job.tabsClosed) window.seriesRenderApi.refreshItems?.(job.items); // the tabs as they are now
           r = await renderPartExport(i);
           checkStop();
@@ -19778,6 +19846,9 @@
     // says who speaks (/api/translate-missing-lines, lib/missing-lines.js), or skips what is not
     // speech (a sign, a logo). A tab Gemini can't answer for keeps its lines as they are.
     const MISSING_CONTEXT = 3; // lines before and after given with each
+    // A subtitle Gemini was asked about and called not speech (a sign, a logo, a sound word) is
+    // kept in proj.screenChecked: not asked again, and not counted as a subtitle with no voice.
+    const screenCheckKey = (l) => `${Number(l.start).toFixed(2)}|${window.ScreenSync ? window.ScreenSync.normText(l.text) : l.text}`;
     function missingScreenLinesOf(proj) {
       const shown = (proj.textBlur && proj.textBlur.lines) || [];
       if (!shown.length || !window.ScreenSync) return [];
@@ -19786,16 +19857,25 @@
         const len = s.screenMatched && parseFloat(s.screenLen) > 0 ? parseFloat(s.screenLen) : (parseFloat(s.textEnd) || start) - start;
         return { start, end: start + len };
       });
-      return window.ScreenSync.uncoveredLines(shown, covered);
+      const checked = new Set(proj.screenChecked || []);
+      return window.ScreenSync.uncoveredLines(shown, covered).filter((l) => !checked.has(screenCheckKey(l)));
     }
 
-    async function fillMissingScreenLinesAllTabs({ onProgress = () => { }, checkStop = () => { } } = {}) {
+    // lastResort: the series' check before export - when no Gmail answers, the API keys in
+    // Settings do (also with "Gmails only" on: the server asks them only after the pool failed).
+    async function fillMissingScreenLinesAllTabs({ onProgress = () => { }, checkStop = () => { }, lastResort = false } = {}) {
       saveCurrentProjectState();
       const todo = projects.map((proj) => [proj, missingScreenLinesOf(proj)]).filter(([, l]) => l.length);
       const total = todo.reduce((n, [, l]) => n + l.length, 0);
       const geminiKeys = getFastGeminiConfig().keys;
       const keys = geminiKeys.length ? geminiKeys : (window.textAi?.ready() ? [""] : []);
-      if (!total || !keys.length) return { added: 0, missing: total };
+      let settingsKeys = [];
+      if (lastResort) {
+        try { settingsKeys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]"); } catch (_) { settingsKeys = []; }
+        settingsKeys = (Array.isArray(settingsKeys) ? settingsKeys : []).map((k) => String(k || "").trim()).filter(Boolean);
+      }
+      if (!total || (!keys.length && !settingsKeys.length)) return { added: 0, missing: total };
+      if (!keys.length) keys.push(settingsKeys[0]);
       const config = getFastGeminiConfig();
       let added = 0, done = 0, next = 0, stopError = null;
       const worker = async (w) => {
@@ -19831,10 +19911,13 @@
                 glossary: typeof getDramaGlossaryDict === "function" ? getDramaGlossaryDict() : null,
                 sourceFilePath: proj.videoFilePath || (proj.file && proj.file.path) || null,
                 requestId,
+                ...(settingsKeys.length ? { lastResortKeys: settingsKeys } : {}),
               }),
             });
             const data = await res.json().catch(() => null);
             results = data && data.success && Array.isArray(data.results) ? data.results : null;
+            // Answered: what got no line is not speech - not asked again, not a silent subtitle.
+            if (results) proj.screenChecked = [...new Set([...(proj.screenChecked || []), ...missing.map(screenCheckKey)])];
           } catch (e) {
             console.warn("[Missing lines]", e);
           } finally {
@@ -19867,6 +19950,111 @@
       refreshActiveTabFromProject();
       if (stopError) throw stopError;
       return { added, missing: total };
+    }
+
+    // ── Dub Whole Series: a joined line is cut at its pauses ──
+    // A line Transcribe made from several subtitles with a pause between them was voiced in one
+    // go from its start, then silent while the actor went on (2026-11-09, a series export: 74
+    // subtitles silent that way - "什么东西? (pause) 石头? (pause) 活的?" over 9 s, the Khmer said in
+    // its first 2.5 s). Cut where the subtitles have a gap of SPLIT_GAP or more (most subtitle
+    // changes are back to back while the actor talks on - cutting at those made the sync worse,
+    // 2026-10-24); Gemini splits the Khmer into the parts keeping its words
+    // (/api/split-joined-lines), and each part is voiced at its own subtitle. A part that would
+    // not fit its time (estimated at SPLIT_EST_CHARS_PER_SEC, 1.3x at most) is joined to its
+    // neighbour, and a line with no part left alone stays whole. Measured on 93 such lines with
+    // their real Edge voices: silent subtitles 88 -> 45, rushed lines 5 -> 5.
+    const SPLIT_GAP = 0.6;
+    const SPLIT_EST_CHARS_PER_SEC = 8; // Edge, letters as fastSpokenLength counts them: a median 8.7/s on those lines
+    const SPLIT_MAX_SPEED = 1.3;
+    function joinedLinesOf(proj) {
+      const shown = ((proj.textBlur && proj.textBlur.lines) || []).filter((l) => Number.isFinite(+l.start) && Number.isFinite(+l.end) && l.end > l.start);
+      if (!shown.length) return [];
+      const out = [];
+      for (const sub of proj.subtitles || []) {
+        if (sub.audioStatus === "ready" || sub.fromScreen || sub._splitFrom || !isSpeakableText(sub.text)) continue;
+        const start = parseFloat(sub.textStart) || 0;
+        const len = sub.screenMatched && parseFloat(sub.screenLen) > 0 ? parseFloat(sub.screenLen) : (parseFloat(sub.textEnd) || start) - start;
+        const end = start + len;
+        const subs = shown.filter((o) => Math.min(end, o.end) - Math.max(start, o.start) > 0.5 * (o.end - o.start)).sort((a, b) => a.start - b.start);
+        if (subs.length < 2) continue;
+        const groups = [[subs[0]]];
+        for (let k = 1; k < subs.length; k++) (subs[k].start - subs[k - 1].end >= SPLIT_GAP ? groups.push([subs[k]]) : groups[groups.length - 1].push(subs[k]));
+        if (groups.length >= 2) out.push({ sub, end, groups });
+      }
+      return out;
+    }
+    // Parts [{ a, b, text, zh }] -> the same with unfit parts joined to a neighbour (worst first).
+    function fitSplitParts(parts, lineEnd) {
+      const g = parts.map((p) => ({ ...p }));
+      const est = (p) => fastSpokenLength(window.KhmerSpeech.normalizeForSpeech(p.text)) / SPLIT_EST_CHARS_PER_SEC;
+      const ratio = (k) => est(g[k]) / Math.max(0.3, (k + 1 < g.length ? g[k + 1].a : Math.max(lineEnd, g[k].b)) - g[k].a);
+      while (g.length > 1) {
+        let worst = 0;
+        for (let k = 1; k < g.length; k++) if (ratio(k) > ratio(worst)) worst = k;
+        if (ratio(worst) <= SPLIT_MAX_SPEED) break;
+        const j = worst === g.length - 1 ? worst - 1 : worst;
+        g.splice(j, 2, { a: g[j].a, b: g[j + 1].b, text: `${g[j].text} ${g[j + 1].text}`, zh: `${g[j].zh} ${g[j + 1].zh}` });
+      }
+      return g;
+    }
+    async function splitJoinedLinesAllTabs({ checkStop = () => { } } = {}) {
+      saveCurrentProjectState();
+      const config = getFastGeminiConfig();
+      const keys = config.keys.length ? config.keys : (window.textAi?.ready() ? [""] : []);
+      let found = 0, cut = 0, parts = 0;
+      if (!keys.length) return { found, cut, parts };
+      for (const proj of projects) {
+        checkStop();
+        const joined = joinedLinesOf(proj);
+        if (!joined.length) continue;
+        found += joined.length;
+        const requestId = `split_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        fastCondenseRequestIds.add(requestId); // the series' Stop cancels it
+        let results = null;
+        try {
+          const res = await fetch("http://localhost:3001/api/split-joined-lines", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              items: joined.map((j, k) => ({ id: String(k), line: j.sub.text, original: j.sub.originalText || "", parts: j.groups.map((g) => g.map((o) => o.text).join(" ")) })),
+              apiKey: keys[0], apiKeys: keys, model: config.model,
+              targetLanguage: proj.targetLanguage || targetLanguage, requestId,
+            }),
+          });
+          const data = await res.json().catch(() => null);
+          results = data && data.success && Array.isArray(data.results) ? data.results : null;
+        } catch (e) {
+          console.warn("[Split lines]", e);
+        } finally {
+          fastCondenseRequestIds.delete(requestId);
+        }
+        if (!results) continue; // no answer: the lines stay as they were
+        const replace = new Map();
+        for (const r of results) {
+          const j = joined[Number(r.id)];
+          if (!j || !Array.isArray(r.parts) || r.parts.length !== j.groups.length) continue;
+          const g = fitSplitParts(j.groups.map((grp, k) => ({ a: grp[0].start, b: grp[grp.length - 1].end, text: String(r.parts[k]).trim(), zh: grp.map((o) => o.text).join(" ") })), j.end);
+          if (g.length < 2) continue;
+          replace.set(j.sub, g.map((p) => ({
+            ...j.sub,
+            id: crypto.randomUUID().substring(0, 8),
+            textStart: p.a.toFixed(2), textEnd: p.b.toFixed(2), audioStart: p.a.toFixed(2), audioEnd: p.b.toFixed(2),
+            text: p.text, originalText: p.zh,
+            audioStatus: "idle", audioUrl: null, file: undefined, baseAudioDuration: 0, speed: 1.0,
+            screenMatched: true, screenLen: (p.b - p.a).toFixed(3), _splitFrom: j.sub.id,
+          })));
+        }
+        if (!replace.size) continue;
+        cut += replace.size;
+        proj.subtitles = setVoiceRooms((proj.subtitles || []).flatMap((s) => {
+          const r = replace.get(s);
+          if (r) parts += r.length;
+          return r || [s];
+        }), proj.duration);
+        settleMatchedSubtitles(proj.subtitles, proj.duration > 0 ? proj.duration : Infinity);
+      }
+      refreshActiveTabFromProject();
+      return { found, cut, parts };
     }
 
     function refreshActiveTabFromProject() {
@@ -20817,7 +21005,13 @@
 
       // A starter profile's description ("A clear, natural young male voice…") is for a voice
       // with no clip; once a clip is attached it pulled the clone towards a generic voice.
-      const starter = voxCmp2Defaults().profiles.some((p) => p.instruction === profile?.instruction);
+      const starterInstructions = new Set([
+        ...voxCmp2Defaults().profiles.map((p) => p.instruction),
+        // The short-lived "studio voiceover" starters (2026-11-08), in case a profile saved them.
+        "Clear, resonant studio voiceover, warm male voice, articulate enunciation",
+        "Clear, natural studio voiceover, soft and warm female voice, articulate enunciation"
+      ]);
+      const starter = starterInstructions.has(profile?.instruction);
       const ownInstruction = profile?.audioPath && starter ? "" : (profile?.instruction || "");
       // If text is Khmer and no reference audio is used, avoid injecting English prompt context
       const effectiveInstruction = (isKhmer && !profile?.audioPath) ? "" : ownInstruction;
@@ -20839,7 +21033,9 @@
               reference_audio_base64: refBase64,
               speed: parseFloat(speed) || 1.0,
               emotion: emotion || "Neutral",
-              cfg_value: 2.0,
+              cfg_value: profile?.cfg_value ? parseFloat(profile.cfg_value) : 2.0,
+              inference_timesteps: profile?.inference_timesteps ? parseInt(profile.inference_timesteps, 10) : null, // null: the server's 10 (measured)
+              prompt_text: profile?.promptText || null,
               fit_seconds: fitSeconds,
               feeling_audio_base64: feelingBase64,
               feeling_from: feelingFrom,
@@ -20886,7 +21082,9 @@
           index,
           speed: parseFloat(speed) || 1.0,
           emotion: emotion || "Neutral",
-          cfg_value: 2.0,
+          cfg_value: profile?.cfg_value ? parseFloat(profile.cfg_value) : 2.0,
+          inference_timesteps: profile?.inference_timesteps ? parseInt(profile.inference_timesteps, 10) : null, // null: the server's 10 (measured)
+          prompt_text: profile?.promptText || null,
           fit_seconds: fitSeconds,
           feeling_audio_base64: feelingBase64,
           feeling_from: feelingFrom,
@@ -20911,7 +21109,9 @@
                 reference_audio_base64: refBase64,
                 speed: parseFloat(speed) || 1.0,
                 emotion: emotion || "Neutral",
-                cfg_value: 2.0,
+                cfg_value: profile?.cfg_value ? parseFloat(profile.cfg_value) : 2.0,
+                inference_timesteps: profile?.inference_timesteps ? parseInt(profile.inference_timesteps, 10) : null, // null: the server's 10 (measured)
+                prompt_text: profile?.promptText || null,
                 fit_seconds: fitSeconds,
                 feeling_audio_base64: feelingBase64,
                 feeling_from: feelingFrom,
@@ -24769,12 +24969,13 @@
         // it was done (Dub Whole Series paused 3 times). Waits until the server has no render going
         // and returns its last render's state ({ status, outputFile, error, token }). Throws when
         // the server doesn't answer for 2 minutes, or when the signal is aborted (Stop).
-        const waitForServerRender = async (signal) => {
+        // token: wait for that render (two can run at once); none: for the one started last.
+        const waitForServerRender = async (signal, token = null) => {
           let lostSince = 0;
           for (;;) {
             if (signal?.aborted) throw new DOMException("The render was stopped.", "AbortError");
             try {
-              const st = await (await fetch("http://localhost:3001/api/render-progress", { signal })).json();
+              const st = await (await fetch(`http://localhost:3001/api/render-progress${token ? `?token=${encodeURIComponent(token)}` : ""}`, { signal })).json();
               lostSince = 0;
               if (st.status !== "processing") return st;
             } catch (e) {
@@ -24792,6 +24993,9 @@
         // render still going ("already in progress" - maybe for a request lost earlier) is waited
         // out first, instead of answered with status 409.
         const sendRender = async (formData, token, signal, { waitIfBusy = true } = {}) => {
+          // Both export slots busy ("already in progress"): waiting for a free one is not a failed
+          // try - a series' export queue waits through other renders without running out of tries.
+          let busyWaits = 0;
           for (let attempt = 0; ; attempt++) {
             let res;
             try {
@@ -24799,12 +25003,25 @@
             } catch (e) {
               if (e.name === "AbortError" || attempt >= 3) throw e;
               console.warn(`[Render] The request was lost (${e.message}) - waiting for the server's render.`);
-              const st = await waitForServerRender(signal);
-              if (st.token === token) return st.status === "done" ? { success: true, outputPath: st.outputFile } : { success: false, error: st.error || "Render failed" };
-              continue; // it never reached the server
+              const st = await waitForServerRender(signal, token);
+              if (st.token === token && st.status !== "idle") return st.status === "done" ? { success: true, outputPath: st.outputFile } : { success: false, error: st.error || "Render failed" };
+              continue; // it never reached the server (no render by this token)
             }
-            if (res.status === 409 && waitIfBusy && attempt < 3) {
+            if (res.status === 409 && waitIfBusy && busyWaits < 1000) {
+              let busy = null;
+              try { busy = await res.clone().json(); } catch (_) { }
+              attempt--;
+              if (busy && busy.held === "search") {
+                // A subtitle search is running: exports wait their turn (the server lets this one
+                // through after 20 minutes at most). Not counted as a busy try.
+                await new Promise((r) => setTimeout(r, 4000));
+                if (signal?.aborted) throw new DOMException("The render was stopped.", "AbortError");
+                continue;
+              }
+              busyWaits++;
               await waitForServerRender(signal);
+              // No render was going (the slot freed in between): a short pause, not a tight loop.
+              await new Promise((r) => setTimeout(r, 1500));
               continue;
             }
             let data = null;
@@ -24881,6 +25098,8 @@
               try {
                 await fetch("http://localhost:3001/api/cancel-render", {
                   method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ token: targetProject._renderToken || null }),
                 });
                 if (targetProject.renderAbortController) targetProject.renderAbortController.abort();
               } catch (e) {
@@ -25145,6 +25364,7 @@
             configData.audioTracks = patchedAudioTracks;
             const renderToken = newRenderToken();
             configData.renderToken = renderToken;
+            targetProject._renderToken = renderToken; // Cancel stops this render (two can run at once)
 
             formData.append("data", JSON.stringify(configData));
 
@@ -25163,7 +25383,7 @@
 
             // Progress polling — always reads from server, updates UI only if still on this project
             let renderProgressInterval = window.backendJobs.pollEvery(500, async (pollSignal) => {
-              const progRes = await fetch("http://localhost:3001/api/render-progress", { signal: pollSignal });
+              const progRes = await fetch(`http://localhost:3001/api/render-progress?token=${encodeURIComponent(renderToken)}`, { signal: pollSignal });
               const progData = await progRes.json();
               if (progData.status === "processing") {
                 // Always save to the project object (source of truth)
@@ -26264,45 +26484,38 @@
         });
 
         // ── Progress card helpers (card is now inside the drawer) ──
-        const showQueueCard = (itemIndex) => {
+        // Up to QUEUE_RENDERS items render at once (the server's MAX_RENDERS in routes/render.js;
+        // measured: two side by side 90 s each against 119 s one at a time). The card shows the
+        // whole queue's percent - finished items, and running ones part-way - and the running names.
+        const QUEUE_RENDERS = 2;
+        const queueFinished = (i) => i.status === "done" || i.status === "error" || i.status === "cancelled";
+        const queueOverallPct = () => {
+          const total = renderQueue.length;
+          if (!total) return 0;
+          const done = renderQueue.filter(queueFinished).length;
+          const partly = renderQueue.filter((i) => i.status === "running").reduce((s, i) => s + (i.progress || 0) / 100, 0);
+          return Math.min(100, Math.max(0, ((done + partly) / total) * 100));
+        };
+        const showQueueCard = () => {
           const card = document.getElementById("queue-progress-card");
           if (!card) return;
-          const item = renderQueue[itemIndex];
+          const running = renderQueue.filter((i) => i.status === "running");
           const nameEl = document.getElementById("queue-card-name");
           const counterEl = document.getElementById("queue-card-counter");
-          const pctEl = document.getElementById("queue-card-pct");
-          const barEl = document.getElementById("queue-card-bar");
-          const total = renderQueue.length;
-          const doneCount = renderQueue.filter((i) => i.status === "done" || i.status === "error" || i.status === "cancelled").length;
-          // Overall pct = fully done jobs + 0% for the job just starting
-          const overallPct = total > 0 ? (doneCount / total) * 100 : 0;
-          if (nameEl) nameEl.textContent = item?.config.outputFileName || "";
-          if (counterEl) counterEl.textContent = `${itemIndex + 1} / ${total}`;
-          if (pctEl) pctEl.textContent = `${Math.round(overallPct)}%`;
-          if (barEl) barEl.style.width = `${overallPct}%`;
+          if (nameEl) nameEl.textContent = running.map((i) => i.config?.outputFileName || "").filter(Boolean).join("  ·  ");
+          if (counterEl) counterEl.textContent = `${renderQueue.filter(queueFinished).length + running.length} / ${renderQueue.length}`;
+          updateQueueCard();
           card.classList.remove("hidden");
           _lucideCreateIcons();
         };
 
-        const updateQueueCard = (currentJobPct) => {
+        const updateQueueCard = () => {
           const pctEl = document.getElementById("queue-card-pct");
           const barEl = document.getElementById("queue-card-bar");
-          const total = renderQueue.length;
-          if (total === 0) return;
-          // Count jobs fully done EXCLUDING the currently running item.
-          // We identify the running item as the one whose status is "running",
-          // OR if called after status flipped to "done"/"error"/"cancelled" on the
-          // same tick, we subtract 1 from doneCount to avoid double-counting it
-          // since currentJobPct already carries its contribution (0-100).
-          const runningItem = renderQueue.find((i) => i.status === "running");
-          const doneCount = renderQueue.filter((i) => (i.status === "done" || i.status === "error" || i.status === "cancelled") && i !== runningItem).length;
-          // Subtract 1 more if there's no running item but currentJobPct < 100
-          // (means we just flipped it to done this tick — don't count it yet)
-          const effectiveDone = runningItem ? doneCount : Math.max(0, doneCount - 1);
-          const overallPct = ((effectiveDone + currentJobPct / 100) / total) * 100;
-          const clamped = Math.min(100, Math.max(0, overallPct));
-          if (pctEl) pctEl.textContent = `${Math.round(clamped)}%`;
-          if (barEl) barEl.style.width = `${clamped}%`;
+          if (renderQueue.length === 0) return;
+          const pct = queueOverallPct();
+          if (pctEl) pctEl.textContent = `${Math.round(pct)}%`;
+          if (barEl) barEl.style.width = `${pct}%`;
         };
 
         const hideQueueCard = () => {
@@ -26324,29 +26537,33 @@
           }
         };
 
+        // Stops one running item: its request, and its render on the server (by its token - the
+        // other render going is left alone).
+        const cancelItemRender = async (item) => {
+          item._abortCtrl?.abort();
+          if (!item._renderToken) return;
+          try {
+            await fetch("http://localhost:3001/api/cancel-render", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: item._renderToken }) });
+          } catch { }
+        };
+
+        // Items the running queue may start: every pending item when Start Queue is pressed, and
+        // each series part's items. QUEUE_RENDERS workers take them in queue order (an earlier
+        // part's tabs first); a part asking while a run is going joins it instead of waiting.
+        const queueWanted = new Set();
+        let queueWorkers = 0;
+
         let queueStops = 0; // every Stop, so Dub Whole Series doesn't render again what was stopped
         const stopRenderQueue = async () => {
           if (!queueRunning) return;
           queueStopRequested = true;
           queueStops++;
-
-          // Abort the currently running job's fetch
-          const runningItem = renderQueue.find((i) => i.status === "running");
-          if (runningItem?._abortCtrl) {
-            runningItem._abortCtrl.abort();
-          }
-
-          // Also tell the server to cancel FFmpeg
-          try {
-            await fetch("http://localhost:3001/api/cancel-render", {
-              method: "POST",
-            });
-          } catch { }
-
-          // Mark all remaining pending items as cancelled
+          // Mark all remaining pending items as cancelled (no worker starts them), then stop the running ones.
           renderQueue.forEach((i) => {
             if (i.status === "pending") i.status = "cancelled";
           });
+          queueWanted.clear();
+          for (const item of renderQueue.filter((i) => i.status === "running")) await cancelItemRender(item);
 
           showToast("Queue stopped. All pending jobs cancelled.", "info");
           renderQueueList();
@@ -26354,131 +26571,10 @@
         document.getElementById("btn-stop-queue")?.addEventListener("click", stopRenderQueue);
 
         // ── Start Queue runner ────────────────────────────────────
-        // onlyItems (Set): render just those queue items (Dub Whole Series' hands-free export).
-        const runRenderQueue = async (onlyItems = null) => {
-          if (queueRunning) return;
-          const wantedItem = (i) => !onlyItems || onlyItems.has(i);
-          const pending = renderQueue.filter((i) => i.status === "pending" && wantedItem(i));
-          if (pending.length === 0) return showToast("No pending items in the queue.", "info");
-
-          queueRunning = true;
-          queueStopRequested = false;
-          syncQueueButtons();
-          updateQueueBadge();
-          // Open the drawer so user can see progress
-          openQueueDrawer();
-
-          for (let i = 0; i < renderQueue.length; i++) {
-            if (queueStopRequested) break;
-            const item = renderQueue[i];
-            if (item.status !== "pending" || !wantedItem(item)) continue;
-
-            // Mark running
-            item.status = "running";
-            item.progress = 0;
-            renderQueueList();
-            showQueueCard(i);
-
-            let pollInterval = null;
-            try {
-              if (!item.config) throw new Error("Queue item is missing config — please re-add to queue.");
-              const queueConfig = JSON.parse(JSON.stringify(item.config)); // deep clone — don't mutate the queued item
-
-              const formData = new FormData();
-              const localVideoPath = queueConfig.videoFilePath || item.config?.videoFilePath || item.videoFilePath;
-              if (localVideoPath) {
-                // Desktop/Electron: video is already on disk, pass path directly without gigabyte memory buffering!
-                queueConfig.videoFilePath = localVideoPath;
-              } else if (item.blobUrl) {
-                // Web-only fallback when no local path is available
-                try {
-                  const videoFetchRes = await fetch(item.blobUrl);
-                  const videoBlob = await videoFetchRes.blob();
-                  const safeName = (item.fileName || "video.mp4").replace(/[^a-zA-Z0-9.]/g, "_");
-                  formData.append("videoFile", videoBlob, safeName);
-                } catch (fetchErr) {
-                  console.warn("Could not fetch video blob in queue:", fetchErr);
-                }
-              }
-
-              if (item.bgmFileObj) formData.append("bgmFile", item.bgmFileObj);
-
-              // Upload imported A1 audio blobs for this queue item
-              const patchedQueueTracks = [];
-              let queueImportedIdx = 0;
-              for (const track of queueConfig.audioTracks || []) {
-                if (typeof track.file === "string" && track.file.startsWith("blob:")) {
-                  try {
-                    const blob = await fetch(track.file).then((r) => r.blob());
-                    formData.append("importedAudioFiles", blob, `imported_audio_${queueImportedIdx}.mp3`);
-                    const sentinel = `__imported__:${queueImportedIdx}`;
-                    queueImportedIdx++;
-                    patchedQueueTracks.push({ ...track, file: sentinel });
-                  } catch {
-                    // skip unreadable blobs
-                  }
-                } else {
-                  patchedQueueTracks.push(track);
-                }
-              }
-              queueConfig.audioTracks = patchedQueueTracks;
-              const renderToken = newRenderToken();
-              queueConfig.renderToken = renderToken;
-
-              formData.append("data", JSON.stringify(queueConfig));
-
-              // Per-item abort controller
-              const abortCtrl = new AbortController();
-              item._abortCtrl = abortCtrl;
-
-              // Poll progress every 1.2s
-              pollInterval = window.backendJobs.pollEvery(500, async (pollSignal) => {
-                const progRes = await fetch("http://localhost:3001/api/render-progress", { signal: pollSignal });
-                const progData = await progRes.json();
-                if (progData.status === "processing") {
-                  item.progress = progData.percent;
-                  // Smooth targeted DOM update — no full re-render needed
-                  const el = document.querySelector(`[data-queue-key="${item._key}"]`);
-                  if (el) {
-                    const bar = el.querySelector(".queue-item-progress-bar");
-                    const pct = el.querySelector(".queue-item-progress-pct");
-                    if (bar) bar.style.width = `${progData.percent}%`;
-                    if (pct) pct.textContent = `${Math.round(progData.percent)}%`;
-                  }
-                  updateQueueCard(progData.percent);
-                }
-              });
-
-              // A request lost to a network change waits for the server's render (sendRender).
-              const result = await sendRender(formData, renderToken, abortCtrl.signal);
-              if (!result.success) throw new Error(result.error || "Render failed");
-
-              item.outputPath = result.outputPath || null;
-              item.status = "done";
-              item.progress = 100;
-              updateQueueCard(100); // overall bar auto-advances since this item is now "done"
-              showToast(`Queue: "${item.config.outputFileName}" done! ✅`, "success");
-            } catch (err) {
-              if (err.name === "AbortError") {
-                item.status = "cancelled";
-                showToast(`Queue: "${item.config.outputFileName}" stopped.`, "info");
-              } else {
-                item.status = "error";
-                console.error("Queue render error:", err);
-                showToast(`Queue: "${item.config.outputFileName}" failed — ${err.message}`, "error");
-              }
-            } finally {
-              if (pollInterval) clearInterval(pollInterval);
-              item._abortCtrl = null;
-            }
-
-            renderQueueList();
-            // Pause 800ms between jobs so FFmpeg releases file handles cleanly
-            if (!queueStopRequested) await new Promise((r) => setTimeout(r, 800));
-          }
-
+        const finishQueueRun = () => {
           queueRunning = false;
           queueStopRequested = false;
+          queueWanted.clear();
           hideQueueCard();
           syncQueueButtons();
           updateQueueBadge();
@@ -26486,6 +26582,155 @@
 
           const doneCount = renderQueue.filter((i) => i.status === "done").length;
           if (doneCount > 0) showToast(`Queue complete! ${doneCount} file${doneCount > 1 ? "s" : ""} rendered. 🎉`, "success");
+        };
+
+        // Renders one queue item (already marked running by its worker).
+        const renderQueueItem = async (item) => {
+          item.progress = 0;
+          renderQueueList();
+          showQueueCard();
+
+          let pollInterval = null;
+          try {
+            if (!item.config) throw new Error("Queue item is missing config — please re-add to queue.");
+            const queueConfig = JSON.parse(JSON.stringify(item.config)); // deep clone — don't mutate the queued item
+
+            const formData = new FormData();
+            const localVideoPath = queueConfig.videoFilePath || item.config?.videoFilePath || item.videoFilePath;
+            if (localVideoPath) {
+              // Desktop/Electron: video is already on disk, pass path directly without gigabyte memory buffering!
+              queueConfig.videoFilePath = localVideoPath;
+            } else if (item.blobUrl) {
+              // Web-only fallback when no local path is available
+              try {
+                const videoFetchRes = await fetch(item.blobUrl);
+                const videoBlob = await videoFetchRes.blob();
+                const safeName = (item.fileName || "video.mp4").replace(/[^a-zA-Z0-9.]/g, "_");
+                formData.append("videoFile", videoBlob, safeName);
+              } catch (fetchErr) {
+                console.warn("Could not fetch video blob in queue:", fetchErr);
+              }
+            }
+
+            if (item.bgmFileObj) formData.append("bgmFile", item.bgmFileObj);
+
+            // Upload imported A1 audio blobs for this queue item
+            const patchedQueueTracks = [];
+            let queueImportedIdx = 0;
+            for (const track of queueConfig.audioTracks || []) {
+              if (typeof track.file === "string" && track.file.startsWith("blob:")) {
+                try {
+                  const blob = await fetch(track.file).then((r) => r.blob());
+                  formData.append("importedAudioFiles", blob, `imported_audio_${queueImportedIdx}.mp3`);
+                  const sentinel = `__imported__:${queueImportedIdx}`;
+                  queueImportedIdx++;
+                  patchedQueueTracks.push({ ...track, file: sentinel });
+                } catch {
+                  // skip unreadable blobs
+                }
+              } else {
+                patchedQueueTracks.push(track);
+              }
+            }
+            queueConfig.audioTracks = patchedQueueTracks;
+            const renderToken = newRenderToken();
+            queueConfig.renderToken = renderToken;
+            item._renderToken = renderToken; // Stop cancels this render, not the other one going
+
+            formData.append("data", JSON.stringify(queueConfig));
+
+            // Per-item abort controller
+            const abortCtrl = new AbortController();
+            item._abortCtrl = abortCtrl;
+
+            // Poll progress every 1.2s
+            pollInterval = window.backendJobs.pollEvery(500, async (pollSignal) => {
+              const progRes = await fetch(`http://localhost:3001/api/render-progress?token=${encodeURIComponent(renderToken)}`, { signal: pollSignal });
+              const progData = await progRes.json();
+              if (progData.status === "processing") {
+                item.progress = progData.percent;
+                // Smooth targeted DOM update — no full re-render needed
+                const el = document.querySelector(`[data-queue-key="${item._key}"]`);
+                if (el) {
+                  const bar = el.querySelector(".queue-item-progress-bar");
+                  const pct = el.querySelector(".queue-item-progress-pct");
+                  if (bar) bar.style.width = `${progData.percent}%`;
+                  if (pct) pct.textContent = `${Math.round(progData.percent)}%`;
+                }
+                updateQueueCard();
+              }
+            });
+
+            // A request lost to a network change waits for the server's render (sendRender).
+            const result = await sendRender(formData, renderToken, abortCtrl.signal);
+            if (!result.success) throw new Error(result.error || "Render failed");
+
+            item.outputPath = result.outputPath || null;
+            item.status = "done";
+            item.progress = 100;
+            updateQueueCard();
+            showToast(`Queue: "${item.config.outputFileName}" done! ✅`, "success");
+          } catch (err) {
+            if (err.name === "AbortError") {
+              item.status = "cancelled";
+              showToast(`Queue: "${item.config.outputFileName}" stopped.`, "info");
+            } else {
+              item.status = "error";
+              console.error("Queue render error:", err);
+              showToast(`Queue: "${item.config.outputFileName}" failed — ${err.message}`, "error");
+            }
+          } finally {
+            if (pollInterval) clearInterval(pollInterval);
+            item._abortCtrl = null;
+          }
+
+        };
+
+        // One worker: the next wanted pending item in queue order, until none is left. The item is
+        // marked running before anything is awaited, so the other worker never takes it too; a
+        // worker with nothing to do stops in that same step (a part asking right then gets workers).
+        const queueWorker = async () => {
+          for (;;) {
+            const item = queueStopRequested ? null : renderQueue.find((i) => i.status === "pending" && queueWanted.has(i));
+            if (!item) {
+              queueWorkers--;
+              if (queueWorkers === 0) finishQueueRun();
+              return;
+            }
+            item.status = "running";
+            await renderQueueItem(item);
+            renderQueueList();
+            // Pause 800ms between jobs so FFmpeg releases file handles cleanly
+            if (!queueStopRequested) await new Promise((r) => setTimeout(r, 800));
+          }
+        };
+
+        // onlyItems (Set): render just those queue items (Dub Whole Series' hands-free export).
+        // Joins a run already going; resolves when every item it asked for has finished.
+        const runRenderQueue = async (onlyItems = null) => {
+          // A Stop still ending its run: wait for it, then start a fresh one.
+          while (queueRunning && queueStopRequested) await new Promise((r) => setTimeout(r, 300));
+          const asked = renderQueue.filter((i) => i.status === "pending" && (!onlyItems || onlyItems.has(i)));
+          if (asked.length === 0) return showToast("No pending items in the queue.", "info");
+          asked.forEach((i) => queueWanted.add(i));
+
+          if (!queueRunning) {
+            queueRunning = true;
+            queueStopRequested = false;
+            syncQueueButtons();
+            updateQueueBadge();
+            // Open the drawer so user can see progress
+            openQueueDrawer();
+          }
+          // As many workers as there are items to take (a worker with none stops at once - started
+          // in a loop until there were two, a single waiting item made that loop run forever).
+          const waiting = renderQueue.filter((i) => i.status === "pending" && queueWanted.has(i)).length;
+          const start = Math.min(QUEUE_RENDERS, waiting) - queueWorkers;
+          for (let k = 0; k < start; k++) {
+            queueWorkers++;
+            queueWorker();
+          }
+          while (asked.some((i) => i.status === "pending" || i.status === "running")) await new Promise((r) => setTimeout(r, 500));
         };
         document.getElementById("btn-start-queue")?.addEventListener("click", () => runRenderQueue());
 
@@ -26537,8 +26782,7 @@
           const stopsBefore = queueStops;
           for (let attempt = 0; attempt < 2 && queueStops === stopsBefore; attempt++) {
             if (attempt) again(["error"]);
-            // Waiting behind the user's own queue run: a Stop ends the wait (it doesn't stop theirs).
-            while (queueRunning && queueStops === stopsBefore) await new Promise((r) => setTimeout(r, 1000));
+            // Joins the queue run already going (the user's own, or another part's): two render at once.
             if (queueStops !== stopsBefore || !items.some((i) => i.status === "pending")) break;
             await runRenderQueue(new Set(items));
           }
@@ -26557,13 +26801,13 @@
         const stopSeriesItems = async (items) => {
           const own = new Set(items);
           queueStops++; // renderSeriesItems doesn't start these again
-          const runningItem = renderQueue.find((i) => i.status === "running");
-          if (runningItem && own.has(runningItem)) {
-            queueStopRequested = true; // the run is the series' own (runRenderQueue(onlyItems))
-            runningItem._abortCtrl?.abort();
-            try { await fetch("http://localhost:3001/api/cancel-render", { method: "POST" }); } catch { }
-          }
-          renderQueue.forEach((i) => { if (own.has(i) && i.status === "pending") i.status = "cancelled"; });
+          renderQueue.forEach((i) => {
+            if (!own.has(i)) return;
+            queueWanted.delete(i);
+            if (i.status === "pending") i.status = "cancelled";
+          });
+          // Its running renders (by their tokens); a render of the user's own keeps going.
+          for (const item of renderQueue.filter((i) => own.has(i) && i.status === "running")) await cancelItemRender(item);
           renderQueueList();
         };
         // Before a failed export is tried again: an item whose tab is still open takes the tab as
@@ -26611,7 +26855,7 @@
           renderQueueList();
           return items;
         };
-        window.seriesRenderApi = { queueAllTabs: queueAllTabsForSeries, renderItems: renderSeriesItems, stop: stopRenderQueue, stopItems: stopSeriesItems, refreshItems: refreshSeriesItems, restoreItems: restoreSeriesItems };
+        window.seriesRenderApi = { queueAllTabs: queueAllTabsForSeries, renderItems: renderSeriesItems, stop: stopRenderQueue, stopItems: stopSeriesItems, refreshItems: refreshSeriesItems, restoreItems: restoreSeriesItems, stops: () => queueStops };
 
         // Initial render of empty queue UI
         renderQueueList();

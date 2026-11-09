@@ -8,7 +8,6 @@ const { getFFmpegBinary, getFFprobeBinary } = require('./ffmpeg_env');
 const { buildTextBlurFilters, probeDisplaySize } = require('./lib/text-blur');
 const { buildColorFilters } = require('./lib/video-color');
 
-let activeRenderProcess = null;
 
 function escapeFfmpegFilterPath(p) {
     if (!p || typeof p !== 'string') return '';
@@ -18,6 +17,31 @@ function escapeFfmpegFilterPath(p) {
     // containing an apostrophe (e.g. a Windows user folder like C:\Users\O'Brien).
     return p.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''");
 }
+// Exports by job id (the page's render token, or a made-up id). Two can run at once: measured
+// 2026-11-08, one 7.6-min tab alone 119 s, two side by side 90 s each. currentRenderJob is the
+// export started last, for callers that ask without a token.
+const renderJobs = new Map();
+
+// While a subtitle search runs, an export runs at low priority (and routes/render.js starts no
+// new one): the next part's voices wait for the search, the export is not needed until the end.
+// Measured 2026-11-09 (16 threads, NVENC, 4 searches + exports of a 6-min piece): searches with
+// 2 exports beside them at normal priority moved at 0.68 steps/s against 22.3 alone (33x slower),
+// the exports at 2.6 s of video/s against 6.3; with the export at low priority the searches did
+// 9.3 and one export 1.2. They share the GPU's video decoder and memory, so taking turns wins.
+let searchBusy = false;
+function setRenderPriority(proc, low) {
+    try {
+        if (proc && proc.pid) os.setPriority(proc.pid, low ? os.constants.priority.PRIORITY_BELOW_NORMAL : os.constants.priority.PRIORITY_NORMAL);
+    } catch (e) { }
+}
+function setSearchBusy(busy) {
+    busy = !!busy;
+    if (busy === searchBusy) return;
+    searchBusy = busy;
+    for (const j of renderJobs.values()) if (j.status === 'rendering' && j.proc) setRenderPriority(j.proc, busy);
+    console.log(`[Render] ${busy ? 'Subtitle search running: exports wait / run at low priority' : 'Subtitle search done: exports at full speed'}`);
+}
+const isSearchBusy = () => searchBusy;
 let currentRenderJob = {
     status: 'idle',
     progress: 0,
@@ -25,6 +49,20 @@ let currentRenderJob = {
     outputFile: null,
     error: null
 };
+function newRenderJob(renderToken, outputPath) {
+    const token = renderToken ? String(renderToken).slice(0, 64) : null;
+    const job = {
+        id: token || `r_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+        status: 'rendering', progress: 0, eta: 'Calculating...', outputFile: outputPath, error: null,
+        token, cancelRequested: false, proc: null, startedAt: Date.now()
+    };
+    renderJobs.set(job.id, job);
+    for (const [id, j] of renderJobs) {
+        if (j.status !== 'rendering' && Date.now() - j.startedAt > 60 * 60 * 1000) renderJobs.delete(id);
+    }
+    return job;
+}
+const runningRenderJobs = () => [...renderJobs.values()].filter(j => j.status === 'rendering');
 
 let _subtitlesFilterSupported = null;
 function hasSubtitlesFilter() {
@@ -1284,20 +1322,16 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         videoScaleY
     } = options;
 
+    // This export's own job (two exports can run at once): status, progress, its FFmpeg. The
+    // page's token names it - a page that lost its request (Wi-Fi switched off or on drops it,
+    // even to localhost) asks /api/render-progress?token= whether its render went on. A retry
+    // (NVIDIA-decode or CPU-encoder fallback) carries on the same job.
+    const job = options._job || newRenderJob(options.renderToken, outputPath);
+    if (options._job) Object.assign(job, { status: 'rendering', progress: 0, eta: 'Calculating...', error: null, proc: null });
+    currentRenderJob = job;
     try {
-        currentRenderJob = {
-            status: 'rendering',
-            progress: 0,
-            eta: 'Calculating...',
-            outputFile: outputPath,
-            error: null,
-            // The page's id for this render: a page that lost its request (Wi-Fi switched off or
-            // on drops it, even to localhost) asks /api/render-progress whether this one is its own.
-            token: options.renderToken ? String(options.renderToken).slice(0, 64) : null
-        };
         // Stop before FFmpeg has started (voice track, probes): cancelRender() marks this job,
         // and the render ends at the next check instead of rendering the whole tab after Stop.
-        const job = currentRenderJob;
         const stopIfCancelled = () => {
             if (job.cancelRequested) throw Object.assign(new Error('Render cancelled'), { cancelled: true });
         };
@@ -1453,7 +1487,8 @@ async function renderVideo(options, onProgress, onComplete, onError) {
             console.log(`[Render] Spawning FFmpeg to export audio: ${outputPath}`);
             stopIfCancelled();
             const ffmpeg = spawn(getFFmpegBinary(), args, { windowsHide: true });
-            activeRenderProcess = ffmpeg;
+            job.proc = ffmpeg;
+            if (searchBusy) setRenderPriority(ffmpeg, true);
 
             let fullStderr = '';
             ffmpeg.stderr.on('data', (data) => {
@@ -1468,38 +1503,38 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                     const etaSec = Math.max(0, Math.round((effectiveVideoDuration - currentSec) / (speed || 1)));
                     const etaStr = etaSec < 60 ? `${etaSec}s` : `${Math.floor(etaSec / 60)}m ${etaSec % 60}s`;
 
-                    currentRenderJob.progress = progressPct;
-                    currentRenderJob.eta = etaStr;
+                    job.progress = progressPct;
+                    job.eta = etaStr;
                     if (onProgress) onProgress(progressPct, etaStr);
                 }
             });
 
             ffmpeg.on('close', (code) => {
-                activeRenderProcess = null;
+                job.proc = null;
                 try { if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true }); } catch (e) { }
                 if (code === 0 && fs.existsSync(outputPath)) {
-                    currentRenderJob.status = 'done';
-                    currentRenderJob.progress = 100;
-                    currentRenderJob.eta = '0s';
+                    job.status = 'done';
+                    job.progress = 100;
+                    job.eta = '0s';
                     if (onComplete) onComplete(outputPath);
                 } else {
                     try { if (!outputPreexisted && fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch (e) { }
-                    if (currentRenderJob.status === 'cancelled') {
-                        currentRenderJob.error = 'Render cancelled';
-                        if (onError) onError(new Error(currentRenderJob.error));
+                    if (job.status === 'cancelled') {
+                        job.error = 'Render cancelled';
+                        if (onError) onError(new Error(job.error));
                         return;
                     }
-                    currentRenderJob.status = 'error';
-                    currentRenderJob.error = `Audio export exited with code ${code}`;
-                    if (onError) onError(new Error(currentRenderJob.error));
+                    job.status = 'error';
+                    job.error = `Audio export exited with code ${code}`;
+                    if (onError) onError(new Error(job.error));
                 }
             });
 
             ffmpeg.on('error', (err) => {
-                activeRenderProcess = null;
+                job.proc = null;
                 try { if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true }); } catch (e) { }
-                currentRenderJob.status = 'error';
-                currentRenderJob.error = err.message;
+                job.status = 'error';
+                job.error = err.message;
                 if (onError) onError(err);
             });
 
@@ -1910,7 +1945,8 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         console.log(`[Render] Spawning FFmpeg to render (${chosenEncoder}${hwDecode ? ', NVIDIA decoding' : ''}): ${outputPath}`);
         stopIfCancelled();
         const ffmpeg = spawn(getFFmpegBinary(), args, { windowsHide: true });
-        activeRenderProcess = ffmpeg;
+        job.proc = ffmpeg;
+        if (searchBusy) setRenderPriority(ffmpeg, true);
         const renderStartedAt = Date.now();
 
         function cleanupTempDir() {
@@ -1934,30 +1970,31 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                 const etaSec = Math.max(0, Math.round((videoDuration - currentSec) / (speed || 1)));
                 const etaStr = etaSec < 60 ? `${etaSec}s` : `${Math.floor(etaSec / 60)}m ${etaSec % 60}s`;
 
-                currentRenderJob.progress = progressPct;
-                currentRenderJob.eta = etaStr;
+                job.progress = progressPct;
+                job.eta = etaStr;
                 if (onProgress) onProgress(progressPct, etaStr);
             }
         });
 
         ffmpeg.on('close', (code) => {
-            activeRenderProcess = null;
+            job.proc = null;
             cleanupTempDir();
             if (code === 0 && fs.existsSync(outputPath)) {
                 const now = Date.now();
                 console.log(`[Render] Finished ${path.basename(outputPath)}: video + mix ${((now - renderStartedAt) / 1000).toFixed(1)} s, whole export ${((now - stemStartedAt) / 1000).toFixed(1)} s`);
-                currentRenderJob.status = 'done';
-                currentRenderJob.progress = 100;
-                currentRenderJob.eta = '0s';
+                job.status = 'done';
+                job.progress = 100;
+                job.eta = '0s';
                 if (onComplete) onComplete(outputPath);
             } else {
                 // Failed with NVIDIA decoding the video: once more with the CPU decoding it (and the
                 // same encoder - the decoder may be what broke).
-                if (hwDecode && currentRenderJob.status !== 'cancelled') {
+                if (hwDecode && job.status !== 'cancelled') {
                     console.warn(`[Render Auto-Fallback] FFmpeg failed (exit code ${code}) with NVIDIA decoding the video. Retrying with the CPU decoding it...`);
                     try { if (!outputPreexisted && fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch (e) { }
                     return renderVideo({
                         ...options,
+                        _job: job,
                         _noHwDecode: true,
                         _outputPreexisted: outputPreexisted
                     }, onProgress, (out) => {
@@ -1967,7 +2004,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                 }
                 // If a hardware encoder failed and this wasn't already a retry, and render was not cancelled,
                 // seamlessly fall back to the ultra-reliable CPU encoder (libx264)
-                if (chosenEncoder !== 'libx264' && !options._isRetry && currentRenderJob.status !== 'cancelled') {
+                if (chosenEncoder !== 'libx264' && !options._isRetry && job.status !== 'cancelled') {
                     console.warn(`[Render Auto-Fallback] Hardware encoder "${chosenEncoder}" failed (exit code ${code}). Automatically retrying with CPU encoder (libx264)...`);
                     if (_detectedEncoders) {
                         for (const [k, c] of Object.entries(codecByKey)) {
@@ -1977,6 +2014,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                     try { if (!outputPreexisted && fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch (e) { }
                     return renderVideo({
                         ...options,
+                        _job: job,
                         encoder: 'libx264',
                         _isRetry: true,
                         _outputPreexisted: outputPreexisted
@@ -1985,80 +2023,98 @@ async function renderVideo(options, onProgress, onComplete, onError) {
 
                 // A stopped or failed render leaves a half-written, unplayable file behind.
                 try { if (!outputPreexisted && fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch (e) { }
-                if (currentRenderJob.status === 'cancelled') {
-                    currentRenderJob.error = 'Render cancelled';
-                    if (onError) onError(new Error(currentRenderJob.error));
+                if (job.status === 'cancelled') {
+                    job.error = 'Render cancelled';
+                    if (onError) onError(new Error(job.error));
                     return;
                 }
                 console.error(`[Render FFmpeg Error Code ${code}] Full stderr:\n`, fullStderr);
-                currentRenderJob.status = 'error';
+                job.status = 'error';
                 const errLines = fullStderr
                     .split('\n')
                     .map(l => l.trim())
                     .filter(l => l.includes('Error') || l.includes('Invalid') || l.includes('Failed') || l.includes('Unable') || l.includes('could not') || l.includes('Cannot'))
                     .filter(l => !l.includes('Task finished with error code') && !l.includes('Terminating thread with return code'));
                 const errDetail = errLines.length > 0 ? errLines.slice(-3).join(' | ') : fullStderr.slice(-1500);
-                currentRenderJob.error = `FFmpeg exited with code ${code}: ${errDetail}`;
-                if (onError) onError(new Error(currentRenderJob.error));
+                job.error = `FFmpeg exited with code ${code}: ${errDetail}`;
+                if (onError) onError(new Error(job.error));
             }
         });
 
         ffmpeg.on('error', (err) => {
-            activeRenderProcess = null;
+            job.proc = null;
             cleanupTempDir();
-            if (chosenEncoder !== 'libx264' && !options._isRetry && currentRenderJob.status !== 'cancelled') {
+            if (chosenEncoder !== 'libx264' && !options._isRetry && job.status !== 'cancelled') {
                 console.warn(`[Render Auto-Fallback] Hardware encoder "${chosenEncoder}" process error: ${err.message}. Retrying with libx264...`);
                 try { if (!outputPreexisted && fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch (e) { }
                 return renderVideo({
                     ...options,
+                    _job: job,
                     encoder: 'libx264',
                     _isRetry: true,
                     _outputPreexisted: outputPreexisted
                 }, onProgress, onComplete, onError);
             }
-            currentRenderJob.status = 'error';
-            currentRenderJob.error = err.message;
+            job.status = 'error';
+            job.error = err.message;
             if (onError) onError(err);
         });
 
     } catch (err) {
-        currentRenderJob.status = err.cancelled ? 'cancelled' : 'error';
-        currentRenderJob.error = err.message;
+        job.status = err.cancelled ? 'cancelled' : 'error';
+        job.error = err.message;
         if (onError) onError(err);
     }
 }
 
-function cancelRender() {
+// token: that export; none: the export started last that is still running (older callers).
+function cancelRender(token) {
+    const job = token ? renderJobs.get(String(token).slice(0, 64)) : runningRenderJobs().pop();
+    if (!job || job.status !== 'rendering') return false;
     // Still preparing (voice track, probes): FFmpeg hasn't started, so mark the job - it stops
     // at its next check (renderVideo's stopIfCancelled).
-    if (!activeRenderProcess && currentRenderJob && currentRenderJob.status === 'rendering') {
-        currentRenderJob.cancelRequested = true;
+    if (!job.proc) {
+        job.cancelRequested = true;
         return true;
     }
-    if (activeRenderProcess) {
-        try {
-            if (process.platform === 'win32') {
-                const { exec } = require('child_process');
-                exec(`taskkill /pid ${activeRenderProcess.pid} /T /F`, () => { });
-            } else {
-                activeRenderProcess.kill('SIGKILL');
-            }
-        } catch (e) { }
-        activeRenderProcess = null;
-        currentRenderJob.status = 'cancelled';
-        return true;
-    }
-    return false;
+    try {
+        if (process.platform === 'win32') {
+            const { exec } = require('child_process');
+            exec(`taskkill /pid ${job.proc.pid} /T /F`, () => { });
+        } else {
+            job.proc.kill('SIGKILL');
+        }
+    } catch (e) { }
+    job.proc = null;
+    job.status = 'cancelled';
+    return true;
 }
 
-function getRenderProgress() {
-    return currentRenderJob;
+// token: that export (status 'idle' when the server has none by that token); none: the export
+// started last that is still running, else the one started last.
+function getRenderProgress(token) {
+    if (token) return renderJobs.get(String(token).slice(0, 64)) || { status: 'idle', progress: 0, eta: '0s', outputFile: null, error: null, token: String(token).slice(0, 64) };
+    return runningRenderJobs().pop() || currentRenderJob;
+}
+
+// Exports running now (the route lets two run at once).
+function renderingCount() {
+    return runningRenderJobs().length;
+}
+
+// The output files being written now (two exports of one file would collide).
+function renderingOutputs() {
+    return runningRenderJobs().map(j => j.outputFile).filter(Boolean);
 }
 
 module.exports = {
     renderVideo,
     cancelRender,
     getRenderProgress,
+    renderingCount,
+    renderingOutputs,
+    setSearchBusy,
+    isSearchBusy,
     detectAvailableEncoders,
     // Exposed for tests (tests/subtitle-layout.test.js).
     _buildSubtitleAss: buildSubtitleAss,

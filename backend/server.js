@@ -13,7 +13,7 @@ const { createPreviewService } = require('./media_preview');
 const { createAudioRepair } = require('./audio_repair');
 const { createEpisodeJoiner } = require('./episode_joiner');
 const { createVideoSplitter } = require('./video_splitter');
-const { renderVideo, cancelRender, getRenderProgress, detectAvailableEncoders } = require('./render_service');
+const { renderVideo, cancelRender, getRenderProgress, renderingCount, renderingOutputs, setSearchBusy, isSearchBusy, detectAvailableEncoders } = require('./render_service');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -1685,6 +1685,8 @@ app.post('/api/generate-voxcmp2', async (req, res) => {
             speed: parseFloat(speed) || 1.0,
             emotion: emotion || 'Neutral',
             cfg_value: parseFloat(req.body.cfg_value) || 2.0,
+            inference_timesteps: parseInt(req.body.inference_timesteps, 10) || null,
+            prompt_text: typeof req.body.prompt_text === 'string' ? req.body.prompt_text : null,
             // The line's room: a take that fits it is kept over one that would play rushed.
             fit_seconds: parseFloat(req.body.fit_seconds) || null,
             // How the line is said (the actor's own line, or their clip of this feeling).
@@ -1855,7 +1857,8 @@ function findVocalStem(videoPath) {
 app.use('/api', require('./routes/voice-capture')({ getFFmpegBinary, getFFprobeBinary, audioRepair, trackProcess, findVocalStem }));
 app.use('/api/episodes', require('./routes/episodes')({ episodeJoiner }));
 app.use('/api/split', require('./routes/split')({ videoSplitter }));
-app.use('/api', require('./routes/render')({ upload, renderVideo, cancelRender, getRenderProgress, audioRepair }));
+// searchBusy: a subtitle search is running - new exports wait their turn (render_service.js).
+app.use('/api', require('./routes/render')({ upload, renderVideo, cancelRender, getRenderProgress, renderingCount, renderingOutputs, searchBusy: isSearchBusy, audioRepair }));
 // On-screen subtitle detection (the render blurs them while they show).
 const textDetect = require('./text_detect_service').createTextDetectService({
     pythonCmd: PYTHON_CMD,
@@ -1866,6 +1869,7 @@ const textDetect = require('./text_detect_service').createTextDetectService({
     cacheDir: path.join(STORAGE_BASE, 'text_detect'),
     trackProcess,
     killProcessTree,
+    onBusyChange: setSearchBusy,
 });
 app.use('/api', require('./routes/text-detect')({ textDetect }));
 app.use('/api', require('./routes/series-checkpoint')());
