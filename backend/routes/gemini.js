@@ -73,12 +73,16 @@ function resolveGeminiModel(modelName) {
 }
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
-// 65s timeout: if Google hasn't answered within 65s, it is overloaded (hanging) - fail over
-// quickly to a responsive fallback model instead of wasting 4 minutes on a dead request.
-const GEMINI_ATTEMPT_TIMEOUT_MS = 65000;
-// Short text-only requests (shorten rushed lines, re-translate up to 40 lines, read the names)
-// answer well within this.
-const GEMINI_TEXT_TIMEOUT_MS = 45000;
+// A whole tab (API saver: up to 10 min of audio + video) writes ~12k tokens and thinks ~15k more,
+// which takes Google 1.5-3 minutes. At 65s (v1.17.0) most of them were cut off while still being
+// written - 154 in one day, 0 in the three weeks at 240s - each cut-off still counting against the
+// key's per-minute limit, so 50 keys ran into "per-minute limit" 572 times. Back to v1.16.0's values.
+const GEMINI_ATTEMPT_TIMEOUT_MS = 240000;
+// Short text-only requests (shorten rushed lines, re-translate up to 40 lines, read the names,
+// the review of up to 100 lines) answer well within this.
+const GEMINI_TEXT_TIMEOUT_MS = 120000;
+// Check limits sends "Reply with OK": no answer in this time is Google overloaded, not a long reply.
+const GEMINI_CHECK_TIMEOUT_MS = 30000;
 const geminiModelListCache = new Map(); // apiKey -> { at, models: Set<string> }
 
 // Ask Google which models this key can actually call, so we never burn retries on
@@ -3219,7 +3223,7 @@ ${JSON.stringify(chunk)}`;
             while (next < todo.length && !stoppedBusy) {
                 const key = todo[next++];
                 try {
-                    const r = await executeGeminiGenerate(key, model, payload, null, { stayOnModel: true, timeoutMs: GEMINI_TEXT_TIMEOUT_MS });
+                    const r = await executeGeminiGenerate(key, model, payload, null, { stayOnModel: true, timeoutMs: GEMINI_CHECK_TIMEOUT_MS });
                     // A whole-key refusal is parked the way tryKeysOnce does it.
                     if (!r.success && r.error === 'INVALID_API_KEY') {
                         const dead = isDeadKeyAnswer(key, r);

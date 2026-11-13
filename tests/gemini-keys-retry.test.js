@@ -230,11 +230,22 @@ describe('Shortening engine (Shorten rushed lines, Ultra-Short, a row\'s Shorten
 });
 
 describe('short text requests time out sooner than audio', () => {
-  test('re-translate, names, shorten, the character sheet, missed subtitles, split lines and Check limits use GEMINI_TEXT_TIMEOUT_MS; it is shorter than an audio attempt', () => {
+  test('re-translate, names, shorten, the character sheet, missed subtitles and split lines use GEMINI_TEXT_TIMEOUT_MS; it is shorter than an audio attempt', () => {
     const text = Number(serverSource.match(/const GEMINI_TEXT_TIMEOUT_MS = (\d+);/)[1]);
     const audio = Number(serverSource.match(/const GEMINI_ATTEMPT_TIMEOUT_MS = (\d+);/)[1]);
     assert.ok(text < audio);
-    assert.equal((serverSource.match(/timeoutMs: GEMINI_TEXT_TIMEOUT_MS/g) || []).length, 7);
+    assert.equal((serverSource.match(/timeoutMs: GEMINI_TEXT_TIMEOUT_MS/g) || []).length, 6);
+  });
+
+  test('a whole tab has time to be written: an audio attempt waits at least 4 minutes (65s cut most of them off)', () => {
+    assert.ok(Number(serverSource.match(/const GEMINI_ATTEMPT_TIMEOUT_MS = (\d+);/)[1]) >= 240000);
+  });
+
+  test('Check limits ("Reply with OK") gives up sooner than a text job', () => {
+    const check = Number(serverSource.match(/const GEMINI_CHECK_TIMEOUT_MS = (\d+);/)[1]);
+    const text = Number(serverSource.match(/const GEMINI_TEXT_TIMEOUT_MS = (\d+);/)[1]);
+    assert.ok(check < text);
+    assert.match(serverSource, /gemini-check-limits[\s\S]*?timeoutMs: GEMINI_CHECK_TIMEOUT_MS/);
   });
 });
 
