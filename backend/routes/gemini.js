@@ -120,9 +120,14 @@ function rankGeminiFallbacks(available) {
         if (name.includes('2.5') || name.includes('2.0') || name.includes('1.5') || name.includes('-lite')) continue;
         // Dated previews only ("-preview-09-2025"); skips -tts, -image, -live variants and
         // -transcribe (audio only: it refuses a prompt and JSON, so every request to it failed).
-        const m = name.match(/^gemini-(\d+(?:\.\d+)?)-(flash|pro)(?:-(latest|preview(?:-\d[\d-]*)?))?$/);
+        // gemini-4-hydrogen: tested 2026-11-14 on a free key - good Khmer (pronouns, royal words),
+        // 13s for 5 lines. Ranked like a Flash preview: after the stable Flash models, before older
+        // previews. (gemini-4-argon / -carbon answered "quota exceeded" with no quota at all on a free key.)
+        const m = name.match(/^gemini-(\d+(?:\.\d+)?)-(flash|pro|hydrogen)(?:-(latest|preview(?:-\d[\d-]*)?))?$/);
         if (!m) continue;
-        parsed.push({ name, version: parseFloat(m[1]), tier: m[2], tag: m[3] || '' });
+        const tier = m[2] === 'pro' ? 'pro' : 'flash';
+        const tag = m[3] || (m[2] === 'hydrogen' ? 'hydrogen' : '');
+        parsed.push({ name, version: parseFloat(m[1]), tier, tag });
     }
     parsed.sort((a, b) =>
         (a.tier === 'flash' ? 0 : 1) - (b.tier === 'flash' ? 0 : 1) ||
@@ -409,7 +414,8 @@ function formatWait(ms) {
 // dialogue differently (fewer, longer lines).
 // timeoutMs: how long one attempt may take before it counts as a dead connection.
 // thinking: 'low' asks for little thinking (geminiThinkingConfig) - text jobs only.
-async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { stayOnModel = false, timeoutMs = GEMINI_ATTEMPT_TIMEOUT_MS, thinking = null } = {}) {
+// onlyModel: ask exactly requestedModel, no other (Check limits, which asks each model in turn).
+async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { stayOnModel = false, timeoutMs = GEMINI_ATTEMPT_TIMEOUT_MS, thinking = null, onlyModel = false } = {}) {
     apiKey = String(apiKey || '').trim();
     if (typeof isGeminiWebKey === 'function' && isGeminiWebKey(apiKey)) {
         const ctx = keyAttemptContext && keyAttemptContext.getStore();
@@ -417,7 +423,8 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { 
         if (r && (r.success || r.status < 500)) noteKeyAnswered(apiKey);
         return r;
     }
-    const listed = await getCandidateModels(apiKey, requestedModel, signal);
+    if (onlyModel) stayOnModel = false; // the fallbacks that stayOnModel adds would ask other models
+    const listed = onlyModel ? [resolveGeminiModel(requestedModel)] : await getCandidateModels(apiKey, requestedModel, signal);
     // A model that answered 404 for this key is left out (unless nothing else is left).
     const reachable = listed.filter(m => !isGeminiModelGone(apiKey, m));
     const allModels = reachable.length ? reachable : listed;
@@ -3201,54 +3208,104 @@ ${JSON.stringify(chunk)}`;
         res.json({ success: true, keys: keys.map(k => ({ suffix: k.slice(-4), ...geminiKeyStatus(k) })) });
     });
 
-    // ── Check limits: one tiny request per key on the chosen model ──
+    // ── Check limits: every model a job would use, on every key ──
     // The app only learns a key's limits from Google's answers, so a key another computer used up
-    // shows as "Not checked today" until it is asked. This asks every key once (6 at a time): a
-    // key out of quota is refused at no cost and rests like any other limit; one that still has
-    // quota spends a single request. Keys already resting are not asked.
+    // shows as "Not checked today" until it is asked. This asks each key's job models (the chosen
+    // one and its backups, getCandidateModels) with one tiny request each, 6 keys at a time, and
+    // lists per model: ready, per-minute limit, out for today, no quota on this plan (Google's
+    // "limit: 0"), not available to the key, or Google busy. A used-up model is refused at no
+    // cost; one that still works spends a single request. Models already resting, closed to the
+    // key or busy at Google are not asked. Keys parked as a whole (invalid / out) are not asked.
+    // Why every model, not just the chosen one: on 2026-11-14 gemini-3.8-flash did not answer
+    // "Reply with OK" in 90s while 3.6 Flash answered in 7s - asking only the chosen model timed
+    // out every key and said nothing about the backups a job would run on.
+    let checkProgress = { running: false, total: 0, done: 0 };
+    router.get('/gemini-check-limits/progress', (req, res) => res.json({ success: true, ...checkProgress }));
+
+    // What the app knows about one model of one key, without asking Google.
+    function knownModelState(key, m) {
+        if (isGeminiModelGone(key, m)) return { model: m, state: 'gone' };
+        const c = geminiModelCooldowns.get(`${key}|${m}`);
+        if (c && c.until > Date.now()) {
+            return { model: m, state: c.daily ? 'daily' : 'minute', retryAfterMs: c.until - Date.now(), noQuota: /limit:\s*0\b/.test(c.msg || '') };
+        }
+        if (isGeminiModelBusy(m)) return { model: m, state: 'busy' };
+        return null;
+    }
+
     router.post('/gemini-check-limits', async (req, res) => {
         const keys = [...new Set((Array.isArray(req.body?.keys) ? req.body.keys : []).map(k => String(k || '').trim()).filter(Boolean))];
         const model = String(req.body?.model || 'gemini-3.8-flash');
         const payload = { contents: [{ role: 'user', parts: [{ text: 'Reply with OK.' }] }], generationConfig: { maxOutputTokens: 8 } };
         const resting = (k) => ['invalid', 'daily', 'cooling'].includes(geminiKeyStatus(k).state);
         const todo = keys.filter(k => !resting(k));
-        const results = new Map();
+        const results = new Map(); // key -> verdict for the whole key
+        const checks = new Map();  // key -> [{ model, state, retryAfterMs?, noQuota?, asked }]
         let next = 0;
-        // "Busy" is the model overloaded for everyone and says nothing about a key's limits: when
-        // the first answers are all busy, the other keys would only be busy too (seen: 32 keys,
-        // 2.5 min, all "high demand") - stop and say so.
+        checkProgress = { running: true, total: todo.length, done: 0 };
+
+        async function checkModel(key, m) {
+            const known = knownModelState(key, m);
+            if (known) return { ...known, asked: false };
+            const r = await executeGeminiGenerate(key, m, payload, null, { onlyModel: true, timeoutMs: GEMINI_CHECK_TIMEOUT_MS });
+            if (r.success) return { model: m, state: 'ok', asked: true };
+            if (r.error === 'INVALID_API_KEY') return { model: m, state: 'invalid', asked: true, message: r.message || '', r };
+            const after = knownModelState(key, m);
+            if (after) return { ...after, asked: true };
+            if (r.code === 'OVERLOADED' || Number(r.status) === 503) return { model: m, state: 'busy', asked: true };
+            return { model: m, state: 'error', asked: true, message: String(r.message || r.error || '').slice(0, 200) };
+        }
+
+        // "Busy" on every model of the first keys: the other keys would only be busy too
+        // (seen: 32 keys, 2.5 min, all "high demand") - stop and say so.
         const BUSY_STOP = 6;
         let busyRun = 0, stoppedBusy = false;
         await Promise.all(Array.from({ length: Math.min(6, todo.length) }, async () => {
             while (next < todo.length && !stoppedBusy) {
                 const key = todo[next++];
+                let verdict = 'error';
                 try {
-                    const r = await executeGeminiGenerate(key, model, payload, null, { stayOnModel: true, timeoutMs: GEMINI_CHECK_TIMEOUT_MS });
+                    const models = await getCandidateModels(key, model, null);
+                    const list = await Promise.all(models.map(m => checkModel(key, m).catch(e => ({ model: m, state: 'error', asked: true, message: e.message }))));
                     // A whole-key refusal is parked the way tryKeysOnce does it.
-                    if (!r.success && r.error === 'INVALID_API_KEY') {
-                        const dead = isDeadKeyAnswer(key, r);
-                        invalidGeminiKeys.set(key, { until: Date.now() + (dead ? DEAD_KEY_REST_MS : INVALID_KEY_REST_MS), dead, message: r.message || '' });
+                    const refused = list.find(x => x.state === 'invalid');
+                    if (refused) {
+                        const dead = isDeadKeyAnswer(key, refused.r);
+                        invalidGeminiKeys.set(key, { until: Date.now() + (dead ? DEAD_KEY_REST_MS : INVALID_KEY_REST_MS), dead, message: refused.message });
                     }
-                    const verdict = r.success ? 'ok' : (r.code === 'OVERLOADED' || Number(r.status) === 503) ? 'busy' : r.error === 'RATE_LIMIT_EXCEEDED' ? 'limited' : 'refused';
-                    results.set(key, verdict);
-                    busyRun = verdict === 'busy' ? busyRun + 1 : 0;
-                    if (busyRun >= BUSY_STOP && ![...results.values()].some(v => v !== 'busy')) stoppedBusy = true;
-                } catch (e) {
-                    results.set(key, 'error');
-                }
+                    checks.set(key, list.map(({ r, ...x }) => x));
+                    const has = (s) => list.some(x => x.state === s);
+                    verdict = has('ok') ? 'ok' : refused ? 'refused' : has('busy') ? 'busy' : (has('minute') || has('daily')) ? 'limited' : 'refused';
+                } catch (e) { }
+                results.set(key, verdict);
+                busyRun = verdict === 'busy' ? busyRun + 1 : 0;
+                if (busyRun >= BUSY_STOP && ![...results.values()].some(v => v !== 'busy')) stoppedBusy = true;
+                checkProgress.done = results.size;
             }
         }));
+        checkProgress = { running: false, total: todo.length, done: results.size };
         const count = (v) => [...results.values()].filter(x => x === v).length;
         const notAsked = todo.length - results.size;
+        // Per model: on how many keys it is ready / resting.
+        const models = {};
+        for (const list of checks.values()) for (const x of list) {
+            const s = models[x.model] || (models[x.model] = { ready: 0, minute: 0, daily: 0, noQuota: 0, other: 0 });
+            if (x.state === 'ok') s.ready++;
+            else if (x.noQuota) s.noQuota++;
+            else if (x.state === 'minute') s.minute++;
+            else if (x.state === 'daily') s.daily++;
+            else s.other++;
+        }
         console.log(`[Gemini] Check limits on ${model}: ${keys.length} key(s), ${keys.length - todo.length} already resting, ${count('ok')} ready, ${count('limited')} limited, ${count('refused')} refused, ${count('busy')} busy` +
-            (stoppedBusy ? ` - stopped: Google is overloaded on ${model}, ${notAsked} not asked` : ''));
+            (Object.keys(models).length ? ` - per model: ${Object.entries(models).map(([m, s]) => `${m} ${s.ready} ready/${s.minute} minute/${s.daily} day/${s.noQuota} no quota`).join(', ')}` : '') +
+            (stoppedBusy ? ` - stopped: Google is overloaded on every model, ${notAsked} not asked` : ''));
         res.json({
             success: true,
             asked: results.size,
             alreadyResting: keys.length - todo.length,
             ready: count('ok'), limited: count('limited'), refused: count('refused'), busy: count('busy'),
-            stoppedBusy, notAsked,
-            keys: keys.map(k => ({ suffix: k.slice(-4), ...geminiKeyStatus(k) }))
+            stoppedBusy, notAsked, models, chosenBusy: isGeminiModelBusy(resolveGeminiModel(model)),
+            keys: keys.map(k => ({ suffix: k.slice(-4), ...geminiKeyStatus(k), ...(checks.has(k) ? { checks: checks.get(k) } : {}) }))
         });
     });
 

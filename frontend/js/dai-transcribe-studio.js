@@ -320,6 +320,52 @@
   // second without asking the backend again.
   let shownKeyStatuses = null; // { statuses, keys, at }
   let deadKeys = []; // refused by Google for good (deleted service account, invalid / expired key)
+
+  // "Check limits" answers per model of each key (key -> { at, checks }), shown as chips under
+  // the key until the next check. A model a job used up since then shows its live rest instead.
+  const keyModelChecks = new Map();
+  function modelChipView(c, left) {
+    const name = String(c.model).replace(/^gemini-/, '');
+    if (c.state === 'ok') return { color: 'emerald', text: `${name} ✓`, title: `${c.model}: ready - Google answered it.` };
+    if (c.noQuota) return { color: 'gray', text: `${name} · no quota`, title: `${c.model}: this key's plan has no quota for it (Google: "limit: 0"). Jobs skip it.` };
+    if (c.state === 'daily') return c.ms > 0
+      ? { color: 'rose', text: `${name} · out today · ${left(c.ms)}`, title: `${c.model}: daily quota used up on this key. Resting; it is asked again in ${left(c.ms)}.` }
+      : { color: 'gray', text: `${name} · rest over`, title: `${c.model}: its rest is over - not asked again yet.` };
+    if (c.state === 'minute') return c.ms > 0
+      ? { color: 'amber', text: `${name} · rest ${left(c.ms)}`, title: `${c.model}: per-minute limit hit. Resting for ${left(c.ms)}.` }
+      : { color: 'gray', text: `${name} · rest over`, title: `${c.model}: its rest is over - not asked again yet.` };
+    if (c.state === 'busy') return { color: 'amber', text: `${name} · Google busy`, title: `${c.model}: Google is overloaded on this model right now - says nothing about this key's limit.` };
+    if (c.state === 'gone') return { color: 'gray', text: `${name} · not available`, title: `${c.model}: Google says this key cannot use it.` };
+    if (c.state === 'invalid') return { color: 'rose', text: `${name} · key refused`, title: c.message || 'Google refused the key.' };
+    return { color: 'gray', text: `${name} · error`, title: c.message || 'No clear answer from Google.' };
+  }
+  function drawKeyModelChips(el, key, s, elapsed) {
+    const col = el.parentElement;
+    if (!col) return;
+    let box = col.querySelector('[data-dai-keymodels]');
+    const check = keyModelChecks.get(key);
+    if (!check) { if (box) box.remove(); return; }
+    if (!box) {
+      box = document.createElement('div');
+      box.dataset.daiKeymodels = '1';
+      box.className = 'flex flex-wrap gap-1 mt-1';
+      col.appendChild(box);
+    }
+    const sinceCheck = Date.now() - check.at;
+    const live = new Map((s && s.models || []).map((m) => [m.model, m]));
+    const html = check.checks.map((c0) => {
+      // A rest that began after the check (a job used the model up) wins over the check's answer.
+      const l = live.get(c0.model);
+      const c = l && (c0.state === 'ok' || !(c0.retryAfterMs - sinceCheck > 0))
+        ? { ...c0, state: l.daily ? 'daily' : 'minute', ms: l.retryAfterMs - elapsed }
+        : { ...c0, ms: (c0.retryAfterMs || 0) - sinceCheck };
+      const v = modelChipView(c, (ms) => formatWaitShort(ms) || 'a moment');
+      const k = KEY_STATUS_CLASSES[v.color];
+      return `<span class="inline-flex items-center gap-1 text-[10px] leading-none px-1.5 py-0.5 rounded ${k.badge}" title="${escapeHtml(v.title)}">${escapeHtml(v.text)}</span>`;
+    }).join('');
+    if (box.dataset.html !== html) { box.innerHTML = html; box.dataset.html = html; }
+  }
+
   function drawKeyStatuses() {
     if (!shownKeyStatuses) return;
     const elapsed = Date.now() - shownKeyStatuses.at;
@@ -334,6 +380,8 @@
       el.className = `text-[10px] ${c.text} flex items-center gap-1 min-w-0`;
       el.innerHTML = `<span class="w-1.5 h-1.5 rounded-full ${c.dot} shrink-0"></span> <span class="truncate">${escapeHtml(v.text)}</span>`;
       el.title = v.title || v.text;
+      const key = shownKeyStatuses.keys?.[idx];
+      if (key) drawKeyModelChips(el, key, s, elapsed);
     });
     groupKeyRows(resting);
   }
@@ -384,8 +432,9 @@
     }
   });
 
-  // Settings' "Check limits": asks every key once which ones Google limited today (one tiny
-  // request each on the transcribe model; a used-up key is refused at no cost).
+  // Settings' "Check limits": asks every key which of its job models (the chosen one and the
+  // backups) Google limited today - one tiny request per model, a used-up model is refused at
+  // no cost - and shows the answer per model under each key (drawKeyModelChips).
   // auto: the one retry it makes by itself when Google was overloaded (3 minutes later).
   let recheckTimer = null;
   const RECHECK_MS = 3 * 60 * 1000;
@@ -396,9 +445,19 @@
     // would only spend those credits.
     const keys = getActiveApiKeys().filter((k) => !String(k).startsWith('gweb:'));
     if (!keys.length) return showToast('Add a Gemini API key first.', 'warning');
+    btn = btn || $('btn-check-key-limits');
     if (btn) btn.disabled = true;
     const model = $('dai-model-select')?.value || getActiveModel();
     showToast(auto ? `Checking the keys again on ${model}…` : `Checking ${keys.length} key(s) on ${model}…`, 'info');
+    // Live count on the button while it runs (a big key list takes a minute or more).
+    const label = btn && [...btn.childNodes].find((n) => n.nodeType === 3 && n.textContent.trim());
+    const labelText = label ? label.textContent : '';
+    const progressTimer = label && setInterval(async () => {
+      try {
+        const p = await (await fetch(`${getBackendBase()}/api/gemini-check-limits/progress`)).json();
+        if (p.running && p.total) label.textContent = ` Checking ${p.done}/${p.total}… `;
+      } catch (e) { }
+    }, 1000);
     try {
       const res = await fetch(`${getBackendBase()}/api/gemini-check-limits`, {
         method: 'POST',
@@ -407,16 +466,18 @@
       });
       const d = await res.json();
       if (!d.success) throw new Error(d.error || 'check failed');
-      shownKeyStatuses = { statuses: d.keys, keys, at: Date.now() };
+      const checkedAt = Date.now();
+      (d.keys || []).forEach((s, i) => { if (s && Array.isArray(s.checks) && keys[i]) keyModelChecks.set(keys[i], { at: checkedAt, checks: s.checks }); });
+      shownKeyStatuses = { statuses: d.keys, keys, at: checkedAt };
       drawKeyStatuses();
       updateApiStatusDisplay();
       if (d.stoppedBusy) {
         // "High demand" says nothing about a key's limits: one more try by itself a little later.
         if (!auto) {
           recheckTimer = setTimeout(() => checkKeyLimits(null, { auto: true }), RECHECK_MS);
-          showToast(`Google is overloaded on ${model} right now - every key answered "high demand", which says nothing about its limits. Checking again by itself in 3 minutes.`, 'warning');
+          showToast(`Google is overloaded on ${model} and its backup models right now - every key answered "high demand", which says nothing about its limits. Checking again by itself in 3 minutes.`, 'warning');
         } else {
-          showToast(`Google is still overloaded on ${model}. Press Check limits again later - a series started now would be slow too.`, 'warning');
+          showToast(`Google is still overloaded on ${model} and its backups. Press Check limits again later - a series started now would be slow too.`, 'warning');
         }
         return;
       }
@@ -425,10 +486,24 @@
       if (d.refused) parts.push(`${d.refused} refused`);
       if (d.busy) parts.push(`${d.busy} not known (Google busy)`);
       if (d.alreadyResting) parts.push(`${d.alreadyResting} already resting (not asked)`);
-      showToast(`Key check on ${model}: ${parts.join(', ')}.`, d.ready ? 'success' : 'warning');
+      // Per model, over all keys: ready on N, resting on N, out today on N, no quota.
+      const short = (m) => String(m).replace(/^gemini-/, '');
+      const perModel = Object.entries(d.models || {}).map(([m, s]) => {
+        const bits = [];
+        if (s.ready) bits.push(`${s.ready} ready`);
+        if (s.minute) bits.push(`${s.minute} resting`);
+        if (s.daily) bits.push(`${s.daily} out today`);
+        if (s.noQuota) bits.push('no quota');
+        if (s.other) bits.push(`${s.other} busy/other`);
+        return `${short(m)}: ${bits.join(', ')}`;
+      });
+      const note = perModel.length ? ` Models - ${perModel.join(' · ')}. Details under each key.` : '';
+      showToast(`Key check on ${model}: ${parts.join(', ')}.${note}`, d.ready ? 'success' : 'warning');
     } catch (e) {
       showToast(`Could not check the keys: ${e.message}`, 'error');
     } finally {
+      clearInterval(progressTimer);
+      if (label) label.textContent = labelText;
       if (btn) btn.disabled = false;
     }
   }
