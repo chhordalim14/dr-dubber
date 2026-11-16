@@ -29,6 +29,7 @@ const APP_ORIGIN = `http://localhost:${PORT}`;
 // in an HttpOnly cookie of the app's own session, so other programs and web
 // pages can't call the API (see backend/lib/security.js).
 const security = require('./backend/lib/security');
+const { withoutProgressBars } = require('./backend/lib/server-log');
 const API_TOKEN = crypto.randomBytes(32).toString('hex');
 security.setApiToken(API_TOKEN);
 
@@ -690,24 +691,33 @@ const AI_STUDIO_KEYS_URL = 'https://aistudio.google.com/app/apikey';
 const GEMINI_KEY_RE = /(?:AIza[0-9A-Za-z_-]{35}|AQ[.][0-9A-Za-z_.-]{20,100})/;
 const KEY_WAIT_MS = 5 * 60 * 1000;
 let keyWatch = null; // the running watch: a second click reopens the page and shares it
+// The clipboard's text. Electron 44 made clipboard.readText() return a promise (it returned
+// the text itself before); awaiting works for both. A clipboard that cannot be read (another
+// program holds it, or it has a picture on it) is simply "no key yet".
+async function clipboardText() {
+    try {
+        const text = await clipboard.readText();
+        return typeof text === 'string' ? text : '';
+    } catch (e) {
+        return '';
+    }
+}
+
 handle('dr-router:googleLogin', async () => {
-    const clipKey = () => ((clipboard.readText() || '').match(GEMINI_KEY_RE) || [])[0] || '';
+    const clipKey = async () => ((await clipboardText()).match(GEMINI_KEY_RE) || [])[0] || '';
     await shell.openExternal(AI_STUDIO_KEYS_URL);
     if (keyWatch) return keyWatch;
-    const before = clipKey();
-    keyWatch = new Promise((resolve) => {
+    // Claim the watch before the first read: a second click during it must share this one.
+    keyWatch = (async () => {
+        const before = await clipKey();
         const started = Date.now();
-        const timer = setInterval(() => {
-            const key = clipKey();
-            if (key && key !== before) {
-                clearInterval(timer);
-                resolve({ success: true, email: '', apiKey: key });
-            } else if (Date.now() - started > KEY_WAIT_MS) {
-                clearInterval(timer);
-                resolve({ success: false, error: 'No new API key was copied within 5 minutes. Copy a key in AI Studio, then press the button again.' });
-            }
-        }, 1000);
-    }).finally(() => { keyWatch = null; });
+        while (Date.now() - started <= KEY_WAIT_MS) {
+            await new Promise((r) => setTimeout(r, 1000));
+            const key = await clipKey();
+            if (key && key !== before) return { success: true, email: '', apiKey: key };
+        }
+        return { success: false, error: 'No new API key was copied within 5 minutes. Copy a key in AI Studio, then press the button again.' };
+    })().finally(() => { keyWatch = null; });
     return keyWatch;
 });
 
@@ -997,22 +1007,34 @@ handle('voxcpm2:startServer', async (event, opts = {}) => {
 
         child.stderr.on('data', (d) => {
             const str = d.toString();
-            console.warn('[VoxCPM2 Stderr]', str);
+            // The page's server panel gets everything; the log file skips the progress bars.
+            const kept = withoutProgressBars(str);
+            if (kept) console.warn('[VoxCPM2 Stderr]', kept);
             if (mainWindow && !mainWindow.isDestroyed()) {
                 mainWindow.webContents.send('voxcpm2:log', { type: 'stderr', text: str });
             }
         });
 
+        // A server that was stopped and started again right away: the old process ends after
+        // the new one has begun. Its ending must not mark the new server as stopped - the page
+        // would show "stopped" and the new server would be left running when the app closes.
+        const replaced = () => !!activeVoxServerJob && activeVoxServerJob.child !== child;
+
         child.on('close', (code) => {
             console.log(`[VoxCPM2] Process exited with code ${code}`);
+            if (replaced()) return;
+            // Stop Server clears the job before the process ends; a server that ends while
+            // it is still the job ended by itself (crash, out of memory).
+            const byUser = !activeVoxServerJob;
             activeVoxServerJob = null;
             if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send('voxcpm2:serverStopped', { code });
+                mainWindow.webContents.send('voxcpm2:serverStopped', { code, byUser });
             }
         });
 
         child.on('error', (err) => {
             console.error('[VoxCPM2 Error]', err);
+            if (replaced()) return;
             activeVoxServerJob = null;
             if (mainWindow && !mainWindow.isDestroyed()) {
                 mainWindow.webContents.send('voxcpm2:serverStopped', { error: err.message });
@@ -1071,10 +1093,18 @@ handle('voxcpm2:install', async (event, opts = {}) => {
 handle('voxcpm2:cancelInstall', async () => ({ success: getVoxInstaller().cancel() }));
 
 handle('voxcpm2:stopServer', async () => {
-    if (activeVoxServerJob && activeVoxServerJob.child) {
-        killProcessTree(activeVoxServerJob.child);
+    const job = activeVoxServerJob;
+    if (job && job.child) {
+        const child = job.child;
         activeVoxServerJob = null;
-        return { success: true, status: 'stopped' };
+        // Answer once the process is really gone (it still holds its port and the GPU memory
+        // until then), so a Start right after Stop does not collide with it. Never wait long.
+        const gone = new Promise((resolve) => {
+            if (child.exitCode !== null || child.signalCode) resolve();
+            else child.once('close', resolve);
+        });
+        killProcessTree(child);
+        await Promise.race([gone, new Promise((resolve) => setTimeout(resolve, 5000))]);
     }
     return { success: true, status: 'stopped' };
 });

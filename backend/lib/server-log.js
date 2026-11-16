@@ -27,22 +27,47 @@ function installServerLog(logsDir, { fileName = 'server.log', maxBytes = MAX_BYT
     }
     let size = 0;
     try { size = fs.existsSync(file) ? fs.statSync(file).size : 0; } catch (e) { }
-    // Plain synchronous appends: a line is on disk before the next one (nothing lost if the
-    // app crashes right after), and rotating can never race a stream that hasn't opened yet.
     let fd = null;
     try { fd = fs.openSync(file, 'a'); } catch (e) { return null; }
 
+    let buffer = [];
+    let flushTimer = null;
+
+    const flush = () => {
+        if (!buffer.length || !fd) return;
+        const lines = buffer;
+        buffer = [];
+        try {
+            for (const line of lines) {
+                fs.writeSync(fd, line);
+                size += Buffer.byteLength(line);
+                if (size > maxBytes) {
+                    fs.closeSync(fd);
+                    rotate(file);
+                    size = 0;
+                    fd = fs.openSync(file, 'a');
+                }
+            }
+        } catch (e) {}
+    };
+
     const write = (level, args) => {
         const line = `${new Date().toISOString()} ${level} ${util.format(...args)}\n`;
-        fs.writeSync(fd, line);
-        size += Buffer.byteLength(line);
-        if (size > maxBytes) {
-            fs.closeSync(fd);
-            rotate(file);
-            size = 0;
-            fd = fs.openSync(file, 'a');
+        buffer.push(line);
+        if (buffer.length >= 200) {
+            if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+            flush();
+        } else if (!flushTimer) {
+            flushTimer = setTimeout(() => {
+                flushTimer = null;
+                flush();
+            }, 30);
+            if (flushTimer.unref) flushTimer.unref();
         }
     };
+
+    process.once('exit', flush);
+    process.once('beforeExit', flush);
     for (const [method, level] of [['log', 'INFO '], ['info', 'INFO '], ['warn', 'WARN '], ['error', 'ERROR']]) {
         const original = console[method].bind(console);
         console[method] = (...args) => {
@@ -54,4 +79,15 @@ function installServerLog(logsDir, { fileName = 'server.log', maxBytes = MAX_BYT
     return file;
 }
 
-module.exports = { installServerLog };
+// A helper program's output without its progress bars ("  40%|####      | 4/10 [00:01<00:02,
+// 3.4it/s]"). VoxCPM2 draws one for every line it voices: they were 70% of server.log, so the
+// log rotated away the lines worth reading within days. Everything else is kept, one per line.
+const PROGRESS_BAR = /\d{1,3}%\|[^|]*\|\s*\d+\/\d+\s*\[/;
+function withoutProgressBars(text) {
+    return String(text || '')
+        .split(/[\r\n]+/)
+        .filter((line) => line.trim() && !PROGRESS_BAR.test(line))
+        .join('\n');
+}
+
+module.exports = { installServerLog, withoutProgressBars };

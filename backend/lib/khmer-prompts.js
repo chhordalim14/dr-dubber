@@ -38,17 +38,33 @@ function lineSeconds(sub) {
 // love scene sound like a quarrel, and a father calling his son "បង" sounds absurd, so the
 // choice is spelled out by relationship, both directions, and "បង" is not a default "you".
 const KHMER_FORMS_OF_ADDRESS = `2. FORMS OF ADDRESS (របៀបហៅគ្នា) - choose by WHO IS SPEAKING TO WHOM, never at random:
-   - First work out the speaker and the listener of each line from the neighbouring lines, the character sheet and the words in the line (爸/妈/爹/娘/儿子/女儿/孩子/爷爷/奶奶/孙子/哥/姐/弟/妹/老公/老婆/师父/老师/老板/少爷/小姐/陛下 ... say how they are related).
+   - First work out the speaker and the listener of each line from the neighbouring lines, the character sheet, speaker role and the words in the line (爸/妈/爹/娘/儿子/女儿/孩子/爷爷/奶奶/孙子/哥/姐/弟/妹/老公/老婆/师父/老师/老板/少爷/小姐/陛下 ... say how they are related).
    - Khmer has no neutral "you" or "I": 你 / 您 / 我 / "អ្នក" are translated by the relationship. "បង" is NOT a default - use it only where a rule below says so. When the relationship really can't be told, leave the pronoun out (Khmer drops it naturally) rather than guess.
    Each rule is speaker -> listener: calls them "..." / calls self "...".
+
+   LOVERS / HUSBAND & WIFE / BOYFRIEND & GIRLFRIEND (គូស្នេហ៍ ប្ដីប្រពន្ធ សង្សារ):
+   - Lovers / husband & wife (គូស្នេហ៍ ប្ដីប្រពន្ធ): he calls himself "បង" and her "អូន"; she calls herself "អូន" and him "បង".
+   - Male speaker (ប្រុស / Piseth) speaking to his female partner / wife / girlfriend:
+     * MUST call her: "អូន" (e.g. "អូនទៅណា?", "អូនមិនអីទេ?").
+     * MUST call himself: "បង" (e.g. "បងស្រឡាញ់អូន", "ទុកឲ្យបង").
+     * 🚫 STRICTLY FORBIDDEN: NEVER call her "បង" (fatal error!), NEVER call her "ឯង" or "អ្នក".
+     * 🚫 STRICTLY FORBIDDEN: NEVER call himself "អូន".
+   - Female speaker (ស្រី / Sreymom) speaking to her male partner / husband / boyfriend:
+     * MUST call him: "បង" (e.g. "បងទៅណា?", "បងឃ្លានទេ?").
+     * MUST call herself: "អូន" (e.g. "អូនស្រឡាញ់បង", "អូនសុំទោស").
+     * 🚫 STRICTLY FORBIDDEN: NEVER call herself "បង" (fatal error!), NEVER call herself "ខ្ញុំ" in intimate/romantic lines.
+     * 🚫 STRICTLY FORBIDDEN: NEVER call him "អូន", "ឯង" or "អ្នក".
+
    FAMILY (គ្រួសារ):
    - Parent -> child: calls them "កូន" / calls self "ប៉ា" / "ម៉ាក់" (or "ពុក" / "ម្ដាយ"). Never "បង", "អូន", "ប្អូន" or "ឯង" for one's own child (father to son "你去哪?" -> "កូនទៅណា?", "我不怪你" -> "ប៉ាមិនបន្ទោសកូនទេ").
-   - Child -> parent: calls them "ប៉ា" / "ម៉ាក់" (or "ពុក" / "ម្ដាយ") / calls self "កូន" ("爸，我错了" -> "ប៉ា កូនខុសហើយ").
+     * 🚫 STRICTLY FORBIDDEN: A parent NEVER calls their child "បង", "អូន", or "ឯង".
+   - Child -> parent: calls them "ប៉ា" / "ម៉ាក់" (or "ពុក" / "ម្ដាយ") / calls self "កូន" ("爸，我错了" -> "ប៉ា កូនខុសហើយ", "我不走" -> "កូនមិនទៅទេ").
+     * 🚫 STRICTLY FORBIDDEN: A child NEVER calls parents "បង", "អូន", "ឯង", "លោក", or "អ្នក", and NEVER calls self "ខ្ញុំ", "បង", or "អូន".
    - Grandparent -> grandchild: "ចៅ" / self "យាយ" / "តា". Grandchild -> grandparent: "យាយ" / "តា" / self "ចៅ".
    - Uncle / aunt -> niece / nephew: "ក្មួយ" / self "ពូ" / "មីង" (or "អ៊ំ" when older than the parent). Niece / nephew -> uncle / aunt: "ពូ" / "មីង" / "អ៊ំ" / self "ក្មួយ".
    - Older sibling -> younger: "ប្អូន" / self "បង". Younger sibling -> older: "បង" (or "បងប្រុស" / "បងស្រី") / self "ប្អូន" or "ខ្ញុំ".
    - Parent-in-law -> son / daughter-in-law: "កូន" / self "ម៉ាក់" / "ប៉ា". Son / daughter-in-law -> parent-in-law: "ម៉ាក់" / "ប៉ា" / self "កូន".
-   - Lovers / husband & wife (គូស្នេហ៍ ប្ដីប្រពន្ធ): he calls himself "បង" and her "អូន"; she calls herself "អូន" and him "បង".
+
    SOCIAL (សង្គម):
    - To a boss, elder, stranger or superior (ថ្នាក់លើ អ្នកចាស់ទុំ អ្នកមិនស្គាល់): "លោក" (man), "លោកស្រី" / "អ្នកនាង" (woman); self "ខ្ញុំ" (polite: "ខ្ញុំបាទ" / "នាងខ្ញុំ"). Boss / superior -> junior: by name or title / self "ខ្ញុំ"; "ឯង" only when harsh.
    - Everyday people by apparent age (the Khmer way): an older man "ពូ" / "អ៊ំ", an older woman "មីង" / "អ៊ំ", an old person "តា" / "យាយ", someone a bit older "បង", someone younger "ប្អូន", a child "ក្មួយ"; the speaker calls self to match ("ក្មួយ" or "ខ្ញុំ" to ពូ / មីង).
@@ -58,6 +74,7 @@ const KHMER_FORMS_OF_ADDRESS = `2. FORMS OF ADDRESS (របៀបហៅគ្ន
    - Same-age friends: by name, or "ឯង" / "គ្នា" / "យើង" when close and casual. Polite colleagues: "បង" / "ប្អូន" by age, or by name.
    - Royal forms ("ព្រះអង្គ", "ទូលបង្គំ", "ក្រាបទូល") ONLY in a historical / palace register (or for gods and a heavenly court in fantasy).
    - "ឯង" / "អញ" / "ហ្អែង" ONLY for anger, fights, villains or very close same-age friends - never between lovers or from a parent to a child in a normal scene.
+
    TALKING ABOUT SOMEONE (he / she / they):
    - "គាត់" for a parent, an elder or anyone respected; "គេ" for other people; "នាង" for a young woman; "វា" ONLY for a child, an animal, a thing or in contempt - never for one's own parent or an elder.
    - Between lovers the word for "you" depends on WHO SPEAKS: she says "បង" to him, he says "អូន" to her. Check the line's speaker gender before writing it: a man asking his lover "你怎么回来了?" says "ម៉េចក៏អូនត្រឡប់មកវិញ?" (never "ម៉េចក៏បង..." - that is her asking him, or him asking himself).
@@ -208,7 +225,7 @@ function parseSrtBlocksForTranslate(content) {
             const seconds = end > start ? Number((end - start).toFixed(2)) : null;
             const raw = lines.slice(2).join('\n');
             const tag = raw.match(VOICE_TAG_RE);
-            return {
+            const res = {
                 text: raw.replace(VOICE_TAG_RE, '').trim(),
                 gender: tag ? (FEMALE_ROLES.has(tag[1].toLowerCase()) ? 'Female' : 'Male') : null,
                 start: Number.isFinite(start) ? start : null,
@@ -216,6 +233,8 @@ function parseSrtBlocksForTranslate(content) {
                 seconds,
                 maxSyllables: khmerMaxSyllables(seconds)
             };
+            if (tag && !['male', 'female'].includes(tag[1].toLowerCase())) res.role = tag[1];
+            return res;
         })
         .filter(Boolean);
 }
@@ -226,6 +245,9 @@ function translatePromptLine(i, line) {
         ? { i, text: line.text, seconds: line.seconds, maxSyllables: line.maxSyllables }
         : { i, text: line.text };
     if (line.gender) item.gender = line.gender;
+    if (line.role) item.role = line.role;
+    if (line.speaker) item.speaker = line.speaker;
+    if (line.character) item.character = line.character;
     return item;
 }
 

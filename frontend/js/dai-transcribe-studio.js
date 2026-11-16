@@ -110,9 +110,7 @@
     return `http://localhost:${port}`;
   };
 
-  // Settings keys, then DR Router's ready pool keys (window.drPool, dr-router-modal.js): with the
-  // pool linked, its accounts get tabs of their own like Settings keys, and replace a key that
-  // runs out - the batch no longer needs any key in Settings.
+  // Settings keys
   const getSettingsApiKeys = () => {
     try {
       const keys = JSON.parse(localStorage.getItem('aiDubberApiKeys') || '[]');
@@ -122,8 +120,7 @@
     return single ? [single] : [];
   };
   const getActiveApiKeys = () => {
-    const own = getSettingsApiKeys();
-    return window.drPool ? window.drPool.merge(own) : own;
+    return getSettingsApiKeys();
   };
 
   const getActiveModel = () => {
@@ -1125,10 +1122,9 @@
     if (state.isBatchRunning) return;
     if (!(onlyIds instanceof Set)) onlyIds = null;
 
-    if (window.drPool) await window.drPool.refresh();
     const apiKeys = getActiveApiKeys();
     if (apiKeys.length === 0) {
-      showToast('Please add at least one Gemini API Key in Settings ➔ General, or an account in DR Router.', 'error');
+      showToast('Please add at least one Gemini API Key in Settings ➔ General.', 'error');
       document.getElementById('btn-open-settings')?.click();
       return;
     }

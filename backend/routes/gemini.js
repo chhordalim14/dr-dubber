@@ -16,15 +16,9 @@ const { isNetworkPath } = security;
 const { hasForeignText, stripForeignScript } = require('../lib/text-rules');
 const { trackProcess } = require('../lib/process-tracker');
 const { secureFetch } = require('../lib/secure-fetch');
-const { getDRRouterManager } = require('../lib/dr-router');
 
 function getDRRouterProxyForKey(apiKey) {
-    try {
-        const mgr = getDRRouterManager();
-        return mgr.getProxyForApiKey(apiKey);
-    } catch (e) {
-        return null;
-    }
+    return process.env.HTTPS_PROXY || process.env.HTTP_PROXY || null;
 }
 const { createCodeCraftClient } = require('../lib/codecraft');
 const { createKeyRest } = require('../lib/key-rest');
@@ -418,6 +412,11 @@ function formatWait(ms) {
 async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { stayOnModel = false, timeoutMs = GEMINI_ATTEMPT_TIMEOUT_MS, thinking = null, onlyModel = false } = {}) {
     apiKey = String(apiKey || '').trim();
     if (typeof isGeminiWebKey === 'function' && isGeminiWebKey(apiKey)) {
+        let s = {};
+        try { s = geminiWeb().settings(); } catch (e) {}
+        if (!s || !s.useForDubbing) {
+            return { success: false, status: 400, code: 'GWEB_DISABLED', error: 'Gemini Web Router is turned off' };
+        }
         const ctx = keyAttemptContext && keyAttemptContext.getStore();
         const r = await geminiWeb().generate(apiKey, payload, signal, { timeoutMs: Math.max(timeoutMs || 0, 10 * 60 * 1000), noWait: !!(ctx && ctx.apiBackup) });
         if (r && (r.success || r.status < 500)) noteKeyAnswered(apiKey);
@@ -705,32 +704,41 @@ function codecraftKeysByLoad() {
         .sort((a, b) => a.busy - b.busy || a.i - b.i)
         .map(x => x.k);
 }
-function getDRRouterKeys() {
+function getPoolKeys() {
     const keys = [];
-    try {
-        const { getDRRouterManager } = require('../lib/dr-router');
-        keys.push(...getDRRouterManager().keysForDubber());
-    } catch (e) {}
     // Gemini Web Router: each ready Gmail is a "gweb:<id>" key (lib/gemini-web-router.js).
-    try { keys.push(...geminiWeb().keysForDubber()); } catch (e) {}
+    try {
+        const gw = geminiWeb();
+        if (gw.settings().useForDubbing) {
+            keys.push(...gw.keysForDubber());
+        }
+    } catch (e) {}
     return keys;
 }
+const getDRRouterKeys = getPoolKeys;
 function geminiWeb() { return require('../lib/gemini-web-router').getGeminiWebRouter(); }
 function isGeminiWebKey(key) { return typeof key === 'string' && key.startsWith('gweb:'); }
 // "Router first" (Gemini Web Router page, on by default): the Gmails go before every other key
 // and a job gets one lane per Gmail; API keys stay as backups, used when a Gmail is busy with
 // another job, out of credits or signed out.
 function geminiWebFirst() {
-    try { return geminiWeb().settings().routerFirst !== false; } catch (e) { return false; }
+    try {
+        const s = geminiWeb().settings();
+        return !!(s && s.useForDubbing && s.routerFirst !== false);
+    } catch (e) { return false; }
 }
 function orderPool(keys) {
+    let s = {};
+    try { s = geminiWeb().settings(); } catch (e) {}
+    if (!s || !s.useForDubbing) {
+        return keys.filter(k => !isGeminiWebKey(k));
+    }
     if (!geminiWebFirst()) return keys;
     const web = keys.filter(isGeminiWebKey);
     if (!web.length) return keys;
     // "Gmails only" (router page): no API key while a Gmail is there - a job waits for a free
     // Gmail instead. With no Gmail at all (none signed in) the API keys still do the work.
-    let gmailOnly = false;
-    try { gmailOnly = geminiWeb().settings().gmailOnly === true; } catch (e) { }
+    const gmailOnly = s.gmailOnly === true;
     return gmailOnly ? web : [...web, ...keys.filter(k => !isGeminiWebKey(k))];
 }
 function webLaneCount(keys) {
@@ -740,60 +748,7 @@ function webLaneCount(keys) {
 // Only then does a busy Gmail say "busy" at once instead of queueing the request.
 // (Tests run parts of this file with no `require`: then there is simply no context.)
 const keyAttemptContext = typeof require === 'function' ? new (require('async_hooks').AsyncLocalStorage)() : null;
-const getDaPoolKeys = getDRRouterKeys;
-
-// DR Router Fast mode: transcribe every chunk at once (one chunk per key) and skip API saver's
-// big chunks, trading some requests for speed when the pool has keys to spare.
-function drRouterFastMode() {
-    try {
-        const { getDRRouterManager } = require('../lib/dr-router');
-        return !!getDRRouterManager().fastMode;
-    } catch (e) { return false; }
-}
-
-// Count a pool key's live requests so the DR Router dashboard shows them in flight.
-function notifyDRRouterInFlight(key, delta) {
-    try {
-        const { getDRRouterManager } = require('../lib/dr-router');
-        const acc = getDRRouterManager().findByKey(key);
-        if (acc) getDRRouterManager().trackInFlight(acc.id, delta);
-    } catch (e) {}
-}
-
-function notifyDRRouterSuccess(key) {
-    try {
-        const { getDRRouterManager } = require('../lib/dr-router');
-        const dr = getDRRouterManager();
-        const acc = dr.accounts.find(a => a.apiKey === key);
-        if (acc) dr.markSuccess(acc.id);
-    } catch (e) {}
-}
-const notifyDaPoolSuccess = notifyDRRouterSuccess;
-
-function notifyDRRouterRateLimited(key, waitMs) {
-    try {
-        const { getDRRouterManager } = require('../lib/dr-router');
-        const dr = getDRRouterManager();
-        const acc = dr.accounts.find(a => a.apiKey === key);
-        if (acc) dr.markRateLimited(acc.id, waitMs);
-    } catch (e) {}
-}
-const notifyDaPoolRateLimited = notifyDRRouterRateLimited;
-
-// dead: Google says the key itself is bad (retired). Otherwise (e.g. a 403 for region or a
-// disabled API) the pool account only rests for restMs, like the key does here.
-function notifyDRRouterInvalid(key, msg, dead = true, restMs = undefined) {
-    try {
-        const { getDRRouterManager } = require('../lib/dr-router');
-        const dr = getDRRouterManager();
-        const acc = dr.accounts.find(a => a.apiKey === key);
-        if (acc) {
-            if (dead) dr.markInvalid(acc.id, msg);
-            else dr.markRejected(acc.id, msg, restMs);
-        }
-    } catch (e) {}
-}
-const notifyDaPoolInvalid = notifyDRRouterInvalid;
+function drRouterFastMode() { return false; }
 
 // enabled: false for jobs that must stay on Gemini (the re-translation inside Direct transcription).
 function textKeys(geminiKeys, enabled = true) {
@@ -1492,7 +1447,6 @@ async function tryKeysOnce(keys, call) {
     for (let key = pickNextGeminiKey(keys, tried); key; key = pickNextGeminiKey(keys, tried)) {
         tried.add(key);
         geminiKeyInFlight.set(key, (geminiKeyInFlight.get(key) || 0) + 1);
-        if (typeof notifyDRRouterInFlight === 'function') notifyDRRouterInFlight(key, 1);
         let out;
         try {
             // (Guarded like the DR Router hooks: tests run this block without the Gemini Web parts.)
@@ -1502,18 +1456,13 @@ async function tryKeysOnce(keys, call) {
         } finally {
             const left = (geminiKeyInFlight.get(key) || 1) - 1;
             if (left > 0) geminiKeyInFlight.set(key, left); else geminiKeyInFlight.delete(key);
-            if (typeof notifyDRRouterInFlight === 'function') notifyDRRouterInFlight(key, -1);
         }
         if (out.ok) {
-            if (typeof notifyDRRouterSuccess === 'function') notifyDRRouterSuccess(key);
-            else if (typeof notifyDaPoolSuccess === 'function') notifyDaPoolSuccess(key);
             return out;
         }
         lastOut = out;
         if (out.result && (out.result.error === 'INVALID_API_KEY' || out.result.code === 'PROVIDER_KEY')) {
             const dead = isDeadKeyAnswer(key, out.result);
-            if (typeof notifyDRRouterInvalid === 'function') notifyDRRouterInvalid(key, out.result.message || '', dead, INVALID_KEY_REST_MS);
-            else if (typeof notifyDaPoolInvalid === 'function') notifyDaPoolInvalid(key, out.result.message || '');
             invalidGeminiKeys.set(key, { until: Date.now() + (dead ? DEAD_KEY_REST_MS : INVALID_KEY_REST_MS), dead, message: out.result.message || '' });
             console.warn(`[Gemini] key …${String(key).slice(-4)} rejected (${out.result.message || 'invalid'}); ${dead ? 'not used for a day (adding it again in Settings tries it sooner)' : 'skipping it'}`);
             continue;
@@ -1535,7 +1484,6 @@ async function tryKeysOnce(keys, call) {
                 const daily = !!out.result.isDailyQuota;
                 const waitMs = out.result.retryAfterMs != null ? out.result.retryAfterMs : RATE_LIMIT_COOLDOWN_MS;
                 if (typeof notifyDRRouterRateLimited === 'function') notifyDRRouterRateLimited(key, waitMs);
-                else if (typeof notifyDaPoolRateLimited === 'function') notifyDaPoolRateLimited(key, waitMs);
                 rateLimitedGeminiKeys.set(key, { until: Date.now() + waitMs, daily });
                 console.warn(`[Gemini] key …${String(key).slice(-4)} ${daily ? 'used up its daily quota' : 'rate-limited'}; parked for ${formatWait(waitMs)}, trying the next key`);
             }

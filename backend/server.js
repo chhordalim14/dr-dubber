@@ -903,7 +903,7 @@ async function removeMusicFromBgm(jobId, bgmPath, vocalPath, extra, music) {
 const FFMPEG_STEMS_MAX_AGE_MS = 2 * 24 * 60 * 60 * 1000;
 function pruneSeparatedFolders() {
     try {
-        const removed = pruneBgmCache(SEPARATED_DIR, 14 * 24 * 60 * 60 * 1000);
+        const removed = pruneBgmCache(SEPARATED_DIR, 14 * 24 * 60 * 60 * 1000, Date.now(), 4 * 1024 * 1024 * 1024);
         if (removed) console.log(`[BGM cache] Removed ${removed} unused entr${removed === 1 ? 'y' : 'ies'}.`);
         const workRoot = path.join(SEPARATED_DIR, 'bgm-work');
         if (fs.existsSync(workRoot)) {
@@ -1876,15 +1876,8 @@ app.use('/api', require('./routes/series-checkpoint')());
 const pronunciationRouter = require('./routes/pronunciation')({ getFFmpegBinary, getPythonScriptPath, trackProcess });
 app.use('/api', pronunciationRouter);
 
-const { getDRRouterManager } = require('./lib/dr-router');
-const drRouterManager = getDRRouterManager();
-if (drRouterManager.proxyEnabled) drRouterManager.startProxy();
-// keyStatus: the Gemini routes' view of each pool key (a model out for today, not checked yet).
-const drRouterApi = require('./routes/dr-router')({ drRouterManager, keyStatus: (k) => require('./routes/gemini').geminiKeyStatus(k) });
-app.use('/api/dr-router', drRouterApi);
 // Gemini Web Router: spare Gmail accounts on gemini.google.com instead of API keys.
 app.use('/api/gemini-web', require('./routes/gemini-web')());
-app.use('/api/dapool', drRouterApi);
 
 const geminiRouter = require('./routes/gemini')({
     getFFmpegBinary,

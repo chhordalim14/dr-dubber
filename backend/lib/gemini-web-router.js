@@ -19,6 +19,7 @@ const { spawn } = require('child_process');
 const { STORAGE_BASE } = require('./paths');
 const { trackProcess } = require('./process-tracker');
 const { GeminiWebSession } = require('./gemini-web');
+const { parseProxyString, maskProxyUrl } = require('./proxy');
 
 const KEY_PREFIX = 'gweb:';
 const DIR = path.join(STORAGE_BASE, 'gemini_web');
@@ -42,8 +43,13 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const readJson = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) { return d; } };
 function writeJson(f, data) {
     fs.mkdirSync(path.dirname(f), { recursive: true });
-    fs.writeFileSync(`${f}.tmp`, JSON.stringify(data, null, 1));
-    fs.renameSync(`${f}.tmp`, f);
+    try {
+        fs.writeFileSync(`${f}.tmp`, JSON.stringify(data, null, 1));
+        fs.renameSync(`${f}.tmp`, f);
+    } catch (e) {
+        fs.writeFileSync(f, JSON.stringify(data, null, 1));
+        try { if (fs.existsSync(`${f}.tmp`)) fs.unlinkSync(`${f}.tmp`); } catch (_) {}
+    }
 }
 
 function run(cmd, args, onLine) {
@@ -156,6 +162,10 @@ class GeminiWebRouter {
         if ('freeProxies' in patch) clean.freeProxies = !!patch.freeProxies;
         if ('model' in patch) clean.model = String(patch.model || '').slice(0, 80);
         if ('thinking' in patch) clean.thinking = patch.thinking === 'extended' ? 'extended' : 'standard';
+        if (clean.useForDubbing === false) {
+            clean.routerFirst = false;
+            clean.gmailOnly = false;
+        }
         const s = { ...this.settings(), ...clean };
         writeJson(SETTINGS_FILE, s);
         this._settings = { at: Date.now(), value: s };
@@ -164,16 +174,11 @@ class GeminiWebRouter {
     accounts() { return readJson(ACCOUNTS_FILE, []).filter(a => a && a.id); }
     saveAccounts(list) { writeJson(ACCOUNTS_FILE, list); }
 
-    // A proxy from DR Router PRO's list ({proxyId}) or typed in ({proxy}); '' / null = none.
+    // A proxy from own list ({proxyId}) or typed in ({proxy}); '' / null = none.
     resolveProxy({ proxyId, proxy } = {}) {
-        const { parseProxyString, getDRRouterManager } = require('./dr-router');
-        if (proxyId) {
-            const p = (getDRRouterManager().proxies || []).find(x => x.id === proxyId);
-            if (!p) throw new Error('That proxy is no longer in DR Router PRO.');
-            return p.url;
-        }
-        if (!proxy || !String(proxy).trim()) return null;
-        const parsed = parseProxyString(String(proxy));
+        const val = proxy || (proxyId && this.ownProxies().find(x => x.id === proxyId)?.url);
+        if (!val || !String(val).trim()) return null;
+        const parsed = parseProxyString(String(val));
         if (!parsed) throw new Error('Could not read that proxy. Use host:port, host:port:user:pass or http://user:pass@host:port.');
         if (!/^(https?|socks5h?|socks4)$/.test(parsed.protocol)) throw new Error(`Proxy type "${parsed.protocol}" is not supported (http, https or socks5).`);
         return parsed.url;
@@ -181,29 +186,25 @@ class GeminiWebRouter {
 
     proxyChoices() {
         try {
-            const { getDRRouterManager } = require('./dr-router');
-            return (getDRRouterManager().proxies || []).filter(p => p.enabled !== false)
+            return (this.settings().proxies || []).filter(p => p.enabled !== false)
                 .map(p => ({ id: p.id, label: maskProxy(p.url), status: p.status || null }));
         } catch (e) { return []; }
     }
 
     // ---- proxies ---------------------------------------------------------------------------
     // Every Gmail gets its own outside address, so Google cannot tie them together. Your own
-    // proxies (DR Router PRO's list: bought ones, or a phone running a proxy app) come first;
-    // free public proxies only fill the gap, when settings.freeProxies is on. A Gmail keeps its
-    // proxy while it works - jumping between addresses is what looks like a stolen session - and
-    // moves only when the proxy itself is dead. One Gmail may stay on this PC's own address.
+    // proxies come first; free public proxies only fill the gap, when settings.freeProxies is on.
+    // A Gmail keeps its proxy while it works and moves only when the proxy itself is dead.
+    // One Gmail may stay on this PC's own address.
 
     // One proxy = host + port + user (a sticky residential gateway is one host with a user per IP).
     proxyKey(u) {
-        const { parseProxyString } = require('./dr-router');
         const p = u && parseProxyString(String(u));
         return p ? `${p.host}:${p.port}:${p.username || ''}`.toLowerCase() : String(u || '').toLowerCase();
     }
     ownProxies() {
         try {
-            const { getDRRouterManager } = require('./dr-router');
-            return (getDRRouterManager().proxies || []).filter(p => p.enabled !== false && p.url);
+            return (this.settings().proxies || []).filter(p => p.enabled !== false && p.url);
         } catch (e) { return []; }
     }
     isOwnProxy(url) {
@@ -218,14 +219,14 @@ class GeminiWebRouter {
         return acc.autoProxy ? 'free' : 'typed';
     }
     chromeCanUse(url) {
-        const p = url && require('./dr-router').parseProxyString(String(url));
+        const p = url && parseProxyString(String(url));
         return !!p && !(/^socks/.test(p.protocol) && (p.username || p.password));
     }
     // The sign-in and refresh Chrome goes through the Gmail's proxy, so Google sees one address
     // from the start - except a free one, which can die in the middle of a sign-in.
     chromeProxyFor(acc) {
         if (!acc || !acc.proxy || this.proxySourceOf(acc) === 'free') return null;
-        const p = require('./dr-router').parseProxyString(String(acc.proxy));
+        const p = parseProxyString(String(acc.proxy));
         if (p && /^socks/.test(p.protocol) && (p.username || p.password)) {
             throw new Error('Chrome cannot sign in through a SOCKS proxy with a password. Use an http proxy for this Gmail, or none.');
         }

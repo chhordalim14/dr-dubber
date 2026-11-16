@@ -153,6 +153,34 @@ describe('pruneBgmCache', () => {
         assert.ok(lookupCachedStems(sep, newKey));
     });
 
+    test('prunes LRU entries when total cache size exceeds maxBytes', () => {
+        const sep = path.join(tmp, 'sep-size');
+        const k1 = 'a'.repeat(40);
+        const k2 = 'b'.repeat(40);
+        const k3 = 'c'.repeat(40);
+        // Each entry writes ~100 bytes of stems
+        storeStems(sep, k1, { bgm: writeFile(path.join(sep, 'w1', 'b.wav'), 'B'.repeat(50)), vocal: writeFile(path.join(sep, 'w1', 'v.wav'), 'V'.repeat(50)), method: 'demucs' });
+        storeStems(sep, k2, { bgm: writeFile(path.join(sep, 'w2', 'b.wav'), 'B'.repeat(50)), vocal: writeFile(path.join(sep, 'w2', 'v.wav'), 'V'.repeat(50)), method: 'demucs' });
+        storeStems(sep, k3, { bgm: writeFile(path.join(sep, 'w3', 'b.wav'), 'B'.repeat(50)), vocal: writeFile(path.join(sep, 'w3', 'v.wav'), 'V'.repeat(50)), method: 'demucs' });
+
+        // Set timestamps so k1 is oldest, k2 middle, k3 newest
+        const now = Date.now();
+        const t1 = new Date(now - 3000);
+        const t2 = new Date(now - 2000);
+        const t3 = new Date(now - 1000);
+        fs.utimesSync(path.join(cacheDirFor(sep, k1), 'meta.json'), t1, t1);
+        fs.utimesSync(path.join(cacheDirFor(sep, k2), 'meta.json'), t2, t2);
+        fs.utimesSync(path.join(cacheDirFor(sep, k3), 'meta.json'), t3, t3);
+
+        // Limit size to ~220 bytes (enough for 1 entry + overhead, not 3)
+        const removed = pruneBgmCache(sep, 14 * 24 * 3600 * 1000, now, 250);
+        assert.ok(removed >= 1, `expected at least 1 removed, got ${removed}`);
+        // k1 (oldest) should be removed first
+        assert.equal(fs.existsSync(cacheDirFor(sep, k1)), false);
+        // k3 (newest) should still exist
+        assert.equal(fs.existsSync(cacheDirFor(sep, k3)), true);
+    });
+
     test('a missing cache folder is fine', () => {
         assert.equal(pruneBgmCache(path.join(tmp, 'never-made'), 1000), 0);
     });

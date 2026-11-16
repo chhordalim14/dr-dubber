@@ -150,73 +150,71 @@ async function detectAvailableEncoders() {
 // (execSync here used to block the entire Node event loop — audio streaming, TTS
 // generation, progress polling for every other tab — for as long as ffprobe took,
 // on every single render; execFileAsync also avoids shell-interpolating videoPath.)
-const _videoDurationCache = new Map();
+const _mediaProbeCache = new Map();
+async function probeMediaFile(videoPath) {
+    if (!videoPath) return null;
+    let cacheKey = videoPath;
+    try {
+        const st = fs.statSync(videoPath);
+        cacheKey = `${videoPath}:${st.size}:${st.mtimeMs}`;
+        if (_mediaProbeCache.has(cacheKey)) return _mediaProbeCache.get(cacheKey);
+    } catch (e) {
+        return null;
+    }
+
+    try {
+        const { stdout } = await execFileAsync(getFFprobeBinary(), [
+            '-v', 'error',
+            '-show_format',
+            '-show_streams',
+            '-of', 'json',
+            videoPath
+        ], { timeout: 10000 });
+        const data = JSON.parse(stdout);
+        const format = data.format || {};
+        const streams = data.streams || [];
+        const videoStream = streams.find(s => s.codec_type === 'video');
+        const audioStream = streams.find(s => s.codec_type === 'audio');
+
+        const dur = parseFloat(format.duration || (videoStream && videoStream.duration) || (audioStream && audioStream.duration));
+        const duration = (!isNaN(dur) && dur > 0) ? dur : null;
+
+        let dimensions = null;
+        if (videoStream && videoStream.width && videoStream.height) {
+            dimensions = { width: videoStream.width, height: videoStream.height };
+        }
+
+        const info = {
+            duration,
+            dimensions,
+            hasAudio: !!audioStream,
+            videoStream,
+            audioStream
+        };
+        if (_mediaProbeCache.size > 200) {
+            const firstKey = _mediaProbeCache.keys().next().value;
+            _mediaProbeCache.delete(firstKey);
+        }
+        _mediaProbeCache.set(cacheKey, info);
+        return info;
+    } catch (e) {
+        return null;
+    }
+}
+
 async function getVideoDuration(videoPath) {
-    let cacheKey = videoPath;
-    try {
-        cacheKey = `${videoPath}:${fs.statSync(videoPath).mtimeMs}`;
-        if (_videoDurationCache.has(cacheKey)) return _videoDurationCache.get(cacheKey);
-    } catch (e) { }
-
-    try {
-        const { stdout } = await execFileAsync(getFFprobeBinary(), ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', videoPath], { timeout: 5000 });
-        const dur = parseFloat(stdout.trim());
-        const result = (dur && !isNaN(dur) && dur > 0) ? dur : null;
-        _videoDurationCache.set(cacheKey, result);
-        return result;
-    } catch (e) {
-        return null;
-    }
+    const info = await probeMediaFile(videoPath);
+    return info ? info.duration : null;
 }
 
-const _videoDimensionsCache = new Map();
 async function getVideoDimensions(videoPath) {
-    let cacheKey = videoPath;
-    try {
-        cacheKey = `${videoPath}:${fs.statSync(videoPath).mtimeMs}`;
-        if (_videoDimensionsCache.has(cacheKey)) return _videoDimensionsCache.get(cacheKey);
-    } catch (e) { }
-
-    try {
-        const { stdout } = await execFileAsync(getFFprobeBinary(), [
-            '-v', 'error',
-            '-select_streams', 'v:0',
-            '-show_entries', 'stream=width,height',
-            '-of', 'csv=s=x:p=0',
-            videoPath
-        ], { timeout: 5000 });
-        const [w, h] = stdout.trim().split('x').map(n => parseInt(n, 10));
-        const result = (w && h && !isNaN(w) && !isNaN(h) && w > 0 && h > 0) ? { width: w, height: h } : null;
-        _videoDimensionsCache.set(cacheKey, result);
-        return result;
-    } catch (e) {
-        return null;
-    }
+    const info = await probeMediaFile(videoPath);
+    return info ? info.dimensions : null;
 }
 
-const _videoHasAudioCache = new Map();
 async function videoHasAudio(videoPath) {
-    if (!videoPath) return false;
-    let cacheKey = videoPath;
-    try {
-        cacheKey = `${videoPath}:${fs.statSync(videoPath).mtimeMs}`;
-        if (_videoHasAudioCache.has(cacheKey)) return _videoHasAudioCache.get(cacheKey);
-    } catch (e) { }
-
-    try {
-        const { stdout } = await execFileAsync(getFFprobeBinary(), [
-            '-v', 'error',
-            '-select_streams', 'a',
-            '-show_entries', 'stream=codec_type',
-            '-of', 'csv=p=0',
-            videoPath
-        ], { timeout: 5000 });
-        const hasA = stdout.includes('audio');
-        _videoHasAudioCache.set(cacheKey, hasA);
-        return hasA;
-    } catch (e) {
-        return false;
-    }
+    const info = await probeMediaFile(videoPath);
+    return info ? info.hasAudio : false;
 }
 
 function parseTimeToSeconds(timeStr) {

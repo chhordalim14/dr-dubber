@@ -74,6 +74,22 @@ describe('forms of address', () => {
         assert.match(getKhmerDramaRegisterGuidance('modern'), /he to his lover "អូនធ្វើអីហ្នឹង\?"/);
         assert.match(getKhmerDramaRegisterGuidance('modern'), /he to her "អូនមិនអីទេ\?" \/ she to him "បងមិនអីទេ\?"/);
     });
+
+    test('strict negative constraints forbid wrong spouse and parent/child address', () => {
+        // Lovers / Spouses
+        assert.match(KHMER_DUBBING_RULES, /Male speaker \(ប្រុស \/ Piseth\) speaking to his female partner/);
+        assert.match(KHMER_DUBBING_RULES, /MUST call her: "អូន"/);
+        assert.match(KHMER_DUBBING_RULES, /MUST call himself: "បង"/);
+        assert.match(KHMER_DUBBING_RULES, /NEVER call her "បង" \(fatal error!\)/);
+        assert.match(KHMER_DUBBING_RULES, /Female speaker \(ស្រី \/ Sreymom\) speaking to her male partner/);
+        assert.match(KHMER_DUBBING_RULES, /MUST call him: "បង"/);
+        assert.match(KHMER_DUBBING_RULES, /MUST call herself: "អូន"/);
+        assert.match(KHMER_DUBBING_RULES, /NEVER call herself "បង" \(fatal error!\)/);
+
+        // Family / Parent & Child
+        assert.match(KHMER_DUBBING_RULES, /A parent NEVER calls their child "បង", "អូន", or "ឯង"/);
+        assert.match(KHMER_DUBBING_RULES, /A child NEVER calls parents "បង", "អូន", "ឯង", "លោក", or "អ្នក"/);
+    });
 });
 
 describe('translate-srt keeps timing', () => {

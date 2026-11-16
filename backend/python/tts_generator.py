@@ -151,7 +151,7 @@ def get_audio_duration(file_path):
 # fit. Edge can also leave a pause of a second or more at a mid-line '?' or '។'.
 TRIM_THRESHOLD_DB = -45.0   # quieter than this is silence (Edge's pads are digital silence)
 TRIM_MIN_SILENCE = 0.05     # quiet stretches shorter than this are part of a word (stops, breaths)
-TRIM_KEEP_LEAD = 0.04       # kept before the first sound so consonant onsets aren't clipped
+TRIM_KEEP_LEAD = 0.01       # kept before the first sound (10ms) so consonant onsets start instantly with no video delay
 TRIM_KEEP_TAIL = 0.08       # kept after the last sound so word releases fade out naturally
 TRIM_LONG_PAUSE = 0.5       # interior pauses longer than this...
 TRIM_PAUSE_KEEP = 0.3       # ...are shortened to this
@@ -336,6 +336,8 @@ async def _generate_speech_core(text: str, voice: str, rate: str, pitch: str, vo
 
         # Clean up zero-width and invisible control characters
         clean_text = text.replace('\u200b', '').replace('\u200c', '').replace('\u200d', '').replace('\ufeff', '').strip()
+        # Strip leading punctuation/dashes/ellipses that cause Edge TTS to delay speech onset
+        clean_text = re.sub(r'^[-\u2010-\u2015\u2212\s,.;:!?។៕…·•]+', '', clean_text).strip()
         if not clean_text:
             return {"success": False, "error": "Empty text after sanitization"}
 

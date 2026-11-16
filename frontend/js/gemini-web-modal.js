@@ -216,21 +216,26 @@
     }
     const accs = data.accounts || [];
     const ready = accs.filter((a) => a.enabled && a.state === 'ready').length;
+    const s = data.settings || {};
+    const useDubbing = !!s.useForDubbing;
     body.innerHTML = `
       <div class="flex flex-wrap items-center gap-3 justify-between">
         <label class="flex items-center gap-2 text-[13px] text-gray-200 cursor-pointer select-none">
-          <input id="gw-use" type="checkbox" ${data.settings && data.settings.useForDubbing ? 'checked' : ''} class="w-4 h-4 accent-sky-400" />
+          <input id="gw-use" type="checkbox" ${useDubbing ? 'checked' : ''} class="w-4 h-4 accent-sky-400" />
           Use these Gmails for transcribe &amp; translate
         </label>
-        <label class="flex items-center gap-2 text-[13px] text-gray-200 cursor-pointer select-none" title="On: Gmails do the work first and API keys only step in when every Gmail is busy, out of credits or signed out (saves API quota). Off: Gmails and API keys share the work.">
-          <input id="gw-first" type="checkbox" ${data.settings && data.settings.routerFirst !== false ? 'checked' : ''} class="w-4 h-4 accent-sky-400" />
+        <label class="flex items-center gap-2 text-[13px] ${useDubbing ? 'text-gray-200 cursor-pointer' : 'text-gray-500 cursor-not-allowed opacity-50'} select-none" title="On: Gmails do the work first and API keys only step in when every Gmail is busy, out of credits or signed out (saves API quota). Off: Gmails and API keys share the work.">
+          <input id="gw-first" type="checkbox" ${useDubbing && s.routerFirst !== false ? 'checked' : ''} ${useDubbing ? '' : 'disabled'} class="w-4 h-4 accent-sky-400" />
           Router first (API keys only as backup)
         </label>
-        <label class="flex items-center gap-2 text-[13px] text-gray-200 cursor-pointer select-none" title="On: while any Gmail is signed in, API keys are not used at all - an episode waits for a free Gmail, and a Gmail Google signs out keeps its place while it signs back in (seconds). API keys are used only when no Gmail can sign in.">
-          <input id="gw-only" type="checkbox" ${data.settings && data.settings.gmailOnly === true ? 'checked' : ''} class="w-4 h-4 accent-sky-400" />
+        <label class="flex items-center gap-2 text-[13px] ${useDubbing ? 'text-gray-200 cursor-pointer' : 'text-gray-500 cursor-not-allowed opacity-50'} select-none" title="On: while any Gmail is signed in, API keys are not used at all - an episode waits for a free Gmail, and a Gmail Google signs out keeps its place while it signs back in (seconds). API keys are used only when no Gmail can sign in.">
+          <input id="gw-only" type="checkbox" ${useDubbing && s.gmailOnly === true ? 'checked' : ''} ${useDubbing ? '' : 'disabled'} class="w-4 h-4 accent-sky-400" />
           Gmails only (no API keys while a Gmail works)
         </label>
         <div class="text-[12px] text-gray-400">${ready} of ${accs.length} ready${data.running ? '' : ' · <span class="text-rose-300">service not running</span>'}</div>
+      </div>
+      <div id="gw-status-banner" class="mt-2.5 px-3 py-1.5 rounded-lg border text-[12px] font-medium flex items-center gap-2 ${useDubbing ? 'border-sky-500/30 bg-sky-500/10 text-sky-200' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'}">
+        <span>${useDubbing ? '⚡ Gemini Web Router is ON: transcribe &amp; translate route through Gmail accounts.' : '🛡️ Router is OFF: transcribe &amp; translate strictly use your Gemini API keys (Settings ➔ General).'}</span>
       </div>
       ${proxyPanel(accs)}
       ${modelControls(accs)}
@@ -269,6 +274,10 @@
     el._keep = { ...(el._keep || {}), msg: { text, cls } };
     const m = el.querySelector('#gw-msg');
     if (m) { m.textContent = text; m.className = `text-[12px] mt-2 ${cls}`; }
+    const banner = el.querySelector('#gw-status-banner');
+    if (banner) {
+      banner.innerHTML = `<span>${esc(text)}</span>`;
+    }
   }
 
   async function refresh(quota = false) {
@@ -398,7 +407,16 @@
         .catch((err) => message(err.message, 'text-rose-300'));
       return;
     }
-    if (t.id === 'gw-use' && e.type === 'change') api('/settings', { body: { useForDubbing: t.checked } }).then(() => refresh()).catch((err) => message(err.message, 'text-rose-300'));
+    if (t.id === 'gw-use' && e.type === 'change') {
+      const on = t.checked;
+      api('/settings', { body: { useForDubbing: on, ...(!on ? { routerFirst: false, gmailOnly: false } : {}) } })
+        .then(() => {
+          message(on ? 'Gemini Web Router enabled for transcribe & translate.' : 'Router turned OFF: strictly using Gemini API keys.', 'text-emerald-300');
+          refresh();
+        })
+        .catch((err) => message(err.message, 'text-rose-300'));
+      return;
+    }
   }
 
   function build() {

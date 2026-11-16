@@ -339,9 +339,9 @@ describe('Dub Whole Series hands-free export', () => {
   });
 
   test('the render queue\'s own Stop while the series waits: the series pauses instead of rendering it again', async () => {
-    const { env, plan, api } = makeSeries({ parts: 2, renderMs: 30, dubMs: 5 });
+    const { env, plan, api } = makeSeries({ parts: 2, renderMs: 30, dubMs: 150 });
     const run = api.exportAndContinue();
-    await sleep(45); // part 2 is dubbed; part 1's third tab renders (two render at once: 1 and 2 are done)
+    await sleep(45); // part 2 is dubbed in background; part 1's third tab renders (two render at once: 1 and 2 are done)
     await api.stopQueue();
     await assert.rejects(run, /Part 1's export was stopped \(2 of 3 tab\(s\) exported\)\. Press Continue to export the rest\./);
     const part1 = env.renderQueue.filter((i) => /^part1_/.test(i.tab));

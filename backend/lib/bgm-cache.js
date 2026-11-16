@@ -92,6 +92,7 @@ function storeStems(separatedDir, key, { bgm, vocal, method, source }) {
         fs.writeFileSync(path.join(tmpDir, META_FILE), JSON.stringify({ method: method || null, source: source || null, created: Date.now() }));
         fs.rmSync(finalDir, { recursive: true, force: true });
         fs.renameSync(tmpDir, finalDir);
+        try { pruneBgmCache(separatedDir, 14 * 24 * 60 * 60 * 1000, Date.now(), 4 * 1024 * 1024 * 1024); } catch (e) {}
         return { bgm: path.join(finalDir, BGM_FILE), vocal: path.join(finalDir, VOCAL_FILE), method: method || null };
     } catch (e) {
         // Put the stems back where the caller expects them before giving up.
@@ -102,13 +103,30 @@ function storeStems(separatedDir, key, { bgm, vocal, method, source }) {
     }
 }
 
+function dirSizeBytes(dir) {
+    let size = 0;
+    try {
+        const files = fs.readdirSync(dir);
+        for (const file of files) {
+            try {
+                const st = fs.statSync(path.join(dir, file));
+                if (st.isFile()) size += st.size;
+            } catch (e) {}
+        }
+    } catch (e) {}
+    return size;
+}
+
 // Stems are ~100 MB each per 9-minute tab, so entries not used for maxAgeMs
 // are deleted (and so are leftovers from crashed or stopped runs).
-function pruneBgmCache(separatedDir, maxAgeMs, now = Date.now()) {
+// If maxBytes is provided (> 0), least recently used stems are pruned until
+// total cache size is within budget.
+function pruneBgmCache(separatedDir, maxAgeMs, now = Date.now(), maxBytes = 0) {
     const root = path.join(separatedDir, CACHE_FOLDER);
     let removed = 0;
     let names = [];
     try { names = fs.readdirSync(root); } catch (e) { return 0; }
+    const validEntries = [];
     for (const name of names) {
         const dir = path.join(root, name);
         let lastUse = 0;
@@ -117,8 +135,24 @@ function pruneBgmCache(separatedDir, maxAgeMs, now = Date.now()) {
         } catch (e) {
             try { lastUse = fs.statSync(dir).mtimeMs; } catch (e2) { continue; }
         }
-        if (now - lastUse > maxAgeMs) {
+        if (now - lastUse > maxAgeMs || name.includes('.tmp-')) {
             try { fs.rmSync(dir, { recursive: true, force: true }); removed++; } catch (e) {}
+        } else {
+            validEntries.push({ dir, lastUse, size: maxBytes > 0 ? dirSizeBytes(dir) : 0 });
+        }
+    }
+    if (maxBytes > 0 && validEntries.length > 0) {
+        let totalBytes = validEntries.reduce((sum, e) => sum + e.size, 0);
+        if (totalBytes > maxBytes) {
+            validEntries.sort((a, b) => a.lastUse - b.lastUse);
+            for (const entry of validEntries) {
+                if (totalBytes <= maxBytes) break;
+                try {
+                    fs.rmSync(entry.dir, { recursive: true, force: true });
+                    removed++;
+                    totalBytes -= entry.size;
+                } catch (e) {}
+            }
         }
     }
     return removed;

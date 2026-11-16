@@ -3814,7 +3814,6 @@
       let apiKeys = [];
       {
         apiKeys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]");
-        if (window.drPool) apiKeys = window.drPool.merge(apiKeys); // DR Router's ready accounts too
         if (apiKeys.length === 0 && engineMode === "whisper" && window.textAi?.ready()) {
           apiKeys = [""]; // one pass of the translate loop below; the server uses the CodeCraft key
         } else if (apiKeys.length === 0) {
@@ -4291,10 +4290,9 @@
     const btnFixMissing = document.getElementById("btn-fix-missing");
     let fixMissingAllRun = null; // { stopped, requestIds } while "Fix Missing: All Tabs" runs
 
-    // Settings keys, then DR Router's ready pool accounts (window.drPool, dr-router-modal.js).
+    // Settings keys
     const getGeminiKeys = () => {
-      const own = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]").filter(Boolean);
-      return window.drPool ? window.drPool.merge(own) : own;
+      return JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]").filter(Boolean);
     };
     const projectTabName = (p) => p.tabTitle || (p.file?.name || p.name || `Tab ${projects.indexOf(p) + 1}`).replace(/\.[^/.]+$/, "");
     // The open tab's live list is the global `subtitles`; other tabs keep theirs on the project.
@@ -5020,10 +5018,9 @@
           return;
         }
       } else {
-        let apiKeys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]");
-        if (window.drPool) { await window.drPool.refresh(); apiKeys = window.drPool.merge(apiKeys); }
+        const apiKeys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]");
         if (apiKeys.length === 0) {
-          showToast("Please add at least one Gemini API Key in Settings, or an account in DR Router.", "error");
+          showToast("Please add at least one Gemini API Key in Settings.", "error");
           document.getElementById("btn-open-settings")?.click();
           return;
         }
@@ -10099,8 +10096,14 @@
     });
 
     if (window.electronAPI && window.electronAPI.onVoxServerStopped) {
-      window.electronAPI.onVoxServerStopped((_e, data) => {
-        const msg = data?.error ? `⚠ Stopped (code ${data.code}): ${data.error.split("\n").pop()}` : "Server stopped.";
+      // preload.js passes the data alone (no event argument): reading a second argument here
+      // was always undefined, so a server that failed to start only ever said "Server stopped."
+      window.electronAPI.onVoxServerStopped((data) => {
+        const msg = data?.error
+          ? `⚠ Stopped: ${data.error.split("\n").pop()}`
+          : data?.code && !data.byUser
+            ? `⚠ Server stopped by itself (exit code ${data.code}). See the server log.`
+            : "Server stopped.";
         voxCmp2SetServerUI(false, null, msg);
         if (data?.error) voxCmp2LogAppend({ type: "stderr", text: data.error + "\n" });
         // Signal any active ping loop to stop
@@ -11316,20 +11319,21 @@
     const saveStateToPast = (customSubs = null, customBgm = null, customDetached = null) => {
       if (pastStates.length > 50) pastStates.shift(); // Keep max 50 states
 
+      const cloneObj = (o) => (typeof structuredClone === "function" ? structuredClone(o) : JSON.parse(JSON.stringify(o)));
       pastStates.push({
-        subs: JSON.parse(JSON.stringify(customSubs || subtitles)),
-        bgm: JSON.parse(JSON.stringify(customBgm || bgmTrack)),
+        subs: cloneObj(customSubs || subtitles),
+        bgm: cloneObj(customBgm || bgmTrack),
         // ADDED: Snapshot the detached audios into history
-        detached: JSON.parse(JSON.stringify(customDetached || detachedAudios || [])),
+        detached: cloneObj(customDetached || detachedAudios || []),
         flipH: isFlippedH,
         flipV: isFlippedV,
-        crop: JSON.parse(JSON.stringify(cropConfig)),
-        pan: JSON.parse(JSON.stringify(videoPan)),
+        crop: cloneObj(cropConfig),
+        pan: cloneObj(videoPan),
         zoom: videoZoom,
         scaleX: window.videoScaleX || videoZoom || 1,
         scaleY: window.videoScaleY || videoZoom || 1,
-        texts: JSON.parse(JSON.stringify(freeTexts)),
-        blurBoxes: JSON.parse(JSON.stringify(blurBoxes || [])),
+        texts: cloneObj(freeTexts),
+        blurBoxes: cloneObj(blurBoxes || []),
         subtitleStyle: {
           subtitleColor: globalSubtitleColor,
           subtitleFont: globalSubtitleFont,
@@ -17632,8 +17636,9 @@
         if (g.reason === "no-subtitles") return "no subtitles to voice";
         const voiceMissingLines = async () => {
           for (let pass = 1; pass <= seriesRetryPasses() && missingVoice(); pass++) {
-            setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Generate again: ${missingVoice()} line(s) (${pass}/${seriesRetryPasses()})`);
-            await sleep(5000);
+            const count = missingVoice();
+            setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Generate again: ${count} line(s) (${pass}/${seriesRetryPasses()})`);
+            await sleep(count <= 2 ? 1500 : 3500);
             checkStop();
             g = await runGenerate();
           }
@@ -17813,20 +17818,26 @@
         saveCurrentProjectState();
         let louder = 0;
         const lowered = [];
-        for (const proj of projects) {
+        // Fetch audio peaks for all tabs in parallel instead of sequentially
+        const peakJobs = await Promise.all(projects.map(async (proj) => {
           const music = proj.bgmTrack;
-          if (!music?.file || !proj.subtitles?.length) continue;
+          if (!music?.file || !proj.subtitles?.length) return null;
           const r = await postJson(`${API}/audio-peaks`, { filePath: music.file }).catch(() => null);
-          if (!r?.success || !Array.isArray(r.peaks)) continue;
+          if (!r?.success || !Array.isArray(r.peaks)) return null;
+          return { proj, music, peaks: r.peaks, perSec: r.peaksPerSecond };
+        }));
+        for (const job of peakJobs) {
+          if (!job) continue;
+          const { proj, music, peaks, perSec } = job;
           const start = parseFloat(music.start) || 0;
-          const levelDb = musicLevelDb(proj.subtitles, r.peaks, r.peaksPerSecond, start);
+          const levelDb = musicLevelDb(proj.subtitles, peaks, perSec, start);
           if (levelDb) {
             music.levelDb = levelDb;
             lowered.push(proj);
           } else delete music.levelDb;
           // The open tab plays (and is saved back) from its own copy of the track.
           if (proj === projects[activeProjectIndex] && bgmTrack?.file === music.file) bgmTrack.levelDb = music.levelDb;
-          louder += boostVoicesOverMusic(proj.subtitles, r.peaks, r.peaksPerSecond, start);
+          louder += boostVoicesOverMusic(proj.subtitles, peaks, perSec, start);
         }
         refreshActiveTabFromProject();
         return { louder, lowered };
@@ -19111,7 +19122,7 @@
 
           if (currentVisualDuration > maxAllowedDuration && maxAllowedDuration > 0.1 && maxAllowedDuration !== Infinity) {
             let requiredSpeed = sub.baseAudioDuration / maxAllowedDuration;
-            requiredSpeed = Math.max(0.5, Math.min(2.5, requiredSpeed));
+            requiredSpeed = Math.max(0.90, Math.min(1.20, requiredSpeed));
 
             const realIndex = subsArray.findIndex((s) => s.id === sub.id);
             if (realIndex > -1) {
@@ -19154,7 +19165,7 @@
 
           if (currentVisualDuration > maxAllowedDuration && maxAllowedDuration > 0.1) {
             let requiredSpeed = a.baseAudioDuration / maxAllowedDuration;
-            requiredSpeed = Math.max(0.5, Math.min(2.5, requiredSpeed));
+            requiredSpeed = Math.max(0.90, Math.min(1.20, requiredSpeed));
 
             const realIndex = detachedArray.findIndex((d) => d.id === a.id);
             if (realIndex > -1) {
@@ -19195,7 +19206,7 @@
             const targetDuration = Math.min(slot, maxCollision > 0.1 ? maxCollision : slot);
 
             let targetSpeed = sub.baseAudioDuration / targetDuration;
-            targetSpeed = Math.max(0.70, Math.min(2.2, Math.round(targetSpeed * 100) / 100));
+            targetSpeed = Math.max(0.90, Math.min(1.20, Math.round(targetSpeed * 100) / 100));
 
             sub.speed = targetSpeed;
             sub.audioStart = tStart.toFixed(2);
@@ -19301,7 +19312,7 @@
     // every renderSubtitles(), so it stays O(n) with no sorting.
     const FAST_SPEED_THRESHOLD = 1.15;
     const FAST_SPEED_CRITICAL = 1.8;
-    const FAST_MAX_SPEED = 2.5;          // same ceiling as the timeline resize handles
+    const FAST_MAX_SPEED = 2.5;          // ceiling for timeline resize handles and fast fit
     const FAST_FIT_TOLERANCE = 0.1;      // seconds a 1.0x voice may run past its slot end
     const FAST_EST_CHARS_PER_SEC = 12;   // natural pace estimate for lines without audio yet
     // VoxCPM2 says Khmer slower: a median 15.6 code points a second over 428 lines of the server
@@ -19648,7 +19659,6 @@
       let keys = [];
       try { keys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]"); } catch (_) { keys = []; }
       keys = (Array.isArray(keys) ? keys : []).map((k) => String(k || "").trim()).filter(Boolean);
-      if (window.drPool) keys = window.drPool.merge(keys); // DR Router's ready accounts too
       return { keys, model: localStorage.getItem("aiDubberModel") || "gemini-3.8-flash" };
     }
 
@@ -20532,7 +20542,7 @@
             const visualDuration = sub.baseAudioDuration / (sub.speed || 1.0);
 
             if (visualDuration > maxDuration && maxDuration > 0.1) {
-              const requiredSpeed = Math.max(0.5, Math.min(2.5, sub.baseAudioDuration / maxDuration));
+              const requiredSpeed = Math.max(0.90, Math.min(1.20, sub.baseAudioDuration / maxDuration));
               const realIdx = proj.subtitles.findIndex((s) => s.id === sub.id);
               if (realIdx > -1) {
                 proj.subtitles[realIdx].speed = requiredSpeed;
@@ -20838,7 +20848,7 @@
                 const maxDuration = nextSub ? parseFloat(nextSub.textStart) - startTime + overlapMargin : projDuration - startTime;
                 const visualDuration = sub.baseAudioDuration / (sub.speed || 1.0);
                 if (visualDuration > maxDuration && maxDuration > 0.1) {
-                  const requiredSpeed = Math.max(0.5, Math.min(2.5, sub.baseAudioDuration / maxDuration));
+                  const requiredSpeed = Math.max(0.90, Math.min(1.20, sub.baseAudioDuration / maxDuration));
                   const realIdx = projSubs.findIndex((s) => s.id === sub.id);
                   if (realIdx > -1) {
                     projSubs[realIdx].speed = requiredSpeed;
@@ -21195,7 +21205,8 @@
         saveStateToPast();
       }
 
-      const concurrentLimit = isVoxCmp2Enabled ? 1 : parseInt(localStorage.getItem("aiDubberConcurrentAudio") || "3", 10);
+      const userAudioLimit = parseInt(localStorage.getItem("aiDubberConcurrentAudio") || "3", 10);
+      const concurrentLimit = isVoxCmp2Enabled ? 1 : Math.max(userAudioLimit, isBatch ? 3 : userAudioLimit);
 
       // Clone Voices from Video (js/vox-speakers.js): lines no one has given a speaker yet get
       // one, with a voice cloned from the video, before any of them is voiced.
@@ -21413,7 +21424,7 @@
                     const expectedVisualDuration = durationVal / finalSpeed;
                     if (expectedVisualDuration > timeRemainingInVideo && timeRemainingInVideo > 0.1) {
                       let requiredSpeed = durationVal / timeRemainingInVideo;
-                      finalSpeed = Math.max(0.5, Math.min(2.5, requiredSpeed));
+                      finalSpeed = Math.max(0.90, Math.min(1.20, requiredSpeed));
                     }
                     targetProject.subtitles[idx].baseAudioDuration = durationVal;
                     targetProject.subtitles[idx].speed = finalSpeed;
@@ -21560,7 +21571,7 @@
               const maxDuration = nextSub ? parseFloat(nextSub.textStart) - startTime + overlapMargin : projDuration - startTime;
               const visualDuration = sub.baseAudioDuration / (sub.speed || 1.0);
               if (visualDuration > maxDuration && maxDuration > 0.1) {
-                const requiredSpeed = Math.max(0.5, Math.min(2.5, sub.baseAudioDuration / maxDuration));
+                const requiredSpeed = Math.max(0.90, Math.min(1.20, sub.baseAudioDuration / maxDuration));
                 const realIdx = targetProject.subtitles.findIndex((s) => s.id === sub.id);
                 if (realIdx > -1) {
                   targetProject.subtitles[realIdx].speed = requiredSpeed;
@@ -21762,10 +21773,9 @@
       });
       if (typeof renderProjectTabs === "function") renderProjectTabs();
 
-      // 🚀 Concurrency Worker Pool: 4 tabs processed in parallel (with global backend TTS queue safety).
-      // Each tab sends its lines a few at a time (Settings), so 4 tabs keep the server's 12 voice
-      // lines at once busy; with 2 tabs only 6 were ever asked for.
-      const poolSize = 4;
+      // 🚀 Concurrency Worker Pool: up to 8 tabs processed in parallel (with global backend TTS queue safety).
+      // Each tab sends its lines a few at a time, keeping the server's 12 voice lines at once fully saturated.
+      const poolSize = Math.min(eligibleProjects.length, 8);
       let activeIdx = 0;
       let succeededCount = 0;
       let totalTabsProcessed = 0;
@@ -22058,7 +22068,7 @@
                       let spd = 1.0;
                       const safeProjDur = proj.duration > 0 ? proj.duration : Infinity;
                       const remaining = safeProjDur - startTime;
-                      if (remaining > 0.1 && dur / spd > remaining) spd = Math.max(0.5, Math.min(2.5, dur / remaining));
+                      if (remaining > 0.1 && dur / spd > remaining) spd = Math.max(0.90, Math.min(1.20, dur / remaining));
                       proj.subtitles[ii].baseAudioDuration = dur;
                       proj.subtitles[ii].speed = spd;
                       let end = startTime + dur / spd;
@@ -25178,6 +25188,22 @@
                 const fontName = isKhmer ? "Kantumruy Pro" : "Noto Sans";
                 srtContent += `<font face="${fontName}">${text}</font>\n\n`;
               }));
+            }
+
+            // Pre-export audio integrity: auto-generate audio for any dialogue lines lacking audio so no voice is missed
+            if (!projIsA1Muted) {
+              const unvoicedSubs = projSubs.filter((s) => isSpeakableText(s.text) && (s.audioStatus !== "ready" || !s.file));
+              if (unvoicedSubs.length > 0 && typeof generateStandardAudioForProject === "function") {
+                console.log(`[Export Integrity] Auto-generating audio for ${unvoicedSubs.length} missing subtitle(s) before export...`);
+                try {
+                  showToast(`Generating audio for ${unvoicedSubs.length} missing line(s) before export...`, "info");
+                  const missingIds = unvoicedSubs.map((s) => s.id);
+                  await generateStandardAudioForProject(targetProject, missingIds, false);
+                  projSubs = targetProject.subtitles || [];
+                } catch (genErr) {
+                  console.warn("[Export Integrity] Voice generation attempt failed:", genErr);
+                }
+              }
             }
 
             const audioTracks = projIsA1Muted
