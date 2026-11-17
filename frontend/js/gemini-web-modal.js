@@ -349,7 +349,7 @@
       pill.textContent = 'Not installed';
       body.innerHTML = `<div class="gw-box">
           <div style="font-size:13.5px;color:var(--text-bright);font-weight:600">Install the Router's Python part</div>
-          <div class="gw-hint">It is the <code>gemini_webapi</code> library (about 20 MB) and installs into <code>DR Dubber Gemini Web</code> in your user folder. Python 3.10 or newer must be on this PC.</div>
+          <div class="gw-hint">It is the <code>gemini_webapi</code> library (about 20 MB) and installs into <code>DR Dubber Gemini Web</code> in your user folder. It uses Python 3.10 or newer if this PC has it, otherwise the Python that comes with DR Dubber.</div>
           <div style="margin-top:12px"><button id="gw-install" class="gw-btn pri" ${ins.running ? 'disabled' : ''}>${ins.running ? '<span class="gw-spin" style="border-color:#fff;border-top-color:transparent"></span>Installing…' : 'Install'}</button></div>
           ${ins.lines && ins.lines.length ? `<pre class="gw-log">${esc(ins.lines.slice(-30).join('\n'))}</pre>` : ''}
           ${ins.error ? `<div class="gw-msg bad">${esc(ins.error)}</div>` : ''}
