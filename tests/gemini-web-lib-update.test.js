@@ -161,7 +161,7 @@ describe('Gemini Web Router: who answered', () => {
     });
 
     test('routes/gemini.js reports answers only while the Router is on, never CodeCraft keys', () => {
-        const src = fs.readFileSync(path.join(__dirname, '..', 'backend', 'routes', 'gemini.js'), 'utf8');
+        const src = fs.readFileSync(path.join(__dirname, '..', 'backend', 'routes', 'gemini.js'), 'utf8').replace(/\r\n/g, '\n'); // CRLF on Windows CI
         const at = src.indexOf('function noteRouterUsage(');
         const fn = src.slice(at, src.indexOf('\n}\n', at) + 2);
         const noted = [];

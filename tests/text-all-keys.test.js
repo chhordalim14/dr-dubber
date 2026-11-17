@@ -8,7 +8,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const source = fs.readFileSync(path.join(__dirname, '..', 'backend', 'routes', 'gemini.js'), 'utf8');
+const source = fs.readFileSync(path.join(__dirname, '..', 'backend', 'routes', 'gemini.js'), 'utf8').replace(/\r\n/g, '\n'); // CRLF on Windows CI
 const start = source.indexOf('async function generateTextForKey(');
 const end = source.indexOf('\n}\n', start) + 2;
 const fnSource = source.slice(start, end);
