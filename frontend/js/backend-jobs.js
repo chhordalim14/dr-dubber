@@ -9,9 +9,15 @@
 
   const JSON_HEADERS = { "Content-Type": "application/json" };
   const RESULT_POLL_MS = 1000;
-  const RESULT_TIMEOUT_MS = 10000;
-  // The backend can stop answering for a while (a busy machine); give up only after this long.
+  const RESULT_TIMEOUT_MS = 30000;
+  // The backend refusing the connection (closed, crashed) for this long: it is gone.
   const BACKEND_GONE_MS = 2 * 60 * 1000;
+  // A poll that gets no answer in time is usually still waiting for a connection: Chromium opens
+  // at most 6 to localhost, and Generate voices keeps ~12 voice requests open. On 2026-11-17 the
+  // next part's early transcribe finished on the server in 2 minutes while every poll timed out
+  // behind the voices, and all 4 results were dropped as "stopped answering". Slow answers are
+  // waited for this long instead.
+  const BACKEND_SLOW_MS = 20 * 60 * 1000;
 
   const abortError = (signal) => signal?.reason ?? new DOMException("The operation was aborted.", "AbortError");
 
@@ -40,7 +46,8 @@
     if (!first?.background) return jsonResponse(first, started.status);
 
     const resultUrl = `${new URL(url, location.href).origin}/api/job-result?id=${encodeURIComponent(jobId)}`;
-    let failingSince = 0;
+    let failingSince = 0; // no answer at all (refused or too slow)
+    let refusedSince = 0; // refused in a row: the backend is not there
     for (;;) {
       await sleep(RESULT_POLL_MS, signal);
       let data;
@@ -49,11 +56,16 @@
         data = await res.json();
       } catch (e) {
         if (signal?.aborted) throw abortError(signal);
-        failingSince = failingSince || Date.now();
-        if (Date.now() - failingSince > BACKEND_GONE_MS) throw new Error("The backend stopped answering.");
+        const now = Date.now();
+        failingSince = failingSince || now;
+        refusedSince = e?.name === "TimeoutError" ? 0 : (refusedSince || now);
+        if ((refusedSince && now - refusedSince > BACKEND_GONE_MS) || now - failingSince > BACKEND_SLOW_MS) {
+          throw new Error("The backend stopped answering.");
+        }
         continue;
       }
       failingSince = 0;
+      refusedSince = 0;
       if (data.unknown) throw new Error("The backend lost this job (was it restarted?).");
       if (data.done) return jsonResponse(data.body, data.status);
     }

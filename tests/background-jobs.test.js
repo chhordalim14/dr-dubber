@@ -119,3 +119,47 @@ describe('background jobs', () => {
         assert.ok(calls >= 2 && calls <= 5, `calls=${calls}`);
     });
 });
+
+// Polls that time out are usually waiting behind other requests (Chromium: 6 connections to
+// localhost; Generate voices keeps ~12 open) - the job is waited for. Only a refused connection
+// for 2 minutes means the backend is gone. Run with a fake fetch and clock.
+describe('backend-jobs: a busy browser is not a gone backend', () => {
+    function client({ answer }) {
+        let now = 1e12;
+        const FakeDate = { now: () => now };
+        const window = {};
+        let polls = 0;
+        const fakeFetch = async (url, init) => {
+            if (init && init.method === 'POST') return { status: 200, json: async () => ({ success: true, background: true }) };
+            polls++;
+            now += 30000; // each failed poll takes its 30 s timeout
+            return answer(polls);
+        };
+        vm.runInNewContext(clientSrc, {
+            window, fetch: fakeFetch, Response, DOMException, AbortSignal, Date: FakeDate,
+            setTimeout: (fn) => setTimeout(fn, 0), clearTimeout, setInterval, clearInterval,
+            crypto: globalThis.crypto, URL, location: { href: 'http://localhost:3001/' }
+        });
+        return { postJob: window.backendJobs.postJob, polls: () => polls };
+    }
+    const timeout = () => { throw new DOMException('signal timed out', 'TimeoutError'); };
+    const refused = () => { throw new TypeError('Failed to fetch'); };
+
+    test('10 minutes of polls timing out, then the result: it is waited for', async () => {
+        const c = client({ answer: (n) => (n <= 20 ? timeout() : { json: async () => ({ success: true, done: true, status: 200, body: { success: true, v: 1 } }) }) });
+        const res = await c.postJob('http://localhost:3001/api/transcribe', { body: '{}' });
+        assert.deepEqual(await res.json(), { success: true, v: 1 });
+    });
+
+    test('refused for over 2 minutes: the backend is gone', async () => {
+        const c = client({ answer: refused });
+        await assert.rejects(c.postJob('http://localhost:3001/api/transcribe', { body: '{}' }), /stopped answering/);
+        assert.ok(c.polls() <= 6);
+    });
+
+    test('no answer at all for 20 minutes: gives up then', async () => {
+        const c = client({ answer: timeout });
+        await assert.rejects(c.postJob('http://localhost:3001/api/transcribe', { body: '{}' }), /stopped answering/);
+        assert.ok(c.polls() > 35);
+    });
+});

@@ -62,7 +62,7 @@ test('the series\' Direct transcription leaves timing to the later steps; incomp
     assert.match(geminiSrc, /const fitted = fitToTime === false \? 0 : await fitOverlongLines\(\{/);
     const dai = read('frontend', 'js', 'dai-transcribe-studio.js');
     assert.match(dai, /\.\.\.\(forSeries \? \{ fitToTime: false \} : \{\}\)/);
-    assert.match(dai, /if \(!item\.reusedSaved && item\.filePath && !incomplete\) \{/);
+    assert.match(dai, /if \(!item\.reusedSaved && item\.filePath && !incomplete && !early\) \{/); // early: the server saves it (series-early-transcribe.test.js)
     assert.match(geminiSrc, /if \(!result\.success\) return lowAnswer \? \{ \.\.\.lowAnswer, truncated: true \} : \{ ok: false, result \};/);
 });
 

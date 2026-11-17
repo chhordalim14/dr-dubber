@@ -377,6 +377,16 @@ let geminiDailyStrikes = (typeof keyRest !== 'undefined' && keyRest ? keyRest : 
 // "Not checked today" instead of "Ready".
 let geminiKeyAnswered = (typeof keyRest !== 'undefined' && keyRest ? keyRest : getDefaultKeyRest()).answered;
 const noteKeyAnswered = (key) => { if (key) geminiKeyAnswered.set(key, Date.now()); };
+// Gemini Web Router page: while the Router is on, who answered (a Gmail or an API key) and why a
+// Gmail was passed over (lib/gemini-web-router.js noteUsage). Guarded: tests run parts of this
+// file without the Router.
+function noteRouterUsage(key, result) {
+    try {
+        if (isCodeCraftKey(key)) return;
+        const gw = geminiWeb();
+        if (gw.settings().useForDubbing) gw.noteUsage(isGeminiWebKey(key) ? 'gmail' : 'api', result);
+    } catch (e) { }
+}
 
 function dailyCooldownUntil(strikeKey, now = Date.now()) {
     const prev = geminiDailyStrikes.get(strikeKey);
@@ -420,6 +430,7 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { 
         const ctx = keyAttemptContext && keyAttemptContext.getStore();
         const r = await geminiWeb().generate(apiKey, payload, signal, { timeoutMs: Math.max(timeoutMs || 0, 10 * 60 * 1000), noWait: !!(ctx && ctx.apiBackup) });
         if (r && (r.success || r.status < 500)) noteKeyAnswered(apiKey);
+        if (typeof noteRouterUsage === 'function') noteRouterUsage(apiKey, r);
         return r;
     }
     if (onlyModel) stayOnModel = false; // the fallbacks that stayOnModel adds would ask other models
@@ -557,9 +568,11 @@ async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { 
                     const clean = JSON.stringify(value);
                     if (cand && cand.content) cand.content.parts = [{ text: clean }];
                     markGeminiModelAnswering(m);
+                    if (!onlyModel && typeof noteRouterUsage === 'function') noteRouterUsage(apiKey, { success: true });
                     return { success: true, json, text: clean, finishReason: cand?.finishReason, modelUsed: m, fellBack: m !== firstChoice };
                 }
                 markGeminiModelAnswering(m);
+                if (!onlyModel && typeof noteRouterUsage === 'function') noteRouterUsage(apiKey, { success: true });
                 return { success: true, json, text, finishReason: cand?.finishReason, modelUsed: m, fellBack: m !== firstChoice };
             }
 
@@ -791,12 +804,16 @@ async function generateText(key, model, payload, signal, opts = {}) {
     return r;
 }
 
-// For routes that were given a single Gemini key: with CodeCraft or pool/Gmail keys active,
-// try the full pool with that Gemini key as backup; otherwise the direct single-key call.
-async function generateTextForKey(apiKey, model, payload, signal, opts = {}) {
-    const keys = textKeys([apiKey]);
-    if (!codecraftActive() && keys.length <= 1 && keys[0] === String(apiKey || '').trim()) {
-        return executeGeminiGenerate(apiKey, model, payload, signal, opts);
+// A text request over the key pool: CodeCraft and Gmail keys as textKeys orders them, then the
+// Gemini keys given (one key, or the window's whole list). With a single key and nothing else in
+// the pool it is the direct single-key call. AI Refactor and Rewrite used to pass only the first
+// Gemini key here, so a rate-limited first key failed the job while the other keys sat unused.
+async function generateTextForKey(apiKeyOrKeys, model, payload, signal, opts = {}) {
+    const given = (Array.isArray(apiKeyOrKeys) ? apiKeyOrKeys : [apiKeyOrKeys])
+        .map(k => String(k || '').trim()).filter(Boolean);
+    const keys = textKeys(given);
+    if (!codecraftActive() && keys.length <= 1 && given.length === 1 && keys[0] === given[0]) {
+        return executeGeminiGenerate(given[0], model, payload, signal, opts);
     }
     const out = await tryKeysOnce(keys, async (key) => {
         const r = await generateText(key, model, payload, signal, opts);
@@ -941,6 +958,47 @@ async function detectSilences(file, signal) {
 
 // Cut near every TARGET seconds, snapped to the middle of the closest pause so we
 // never slice through a word.
+// Dub Whole Series lends a tab spare keys ("spread"): the tab is cut into one piece per key, so
+// they are all asked at once and the tab takes as long as one ~2-minute piece. Pieces stay at
+// least SPREAD_MIN_CHUNK_SEC (shorter ones lose the conversation around them) and at most the
+// usual chunk length; the last piece may run a third longer instead of leaving a tiny one.
+const SPREAD_MIN_CHUNK_SEC = 120;
+function spreadChunkPlan(totalSec, lanes) {
+    const target = Math.max(SPREAD_MIN_CHUNK_SEC, Math.min(TRANSCRIBE_CHUNK_TARGET_SEC, totalSec / Math.max(1, lanes)));
+    return { target, singleMax: Math.round(target * 4 / 3) };
+}
+
+// ── Pieces kept across tries ──
+// A tab whose piece 3 of 4 failed (Google busy, rate limits) used to be sent again whole: on
+// 2026-11-17 one tab's 3 finished pieces were thrown away twice. The pieces that came back are
+// kept per video file (path + size + modified time), model, register, glossary and video on/off,
+// and the next try of that tab reuses them with the same cut - only the missing pieces are asked.
+// The memory is cleared when the tab finishes, so pressing Transcribe again gives a new transcript.
+const PIECE_MEMORY_TTL_MS = 3 * 60 * 60 * 1000;
+const pieceMemory = new Map(); // key -> { at, totalSec, chunks, outs: [] }
+function pieceMemoryKey(sourceFile, parts) {
+    if (!sourceFile) return null;
+    let st;
+    try { st = fs.statSync(sourceFile); } catch (e) { return null; }
+    if (!st.isFile()) return null;
+    return crypto.createHash('sha1').update(`${path.resolve(sourceFile)}|${st.size}|${Math.round(st.mtimeMs)}|${JSON.stringify(parts)}`).digest('hex');
+}
+// The kept pieces for this tab when they still fit its length; otherwise a fresh entry.
+function pieceMemoryFor(key, totalSec, chunks) {
+    if (!key) return null;
+    const now = Date.now();
+    for (const [k, e] of pieceMemory) if (now - e.at > PIECE_MEMORY_TTL_MS) pieceMemory.delete(k);
+    const kept = pieceMemory.get(key);
+    if (kept && Math.abs(kept.totalSec - totalSec) < 0.5 && kept.outs.some(Boolean)) {
+        kept.at = now;
+        return kept;
+    }
+    if (pieceMemory.size >= 200) pieceMemory.delete(pieceMemory.keys().next().value);
+    const fresh = { at: now, totalSec, chunks, outs: [] };
+    pieceMemory.set(key, fresh);
+    return fresh;
+}
+
 function planTranscribeChunks(totalSec, silences, { singleMax = TRANSCRIBE_SINGLE_MAX_SEC, target: targetSec = TRANSCRIBE_CHUNK_TARGET_SEC } = {}) {
     const chunks = [];
     let cursor = 0;
@@ -1142,7 +1200,7 @@ async function transcribeClipWithGeminiWeb({ apiKey, payload, audioBase64, mimeT
     const ctx = keyAttemptContext && keyAttemptContext.getStore();
     if (ctx && (ctx.apiBackup || ctx.hasAlternativeKey)) {
         const busy = geminiWeb().busyResult(apiKey);
-        if (busy) return { ok: false, result: busy };
+        if (busy) { noteRouterUsage(apiKey, busy); return { ok: false, result: busy }; }
     }
     let timelineP = null;
     if (timing.available()) {
@@ -1187,7 +1245,7 @@ async function transcribeClipWithGeminiWeb({ apiKey, payload, audioBase64, mimeT
             coverage = retimed.coverage;
             const byPc = retimed.filter(l => l.timedBy === 'pc').length;
             items = retimed.map(({ gStart, gEnd, timedBy, ...l }) => l);
-            console.log(`[Transcribe] Gemini Web (${result.gweb && result.gweb.email}): ${items.length} line(s) in ${((result.gweb && result.gweb.ms) || 0) / 1000}s, covering ${Math.round(coverage * 100)}% of the speech; times from the PC for ${byPc}`);
+            console.log(`[Transcribe] Gemini Web (${result.gweb && result.gweb.email}): ${items.length} line(s) in ${((result.gweb && result.gweb.ms) || 0) / 1000}s, ${coverage != null ? `covering ${Math.round(coverage * 100)}% of the speech` : 'no Chinese to match (judged by line count)'}; times from the PC for ${byPc}`);
         }
         const answer = { ok: true, items, raw, modelUsed: result.modelUsed || 'gemini-web', fellBack: false, truncated: false, coverage };
         if (!best || (coverage != null && coverage > (best.coverage || 0)) || (coverage == null && items.length > best.items.length)) best = answer;
@@ -1197,6 +1255,15 @@ async function transcribeClipWithGeminiWeb({ apiKey, payload, audioBase64, mimeT
     }
     if (best) { delete best.coverage; return best; }
     return lastFailure;
+}
+
+// How long one audio request may go unanswered. Gemini writes a piece in about half its length
+// (2-minute pieces: 55-70 s on 2026-11-17), but a whole tab (6-7 min) needs up to 4 minutes, so
+// the limit grows with the piece: 1 min + 0.75 s per second of audio, 2 to 4 minutes. A 2-minute
+// piece that hangs is asked again after 2.5 minutes, not 4 (one hung twice for 240 s that day).
+function audioAttemptTimeoutMs(clipSec) {
+    if (!(clipSec > 0)) return GEMINI_ATTEMPT_TIMEOUT_MS;
+    return Math.min(GEMINI_ATTEMPT_TIMEOUT_MS, Math.max(120000, Math.round(60000 + clipSec * 750)));
 }
 
 function looksIncomplete(items, clipSec, truncated) {
@@ -1395,6 +1462,7 @@ function keysCoolingResult(keys) {
 }
 
 function geminiRetryWaitMs(result, retry) {
+    if (result && result.poolPaused && result.retryAfterMs != null) return Math.min(60 * 1000, result.retryAfterMs + 500);
     if (result && result.error === 'RATE_LIMIT_EXCEEDED' && result.retryAfterMs != null) {
         return Math.min(90 * 1000, Math.max(2000, result.retryAfterMs + 500));
     }
@@ -1427,6 +1495,59 @@ function geminiKeyStatus(key) {
 
 const geminiKeyInFlight = new Map();
 
+// ── Pool pause ──
+// When Google turns free-tier requests away it answers "per-minute limit" on every key at once
+// (2026-11-17: 466 such answers in 4 minutes, every key x every model, while one tab waited).
+// Walking through all the keys again only keeps the limits tripped. When most of the keys asked
+// in the last POOL_PAUSE_WINDOW_MS got a per-minute limit (at least POOL_PAUSE_MIN_KEYS of them),
+// no Google key is asked for POOL_PAUSE_MS; the jobs wait it out like a "busy" answer.
+// (CodeCraft keys and Gemini Web Router Gmails are not Google API keys: never paused.)
+const POOL_PAUSE_WINDOW_MS = 20 * 1000;
+const POOL_PAUSE_MIN_KEYS = 6;
+const POOL_PAUSE_SHARE = 0.6;
+const POOL_PAUSE_MS = 45 * 1000;
+const POOL_STRAIN_MEMORY_MS = 10 * 60 * 1000; // see spreadLanes in /transcribe
+const poolAsked = [];   // { key, at }: a Google key asked
+const poolLimited = []; // { key, at }: a per-minute limit answer
+let poolPausedUntil = 0;
+let poolPausedAt = 0;
+function isPausableKey(key) {
+    return !isCodeCraftKey(key) && !(typeof isGeminiWebKey === 'function' && isGeminiWebKey(key));
+}
+function trimPoolWindow(list, now) {
+    while (list.length && now - list[0].at > POOL_PAUSE_WINDOW_MS) list.shift();
+}
+function notePoolAsked(key) {
+    const now = Date.now();
+    poolAsked.push({ key, at: now });
+    trimPoolWindow(poolAsked, now);
+}
+function notePoolMinuteLimit(key) {
+    const now = Date.now();
+    poolLimited.push({ key, at: now });
+    trimPoolWindow(poolLimited, now);
+    trimPoolWindow(poolAsked, now);
+    if (poolPausedUntil > now) return;
+    const limited = new Set(poolLimited.map(e => e.key));
+    const asked = new Set(poolAsked.map(e => e.key));
+    if (limited.size >= POOL_PAUSE_MIN_KEYS && limited.size >= POOL_PAUSE_SHARE * asked.size) {
+        poolPausedUntil = now + POOL_PAUSE_MS;
+        poolPausedAt = now;
+        poolLimited.length = 0;
+        poolAsked.length = 0;
+        console.warn(`[Gemini] ${limited.size} of ${asked.size} keys got a per-minute limit within ${POOL_PAUSE_WINDOW_MS / 1000}s - Google is turning requests away; no key is asked for ${POOL_PAUSE_MS / 1000}s`);
+    }
+}
+function poolPauseLeftMs() {
+    return Math.max(0, poolPausedUntil - Date.now());
+}
+function poolStrainedRecently(ms) {
+    return poolPausedAt > 0 && Date.now() - poolPausedAt < ms;
+}
+function poolPausedResult(left) {
+    return { ok: false, result: { success: false, status: 503, code: 'OVERLOADED', poolPaused: true, retryAfterMs: left, error: 'Google is turning requests away', message: `Google is turning requests away on every key - asking again in ${formatWait(left)}.` } };
+}
+
 function pickNextGeminiKey(keys, tried) {
     const usable = usableGeminiKeys(keys).filter(k => !tried.has(k));
     if (!usable.length) return null;
@@ -1444,8 +1565,16 @@ async function tryKeysOnce(keys, call) {
     let transientOut = null, lastOut = null;
     if (!usableGeminiKeys(keys).length) return keysCoolingResult(keys);
     const tried = new Set();
+    let skippedForPause = false;
     for (let key = pickNextGeminiKey(keys, tried); key; key = pickNextGeminiKey(keys, tried)) {
         tried.add(key);
+        if (isPausableKey(key)) {
+            if (poolPauseLeftMs() > 0) {
+                skippedForPause = true;
+                continue;
+            }
+            notePoolAsked(key);
+        }
         geminiKeyInFlight.set(key, (geminiKeyInFlight.get(key) || 0) + 1);
         let out;
         try {
@@ -1482,6 +1611,7 @@ async function tryKeysOnce(keys, call) {
         if (isTransientGeminiFailure(out.result)) {
             if (out.result.error === 'RATE_LIMIT_EXCEEDED') {
                 const daily = !!out.result.isDailyQuota;
+                if (!daily && isPausableKey(key)) notePoolMinuteLimit(key);
                 const waitMs = out.result.retryAfterMs != null ? out.result.retryAfterMs : RATE_LIMIT_COOLDOWN_MS;
                 if (typeof notifyDRRouterRateLimited === 'function') notifyDRRouterRateLimited(key, waitMs);
                 rateLimitedGeminiKeys.set(key, { until: Date.now() + waitMs, daily });
@@ -1494,6 +1624,10 @@ async function tryKeysOnce(keys, call) {
     }
     if (transientOut && transientOut.result.error === 'RATE_LIMIT_EXCEEDED' && !usableGeminiKeys(keys).length) {
         return keysCoolingResult(keys);
+    }
+    // Every key left was skipped for the pool pause: wait it out like "busy".
+    if (skippedForPause && poolPauseLeftMs() > 0 && (!transientOut || transientOut.result.error === 'RATE_LIMIT_EXCEEDED') && !lastOut?.ok) {
+        return poolPausedResult(poolPauseLeftMs());
     }
     return transientOut || lastOut;
 }
@@ -1643,6 +1777,9 @@ async function repairTranscript({ cues, sourceFile, totalSec, keys, model, promp
 }
 
 const CHARACTER_SHEETS_DIR = path.join(STORAGE_BASE, 'character_sheets');
+// Finished transcripts per video file (lib/batch-results.js; also read and written by server.js).
+const { saveBatchResult } = require('../lib/batch-results');
+const BATCH_RESULTS_DIR = path.join(STORAGE_BASE, 'batch_results');
 const CHARACTER_SHEET_MIN_LINES = 20;
 
 async function prepareCharacterSheet({ lines, sourceFilePath, glossary, glossaryHint = '', keys, model, signal, usage }) {
@@ -2131,7 +2268,9 @@ function createGeminiRouter(options = {}) {
             fitToTime = true,
             review = true,
             sendVideo = true,
-            maxLanes = TRANSCRIBE_MAX_LANES
+            maxLanes = TRANSCRIBE_MAX_LANES,
+            spread = false,
+            saveResult = false
         } = req.body;
         const laneCap = Math.max(1, Math.min(TRANSCRIBE_MAX_LANES, parseInt(maxLanes, 10) || TRANSCRIBE_MAX_LANES));
 
@@ -2197,10 +2336,22 @@ function createGeminiRouter(options = {}) {
             // Gemini Web Router has its own credits and shorter output window on gemini.google.com,
             // so 3-minute chunks avoid truncated web replies and run faster through PC timing.
             const saverOn = apiSaver && !fastMode && !webLanes;
-            const chunkPlan = saverOn ? { singleMax: SAVER_SINGLE_MAX_SEC, target: SAVER_CHUNK_TARGET_SEC } : {};
+            // Spread (Dub Whole Series, spare keys lent to this tab): one piece per key, all at
+            // once. API Saver still skips the gap re-check below (saverOn stays as it was).
+            // Not while Google is turning free-tier requests away (the key pool was paused in the
+            // last 10 minutes): then one tab is fewer requests, not one per key.
+            const strained = poolStrainedRecently(POOL_STRAIN_MEMORY_MS);
+            const spreadLanes = spread === true && !webLanes && !strained ? Math.min(laneCap, keyPool.length) : 0;
+            if (spread === true && strained) console.log('[Transcribe] Google turned requests away in the last minutes - this tab goes as one request per lane, without spare keys');
+            const chunkPlan = spreadLanes > 1 ? spreadChunkPlan(totalSec, spreadLanes)
+                : saverOn ? { singleMax: SAVER_SINGLE_MAX_SEC, target: SAVER_CHUNK_TARGET_SEC } : {};
             const silences = totalSec > (chunkPlan.singleMax || TRANSCRIBE_SINGLE_MAX_SEC) ? await detectSilences(inputFile, abortCtrl.signal) : [];
-            const chunks = totalSec > 0 ? planTranscribeChunks(totalSec, silences, chunkPlan) : [{ start: 0, end: 0 }];
-            console.log(`[Transcribe] ${totalSec.toFixed(1)}s audio -> ${chunks.length} chunk(s)`);
+            let chunks = totalSec > 0 ? planTranscribeChunks(totalSec, silences, chunkPlan) : [{ start: 0, end: 0 }];
+            // The pieces an earlier try of this tab got back: same cut, only the rest is asked.
+            const pieces = totalSec > 0 ? pieceMemoryFor(pieceMemoryKey(resolveLocalFilePath(sourceFilePath), [resolveGeminiModel(model), genreRegister, userGlossaryHint, sendVideo !== false]), totalSec, chunks) : null;
+            if (pieces) chunks = pieces.chunks;
+            const keptPieces = pieces ? pieces.outs.filter(Boolean).length : 0;
+            console.log(`[Transcribe] ${totalSec.toFixed(1)}s audio -> ${chunks.length} chunk(s)${keptPieces ? ` (${keptPieces} kept from the last try)` : ''}`);
 
             let videoSource = null;
             if (sendVideo !== false && totalSec > 0) {
@@ -2216,7 +2367,7 @@ function createGeminiRouter(options = {}) {
             // Normally a lane does two chunks in a row (the second sees the first one's last lines);
             // Fast mode gives every chunk its own key so the whole film is asked at once.
             // Router first: one lane per Gmail; the API keys stay behind them as backups.
-            const laneCount = Math.max(1, Math.min(webLanes || keyPool.length, laneCap, fastMode ? chunks.length : Math.ceil(chunks.length / 2)));
+            const laneCount = Math.max(1, Math.min(webLanes || keyPool.length, laneCap, (fastMode || spreadLanes > 1) ? chunks.length : Math.ceil(chunks.length / 2)));
             const chunkCues = new Array(chunks.length);
             const rawParts = new Array(chunks.length);
             // phase: 'translate' while the chunks are with Gemini, 'polish' for the checks after.
@@ -2227,7 +2378,7 @@ function createGeminiRouter(options = {}) {
             let anyTruncated = false;
             const modelsUsed = new Set();
             const fellBackModels = new Set();
-            console.log(`[Transcribe] ${chunks.length} chunk(s) across ${laneCount} API key lane(s)${saverOn ? ' [API saver]' : ''}${fastMode ? ' [Fast mode]' : ''}`);
+            console.log(`[Transcribe] ${chunks.length} chunk(s) across ${laneCount} API key lane(s)${spreadLanes > 1 ? ' [spare keys, all at once]' : saverOn ? ' [API saver]' : ''}${fastMode ? ' [Fast mode]' : ''}`);
 
             const cutClip = async (i) => {
                 const chunk = chunks[i];
@@ -2258,18 +2409,28 @@ function createGeminiRouter(options = {}) {
                 const to = Math.floor((lane + 1) * chunks.length / laneCount);
                 const keys = [...keyPool.slice(lane), ...keyPool.slice(0, lane)];
                 let laneCues = [];
-                let nextClipP = from < to ? cutClip(from) : null;
-                if (nextClipP) nextClipP.catch(() => {});
+                const keptOut = (j) => (pieces && pieces.outs[j]) || null;
+                const clipFor = (j) => {
+                    if (j >= to || keptOut(j)) return null;
+                    const p = cutClip(j);
+                    p.catch(() => {});
+                    return p;
+                };
+                let nextClipP = clipFor(from);
                 for (let i = from; i < to; i++) {
                     if (failure || abortCtrl.signal.aborted) return;
                     const chunk = chunks[i];
                     const clipSec = chunk.end - chunk.start;
+                    let out = keptOut(i);
+                    if (out) {
+                        console.log(`[Transcribe] Chunk ${i + 1}/${chunks.length} kept from the last try`);
+                        nextClipP = clipFor(i + 1);
+                    } else {
                     const curClipP = nextClipP || cutClip(i);
-                    nextClipP = (i + 1 < to) ? cutClip(i + 1) : null;
-                    if (nextClipP) nextClipP.catch(() => {});
+                    nextClipP = clipFor(i + 1);
                     const { clipBase64, clipMime } = await curClipP;
                     const cacheKey = transcribeCacheKey(clipBase64, [promptOpts.genreGuidance, promptOpts.glossaryHint, laneCues.slice(-2)]);
-                    let out = transcribeCacheGet(cacheKey);
+                    out = transcribeCacheGet(cacheKey);
                     if (out) console.log(`[Transcribe] Chunk ${i + 1}/${chunks.length} reused from cache`);
                     if (!out) {
                         out = await geminiWithKeys(keys, (key) => {
@@ -2281,15 +2442,20 @@ function createGeminiRouter(options = {}) {
                                 audioBase64: clipBase64,
                                 mimeType: clipMime,
                                 clipSec,
-                                promptOpts: { ...promptOpts, previousLines: laneCues.slice(-4), video: clipMime === 'video/mp4', castParts: clipMime === 'video/mp4' ? castParts : null },
+                                // Spread: the cast pictures go with the tab's first piece only (they
+                                // were ~30k input tokens on every piece); the names stay in the text.
+                                promptOpts: { ...promptOpts, previousLines: laneCues.slice(-4), video: clipMime === 'video/mp4', castParts: clipMime === 'video/mp4' && (spreadLanes <= 1 || i === 0) ? castParts : null },
                                 signal: abortCtrl.signal,
-                                stayOnModel: holdModel
+                                stayOnModel: holdModel,
+                                timeoutMs: webLanes ? GEMINI_ATTEMPT_TIMEOUT_MS : audioAttemptTimeoutMs(clipSec)
                             });
                         }, abortCtrl.signal, {
                             busyBudgetMs: GEMINI_BUSY_RETRY_BUDGET_MS
                         });
                     }
                     if (out.ok && !out.truncated && out.items.length) transcribeCacheSet(cacheKey, out);
+                    if (pieces && out.ok && out.items.length) pieces.outs[i] = out;
+                    }
                     if (!out.ok) {
                         console.warn(`[Transcribe] Chunk ${i + 1}/${chunks.length} failed:`, out.result.error);
                         failure = failure || out.result;
@@ -2379,9 +2545,24 @@ function createGeminiRouter(options = {}) {
                 }).catch(e => console.warn('[Sheet] Series sheet update failed:', e.message));
             }
 
+            const data = finalizeCues(allCues);
+            if (pieces) pieceMemory.forEach((e, k) => { if (e === pieces) pieceMemory.delete(k); }); // done: a new Transcribe starts fresh
+            // Dub Whole Series' early transcribe of the next part: the server keeps the result
+            // itself (batch-result, as Batch Transcribe saves it), so it is there for that part's
+            // Transcribe step even when the app misses this answer (2026-11-17: polls timed out
+            // behind Generate voices and 4 finished tabs were lost). Kept with its repair report
+            // and fallback models, so that step still runs Fix Missing / notes the fallback.
+            if (saveResult === true && sourceFilePath) {
+                try {
+                    saveBatchResult(BATCH_RESULTS_DIR, sourceFilePath, { data, repair: repair || {}, fallbackModels, early: true });
+                } catch (e) {
+                    console.warn('[Transcribe] Could not keep the early result:', e.message);
+                }
+            }
+
             res.json({
                 success: true,
-                data: finalizeCues(allCues),
+                data,
                 reviewed,
                 fitted,
                 usage: promptOpts.usage,
@@ -2792,7 +2973,7 @@ Respond ONLY with a JSON object: { "rewrittenText": "..." }`;
         if (requestId) activeTranscribeRequests.set(requestId, abortCtrl);
 
         try {
-            const geminiResult = await generateTextForKey(apiKey, model, payload, abortCtrl.signal);
+            const geminiResult = await generateTextForKey([apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])], model, payload, abortCtrl.signal);
             if (!geminiResult.success) {
                 return res.status(geminiResult.status || 500).json({
                     success: false,
@@ -2932,7 +3113,7 @@ ${JSON.stringify(chunk)}`;
                     }
                 };
 
-                const geminiResult = await generateTextForKey(apiKey, model, payload, abortCtrl.signal);
+                const geminiResult = await generateTextForKey([apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])], model, payload, abortCtrl.signal);
                 if (!geminiResult.success) {
                     return res.status(geminiResult.status || 500).json({
                         success: false,
@@ -3260,7 +3441,10 @@ ${JSON.stringify(chunk)}`;
     // ── Gemini keys added ──
     router.post('/gemini-keys-added', (req, res) => {
         const keys = (Array.isArray(req.body?.keys) ? req.body.keys : []).map(k => String(k || '').trim()).filter(Boolean);
-        keys.forEach(k => invalidGeminiKeys.delete(k));
+        keys.forEach(k => {
+            invalidGeminiKeys.delete(k);
+            if (typeof rateLimitedGeminiKeys !== 'undefined' && rateLimitedGeminiKeys) rateLimitedGeminiKeys.delete(k);
+        });
         res.json({ success: true });
     });
 

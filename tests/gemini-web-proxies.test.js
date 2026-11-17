@@ -139,7 +139,8 @@ describe('Gemini Web Router: one address per Gmail', () => {
         const r = await gw.autoAssignAllProxies();
         assert.ok(!gw.accounts().some((a) => a.proxy === 'http://free1:1'));
         assert.equal(r.failed.length, 1);
-        assert.match(r.failed[0].error, /Add proxies in DR Router PRO/);
+        assert.match(r.failed[0].error, /No working proxy with a new address is free right now/);
+        assert.doesNotMatch(r.failed[0].error, /DR Router/); // removed: the message must not send users there
         assert.equal(gw.proxySummary().needMore, 1);
     });
 

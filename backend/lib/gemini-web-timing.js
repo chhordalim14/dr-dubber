@@ -175,7 +175,12 @@ function retimeLines(lines, timeline) {
     const out = lines.map(l => ({ ...l, gStart: sec(l.start), gEnd: sec(l.end) }));
     if (!n || !m) {
         const plain = out.map(o => ({ ...o, start: o.gStart, end: o.gEnd, timedBy: 'shifted' }));
-        plain.coverage = m ? 0 : 1;
+        // Coverage: 1 when the PC heard nothing; 0 when Gemini wrote no lines at all; null (can't
+        // tell) when Gemini's lines have no Chinese - a Korean, Thai or English video. That used to
+        // count as 0, so every clip of a non-Chinese video was asked twice on the Gmails (double
+        // the credits) for "covering under 75% of the speech"; the caller now judges such an
+        // answer by its line count, as for API keys.
+        plain.coverage = !m ? 1 : (lines.length ? null : 0);
         return plain;
     }
     // LCS table, rows from the end (Int32: clips are a few thousand characters at most).

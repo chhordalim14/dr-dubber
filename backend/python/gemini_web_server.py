@@ -13,7 +13,8 @@ then: the fresh ones are written back so the next start still works.
 HTTP (127.0.0.1 only):
   GET  /status                 accounts with state, served count, credits
   POST /reload                 re-read accounts.json (after an account is added/removed)
-  POST /generate               {prompt, files?: [paths], account?: id, timeoutSec?}
+  POST /generate               {prompt, files?: [paths], account?: id, timeoutSec?, requestId?}
+  POST /cancel                 {requestId} stop that /generate (DR Dubber's job was stopped)
   POST /quota                  {account?: id} refresh the credits shown
 """
 import argparse
@@ -51,6 +52,12 @@ loop = asyncio.new_event_loop()
 accounts = {}  # id -> Account
 order = []  # ids in round-robin order
 rr = {"next": 0}
+running = {}  # requestId -> the task answering that /generate
+early_cancels = {}  # requestId -> when /cancel came in before its /generate started
+
+QUOTA_WAIT_DEFAULT = 30 * 60  # out of credits and Google gave no reset time
+QUOTA_WAIT_MIN = 60
+QUOTA_WAIT_MAX = 24 * 3600  # a wrong reset time never parks a Gmail for days
 
 
 def log(msg):
@@ -175,6 +182,55 @@ async def test_proxies(body):
                 break
 
     return {"ok": True, "proxies": working, "directIp": direct_ip}
+
+
+def quota_reset_at(client, now=None):
+    """When this Gmail's credits come back (unix seconds), from what Google last told the client;
+    None when unknown. An empty bucket's reset counts first: a fuller bucket that resets sooner
+    does not bring the Gmail back."""
+    now = time.time() if now is None else now
+    quotas = getattr(client, "_quotas", None) or {}
+    empty, other = [], []
+
+    def future(ts):
+        return isinstance(ts, (int, float)) and not isinstance(ts, bool) and ts > now
+
+    for key, q in quotas.items():
+        if key in ("extra", "usage_info") or not isinstance(q, dict):
+            continue
+        ts = q.get("reset_time")
+        if not future(ts):
+            continue
+        if q.get("total") and (q.get("remaining") or 0) <= 0:
+            empty.append(ts)
+        else:
+            other.append(ts)
+    extra = (quotas.get("extra") or {}).get("default") or {}
+    if extra.get("is_blocked") and future(extra.get("reset_time")):
+        empty.append(extra["reset_time"])
+    usage = getattr(client, "_usage_info", None) or {}
+    for window in ("current_5h", "weekly"):
+        metric = usage.get(window)
+        if isinstance(metric, dict) and metric.get("reset_at"):
+            try:
+                from datetime import datetime
+                ts = datetime.fromisoformat(metric["reset_at"]).timestamp()
+                if future(ts):
+                    other.append(ts)
+            except (ValueError, TypeError):
+                pass
+    if empty:
+        return min(empty)
+    return min(other) if other else None
+
+
+def quota_wait(client, now=None):
+    """Seconds to leave an out-of-credits Gmail alone."""
+    now = time.time() if now is None else now
+    reset = quota_reset_at(client, now)
+    if reset is None:
+        return QUOTA_WAIT_DEFAULT
+    return int(min(QUOTA_WAIT_MAX, max(QUOTA_WAIT_MIN, reset - now + 30)))
 
 
 class Account:
@@ -385,6 +441,36 @@ def pick_account(wanted):
 
 
 async def generate(body):
+    """One /generate. A /cancel for its requestId stops it: the Gmail's lock is let go at once
+    instead of being held until Google answers or the request times out (up to 10 minutes)."""
+    req = body.get("requestId") or None
+    if req and early_cancels.pop(req, None):
+        return {"ok": False, "code": "CANCELLED", "error": "Stopped by DR Dubber before it started"}
+    if req:
+        running[req] = asyncio.current_task()
+    try:
+        return await _generate(body)
+    except asyncio.CancelledError:
+        return {"ok": False, "code": "CANCELLED", "error": "Stopped by DR Dubber"}
+    finally:
+        if req:
+            running.pop(req, None)
+
+
+async def cancel(body):
+    req = body.get("requestId") or None
+    if not req:
+        return {"ok": False, "error": "requestId is missing"}
+    task = running.get(req)
+    if task and not task.done():
+        task.cancel()
+        return {"ok": True, "cancelled": True}
+    # Its /generate has not reached the service yet (or is already done): do not start it.
+    early_cancels[req] = time.time()
+    return {"ok": True, "cancelled": False}
+
+
+async def _generate(body):
     a, code, msg = pick_account(body.get("account"))
     if not a:
         return {"ok": False, "code": code, "error": msg}
@@ -426,10 +512,19 @@ async def generate(body):
                 return {"ok": True, "text": text, "account": a.id, "email": a.email, "ms": a.last_ms, "files": len(files),
                         "model": used + (" (extended thinking)" if extended else "")}
             except gx.UsageLimitExceededError as e:
-                a.limited_until = time.time() + 30 * 60
+                # Back when Google says the credits return, not a fixed 30 minutes: a Gmail
+                # sat idle long after its credits came back, or was tried again too early.
+                try:
+                    await asyncio.wait_for(a.client._fetch_quota(), 15)
+                    a.read_quota()
+                except Exception:
+                    pass  # the reset times cached from before still count
+                wait = quota_wait(a.client)
+                a.limited_until = time.time() + wait
                 a.state, a.error = "limited", f"Out of credits: {e}"
                 a.failed += 1
-                return {"ok": False, "code": "QUOTA", "error": a.error, "account": a.id, "email": a.email}
+                return {"ok": False, "code": "QUOTA", "error": a.error, "account": a.id, "email": a.email,
+                        "retryAfterSec": wait}
             except gx.AuthError as e:
                 a.state, a.error = "signed_out", f"Signed out: {e}"
                 a.failed += 1
@@ -477,6 +572,9 @@ async def housekeeping():
     while True:
         await asyncio.sleep(60)
         now = time.time()
+        for req, at in list(early_cancels.items()):
+            if now - at > 15 * 60:
+                early_cancels.pop(req, None)
         for a in list(accounts.values()):
             if a.state == "limited" and a.limited_until and a.limited_until < now:
                 a.state, a.error, a.limited_until = "ready", None, 0
@@ -515,6 +613,8 @@ class Handler(BaseHTTPRequestHandler):
             b = self.body()
             if self.path == "/generate":
                 return self.reply(200, run_coro(generate(b)))
+            if self.path == "/cancel":
+                return self.reply(200, run_coro(cancel(b), 10))
             if self.path == "/reload":
                 run_coro(reload_accounts())
                 return self.reply(200, {"ok": True, "accounts": [accounts[i].info() for i in order if i in accounts]})

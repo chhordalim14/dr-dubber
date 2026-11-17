@@ -461,8 +461,12 @@ handle('app:autoSaveSrt', async (event, { content, fileName, mode, sourceFilePat
         // app.getPath('desktop') is the Desktop the user actually sees, including when
         // OneDrive has redirected it; guessing both Desktop and OneDrive\Desktop used to
         // create a stray OneDrive folder tree on machines without OneDrive.
+        // C:\Export\AIDubber\outputs is a Windows path (lib/paths.js CUSTOM_OUTPUTS_DIR); on macOS
+        // and Linux it is a relative name, which made a folder literally called that in the
+        // app's working folder.
         const desktopOut = path.join(app.getPath('desktop'), 'transcribe output');
-        Promise.all([desktopOut, 'C:\\Export\\AIDubber\\outputs'].map(async (dir) => {
+        const copyDirs = process.platform === 'win32' ? [desktopOut, 'C:\\Export\\AIDubber\\outputs'] : [desktopOut];
+        Promise.all(copyDirs.map(async (dir) => {
             try {
                 if (!fs.existsSync(dir)) await fs.promises.mkdir(dir, { recursive: true });
                 await fs.promises.writeFile(path.join(dir, srtFileName), content, 'utf8');

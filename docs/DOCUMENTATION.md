@@ -1,16 +1,16 @@
 # DR Dubber Pro — Documentation
 
-Last updated: 2026-10-14
+Last updated: 2026-11-17
 
 ## Overview
 
-DR Dubber Pro turns a foreign-language video into a finished Khmer-dubbed video on your own computer. It transcribes the speech, translates it into natural Khmer, voices each line with text-to-speech, keeps the original music and effects, and renders the final video. The current release is v1.6.0.
+DR Dubber Pro turns a foreign-language video into a finished Khmer-dubbed video on your own computer. It transcribes the speech, translates it into natural Khmer, voices each line with text-to-speech, keeps the original music and effects, and renders the final video. The current release is v1.17.1.
 
 It is built for editors who dub drama series into Khmer, often a whole season at a time. It is an Electron desktop app with a local Node.js/Express backend; FFmpeg and a few Python tools do the media work. Windows is the main platform; macOS works for development.
 
 | Stage | What it does | Engines |
 | --- | --- | --- |
-| Transcribe | Turns speech into timed subtitles | Gemini direct, or on-device faster-whisper then translation |
+| Transcribe | Turns speech into timed subtitles | Gemini direct (API keys, or Gmail accounts through the Gemini Web Router), or local Whisper then translation |
 | Translate | Drama-aware Khmer translation with genre styles; keeps character names consistent across episodes, shortens lines too long for their slot | Gemini (or a CodeCraft `cc_` key) |
 | Voice | Speaks each line with per-line emotion, speed and pitch; keeps each line's Male/Female voice | Edge TTS `km-KH-PisethNeural`, `km-KH-SreymomNeural`; optional VoxCPM2 cloning |
 | Isolate BGM | Removes the original voices, keeps music and effects | MDX-Net (default), Demucs, Spleeter, FFmpeg |
@@ -26,7 +26,7 @@ Install Node.js 22, FFmpeg and a Gemini key, then `npm install` and `npm start`.
 | Node.js 22 and npm | Running and building the app |
 | FFmpeg / FFprobe | All media work. Put the binaries in `backend/bin/` or on `PATH`; WinGet installs are found automatically. |
 | Python 3.11 | TTS, transcription, BGM separation and text detection. On Windows, `setup_python_env.bat` downloads a portable copy. |
-| Gemini API key (or a CodeCraft `cc_` key) | Transcription and translation. Entered in the app's Settings, never in `.env`. |
+| Gemini API key | Transcription and translation. Entered in the app's Settings, never in `.env`. Alternatives: Gmail accounts through the Gemini Web Router (see Settings), or a CodeCraft `cc_` key for text jobs only. |
 
 ### Install and run
 
@@ -55,14 +55,16 @@ Install Node.js 22, FFmpeg and a Gemini key, then `npm install` and `npm start`.
 | --- | --- |
 | `npm start` | Builds the CSS and launches the Electron app |
 | `npm run server` | Runs only the backend (`backend/server.js`) |
-| `npm test` | Runs the test suite with `node --test` (36 test files in `tests/`) |
+| `npm test` | Runs the test suite with `node --test` (65 test files in `tests/`) |
+| `npm run build:css` | Builds `frontend/css/tailwind-built.css` once (`npm start` does this first) |
 | `npm run watch:css` | Rebuilds `frontend/css/tailwind-built.css` on every change |
+| `npm run pack` | Builds an unpacked app folder for a quick check, no installer |
 | `npm run dist:win` | Builds the Windows installer and portable exe into `release/`; fails unless `setup_python_env.bat` has run |
 | `npm run dist:mac` | Builds the macOS `.dmg` and `.zip` |
 
 ## Using the app
 
-A single video goes Load → Transcribe → Generate Audio → Isolate BGM → Blur Subtitles → Render. A whole season goes through **Dub Whole Series**, which runs the same steps for each part without you.
+A single video goes Load → Transcribe → Generate Audio → Isolate BGM → Blur Subtitles → Render. A whole season goes through **Dub Whole Series**, which runs the same steps for each part without you. While one part is voiced and blurred, the next part is already cut into tabs and transcribed in the background, so its Transcribe step finds the results ready. Spare Gemini keys (more keys than tabs) are lent to the tabs: each tab is cut into ~2-minute pieces asked at the same time.
 
 ### Where things are
 
@@ -96,11 +98,12 @@ Every button in the **All Tabs** menu runs that step on every open tab, so you c
 
 1. Open **Series** and **Choose Folder** with the episodes.
 2. Set **Join: minutes per part** (default 50) and **Split: minutes per tab** (default 7). Episodes are joined into parts, and each part is split into tabs.
-3. If your videos are already one per part, tick **Videos are already merged**. It ticks itself when every video is 20 minutes or longer.
+3. If your videos are already one per part, tick **Videos are already merged**. It ticks itself when every video is 20 minutes or longer. To dub each episode as its own tab with nothing joined or split, tick **Each episode its own tab**.
 4. Pick the steps (Transcribe, Match subtitles, Generate voices, Isolate BGM, Blur subtitles; all on by default) and a Drama Style.
 5. Optional: a **Color filter** applied to every tab, from a Color Studio preset (a Drama LUT or a saved custom one).
-6. Turn on **Hands-free** to export each part and start the next one, and **Join into one video** to join a part's tabs after export.
-7. Press **Start**.
+6. Turn on **Hands-free** to export each part and start the next one. **Join into one video** joins the exports per part or into one video for the whole series. **Delete working files** removes the joined and split files at the end.
+7. Optional: **Episodes at once** (how many tabs are transcribed together, default 8) and **Retry failed** (how often a failed tab is tried again, default 2).
+8. Press **Start**.
 
 Progress is saved after every step. After a Stop, a quota pause or a restart, **Continue** picks up where it left off. In Hands-free mode it also resumes by itself: up to 16 tries over about 14 hours for a used-up daily quota, which resets at midnight Pacific. Problems you must fix in Settings wait for you to press Continue.
 
@@ -116,6 +119,10 @@ The server listens on `127.0.0.1:8808` only: `GET /` answers 503 while the model
 
 **How each line is said.** With **Clone voices from video** on, every speaker found in the video gets a voice cloned from the video itself, and each of their lines takes its delivery from the actor saying that very line: the backend cuts the line from the video (`POST /api/voice-capture/line`) and the server clones the line from it, while the speaker's own clip and anchor keep the voice the same in every feeling. The cut comes from the separated vocals once **Isolate BGM** has run on the video (from a 5.1 track's dialogue channel before that); a stereo track that has not been isolated is not used, as the music under the line would be copied into the dub, so the line falls back to the speaker's clip of its emotion, as do lines under 1.6 s (too little to clone from). Measured on 96 lines of a C-drama spoken with their real Khmer translations, the dub's pitch then follows the actor's from line to line (correlation 0.19, where the speaker's clip with the written emotion gave 0.00), with the same voice and Khmer as clear: a real step, though the dub still follows the actor only in part. Each dub line is also as loud as the actor said it against the film's other dialogue (60% of the difference, −9 to +6 dB), so a whisper stays under and a shout over. A voice picked by hand never takes the original actor's audio. Each line is also told its room on the timeline (`fit_seconds`): of the takes VoxCPM2 draws, one that fits is kept over one that would have to play rushed.
 
+### Gemini Web Router
+
+The Router lets Gmail accounts do transcription and translation instead of API keys. Open it with the **Gemini Web Router** button in **Settings → API Keys**, press **Install** (needs Python 3.10 or newer), add each Gmail and turn on **Use for dubbing**. By default the Gmails are used first and your API keys are the backup. In **Dub Whole Series** each ready Gmail transcribes its own tab, so set **Episodes at once** to about the number of Gmails you have. With ready Gmails, no API key is needed in Settings. Using Gmail accounts this way is against Google's terms and accounts can be banned: use only accounts you can afford to lose. How it works: [ARCHITECTURE.md › Gemini Web Router](ARCHITECTURE.md#10-gemini-web-router).
+
 ### Interface language
 
 Switch between English and Khmer with **EN / ខ្មែរ** in the header or **Settings → General → Interface Language**. The default is English. This changes only the app's own labels; subtitles and dubbing stay Khmer either way. The translator is `frontend/js/i18n.js` and its English → Khmer dictionary is `frontend/js/i18n-km.js`.
@@ -125,12 +132,12 @@ Switch between English and Khmer with **EN / ខ្មែរ** in the header or 
 | Setting | Options | Default |
 | --- | --- | --- |
 | Gemini AI Model | Supported Gemini models; a saved model Google has retired switches to a working one | — |
-| API Saver mode | One request per episode, up to 10 min | Off |
+| API Saver mode | Fewer, longer requests: pieces of about 9 min (up to 10 min in one request), and no extra gap check. Turned off automatically while Gmails from the Gemini Web Router are used | On |
 | Transcription Engine | Direct (Gemini), Whisper + Translate | Direct (Gemini) |
 | Vocal Removal Engine | MDX-Net (Best), Demucs, Spleeter, FFmpeg (Instant) | MDX-Net |
 | Hardware Acceleration (Vocal Removal) | GPU, CPU | GPU on Windows, CPU on macOS |
 | Demucs Segment Size | 1–7 | 7 |
-| Final Video Rendering | CPU (x264), GPU (Auto) | — |
+| Final Video Rendering | GPU (Auto): uses NVIDIA, Intel Quick Sync, AMD or Mac hardware encoding when it works, otherwise the CPU. CPU (x264): always the CPU | GPU (Auto) |
 | Concurrent Audio Generation | 1–10 | 3 |
 | Save Path (For Exported Video) | Any folder | `C:\Export\AIDubber` on Windows |
 | Generated Audio Temp Path | Any folder | `C:\Temp\AIDubber` on Windows |
@@ -140,13 +147,13 @@ Switch between English and Khmer with **EN / ខ្មែរ** in the header or 
 
 ### Environment overrides
 
-Only needed to override a default. Copy `.env.example` to `.env`:
+Only needed to override a default. Nothing reads a `.env` file, although `.env.example` suggests one: set these as real environment variables before starting the app.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `PORT` | `3001` | Port of the local backend |
-| `APP_STORAGE_DIR` | `./storage` in development; the app-data folder when installed | Uploads, separated audio, exports and logs |
 | `PYTHON_PATH` / `PYTHON_BIN` | Auto-detected (bundled `backend/python_env` first) | Python used for the ML tools |
+| `PORT` | `3001` | Backend port, for `npm run server` only. The Electron app always uses 3001, and setting `PORT` there breaks it |
+| `APP_STORAGE_DIR` | `./storage` in development; the app-data folder when installed | Storage folder, for `npm run server` only. The Electron app always sets it itself |
 
 ### Where files are stored
 
@@ -155,6 +162,10 @@ Only needed to override a default. Copy `.env.example` to `.env`:
 | Rendered videos | The Save Path; if none is set, `storage/exports` |
 | Transcription output | The custom folder, else the video's own folder, else `storage/outputs` |
 | Working data | `storage/`: uploads, audio\_cache, separated, preview\_cache, audio\_repair, exports, outputs |
+| Saved results | `storage/`: batch\_results (finished transcripts), character\_sheets (names per series), series\_checkpoints, text\_detect, pronunciation, VoiceCaptures, gemini\_web |
+| API keys and settings | The app window's local storage, not a file you edit |
+| Key rest records | `gemini_key_rest.json` in the Electron userData folder |
+| VoxCPM2 and Gemini Web Router | `~/DR Dubber VoxCPM2`, `~/DR Dubber Gemini Web` |
 | Logs | `storage/logs`: `crash.log`, `server.log`, `voxcpm_debug.log`. **Settings → General → Open Logs** opens the folder. |
 | Presets and device files | The Electron userData folder: `presets.json`, `approved-programs.json`, `device_id.txt` |
 
@@ -162,78 +173,19 @@ Only needed to override a default. Copy `.env.example` to `.env`:
 
 ## How it works
 
-Everything runs on the user's computer except the calls to Gemini or CodeCraft. The Electron main process loads the Express backend in-process; the window talks to it over HTTP on 127.0.0.1:3001, and FFmpeg and Python do the media work as child processes.
+Everything runs on your computer except the AI services: Gemini (by API key, or through the Gemini Web Router's Gmail accounts), CodeCraft for text jobs, and Microsoft's Edge TTS. The Electron app loads a local Express backend, which the window talks to over HTTP on 127.0.0.1:3001. FFmpeg and Python do the media work.
 
-```mermaid
-flowchart TB
-    R["Studio window (renderer)<br/>frontend/index.html and studio-main.js<br/>sandboxed, no Node · Gemini keys in localStorage"]
-    subgraph M["Electron main process"]
-        E["Express backend (backend/server.js)<br/>routes/: render, split, episodes, preview<br/>lib/: prompts, Khmer rules, TTS worker<br/>Gemini and CodeCraft calls, key rotation"]
-        J["main.js<br/>window, origin checks, crash.log<br/>preload.js IPC: files, dialogs, presets<br/>launches local Whisper and VoxCPM2"]
-    end
-    P["Python tools<br/>Edge TTS worker<br/>MDX-Net / Demucs BGM<br/>text_detector (OCR)"]
-    F["FFmpeg / FFprobe<br/>render_service.js<br/>episode_joiner.js<br/>video_splitter.js"]
-    G["Gemini / CodeCraft<br/>transcribe, translate<br/>only cloud service"]
-    L["Local engines (optional)<br/>faster-whisper<br/>VoxCPM2 server :8808"]
-    R -- "HTTP, token cookie" --> E
-    R -- "IPC through preload.js" --> J
-    E -- spawns --> P
-    E -- spawns --> F
-    E -- HTTPS --> G
-    J -- spawns --> L
-```
-
-The window never reaches the internet or the file system directly: it asks the backend over HTTP, or `main.js` over IPC for files and dialogs.
-
-### Security
-
-- The backend listens on 127.0.0.1 only and rejects a foreign `Host` or `Origin` header.
-- Each launch makes a random 32-byte token, sent to the window as the HttpOnly, SameSite=strict cookie `drd_token` (or the `x-drd-token` header). See `backend/lib/security.js`.
-- The window runs with `contextIsolation`, `sandbox` and no Node integration. Every IPC handler checks that the caller is the app's own origin; outside links open in the system browser.
-- Outgoing HTTPS goes through `backend/lib/secure-fetch.js`, which uses Electron's `net.fetch` and the OS certificate store.
-
-### Key modules
-
-| Module | Role |
+| Stage | Where the code is |
 | --- | --- |
-| `backend/server.js` | Express app (about 4,500 lines): transcribe, translate, TTS and BGM endpoints, Gemini key rotation |
-| `backend/routes/` | Render, preview, waveform, episodes, split, text detection, system info |
-| `backend/render_service.js` | FFmpeg render pipeline |
-| `backend/episode_joiner.js` | Joins short episodes into parts of about an hour |
-| `backend/video_splitter.js` | Cuts parts into pieces on keyframes in quiet moments, so no line is split |
-| `backend/lib/tts-worker.js` | Keeps one Edge TTS worker alive; falls back to a process per line if it keeps dying |
-| `backend/lib/khmer-prompts.js` | Khmer dubbing rules and prompts; budget of 4.5 syllables per second |
-| `backend/lib/text-rules.js` | Strips Latin and other scripts that leak into Khmer lines; builds TTS arguments |
-| `backend/lib/character-sheet.js` | Per-series names, genders and forms of address, shared across episodes |
-| `backend/lib/codecraft.js` | CodeCraft gateway client for `cc_` keys; text jobs only, audio always goes to Google |
-| `backend/lib/bgm-cache.js` | Caches separated stems by file, engine and model |
-| `backend/lib/process-tracker.js` | Kills every spawned FFmpeg or Python process on exit |
-| `frontend/js/studio-main.js` | The editor and nearly all UI logic (about 29,000 lines), including the series run |
-| `frontend/js/subtitle-layout.js` | One subtitle layout shared by the preview and the export, so they match |
-| `frontend/js/khmer-speech.js` | Turns numbers and similar text into spoken Khmer before TTS |
-| `frontend/js/i18n.js`, `i18n-km.js` | English / Khmer interface |
+| Editor, tabs, timeline, series run | `frontend/js/studio-main.js` |
+| Transcribe, translate, key rotation | `backend/routes/gemini.js` |
+| Gemini Web Router | `backend/lib/gemini-web-router.js`, `backend/python/gemini_web_server.py` |
+| Voices | `backend/server.js` (Edge TTS), `backend/python/voxcpm2_server.py` (VoxCPM2) |
+| Isolate BGM | `backend/server.js`, `backend/python/vocal_separator.py` |
+| Blur subtitles | `backend/text_detect_service.js`, `backend/python/text_detector.py` |
+| Render | `backend/render_service.js` |
 
-### Gemini calls and key rotation
-
-Only the backend calls Gemini; the window sends the saved keys with each request. For text jobs, CodeCraft keys go first, then Gemini keys. The backend picks the least-busy free key, skips invalid and rate-limited ones, and backs off on a 503 overload instead of burning keys.
-
-### Render pipeline
-
-1. Build the dialogue track: each clip gets its speed and delay, then all clips are mixed in chunks.
-2. Build the audio: BGM with fades, sidechain ducking under the voices, loudness normalisation to −14 LUFS.
-3. Build the video: scale, crop and pad, blur over detected text, free text, and subtitles burned in as ASS through libass with the bundled fonts.
-4. Encode with the best working encoder: NVENC, then Quick Sync, then AMF, then VideoToolbox, then libx264. Each is confirmed with a test encode; if a hardware encode fails, the render retries once with libx264.
-
-On cancel, FFmpeg is killed, the temp folder is removed, and a partial output file is deleted only if this render created it.
-
-### Series run
-
-1. Join episodes into parts (`/api/episodes`).
-2. For each part, split it into pieces (`/api/split`) and open them as tabs.
-3. Across all tabs: transcribe, make names consistent, generate voices, isolate BGM, blur text, fit rushed lines.
-4. Export through the render queue.
-
-The plan and each step's result are kept in `localStorage` under `aiDubberSeriesRun`, which is what lets **Continue** resume.
+The full design — every pipeline as a flowchart, the HTTP and IPC reference, where state is stored, and known issues — is in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Releases and updates
 
@@ -271,12 +223,12 @@ Most failures are a used-up Gemini quota, a missing Python or FFmpeg, or a BGM e
 | --- | --- | --- |
 | "Please add at least one Gemini API Key in Settings." | No key saved | Add a key in **Settings → API Keys** |
 | "Google reports the daily free Gemini quota used up on all N API key(s)…" | Every key hit its daily limit | Wait for the reset at midnight Pacific, pick another Gemini model, or add a key from another Google project |
-| "All N API key(s) are rate-limited by Google - free again in …" | Too many requests per minute | Wait the time shown; lower **Concurrent Audio Generation** or turn on **API Saver mode** |
+| "All N API key(s) are rate-limited by Google - free again in …" | Too many requests per minute | Wait the time shown; lower **Concurrent Audio Generation**, or check **API Saver mode** is still on |
 | "Fix Missing skipped: the daily Gemini quota is used up." | Quota ran out mid-run | After the reset, run **All Tabs › Fix Missing in all tabs** |
 | "No working Python environment found for text-to-speech…" | Python not found | Windows: run `setup_python_env.bat`. Otherwise install Python 3.11 with "Add to PATH" and `pip install edge-tts`, or set `PYTHON_PATH` |
 | Isolate BGM crashes or hangs | GPU driver problem with MDX-Net | Set **Hardware Acceleration (Vocal Removal)** to CPU |
 | "BGM is only FFmpeg phase cancellation - it may have almost no music…" | The FFmpeg fallback engine ran | Switch **Vocal Removal Engine** to MDX-Net |
-| "DR Dubber Pro could not start" | Port 3001 is in use, often by a second copy | Close the other copy, or set `PORT` in `.env` |
+| "DR Dubber Pro could not start" | Port 3001 is in use, often by a second copy | Close the other copy, or whatever else uses port 3001. The port can't be changed for the app |
 | "Unexpected Error" dialog | An uncaught error; the app keeps running | Send `storage/logs/crash.log` with a bug report |
 | Media steps fail with no clear message | FFmpeg / FFprobe not found; the app has no dedicated message for this | Put the binaries in `backend/bin/` or on `PATH` |
 | A render was cancelled or failed | — | Nothing to clean up: temp files and any half-written output are deleted |

@@ -14,6 +14,23 @@ module.exports = function createGeminiWebRoutes() {
 
     router.post('/install', wrap(async () => { gw.installEnv(); return { install: gw.install }; }));
 
+    // The ready Gmails as keys ("gweb:<id>") for the window's batches: with Router first each gets a
+    // tab of its own in Dub Whole Series / DAI batch (frontend/js/dai-transcribe-studio.js).
+    // DR Router's /dubber-keys did this until it was removed (bcb7540); series then ran only as many
+    // tabs as Settings keys, however many Gmails were ready.
+    router.get('/dubber-keys', (req, res) => {
+        try {
+            const s = gw.settings();
+            const on = !!s.useForDubbing;
+            res.json({ success: true, keys: gw.keysForDubber(), routerFirst: on && s.routerFirst !== false, gmailOnly: on && s.gmailOnly === true });
+        } catch (e) {
+            res.json({ success: true, keys: [], routerFirst: false, gmailOnly: false });
+        }
+    });
+
+    // Install the newest gemini_webapi, check it with a test request, put the old one back if it fails.
+    router.post('/lib-update', wrap(async () => ({ update: gw.startLibUpdate() })));
+
     // { useForDubbing?, routerFirst?, gmailOnly?, freeProxies?, model?, thinking? } - only the fields sent change.
     router.post('/settings', wrap(async (req) => ({ settings: gw.setSettings(req.body || {}) })));
 

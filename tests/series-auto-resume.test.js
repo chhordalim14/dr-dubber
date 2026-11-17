@@ -53,7 +53,7 @@ test('each kind of pause keeps its own count, so alternating pauses still reach 
 test('another job running is checked again later (counted), a missing setting is not retried', () => {
     assert.match(source, /if \(auto && otherJobRunning\(\)\) \{/);
     assert.match(source, /scheduleAutoResume\(\{ message: opts\.reason \|\| "Another job was running\." \}, "busy"\)/);
-    assert.match(source, /if \(!preflight\(\)\) return; \/\/ a setting is missing/);
+    assert.match(source, /if \(!\(await preflight\(\)\)\) return; \/\/ a setting is missing/);
 });
 
 test('Reset and Start over hold the countdown while their confirm is open', () => {

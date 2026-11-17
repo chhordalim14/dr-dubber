@@ -13,7 +13,10 @@ const rankStart = src.indexOf('  function keyStatusRank(');
 const rankBlock = src.slice(rankStart).match(/^[\s\S]*?\r?\n  \}\r?\n/)[0];
 const SERIES_MAX_PARALLEL_FILES = Number(src.match(/const SERIES_MAX_PARALLEL_FILES = (\d+)/)[1]);
 const BATCH_MAX_PARALLEL_FILES = Number(src.match(/const BATCH_MAX_PARALLEL_FILES = (\d+)/)[1]);
+const SERIES_MAX_LANES_PER_TAB = Number(src.match(/const SERIES_MAX_LANES_PER_TAB = (\d+)/)[1]);
 const keyStatusRank = eval(`(${rankBlock.trim()})`);
+// The Router's ready Gmails ("gweb:") rank with the ready keys (dai-transcribe-studio.js isRouterKey).
+const isRouterKey = eval(src.match(/const isRouterKey = (\(k\) => [^;]+);/)[1]);
 
 // keyStatus: what the server reports per key ('ok' | 'daily' | 'invalid'); addLater: keys the
 // user adds in Settings while the batch runs ({ key, afterMs }).
@@ -45,6 +48,7 @@ async function runBatch({ keys, tabs, deadKeys = [], keyStatus = {}, addLater = 
     const getActiveApiKeys = () => [...pool];
     for (const { key, afterMs } of addLater) global.setTimeout(() => pool.push(key), afterMs);
     const getBackendBase = () => 'http://localhost:3001';
+    const refreshRouterKeys = async () => { }; // the merged list is `keys` itself
     const fetch = async (url, init) => {
         const sent = JSON.parse(init.body).keys;
         return { json: async () => ({ keys: sent.map((k) => ({ suffix: k.slice(-4), state: keyStatus[k] || 'ok', models: [] })) }) };
@@ -142,10 +146,102 @@ describe('Batch Transcribe, one key per tab', () => {
         assert.ok(r.items.some((i) => i.by === 'k-new'));
     });
 
+    test('more ready keys than tabs: each tab borrows its own spare keys as extra lanes', async () => {
+        const keys = Array.from({ length: 12 }, (_, i) => `k${i + 1}`);
+        const r = await runBatch({ keys, tabs: 4 });
+        assert.equal(r.maxParallel, 4);
+        const borrowed = [];
+        for (const c of r.calls) {
+            assert.equal(c.maxLanes, 3, 'own key + 2 of the 8 spares');
+            assert.equal(c.spread, true);
+            assert.equal(c.apiKeys.length, keys.length, 'every key still there as a backup');
+            borrowed.push(...c.apiKeys.slice(1, c.maxLanes));
+        }
+        assert.equal(new Set(borrowed).size, borrowed.length, 'no spare is lent to two tabs');
+        assert.ok(borrowed.every((k) => !['k1', 'k2', 'k3', 'k4'].includes(k)), 'no tab borrows another tab\'s own key');
+    });
+
+    test('lanes per tab are capped (2 tabs, 20 keys: 4 lanes each, not 10)', async () => {
+        const keys = Array.from({ length: 20 }, (_, i) => `k${i + 1}`);
+        const r = await runBatch({ keys, tabs: 2 });
+        for (const c of r.calls) assert.equal(c.maxLanes, SERIES_MAX_LANES_PER_TAB);
+    });
+
+    test('a spare out for today is not borrowed', async () => {
+        const keys = ['k1', 'k2', 'k3', 'k4'];
+        const r = await runBatch({ keys, tabs: 2, keyStatus: { k3: 'daily' } });
+        for (const c of r.calls) assert.ok(!c.apiKeys.slice(1, c.maxLanes).includes('k3'));
+    });
+
     test('every key out of quota: stops and says so', async () => {
         const r = await runBatch({ keys: ['k1', 'k2'], tabs: 4, deadKeys: ['k1', 'k2'] });
         assert.equal(r.quotaOut, true);
         assert.ok(r.items.every((i) => i.status === 'failed'));
         assert.ok(r.toasts.some((t) => /daily quota/i.test(t)));
+    });
+});
+
+// Gemini Web Router Gmails ("gweb:") in Dub Whole Series. The list the batch gets is the merged one
+// (getActiveApiKeys = mergeRouterKeys(Settings keys)): with Router first the ready Gmails lead.
+// They were lost when DR Router was removed (bcb7540), and a series ran only as many tabs as
+// Settings keys - 2 tabs for 10 Gmails and 2 API keys.
+describe('Batch Transcribe, Gemini Web Router Gmails own tabs', () => {
+    const gmails = (n) => Array.from({ length: n }, (_, i) => `gweb:g${i + 1}`);
+
+    test('10 Gmails + 2 API keys: 8 tabs at once ("Episodes at once"), each on its own Gmail, one lane each', async () => {
+        const keys = [...gmails(10), 'k1', 'k2'];
+        const r = await runBatch({ keys, tabs: 8 });
+        assert.equal(r.maxParallel, 8);
+        assert.ok(r.items.every((i) => i.by.startsWith('gweb:')), 'every tab owned by a Gmail');
+        assert.equal(new Set(r.items.map((i) => i.by)).size, 8);
+        for (const c of r.calls) {
+            assert.equal(c.maxLanes, 1, 'floor(10 Gmails / 8 tabs) lanes: no Gmail asked for twice');
+            assert.equal(c.spread, false, 'Gmails are never lent as spread lanes');
+            assert.ok(c.apiKeys.includes('k1') && c.apiKeys.includes('k2'), 'API keys stay as backups');
+        }
+    });
+
+    test('Gmails not checked like API keys still lead (they are listed only while ready)', async () => {
+        const keys = [...gmails(3), 'k1'];
+        const keyStatus = { 'gweb:g1': 'unknown', 'gweb:g2': 'unknown', 'gweb:g3': 'unknown' }; // rank 1 without isRouterKey
+        const r = await runBatch({ keys, tabs: 3, keyStatus });
+        assert.deepEqual(r.items.map((i) => i.by), gmails(3));
+    });
+
+    test('3 Gmails, 2 tabs: one lane each (floor(3 / 2)), the third Gmail stays free as a backup', async () => {
+        const r = await runBatch({ keys: gmails(3), tabs: 2 });
+        assert.equal(r.maxParallel, 2);
+        for (const c of r.calls) assert.equal(c.maxLanes, 1);
+    });
+
+    test('Gmails only: a series runs with no Settings key at all', async () => {
+        const r = await runBatch({ keys: gmails(4), tabs: 4 });
+        assert.equal(r.maxParallel, 4);
+        assert.ok(r.items.every((i) => i.status === 'completed'));
+    });
+});
+
+describe('mergeRouterKeys (Settings keys + the Router\'s ready Gmails)', () => {
+    const at = src.indexOf('  const routerPool = {');
+    const block = src.slice(at, src.indexOf('  const getActiveApiKeys = ', at));
+    const load = (pool) => eval(`(() => { ${block.replace(/async function refreshRouterKeys[\s\S]*?\n  }\n/, '')}; Object.assign(routerPool, ${JSON.stringify(pool)}); return mergeRouterKeys; })()`);
+
+    test('Router first: Gmails lead, Settings keys follow as backups', () => {
+        const merge = load({ keys: ['gweb:a', 'gweb:b'], routerFirst: true, gmailOnly: false });
+        assert.deepEqual(merge(['k1', 'k2']), ['gweb:a', 'gweb:b', 'k1', 'k2']);
+    });
+    test('Gmails only: just the Gmails (while any is ready)', () => {
+        const merge = load({ keys: ['gweb:a'], routerFirst: true, gmailOnly: true });
+        assert.deepEqual(merge(['k1']), ['gweb:a']);
+        const none = load({ keys: [], routerFirst: true, gmailOnly: true });
+        assert.deepEqual(none(['k1']), ['k1'], 'no ready Gmail: the Settings keys still work');
+    });
+    test('Router first off: Settings keys first, Gmails after', () => {
+        const merge = load({ keys: ['gweb:a'], routerFirst: false, gmailOnly: false });
+        assert.deepEqual(merge(['k1']), ['k1', 'gweb:a']);
+    });
+    test('Router off (no ready Gmails listed): Settings keys unchanged', () => {
+        const merge = load({ keys: [], routerFirst: false, gmailOnly: false });
+        assert.deepEqual(merge(['k1', 'k2']), ['k1', 'k2']);
     });
 });

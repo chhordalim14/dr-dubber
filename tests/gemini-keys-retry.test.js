@@ -27,7 +27,7 @@ function load({ pool = null } = {}) {
     const msUntilPacificMidnight = () => 6 * 3600 * 1000; // the daily reset was 18 h ago
     const isCodeCraftKey = (k) => /^cc_/i.test(k);
     ${block}
-    return { geminiWithKeys, geminiShouldRetry, tryKeysOnce, geminiKeyStatus, geminiKeyAnswered, GEMINI_RETRY_DELAYS_MS, GEMINI_BUSY_RETRY_BUDGET_MS };
+    return { geminiWithKeys, geminiShouldRetry, tryKeysOnce, geminiKeyStatus, geminiKeyAnswered, GEMINI_RETRY_DELAYS_MS, GEMINI_BUSY_RETRY_BUDGET_MS, poolPauseLeftMs, poolStrainedRecently, POOL_PAUSE_MS, POOL_PAUSE_MIN_KEYS };
   `)(fastTimeout, { warn: () => { }, log: () => { } }, FakeDate, createKeyRest, pool);
   return { ...api, waits, now: () => now };
 }
@@ -319,5 +319,51 @@ describe('keys Google refuses', () => {
     assert.equal(geminiKeyStatus('k403').dead, false);
     assert.equal(geminiKeyStatus('k403').retryAfterMs, 10 * 60 * 1000);
     assert.equal(geminiKeyStatus('cc_x').dead, false);
+  });
+});
+
+// Google turning free-tier requests away answers "per-minute limit" on every key at once: the
+// pool pauses instead of walking through every key again (2026-11-17: 466 refusals in 4 minutes).
+describe('pool pause', () => {
+  const keys = Array.from({ length: 10 }, (_, i) => `k${i + 1}`);
+
+  test('most keys limited at once: the rest are not asked, the job waits the pause out and goes on', async () => {
+    const { geminiWithKeys, waits, POOL_PAUSE_MS, POOL_PAUSE_MIN_KEYS, poolStrainedRecently } = load();
+    const asked = [];
+    const out = await geminiWithKeys(keys, async (key) => {
+      const round = waits.length + 1; // a new round after each wait
+      asked.push({ key, round });
+      return round === 1 ? perMinute : { ok: true, key };
+    }, null, { busyBudgetMs: 30 * 60 * 1000 });
+    assert.equal(out.ok, true);
+    const first = asked.filter((a) => a.round === 1).length;
+    assert.equal(first, POOL_PAUSE_MIN_KEYS, 'only until the pause, not all 10 keys');
+    assert.equal(waits[0], POOL_PAUSE_MS + 500);
+    assert.equal(poolStrainedRecently(10 * 60 * 1000), true);
+  });
+
+  test('a couple of limited keys among answering ones: no pause', async () => {
+    const { geminiWithKeys, waits, poolPauseLeftMs, poolStrainedRecently } = load();
+    let n = 0;
+    const out = await geminiWithKeys(keys, async () => (++n <= 2 ? perMinute : { ok: true }), null, { busyBudgetMs: 30 * 60 * 1000 });
+    assert.equal(out.ok, true);
+    assert.equal(n, 3);
+    assert.deepEqual(waits, []);
+    assert.equal(poolPauseLeftMs(), 0);
+    assert.equal(poolStrainedRecently(10 * 60 * 1000), false);
+  });
+
+  test('daily quota answers do not pause the pool (those keys are simply out)', async () => {
+    const { geminiWithKeys, poolPauseLeftMs } = load();
+    await geminiWithKeys(keys, async () => daily, null);
+    assert.equal(poolPauseLeftMs(), 0);
+  });
+
+  test('CodeCraft keys are not Google keys: never paused', async () => {
+    const { geminiWithKeys } = load();
+    const cc = Array.from({ length: 8 }, (_, i) => `cc_${i}`);
+    const asked = [];
+    await geminiWithKeys(cc, async (key) => { asked.push(key); return perMinute; }, null);
+    assert.ok(asked.length >= cc.length, 'every CodeCraft key still asked');
   });
 });

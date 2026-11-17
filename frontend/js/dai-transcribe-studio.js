@@ -119,9 +119,33 @@
     const single = (localStorage.getItem('aiDubberApiKey') || '').trim();
     return single ? [single] : [];
   };
-  const getActiveApiKeys = () => {
-    return getSettingsApiKeys();
-  };
+  // Gemini Web Router: its ready Gmails ("gweb:<id>", /api/gemini-web/dubber-keys) join the keys.
+  // With "Router first" they lead, so each Gmail gets a tab of its own in Dub Whole Series and the
+  // Settings keys are backups; with "Gmails only" the Gmails alone. DR Router's window.drPool did
+  // this until it was removed (bcb7540): series then ran only as many tabs as Settings keys, e.g.
+  // 2 tabs for 10 Gmails, and a PC with Gmails but no Settings key could not start one.
+  const routerPool = { keys: [], routerFirst: false, gmailOnly: false };
+  async function refreshRouterKeys() {
+    try {
+      const res = await fetch(`${getBackendBase()}/api/gemini-web/dubber-keys`);
+      const d = await res.json();
+      if (d && d.success && Array.isArray(d.keys)) {
+        Object.assign(routerPool, { keys: d.keys.filter(Boolean), routerFirst: !!d.routerFirst, gmailOnly: !!d.gmailOnly });
+      }
+    } catch (e) { /* backend not up yet: keep the last list */ }
+    return { ...routerPool, keys: routerPool.keys.slice() };
+  }
+  function mergeRouterKeys(own) {
+    const web = routerPool.keys.filter((k) => !own.includes(k));
+    if (!web.length) return own;
+    if (routerPool.routerFirst) return routerPool.gmailOnly ? web : [...web, ...own];
+    return [...own, ...web];
+  }
+  const getActiveApiKeys = () => mergeRouterKeys(getSettingsApiKeys());
+  // studio-main.js asks before refusing to start for lack of a Settings key.
+  window.geminiRouterKeys = refreshRouterKeys;
+  // A Gmail is listed only while ready: it ranks with the ready keys, not after them.
+  const isRouterKey = (k) => String(k || '').startsWith('gweb:');
 
   const getActiveModel = () => {
     return localStorage.getItem('aiDubberModel') || 'gemini-3.8-flash';
@@ -1088,6 +1112,9 @@
   // started only when another finished - 5-6 minutes later on a busy day. Its window's
   // "Episodes at once" (1-10) and "Retry failed" (Off-5) change these for series runs.
   const SERIES_MAX_PARALLEL_FILES = 8;
+  // Dub Whole Series with more ready keys than tabs: each tab borrows up to this many keys in all
+  // (its own + spares) and its pieces are asked at the same time, one key each.
+  const SERIES_MAX_LANES_PER_TAB = 4;
   const savedSeriesNumber = (key, lo, hi, dflt) => {
     let n = NaN;
     try { n = parseInt(localStorage.getItem(key), 10); } catch (e) { } // storage blocked: the default
@@ -1122,9 +1149,10 @@
     if (state.isBatchRunning) return;
     if (!(onlyIds instanceof Set)) onlyIds = null;
 
+    await refreshRouterKeys(); // the Router's ready Gmails, as of now
     const apiKeys = getActiveApiKeys();
     if (apiKeys.length === 0) {
-      showToast('Please add at least one Gemini API Key in Settings ➔ General.', 'error');
+      showToast('Please add at least one Gemini API Key in Settings ➔ General, or sign in a Gmail in the Gemini Web Router.', 'error');
       document.getElementById('btn-open-settings')?.click();
       return;
     }
@@ -1177,7 +1205,7 @@
         statuses = (await res.json()).keys || [];
       } catch (e) { /* no statuses: the keys in their own order */ }
       const ready = apiKeys
-        .map((k, i) => ({ k, r: keyStatusRank(statuses[i], model) }))
+        .map((k, i) => ({ k, r: isRouterKey(k) ? 0 : keyStatusRank(statuses[i], model) }))
         .filter((c) => c.r < 9)
         .sort((a, b) => a.r - b.r)
         .map((c) => c.k);
@@ -1194,7 +1222,17 @@
     // out for today on this model, fully ready keys first.
     const ownedKeys = new Set(keyPerTab ? ownKeyOrder.slice(0, concurrency) : []);
     const outKeys = new Set(); // ran out of daily quota during this batch
+    // keyPerTab with more ready keys than tabs (e.g. 20 keys, 5 tabs): the keys no tab owns sat
+    // idle as backups while each tab sent its whole video (7 min) in one long request on one key.
+    // Now worker w borrows every concurrency-th spare key (w, w+concurrency, ...) as extra lanes:
+    // the server cuts the tab into ~2-minute pieces and asks them at the same time, one key
+    // each. A spare that became some tab's own key, or ran out for today, is not borrowed.
+    const spareKeys = keyPerTab ? ownKeyOrder.slice(concurrency).filter((k) => !String(k).startsWith('gweb:')) : [];
+    const laneKeysOf = (w, ownKey) => (String(ownKey || '').startsWith('gweb:') ? [] : spareKeys
+      .filter((k, i) => i % concurrency === w && k !== ownKey && !ownedKeys.has(k) && !outKeys.has(k))
+      .slice(0, SERIES_MAX_LANES_PER_TAB - 1));
     const takeSpareKey = async () => {
+      await refreshRouterKeys(); // a Gmail signed in or back from its credit refill counts
       const candidates = getActiveApiKeys().filter((k) => !ownedKeys.has(k) && !outKeys.has(k));
       if (!candidates.length) return null;
       let statuses = [];
@@ -1207,7 +1245,7 @@
         statuses = (await res.json()).keys || [];
       } catch (e) { /* no statuses: take the first candidate */ }
       const best = candidates
-        .map((k, i) => ({ k, r: keyStatusRank(statuses[i], model) }))
+        .map((k, i) => ({ k, r: isRouterKey(k) ? 0 : keyStatusRank(statuses[i], model) }))
         .filter((c) => c.r < 9)
         .sort((a, b) => a.r - b.r)[0];
       if (!best || ownedKeys.has(best.k)) return null; // another worker took it meanwhile
@@ -1252,6 +1290,7 @@
         inFlight++;
         const liveKeys = getActiveApiKeys(); // keys added while the batch runs are backups too
         const offset = (pendingItems.indexOf(item) * keyStride) % Math.max(1, liveKeys.length);
+        const laneKeys = keyPerTab && ownKey ? laneKeysOf(w, ownKey) : [];
         state.runningItemIds.add(item.id);
         if (item.autoApplyToTab) window.dubberBridge?.setTabWorking(item.targetTab, true);
         try {
@@ -1259,8 +1298,10 @@
             // keyPerTab: own key first, the others only as backups (one request at a time), so a
             // rate-limited key passes the next chunk to an idle key instead of waiting. When there
             // are fewer tabs than Gmails (e.g. 1-2 tabs and 5 Gmails), spare Gmails share the tab's lanes.
-            apiKeys: ownKey ? [ownKey, ...liveKeys.filter((k) => k !== ownKey)] : [...liveKeys.slice(offset), ...liveKeys.slice(0, offset)],
-            maxLanes: keyPerTab ? (String(ownKey || '').startsWith('gweb:') ? Math.max(1, Math.floor(ownKeyOrder.filter((k) => String(k).startsWith('gweb:')).length / concurrency)) : 1) : null,
+            // Borrowed spare API keys come right after the own key: the server's lane n starts on key n.
+            apiKeys: ownKey ? [ownKey, ...laneKeys, ...liveKeys.filter((k) => k !== ownKey && !laneKeys.includes(k))] : [...liveKeys.slice(offset), ...liveKeys.slice(0, offset)],
+            maxLanes: keyPerTab ? (String(ownKey || '').startsWith('gweb:') ? Math.max(1, Math.floor(ownKeyOrder.filter((k) => String(k).startsWith('gweb:')).length / concurrency)) : 1 + laneKeys.length) : null,
+            spread: laneKeys.length > 0,
             stayOnModel: keyPerTab,
             forSeries: keyPerTab,
             model,
@@ -1398,6 +1439,102 @@
   }
 
   // The result kept by /api/batch-result/save for this file (unchanged since), or null.
+  // Dub Whole Series: the next part's pieces, transcribed while the current part makes its voices
+  // and blurs (Edge TTS and the CPU - the Gemini keys sit idle then). No tab and no queue row:
+  // each finished result is only saved (batch-result), and the part's own Transcribe step picks it
+  // up instead of asking Gemini again. Same keys as that step: one ready key per piece, spare keys
+  // lent as extra lanes. Best-effort: a piece that fails, comes back incomplete (not saved) or
+  // runs into the daily quota is simply left for that step. onProgress(finished, total).
+  async function transcribeFilesEarly(filePaths, { signal = null, onProgress = null } = {}) {
+    const files = (filePaths || []).filter(Boolean);
+    const summary = { total: files.length, done: 0, failed: 0 };
+    if (files.length) await refreshRouterKeys(); // the Router's ready Gmails get files too
+    const apiKeys = getActiveApiKeys();
+    if (!files.length || !apiKeys.length) return summary;
+    const backendBase = getBackendBase();
+    const genre = getDramaGenre();
+    const model = $('dai-model-select')?.value || getActiveModel();
+    const customFolder = state.outputFolder || localStorage.getItem('aiDubberAutoSaveSrtCustomPath') || '';
+    loadGlossaryFromStorage(); // names the part before saved (Make names consistent)
+    const glossaryDict = state.glossary.length > 0
+      ? state.glossary.reduce((acc, cur) => {
+          if (cur.original && cur.khmer) acc[cur.original.trim()] = cur.khmer.trim();
+          return acc;
+        }, {})
+      : null;
+    let statuses = [];
+    try {
+      const res = await fetch(`${backendBase}/api/gemini-key-status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keys: apiKeys }),
+        signal
+      });
+      statuses = (await res.json()).keys || [];
+    } catch (e) {
+      if (e.name === 'AbortError') return summary;
+    }
+    const ready = apiKeys
+      .map((k, i) => ({ k, r: isRouterKey(k) ? 0 : keyStatusRank(statuses[i], model) }))
+      .filter((c) => c.r < 9)
+      .sort((a, b) => a.r - b.r)
+      .map((c) => c.k);
+    if (!ready.length) return summary; // every key resting: the part's own step says why
+    const concurrency = Math.max(1, Math.min(seriesParallelFiles(), ready.length, files.length));
+    const spares = ready.slice(concurrency).filter((k) => !String(k).startsWith('gweb:'));
+    const running = new Map(); // requestId -> true, to cancel on the server when stopped
+    const cancelRunning = () => {
+      for (const requestId of running.keys()) {
+        fetch(`${backendBase}/api/cancel-transcribe`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ requestId })
+        }).catch(() => {});
+      }
+    };
+    if (signal) signal.addEventListener('abort', cancelRunning, { once: true });
+    let next = 0;
+    const worker = async (w) => {
+      const ownKey = ready[w];
+      const laneKeys = String(ownKey).startsWith('gweb:') ? []
+        : spares.filter((k, i) => i % concurrency === w).slice(0, SERIES_MAX_LANES_PER_TAB - 1);
+      while (next < files.length) {
+        if (signal && signal.aborted) return;
+        const filePath = files[next++];
+        const fileName = String(filePath).split(/[\\/]/).pop();
+        const stamp = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const item = {
+          id: `early_${stamp}`, fileName, filePath, fileExt: (fileName.split('.').pop() || '').toLowerCase(),
+          duration: 0, requestId: `dai_early_${stamp}`, partIndex: next, status: 'pending'
+        };
+        running.set(item.requestId, true);
+        try {
+          await processSingleBatchItem(item, {
+            apiKeys: [ownKey, ...laneKeys, ...getActiveApiKeys().filter((k) => k !== ownKey && !laneKeys.includes(k))],
+            maxLanes: 1 + laneKeys.length,
+            spread: laneKeys.length > 0,
+            stayOnModel: true,
+            forSeries: true,
+            early: true,
+            model, genre, glossaryDict, customFolder, signal
+          });
+          summary.done++;
+        } catch (e) {
+          if (e.name === 'AbortError' || (signal && signal.aborted)) return;
+          summary.failed++;
+          console.warn(`[Early transcribe] ${fileName}: ${e.message} - left for the part's own Transcribe step`);
+          if (e.isDailyQuota || e.code === 'INVALID_API_KEY') return; // this worker's key is done for now
+        } finally {
+          running.delete(item.requestId);
+        }
+        if (onProgress) onProgress(summary.done + summary.failed, summary.total);
+      }
+    };
+    await Promise.all(Array.from({ length: concurrency }, (_, w) => worker(w)));
+    if (signal) signal.removeEventListener('abort', cancelRunning);
+    return summary;
+  }
+
   async function loadSavedBatchResult(backendBase, filePath, signal) {
     try {
       const res = await fetch(`${backendBase}/api/batch-result/get`, {
@@ -1417,7 +1554,7 @@
   }
 
   async function processSingleBatchItem(item, opts) {
-    const { apiKeys, model, genre, glossaryDict, customFolder, signal, stayOnModel = false, maxLanes = null, forSeries = false } = opts;
+    const { apiKeys, model, genre, glossaryDict, customFolder, signal, stayOnModel = false, maxLanes = null, forSeries = false, spread = false, early = false } = opts;
     const backendBase = getBackendBase();
 
     // Step 1: Extract Audio (if video or not already an mp3)
@@ -1531,7 +1668,10 @@
             stayOnModel,
             // Dub Whole Series matches the lines to the video and fits the voices afterwards.
             ...(forSeries ? { fitToTime: false } : {}),
-            ...(maxLanes ? { maxLanes } : {})
+            ...(maxLanes ? { maxLanes } : {}),
+            ...(spread ? { spread: true } : {}),
+            // Early transcribe (Dub Whole Series): the server keeps the result itself.
+            ...(early ? { saveResult: true } : {})
           }),
           signal
         });
@@ -1560,8 +1700,10 @@
     const repairReport = transcribeResult.repair || {};
     const incomplete = repairReport.stillUntranslated > 0 || !!repairReport.translateError || !!repairReport.quotaError || !!repairReport.gapsFailed || !!repairReport.gapsSkippedForTime ||
       (transcribeResult.fallbackModels || []).length > 0;
-    if (!item.reusedSaved && item.filePath && !incomplete) {
-      fetch(`${backendBase}/api/batch-result/save`, {
+    if (!item.reusedSaved && item.filePath && !incomplete && !early) { // early: the server saved it
+      // Waited for (a local file, milliseconds): an early-transcribed piece must be on disk before
+      // its part's Transcribe step looks for it.
+      await fetch(`${backendBase}/api/batch-result/save`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2680,6 +2822,7 @@
     removeItem: removeQueueItem,
     translateAllTabs: openTabsTranslate,
     transcribeAllTabs,
+    transcribeFilesEarly,
     stopBatch,
     isBatchRunning: () => state.isBatchRunning,
     retryItem: (id) => {

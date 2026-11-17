@@ -53,6 +53,19 @@
       }
     }
 
+    // Export encoder from Settings: "auto" (GPU) unless the user picked CPU. Auto test-encodes
+    // NVIDIA, Intel Quick Sync, AMD and (Mac) VideoToolbox once per session and uses the first
+    // that works, else libx264 - so a PC with no usable GPU renders exactly as with "cpu"
+    // (backend/render_service.js applyEncoderSettings). It used to default to "cpu", which left
+    // most PCs on the slow encoder although they had a working hardware one.
+    function renderEngineSetting() {
+      try {
+        return localStorage.getItem("aiDubberRenderEngine") || "auto";
+      } catch (e) {
+        return "auto";
+      }
+    }
+
     const VOCAL_ENGINE_LABELS = { mdx: "MDX-Net", spleeter: "Spleeter", demucs: "Demucs", ffmpeg: "FFmpeg" };
 
     // Rich text for the free-text overlay boxes: those are contentEditable
@@ -3816,6 +3829,8 @@
         apiKeys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]");
         if (apiKeys.length === 0 && engineMode === "whisper" && window.textAi?.ready()) {
           apiKeys = [""]; // one pass of the translate loop below; the server uses the CodeCraft key
+        } else if (apiKeys.length === 0 && await routerHasGmails()) {
+          apiKeys = [""]; // one pass of the loop below; the server uses the Router's Gmails
         } else if (apiKeys.length === 0) {
           showToast("Please add at least one Gemini API Key in Settings.", "error");
           document.getElementById("btn-open-settings")?.click();
@@ -4159,7 +4174,7 @@
                   partIndex: partIdx,
                   customFolder: customFolderPath,
                   sourceFilePath: localVideoPath,
-                  apiSaver: localStorage.getItem("aiDubberApiSaver") === "true",
+                  apiSaver: localStorage.getItem("aiDubberApiSaver") !== "false",
                   review: localStorage.getItem("aiDubberReviewPass") !== "false",
                 }),
                 signal,
@@ -4294,6 +4309,16 @@
     const getGeminiKeys = () => {
       return JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]").filter(Boolean);
     };
+    // Ready Gmails in the Gemini Web Router (dai-transcribe-studio.js window.geminiRouterKeys): with
+    // them the server transcribes and translates without any API key from Settings.
+    async function routerHasGmails() {
+      try {
+        const pool = window.geminiRouterKeys ? await window.geminiRouterKeys() : null;
+        return !!(pool && pool.keys && pool.keys.length);
+      } catch (e) {
+        return false;
+      }
+    }
     const projectTabName = (p) => p.tabTitle || (p.file?.name || p.name || `Tab ${projects.indexOf(p) + 1}`).replace(/\.[^/.]+$/, "");
     // The open tab's live list is the global `subtitles`; other tabs keep theirs on the project.
     const liveSubtitlesOf = (p) => (projects[activeProjectIndex] === p ? subtitles : p.subtitles || []);
@@ -5019,8 +5044,8 @@
         }
       } else {
         const apiKeys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]");
-        if (apiKeys.length === 0) {
-          showToast("Please add at least one Gemini API Key in Settings.", "error");
+        if (apiKeys.length === 0 && !(await routerHasGmails())) {
+          showToast("Please add at least one Gemini API Key in Settings, or sign in a Gmail in the Gemini Web Router.", "error");
           document.getElementById("btn-open-settings")?.click();
           return;
         }
@@ -8499,7 +8524,7 @@
       const hardwareBadge = document.getElementById("hardware-badge");
       if (!hardwareBadge) return;
 
-      const renderEngine = document.querySelector('input[name="render-engine"]:checked')?.value || "cpu";
+      const renderEngine = document.querySelector('input[name="render-engine"]:checked')?.value || renderEngineSetting();
       const iconEl = hardwareBadge.querySelector("i");
       const badgeNameEl = document.getElementById("badge-name");
 
@@ -8669,7 +8694,7 @@
       document.querySelector('input[name="gpu-setting"][value="gpu"]').checked = useGpu;
       document.querySelector('input[name="gpu-setting"][value="cpu"]').checked = !useGpu;
 
-      const renderEngine = localStorage.getItem("aiDubberRenderEngine") || "cpu";
+      const renderEngine = renderEngineSetting();
       const nvencRadio = document.querySelector('input[name="render-engine"][value="auto"]');
       const cpuRadio = document.querySelector('input[name="render-engine"][value="cpu"]');
 
@@ -8919,7 +8944,7 @@
     // API Saver mode (saved as soon as it's toggled; read on every transcribe request)
     const apiSaverToggle = document.getElementById("setting-api-saver");
     if (apiSaverToggle) {
-      apiSaverToggle.checked = localStorage.getItem("aiDubberApiSaver") === "true";
+      apiSaverToggle.checked = localStorage.getItem("aiDubberApiSaver") !== "false";
       apiSaverToggle.addEventListener("change", () => {
         localStorage.setItem("aiDubberApiSaver", apiSaverToggle.checked ? "true" : "false");
         showToast(apiSaverToggle.checked ? "API Saver ON: fewer Gemini requests per episode." : "API Saver OFF: full accuracy checks.", "info");
@@ -10537,6 +10562,20 @@
     const GEMINI_KEY_PATTERN = /^[A-Za-z0-9._-]{20,100}$/;
     const isValidGeminiKey = (val) => GEMINI_KEY_PATTERN.test(val);
 
+    const extractGeminiKeys = (raw) => {
+      if (!raw || typeof raw !== "string") return [];
+      const tokens = raw.split(/[^A-Za-z0-9._-]+/).filter(Boolean);
+      const found = [];
+      const seen = new Set();
+      for (const token of tokens) {
+        if (isValidGeminiKey(token) && !seen.has(token)) {
+          seen.add(token);
+          found.push(token);
+        }
+      }
+      return found;
+    };
+
     // The one Gemini key list (DAI Studio reads it too). "aiDubberApiKey" is the old single-key
     // setting DAI still falls back to when the list is empty: keep it in step.
     const saveGeminiKeys = () => {
@@ -10544,6 +10583,31 @@
       if (apiKeys.length) localStorage.setItem("aiDubberApiKey", apiKeys[0]);
       else localStorage.removeItem("aiDubberApiKey");
     };
+
+    const addGeminiKeys = (keysToAdd) => {
+      if (!Array.isArray(keysToAdd) || !keysToAdd.length) return { added: 0, skipped: 0 };
+      const existing = new Set(apiKeys);
+      const toAdd = keysToAdd.filter((k) => !existing.has(k));
+      const skipped = keysToAdd.length - toAdd.length;
+
+      if (toAdd.length > 0) {
+        apiKeys.push(...toAdd);
+        saveGeminiKeys();
+        fetch("http://localhost:3001/api/gemini-keys-added", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ keys: toAdd }),
+        }).catch(() => { }).finally(() => window.daiStudio?.refreshKeyStatuses?.());
+        renderApiKeys();
+      }
+
+      return { added: toAdd.length, skipped };
+    };
+
+    // Expose for external calls and testing
+    window.extractGeminiKeys = extractGeminiKeys;
+    window.isValidGeminiKey = isValidGeminiKey;
+    window.addGeminiApiKeys = addGeminiKeys;
 
     const renderApiKeys = () => {
       const list = document.getElementById("api-keys-list");
@@ -10647,35 +10711,42 @@
       if (btn) btn.title = hasValue ? "Clear" : "Paste";
     };
 
-    document.getElementById("btn-add-apikey").addEventListener("click", () => {
+    const handleAddApiKeyInput = () => {
       const input = document.getElementById("input-new-apikey");
-      const val = input.value.trim();
-      if (!val) return;
+      const raw = input.value.trim();
+      if (!raw) return;
 
-      if (!isValidGeminiKey(val)) {
+      const extracted = extractGeminiKeys(raw);
+      if (!extracted.length) {
         showToast("That doesn't look like a valid API Key — check for extra spaces or a pasted file path.", "error");
         return;
       }
-      if (apiKeys.includes(val)) {
-        showToast("This API Key is already in your list.", "warning");
-        return;
+
+      const { added, skipped } = addGeminiKeys(extracted);
+      if (extracted.length === 1) {
+        if (added === 1) {
+          showToast("API Key added.", "success");
+        } else {
+          showToast("This API Key is already in your list.", "warning");
+        }
+      } else {
+        if (added === 0) {
+          showToast(`All ${skipped} API key(s) are already in your list.`, "warning");
+        } else if (skipped > 0) {
+          showToast(`Added ${added} new API key(s) (${skipped} duplicate(s) skipped).`, "success");
+        } else {
+          showToast(`Added ${added} new API key(s).`, "success");
+        }
       }
 
-      apiKeys.push(val);
-      saveGeminiKeys();
-      // Added again (maybe fixed in Google Cloud): the server tries it again instead of letting
-      // it rest out the day it was refused for.
-      fetch("http://localhost:3001/api/gemini-keys-added", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ keys: [val] }),
-      }).catch(() => { }).finally(() => window.daiStudio?.refreshKeyStatuses?.());
       input.value = "";
       renderApiKeys();
       updateApiKeyPasteButtonState();
-    });
+    };
+
+    document.getElementById("btn-add-apikey").addEventListener("click", handleAddApiKeyInput);
     document.getElementById("input-new-apikey").addEventListener("keydown", (e) => {
-      if (e.key === "Enter") document.getElementById("btn-add-apikey").click();
+      if (e.key === "Enter") handleAddApiKeyInput();
     });
     document.getElementById("input-new-apikey").addEventListener("input", updateApiKeyPasteButtonState);
 
@@ -10696,6 +10767,103 @@
     });
 
     updateApiKeyPasteButtonState(); // correct icon on first load
+
+    // Bulk Add API Keys Modal logic
+    const modalBulkApiKeys = document.getElementById("modal-bulk-apikeys");
+    const textareaBulk = document.getElementById("textarea-bulk-apikeys");
+    const statsBulk = document.getElementById("bulk-apikeys-stats");
+    const btnSubmitBulk = document.getElementById("btn-submit-bulk-apikeys");
+    const btnSubmitBulkText = document.getElementById("btn-submit-bulk-text");
+
+    const updateBulkStats = () => {
+      if (!textareaBulk || !statsBulk || !btnSubmitBulk) return;
+      const raw = textareaBulk.value;
+      const extracted = extractGeminiKeys(raw);
+      const existing = new Set(apiKeys);
+      const toAdd = extracted.filter((k) => !existing.has(k));
+      const dups = extracted.length - toAdd.length;
+
+      if (!extracted.length) {
+        statsBulk.innerHTML = '<span class="text-[var(--text-muted)]">Paste keys above to detect</span>';
+        btnSubmitBulk.disabled = true;
+        if (btnSubmitBulkText) btnSubmitBulkText.textContent = "Add Keys";
+      } else {
+        const parts = [];
+        if (toAdd.length > 0) {
+          parts.push(`<span class="text-emerald-400 font-semibold">${toAdd.length} new key${toAdd.length > 1 ? "s" : ""}</span>`);
+        }
+        if (dups > 0) {
+          parts.push(`<span class="text-amber-400">${dups} duplicate${dups > 1 ? "s" : ""}</span>`);
+        }
+        statsBulk.innerHTML = parts.join(" · ") + ` (${extracted.length} total detected)`;
+        btnSubmitBulk.disabled = toAdd.length === 0;
+        if (btnSubmitBulkText) btnSubmitBulkText.textContent = `Add ${toAdd.length} Key${toAdd.length === 1 ? "" : "s"}`;
+      }
+    };
+
+    const openBulkModal = () => {
+      if (!modalBulkApiKeys) return;
+      modalBulkApiKeys.classList.remove("hidden");
+      if (textareaBulk) {
+        textareaBulk.value = "";
+        updateBulkStats();
+        setTimeout(() => textareaBulk.focus(), 50);
+      }
+      _lucideCreateIcons();
+    };
+
+    const closeBulkModal = () => {
+      if (!modalBulkApiKeys) return;
+      modalBulkApiKeys.classList.add("hidden");
+      if (textareaBulk) textareaBulk.value = "";
+    };
+
+    window.openBulkApiKeyModal = openBulkModal;
+    window.closeBulkApiKeyModal = closeBulkModal;
+
+    document.getElementById("btn-open-bulk-apikeys")?.addEventListener("click", openBulkModal);
+    document.getElementById("btn-close-bulk-apikeys")?.addEventListener("click", closeBulkModal);
+    document.getElementById("btn-cancel-bulk-apikeys")?.addEventListener("click", closeBulkModal);
+    modalBulkApiKeys?.addEventListener("click", (e) => {
+      if (e.target === modalBulkApiKeys) closeBulkModal();
+    });
+
+    textareaBulk?.addEventListener("input", updateBulkStats);
+
+    document.getElementById("btn-paste-bulk-clipboard")?.addEventListener("click", async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text && textareaBulk) {
+          textareaBulk.value = (textareaBulk.value ? textareaBulk.value + "\n" : "") + text.trim();
+          updateBulkStats();
+        }
+      } catch (err) {
+        showToast("Couldn't read clipboard. Check app permissions.", "error");
+      }
+    });
+
+    btnSubmitBulk?.addEventListener("click", () => {
+      if (!textareaBulk) return;
+      const extracted = extractGeminiKeys(textareaBulk.value);
+      if (!extracted.length) return;
+
+      const { added, skipped } = addGeminiKeys(extracted);
+      if (added === 0) {
+        showToast(`All ${skipped} API key(s) are already in your list.`, "warning");
+      } else if (skipped > 0) {
+        showToast(`Added ${added} new API key(s) (${skipped} duplicate(s) skipped).`, "success");
+      } else {
+        showToast(`Added ${added} new API key(s).`, "success");
+      }
+
+      closeBulkModal();
+    });
+
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && modalBulkApiKeys && !modalBulkApiKeys.classList.contains("hidden")) {
+        closeBulkModal();
+      }
+    });
 
     // Theme Logic
     const getActiveMode = () => (document.documentElement.classList.contains("light-theme") ? "light" : "dark");
@@ -16502,6 +16670,7 @@
     let cancelSeriesBackgroundJoin = () => { }; // set by Dub Whole Series below
     let stopSeriesBackgroundExport = () => { }; // set by Dub Whole Series below
     let stopSeriesBackgroundIsolate = () => { }; // set by Dub Whole Series below
+    let stopSeriesEarlyTranscribe = () => { }; // set by Dub Whole Series below
 
     // Called from stopAllTabsJob (the All Tabs Stop button and this window's Stop button).
     // Transcribe is stopped by stopAllTabsJob itself.
@@ -16513,6 +16682,7 @@
       // Stop means stop: the parts joining in the background stop too (Continue reuses the
       // parts already finished and joins the rest).
       cancelSeriesBackgroundJoin();
+      stopSeriesEarlyTranscribe(); // the next part being split / transcribed ahead (Continue reuses what finished)
       if (seriesRun.splitJobId) post("http://localhost:3001/api/split/cancel", { jobId: seriesRun.splitJobId });
       if (seriesRun.step === "generate" && (isGeneratingAudioAll || voxQueueRunning)) generateSelectedAudioAllProjects();
       if (seriesRun.step === "generate" || seriesRun.step === "match") cancelFastCondenseRequests(); // "Shortening rushed lines", "Subtitles with no line"
@@ -16841,6 +17011,7 @@
       // Parts after the one being dubbed are joined in the background (plan.bgJoin = { jobId,
       // indices }, kept across a reload), so part 1 is dubbed as soon as it is joined.
       let bgJoinProgress = null; // { [partIndex]: backend part status } while that job runs
+      let earlyRun = null; // the next part cut / transcribed ahead: { index, ctrl, split, promise, phase, done, total, splitJobId } (startEarlyTranscribe)
       let bgPoll = null;
       let bgPollJob = null; // the plan.bgJoin that bgPoll is watching
       const joiningIndices = () => (plan?.bgJoin ? plan.bgJoin.indices.filter((k) => plan.parts[k].status === "planned") : []);
@@ -17074,6 +17245,11 @@
             state = running ? pill("run", "working…") : pill("warn", "stopped - Continue");
             bar = stepsPercent(plan.stepState);
           }
+          else if (earlyRun && earlyRun.index === i && earlyRun.phase === "splitting") state = pill("info", "cutting into tabs early");
+          else if (earlyRun && earlyRun.index === i && earlyRun.phase === "transcribing") {
+            state = pill("info", `transcribing early ${earlyRun.done}/${earlyRun.total}`, "Transcribed while the part before is voiced - its Transcribe step will find these ready.");
+            bar = earlyRun.total ? Math.round(earlyRun.done / earlyRun.total * 100) : 0;
+          }
           else state = pill("wait", episodeTabsShown() ? "waiting" : "joined, waiting");
           const tabs = episodeTabsShown() && p.episodes ? p.episodes
             : Math.max(1, Math.min(MAX_PROJECT_TABS, Math.round(p.duration / (splitMinutes() * 60))));
@@ -17180,15 +17356,15 @@
 
       // ── Checks and helpers ────────────────────────────────────────────────
       const otherJobRunning = () => !!(allTabsJob || isTranscribingAll || isTranscribing || isGeneratingAudioAll || isGeneratingAudio || isIsolatingBgmAll || voxQueueRunning);
-      function preflight() {
+      async function preflight() {
         if (otherJobRunning()) {
           showToast("Another job is running. Wait for it to finish or stop it first.", "warning");
           return false;
         }
         if (wanted("transcribe")) {
           const engine = document.querySelector('input[name="transcription-engine"]:checked')?.value || "gemini";
-          if (engine !== "whisper" && !getGeminiKeys().length) {
-            showToast("Please add at least one Gemini API Key in Settings.", "error");
+          if (engine !== "whisper" && !getGeminiKeys().length && !(await routerHasGmails())) {
+            showToast("Please add at least one Gemini API Key in Settings, or sign in a Gmail in the Gemini Web Router.", "error");
             document.getElementById("btn-open-settings")?.click();
             return false;
           }
@@ -17443,6 +17619,57 @@
         render();
       }
 
+      // Cuts part k into tabs of about splitMinutes(). Used by the Split step and, in the
+      // background, by the early transcribe of the next part (onJob: the splitter's job id while it
+      // runs, so Stop can cancel it; onPercent: progress).
+      async function splitPartFile(k, { onJob = () => { }, onPercent = () => { } } = {}) {
+        const part = plan.parts[k];
+        const src = await postJson(`${API}/split/inspect`, { file: part.outPath });
+        if (!src.success) throw new Error(`Could not read part ${k + 1}: ${src.error}.`);
+        let n = Math.max(1, Math.min(40, Math.round(src.duration / (splitMinutes() * 60))));
+        const capped = n > MAX_PROJECT_TABS;
+        if (capped) n = MAX_PROJECT_TABS;
+        while (n > 1 && src.duration / n < 120) n--; // the splitter refuses pieces under 2 minutes
+        if (n < 2) return { pieces: [part.outPath], note: "short part, opened as one tab", duration: src.duration };
+        const r = await postJson(`${API}/split/start`, { file: src.path, outDir: pathJoin(dirOf(src.path), "DR Dubber Split"), partCount: n, baseName: baseOf(src.path) });
+        if (!r.success) throw new Error(`Splitting failed: ${r.error}.`);
+        onJob(r.jobId);
+        let st = null;
+        try {
+          for (;;) {
+            await sleep(700);
+            st = await getJson(`${API}/split/status?jobId=${encodeURIComponent(r.jobId)}`).catch(() => null);
+            if (!st || !st.success) throw new Error("Lost track of the splitting job.");
+            onPercent(st.percent || 0);
+            if (st.status !== "running") break;
+          }
+        } finally {
+          onJob(null);
+        }
+        if (st.status === "cancelled") throw stoppedError();
+        if (st.status !== "done") throw new Error(`Splitting failed: ${st.error || "unknown error"}.`);
+        // Joined parts are cut where an episode ends, so a tab holds whole episodes.
+        const between = st.episodeCuts ? (st.episodeCuts === n - 1 ? ", cut between episodes" : `, ${st.episodeCuts} of ${n - 1} cuts between episodes`) : "";
+        return {
+          pieces: st.parts.map((p) => p.outPath),
+          note: `${n} tabs of about ${fmtDur(src.duration / n)}${between}${capped ? ` (limited to ${MAX_PROJECT_TABS} tabs)` : ""}`,
+          duration: src.duration,
+        };
+      }
+
+      // The tabs part k was cut into early (while the part before it was dubbed), when they still
+      // fit: same tab length, same joined file (its length), and every piece still on disk. Cutting
+      // again would give new files, and the results saved for the early pieces would not match them.
+      async function earlyPiecesFor(k) {
+        const part = plan.parts[k];
+        const e = part.early;
+        if (!e || !e.pieces?.length || e.minutes !== splitMinutes() || e.outPath !== part.outPath) return null;
+        const checks = await Promise.all([part.outPath, ...e.pieces].map((f) => postJson(`${API}/split/inspect`, { file: f }).catch(() => null)));
+        if (checks.some((c) => !c || !c.success)) return null;
+        if (Math.abs((checks[0].duration || 0) - (e.duration || 0)) > 1) return null;
+        return e;
+      }
+
       async function splitStep() {
         const part = plan.parts[plan.current];
         if (part.episodeTabs) {
@@ -17450,38 +17677,92 @@
           plan.pieces = part.files.slice();
           return `${plan.pieces.length} episode${plan.pieces.length === 1 ? "" : "s"}, one tab each`;
         }
-        const src = await postJson(`${API}/split/inspect`, { file: part.outPath });
-        if (!src.success) throw new Error(`Could not read part ${plan.current + 1}: ${src.error}.`);
-        let n = Math.max(1, Math.min(40, Math.round(src.duration / (splitMinutes() * 60))));
-        const capped = n > MAX_PROJECT_TABS;
-        if (capped) n = MAX_PROJECT_TABS;
-        while (n > 1 && src.duration / n < 120) n--; // the splitter refuses pieces under 2 minutes
-        if (n < 2) {
-          plan.pieces = [part.outPath];
-          return "short part, opened as one tab";
+        // Being cut early right now: wait for it rather than cutting the same file twice.
+        if (earlyRun && earlyRun.index === plan.current && earlyRun.split) await earlyRun.split.catch(() => { });
+        checkStop();
+        const early = await earlyPiecesFor(plan.current);
+        if (early) {
+          plan.pieces = early.pieces.slice();
+          return `${early.note} (cut while the part before was dubbed)`;
         }
-        const r = await postJson(`${API}/split/start`, { file: src.path, outDir: pathJoin(dirOf(src.path), "DR Dubber Split"), partCount: n, baseName: baseOf(src.path) });
-        if (!r.success) throw new Error(`Splitting failed: ${r.error}.`);
-        seriesRun.splitJobId = r.jobId;
-        let st = null;
-        try {
-          for (;;) {
-            await sleep(700);
-            st = await getJson(`${API}/split/status?jobId=${encodeURIComponent(r.jobId)}`).catch(() => null);
-            if (!st || !st.success) throw new Error("Lost track of the splitting job.");
-            setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Splitting ${st.percent || 0}%`);
-            if (st.status !== "running") break;
-          }
-        } finally {
-          seriesRun.splitJobId = null;
-        }
-        if (st.status === "cancelled") throw stoppedError();
-        if (st.status !== "done") throw new Error(`Splitting failed: ${st.error || "unknown error"}.`);
-        plan.pieces = st.parts.map((p) => p.outPath);
-        // Joined parts are cut where an episode ends, so a tab holds whole episodes.
-        const between = st.episodeCuts ? (st.episodeCuts === n - 1 ? ", cut between episodes" : `, ${st.episodeCuts} of ${n - 1} cuts between episodes`) : "";
-        return `${n} tabs of about ${fmtDur(src.duration / n)}${between}${capped ? ` (limited to ${MAX_PROJECT_TABS} tabs)` : ""}`;
+        // The early pieces don't fit any more (tab length changed, a file is gone): what is being
+        // transcribed for them would never be used.
+        if (earlyRun && earlyRun.index === plan.current) stopSeriesEarlyTranscribe();
+        const r = await splitPartFile(plan.current, {
+          onJob: (id) => { seriesRun.splitJobId = id; },
+          onPercent: (pct) => setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Splitting ${pct}%`),
+        });
+        plan.pieces = r.pieces;
+        return r.note;
       }
+
+      // ── The next part, transcribed early ──
+      // While a part makes its voices and blurs (Edge TTS and the CPU), the Gemini keys sit idle.
+      // Right after its Transcribe step, the next part is cut into tabs (when it is joined) and
+      // its tabs are transcribed in the background - with the glossary the part before just
+      // saved. Each result is kept per piece (batch-result), so when that part starts, its Split
+      // step reuses the pieces and its Transcribe step finds the results ready (no Gemini
+      // request). Best-effort: whatever fails here is done by that part's own steps as before.
+      function startEarlyTranscribe(i) {
+        if (earlyRun || !plan || !wanted("transcribe") || !window.daiStudio?.transcribeFilesEarly || !getGeminiKeys().length) return;
+        const ctrl = new AbortController();
+        const job = { index: -1, ctrl, split: null, promise: null, phase: "waiting", done: 0, total: 0, splitJobId: null };
+        earlyRun = job;
+        let piecesReady;
+        job.split = new Promise((r) => { piecesReady = r; });
+        job.promise = (async () => {
+          // The next part to dub: the first joined one after this; one still joining is waited for.
+          let k = -1;
+          for (;;) {
+            if (ctrl.signal.aborted || !plan) return;
+            k = plan.parts.findIndex((p, idx) => idx !== i && p.status === "joined");
+            if (k >= 0 || !joiningIndices().some((idx) => idx !== i)) break;
+            await sleep(2000);
+          }
+          if (k < 0 || ctrl.signal.aborted) return;
+          job.index = k;
+          const part = plan.parts[k];
+          let pieces;
+          if (part.episodeTabs) pieces = part.files.slice();
+          else {
+            const kept = await earlyPiecesFor(k);
+            if (kept) pieces = kept.pieces;
+            else {
+              job.phase = "splitting";
+              render();
+              const r = await splitPartFile(k, { onJob: (id) => { job.splitJobId = id; } });
+              if (ctrl.signal.aborted) return;
+              part.early = { pieces: r.pieces, note: r.note, duration: r.duration, minutes: splitMinutes(), outPath: part.outPath };
+              savePlan();
+              pieces = r.pieces;
+            }
+          }
+          piecesReady();
+          if (ctrl.signal.aborted || !pieces?.length) return;
+          job.phase = "transcribing";
+          job.total = pieces.length;
+          render();
+          const r = await window.daiStudio.transcribeFilesEarly(pieces, {
+            signal: ctrl.signal,
+            onProgress: (finished) => { job.done = finished; render(); },
+          });
+          if (!ctrl.signal.aborted) console.log(`[Dub Whole Series] Part ${k + 1} transcribed early: ${r.done} of ${r.total} tab(s)${r.failed ? ` (${r.failed} left for its own Transcribe step)` : ""}`);
+        })().catch((e) => {
+          if (!ctrl.signal.aborted && !e.seriesStopped) console.warn("[Dub Whole Series] Early transcribe of the next part stopped:", e.message);
+        }).finally(() => {
+          piecesReady();
+          job.phase = "finished";
+          if (earlyRun === job && job.index < 0) earlyRun = null; // there was no next part
+          render();
+        });
+      }
+      stopSeriesEarlyTranscribe = () => {
+        const job = earlyRun;
+        if (!job) return;
+        earlyRun = null;
+        job.ctrl.abort();
+        if (job.splitJobId) postJson(`${API}/split/cancel`, { jobId: job.splitJobId }).catch(() => { });
+      };
 
       async function loadStep() {
         if (projects.length && !(await closeOpenTabs(`Part ${plan.current + 1} opens as new tabs.`))) {
@@ -17505,6 +17786,19 @@
       // transcribed again (pieces already done come from the server's cache, no quota), then
       // Fix Missing fills stretches Gemini skipped and lines left without Khmer.
       async function transcribeStep() {
+        // This part was being transcribed early (while the part before was voiced): its results
+        // are saved per tab, so the batch below picks them up. Waiting for the rest of it costs
+        // nothing - sending the same tabs again would only double the requests.
+        const job = earlyRun && earlyRun.index === plan.current ? earlyRun : null;
+        if (job) {
+          while (job.phase !== "finished") {
+            checkStop();
+            setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Transcribe: ${job.done} of ${job.total || "?"} tab(s) done early, waiting for the rest`);
+            await Promise.race([job.promise, sleep(1000)]);
+          }
+          if (earlyRun === job) earlyRun = null;
+          checkStop();
+        }
         const emptyTabs = () => projects.filter((p) => !liveSubtitlesOf(p).length);
         const fallbackTabs = new Map(); // tab -> fallback model(s) Gemini used for it
         let partialTabs = 0; // tabs whose own missed-dialogue / re-translate pass didn't finish
@@ -17866,6 +18160,9 @@
       }
 
       async function runPart(i) {
+        // An early run for another part that is over (its part's Transcribe was switched off, or
+        // the series went on without it) makes way for this part's own.
+        if (earlyRun && earlyRun.phase === "finished" && earlyRun.index !== i) earlyRun = null;
         if (plan.current !== i || !plan.stepState) {
           plan.current = i;
           plan.stepState = {};
@@ -17909,8 +18206,10 @@
           else startIsolate();
         }
         for (const [name, fn] of [["transcribe", transcribeStep], ["match", matchStep], ["generate", generateStep], ["isolate", isolateStep], ["blurtext", blurTextStep]]) {
-          if (plan.stepState[name]?.state === "done") continue;
-          await runStep(name, fn);
+          if (plan.stepState[name]?.state !== "done") await runStep(name, fn);
+          // This part's text is final (names saved to the glossary): the next part is cut and
+          // transcribed in the background while this one is matched, voiced and blurred.
+          if (name === "transcribe") startEarlyTranscribe(i);
         }
         // The SRTs saved after Transcribe are out of date by now: Match moved the lines onto the
         // video's own, and Generate shortened the rushed ones (the voice says the shorter line).
@@ -18396,7 +18695,7 @@
 
       // ── Buttons ──────────────────────────────────────────────────────────
       async function startSeries() {
-        if (!scan || seriesRun || !preflight()) return;
+        if (!scan || seriesRun || !(await preflight())) return;
         cancelAutoResume();
         const ready = readyParts();
         const episodeTabs = !ready && episodeTabsWanted();
@@ -18458,7 +18757,7 @@
           }
           return;
         }
-        if (!preflight()) return; // a setting is missing: preflight says which; a person fixes it
+        if (!(await preflight())) return; // a setting is missing: preflight says which; a person fixes it
         if (!auto) plan.autoResume = null; // pressed by hand: the auto-continue tries start over
         // Exports the app closing interrupted: their queues come back from the checkpoints.
         await restoreLostExports();
@@ -25280,7 +25579,7 @@
               showSubtitles,
               srtContent,
               exportPath: activeRenderExportPath,
-              renderEngine: localStorage.getItem("aiDubberRenderEngine") || "cpu",
+              renderEngine: renderEngineSetting(),
               videoDuration: projDuration,
               blurBoxes: cleanBlurBoxes,
               textBlurs: activeTextBlurs(targetProject), // burned-in subtitles, blurred while they show
@@ -25769,7 +26068,7 @@
               showSubtitles: proj.showSubtitles ?? showSubtitles,
               srtContent,
               exportPath: localStorage.getItem("aiDubberExportPath") || (isMac ? "" : "C:\\Export\\AIDubber"),
-              renderEngine: localStorage.getItem("aiDubberRenderEngine") || "cpu",
+              renderEngine: renderEngineSetting(),
               videoDuration: projDuration,
               blurBoxes: cleanBlurBoxes,
               textBlurs: activeTextBlurs(proj), // burned-in subtitles, blurred while they show

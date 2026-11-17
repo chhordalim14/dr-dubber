@@ -48,7 +48,8 @@ test('the speaker names an episode used come back for the next episode of the sa
 test('Transcribe shows Gemini the cast pictures and keeps frames of the speakers it named', () => {
     const src = fs.readFileSync(path.join(__dirname, '..', 'backend', 'routes', 'gemini.js'), 'utf8').replace(/\r\n/g, '\n');
     assert.match(src, /const castParts = videoSource \? seriesCastParts\(castDir\(CHARACTER_SHEETS_DIR, sourceFilePath\), seriesSpeakers, seriesSheet\) : \[\];/);
-    assert.match(src, /castParts: clipMime === 'video\/mp4' \? castParts : null/, 'only beside the video, not the sound-only gap check');
+    // Only beside the video, not the sound-only gap check; with spare keys only on the tab's first piece.
+    assert.match(src, /castParts: clipMime === 'video\/mp4' && \(spreadLanes <= 1 \|\| i === 0\) \? castParts : null/, 'only beside the video, not the sound-only gap check');
     assert.match(src, /\.\.\.\(\(promptOpts && promptOpts\.castParts\) \|\| \[\]\),\n\s+\{ inlineData: \{ mimeType, data: audioBase64 \} \}/);
     assert.match(src, /captureCastFrames\(\{ video: videoSource, cues: allCues/);
 });

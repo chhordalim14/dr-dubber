@@ -40,6 +40,9 @@ const SIGNIN_TIMEOUT_MS = 6 * 60 * 1000;
 const KEEPER_MS = 10 * 60 * 1000;           // how often sign-ins are checked
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const abortError = () => Object.assign(new Error('Aborted'), { name: 'AbortError' });
+const QUOTA_WAIT_DEFAULT_MS = 30 * 60 * 1000; // out of credits and Google gave no reset time
+const CANCEL_SETTLE_MS = 10000; // how long a stopped request may take to let go of its Gmail
 const readJson = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) { return d; } };
 function writeJson(f, data) {
     fs.mkdirSync(path.dirname(f), { recursive: true });
@@ -140,6 +143,11 @@ class GeminiWebRouter {
         this.publicProxyCache = { at: 0, list: [] }; // cached candidate proxy URLs from public feeds
         this.failLogged = new Map(); // "id|code" -> last time that failure was logged
         this.install = { running: false, lines: [], error: null };
+        this.libUpdate = { running: false, lines: [], error: null, result: null };
+        this.libLatest = { at: 0, version: null, checking: false };
+        this.updating = false; // the library is being updated: Gmails are out of the key pool
+        this.usage = { since: Date.now(), events: [], total: {} };
+        this.run = run; // tests replace it
         this.serviceError = null;
         fs.mkdirSync(COOKIE_DIR, { recursive: true });
     }
@@ -355,7 +363,7 @@ class GeminiWebRouter {
         const own = this.ownProxies().length;
         const freeOff = this.settings().freeProxies === false;
         return `No working proxy with a new address is free right now (you have ${own} proxy${own === 1 ? '' : 'ies'} of your own for ${gmails} Gmail${gmails === 1 ? '' : 's'}). `
-            + (freeOff ? 'Add proxies in DR Router PRO, or turn on free proxies.' : 'Add proxies in DR Router PRO, or try again in a few minutes (free ones come and go).');
+            + (freeOff ? 'Free proxies are turned off.' : 'Try again in a few minutes (free ones come and go).');
     }
 
     // Gives Gmail `id` a working proxy no other Gmail uses, and checks it comes up ready on it.
@@ -597,6 +605,156 @@ class GeminiWebRouter {
         }
     }
 
+    // ---- updating the gemini_webapi library -----------------------------------------------------
+    // Google changes gemini.google.com now and then, and the pinned library stops working until
+    // an app release. "Update" installs the newest library, restarts the service, checks it with
+    // a test request through a Gmail, and puts the old packages back if anything fails.
+    installedLib() { return readJson(path.join(ENV_DIR, 'ready.json'), {}).lib || null; }
+
+    // The newest version on PyPI, looked up in the background (at most every 6 h).
+    refreshLatestLib() {
+        if (this.libLatest.checking || Date.now() - this.libLatest.at < 6 * 3600 * 1000) return;
+        this.libLatest.checking = true;
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 8000);
+        fetch('https://pypi.org/pypi/gemini_webapi/json', { signal: ctrl.signal })
+            .then(r => (r.ok ? r.json() : null))
+            .then(j => { if (j && j.info && j.info.version) this.libLatest.version = String(j.info.version); })
+            .catch(() => {})
+            .finally(() => { clearTimeout(t); this.libLatest.at = Date.now(); this.libLatest.checking = false; });
+    }
+
+    libInfo() {
+        this.refreshLatestLib();
+        return { installed: this.installedLib(), latest: this.libLatest.version, update: this.libUpdate };
+    }
+
+    startLibUpdate() {
+        if (this.libUpdate.running) return this.libUpdate;
+        if (!this.envReady()) throw new Error('Install the Gemini Web part first.');
+        if (this.external) throw new Error('The Router service is run by the other copy of DR Dubber. Close that copy, then update here.');
+        if ([...this.inFlight.values()].some(n => n > 0)) throw new Error('The Gmails are working on a job. Update when no job is running.');
+        if (this.signIns.size) throw new Error('A Gmail is signing in. Finish or cancel the sign-in first.');
+        this.libUpdate = { running: true, lines: [], error: null, result: null };
+        this.runLibUpdate().catch((e) => { this.libUpdate.error = e.message; });
+        return this.libUpdate;
+    }
+
+    async libVersion() {
+        const r = await this.run(VENV_PY, ['-c', "import importlib.metadata as m; print(m.version('gemini_webapi'))"]);
+        const v = (r.out || '').trim().split(/\r?\n/).pop();
+        return r.code === 0 && /^\d+(\.\d+)*/.test(v) ? v : null;
+    }
+
+    async restartService() {
+        this.stopService();
+        // Wait until the old service no longer answers, or ensureService takes it for another copy's.
+        for (let i = 0; i < 20; i++) {
+            try { await this.call('/status', undefined, 800); } catch (e) { break; }
+            await sleep(500);
+        }
+        this.external = false;
+        return this.ensureService();
+    }
+
+    // The service is up and, if a Gmail was ready before, a Gmail answers a test request.
+    async libWorks(hadReady, say) {
+        if (!(await this.restartService())) return { ok: false, why: this.serviceError || 'the service did not start' };
+        let accs = [];
+        for (let i = 0; i < 60; i++) { // Gmails reconnect with the new library (seconds each)
+            const st = await this.call('/status').catch(() => null);
+            accs = (st && st.accounts) || [];
+            if (!accs.some(a => a.state === 'starting')) break;
+            await sleep(1500);
+        }
+        if (!hadReady) { say('No Gmail was ready before the update, so only the service start was checked.'); return { ok: true }; }
+        const ready = accs.filter(a => a.enabled && a.state === 'ready');
+        if (!ready.length) return { ok: false, why: `no Gmail came back ready (${accs.map(a => `${a.email}: ${a.state}${a.error ? ` - ${a.error}` : ''}`).join('; ') || 'none'})` };
+        say(`Test request through ${ready[0].email}…`);
+        const r = await this.generate(KEY_PREFIX + ready[0].id, { contents: [{ role: 'user', parts: [{ text: 'Translate to Khmer, answer with the Khmer only: 我们回家吧' }] }] }, null, { timeoutMs: 120000, duringUpdate: true });
+        if (!r || !r.success || !String(r.text || '').trim()) return { ok: false, why: `the test request failed: ${(r && (r.message || r.error)) || 'no answer'}` };
+        say(`Answered: ${String(r.text).trim().slice(0, 80)}`);
+        return { ok: true };
+    }
+
+    async runLibUpdate() {
+        const u = this.libUpdate;
+        const say = (l) => { u.lines.push(l); if (u.lines.length > 200) u.lines.shift(); };
+        const freezeFile = path.join(ENV_DIR, 'rollback-packages.txt');
+        this.updating = true;
+        try {
+            const before = await this.libVersion();
+            const st = await this.call('/status').catch(() => null);
+            const hadReady = !!(st && st.accounts && st.accounts.some(a => a.enabled && a.state === 'ready'));
+            const frozen = await this.run(VENV_PY, ['-m', 'pip', 'freeze', '--disable-pip-version-check']);
+            if (frozen.code !== 0 || !frozen.out.trim()) throw new Error('Could not record the installed packages, so nothing was changed.');
+            fs.writeFileSync(freezeFile, frozen.out);
+            say(`Installed now: gemini_webapi ${before || '?'}. Installing the newest version…`);
+            const up = await this.run(VENV_PY, ['-m', 'pip', 'install', '--upgrade', '--disable-pip-version-check', '--no-input', 'gemini_webapi'], say);
+            const after = await this.libVersion();
+            if (up.code === 0 && after && after === before) {
+                u.result = { status: 'current', version: after, message: `gemini_webapi ${after} is already the newest version.` };
+                say(u.result.message);
+                return;
+            }
+            const check = up.code === 0 && after ? await this.libWorks(hadReady, say) : { ok: false, why: 'pip could not install it' };
+            if (check.ok) {
+                writeJson(path.join(ENV_DIR, 'ready.json'), { lib: after, at: Date.now(), previous: before });
+                u.result = { status: 'updated', from: before, version: after, message: `Updated gemini_webapi ${before} → ${after}. The Gmails work with it.` };
+                say(u.result.message);
+                return;
+            }
+            say(`The new version did not work: ${check.why}. Putting ${before || 'the old version'} back…`);
+            const back = await this.run(VENV_PY, ['-m', 'pip', 'install', '--disable-pip-version-check', '--no-input', '-r', freezeFile], say);
+            await this.restartService();
+            const now = await this.libVersion();
+            if (back.code !== 0 || (before && now !== before)) {
+                throw new Error(`The update failed and the old version could not be put back (now ${now || '?'}). Press Update again later, or reinstall the Gemini Web part.`);
+            }
+            u.result = { status: 'rolled_back', version: before, tried: after, message: `gemini_webapi ${after || 'newest'} did not work (${check.why}), so ${before} was put back.` };
+            say(u.result.message);
+        } catch (e) {
+            u.error = e.message;
+            say(`Error: ${e.message}`);
+            if (!this.proc) await this.ensureService().catch(() => {});
+        } finally {
+            this.updating = false;
+            u.running = false;
+        }
+    }
+
+    // ---- who answered: Gmails or API keys --------------------------------------------------------
+    // routes/gemini.js reports every answer while the Router is on: a Gmail's answer or the reason
+    // it was passed over, and each API key answer. The page shows the last hour and since start, so
+    // you can see whether the Gmails carry the work or it quietly goes to API keys.
+    usageReason(r) {
+        const code = r && r.code;
+        if (code === 'GWEB_BUSY') return 'busy';
+        if (code === 'GWEB_SIGNED_OUT') return 'signedOut';
+        if (r && Number(r.status) === 429) return r.isDailyQuota ? 'credits' : 'blocked';
+        if (r && Number(r.status) === 504) return 'timeout';
+        return 'error';
+    }
+    noteUsage(kind, result) {
+        const ok = !!(result && result.success);
+        if (kind !== 'gmail' && !ok) return; // API key failures are the key pool's business
+        const what = ok ? (kind === 'gmail' ? 'gmail' : 'api') : this.usageReason(result);
+        const now = Date.now();
+        const ev = this.usage.events;
+        ev.push({ at: now, what });
+        this.usage.total[what] = (this.usage.total[what] || 0) + 1;
+        let drop = 0;
+        while (drop < ev.length && ev[drop].at < now - 3600 * 1000) drop++;
+        if (ev.length - drop > 20000) drop = ev.length - 20000;
+        if (drop) ev.splice(0, drop);
+    }
+    usageSummary() {
+        const cut = Date.now() - 3600 * 1000;
+        const lastHour = {};
+        for (const e of this.usage.events) if (e.at >= cut) lastHour[e.what] = (lastHour[e.what] || 0) + 1;
+        return { since: this.usage.since, lastHour, total: { ...this.usage.total } };
+    }
+
     // ---- the service -----------------------------------------------------------------------
     async call(pathname, body, timeoutMs = 15000) {
         const ctrl = new AbortController();
@@ -668,7 +826,7 @@ class GeminiWebRouter {
     }
 
     async keepSessionsAlive() {
-        if (this.keeping) return;
+        if (this.keeping || this.updating) return; // a library update restarts every Gmail itself
         this.keeping = true;
         try {
             const st = await this.call('/status').catch(() => null);
@@ -792,7 +950,9 @@ class GeminiWebRouter {
 
     async status({ quota = false } = {}) {
         let svc = null;
-        if (this.envReady()) {
+        // Not while the library is updated: it restarts the service itself, and a start from here
+        // in the middle would find the old service still closing and take it for another copy's.
+        if (this.envReady() && !this.updating) {
             const up = await this.ensureService();
             if (up) svc = await this.call(quota ? '/quota' : '/status', quota ? {} : undefined, 60000).catch(() => null);
         }
@@ -807,6 +967,9 @@ class GeminiWebRouter {
             timing: require('./gemini-web-timing').available(),
             proxyChoices: this.proxyChoices(),
             proxySummary: this.proxySummary(),
+            usage: this.usageSummary(),
+            lib: this.envReady() ? this.libInfo() : null,
+            updating: this.updating,
             accounts: this.accounts().map(a => ({
                 ...a,
                 proxySource: this.proxySourceOf(a),
@@ -820,6 +983,7 @@ class GeminiWebRouter {
     // Pool keys for DR Dubber's jobs: ready accounts, when the router is switched on.
     keysForDubber() {
         if (!this.settings().useForDubbing || !this.envReady()) return [];
+        if (this.updating) return []; // the library is being swapped: jobs use API keys meanwhile
         const gmailOnly = this.settings().gmailOnly === true;
         const canRefresh = (id) => !this.refreshFailed.has(id) && fs.existsSync(path.join(PROFILE_DIR, id));
         if (!this.proc && !this.external) this.ensureService().catch(() => {});
@@ -857,8 +1021,14 @@ class GeminiWebRouter {
         return { success: false, status: 502, code: 'GWEB_BUSY', error: msg, message: msg };
     }
 
-    async generate(key, payload, signal, { timeoutMs = 10 * 60 * 1000, noWait = false } = {}) {
+    async generate(key, payload, signal, { timeoutMs = 10 * 60 * 1000, noWait = false, duringUpdate = false } = {}) {
         const id = key.slice(KEY_PREFIX.length);
+        if (signal && signal.aborted) throw abortError(); // the job was stopped: nothing to send
+        if (this.updating && !duringUpdate) {
+            // A key handed out just before the update started: passed over like a busy Gmail.
+            const msg = 'Gemini Web Router is updating its library';
+            return { success: false, status: 502, code: 'GWEB_BUSY', error: msg, message: msg };
+        }
         if (noWait) { const busy = this.busyResult(key); if (busy) return busy; }
         this.inFlight.set(id, (this.inFlight.get(id) || 0) + 1);
         try { return await this.generateOnce(key, id, payload, signal, timeoutMs, noWait); }
@@ -869,16 +1039,36 @@ class GeminiWebRouter {
         if (!(await this.ensureService())) {
             return { success: false, status: 403, error: 'INVALID_API_KEY', message: this.serviceError || 'Gemini Web Router is not running.' };
         }
+        // Starting the service can take a while: the job may have been stopped meanwhile.
+        if (signal && signal.aborted) throw abortError();
         const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gweb_'));
         try {
             const { prompt, files } = payloadToPrompt(payload, tmp);
             const set = this.settings();
+            const requestId = crypto.randomBytes(8).toString('hex');
             const req = this.call('/generate', {
                 account: id, prompt, files, timeoutSec: Math.round(timeoutMs / 1000),
-                model: set.model || null, extendedThinking: set.thinking === 'extended', noWait: !!noWait
+                model: set.model || null, extendedThinking: set.thinking === 'extended', noWait: !!noWait, requestId
             }, timeoutMs + 30000);
-            const aborted = signal ? new Promise((_, rej) => signal.addEventListener('abort', () => rej(Object.assign(new Error('Aborted'), { name: 'AbortError' })), { once: true })) : null;
-            const r = await (aborted ? Promise.race([req, aborted]) : req);
+            let onAbort = null;
+            const aborted = signal ? new Promise((_, rej) => { onAbort = () => rej(abortError()); signal.addEventListener('abort', onAbort, { once: true }); }) : null;
+            let r;
+            try {
+                r = await (aborted ? Promise.race([req, aborted]) : req);
+            } catch (e) {
+                if (e && e.name === 'AbortError') {
+                    // Stop it in the service too. Before this, the Gmail stayed locked on the
+                    // stopped request until Google answered or it timed out (up to 10 minutes),
+                    // and its audio file was deleted while it might still be uploading.
+                    await this.call('/cancel', { requestId }, CANCEL_SETTLE_MS).catch(() => {});
+                    let settle = null;
+                    await Promise.race([req.catch(() => {}), new Promise((res) => { settle = setTimeout(res, CANCEL_SETTLE_MS); })]);
+                    clearTimeout(settle);
+                }
+                throw e;
+            } finally {
+                if (onAbort) signal.removeEventListener('abort', onAbort);
+            }
             this.call('/status').catch(() => {});
             if (r && r.ok) {
                 const text = stripFences(r.text);
@@ -889,7 +1079,7 @@ class GeminiWebRouter {
             // just moving on to an API key - a whole series ran on API keys unnoticed.
             const code = (r && r.code) || 'ERROR';
             const fk = `${id}|${code}`;
-            if (code !== 'BUSY' && Date.now() - (this.failLogged.get(fk) || 0) > 60000) {
+            if (code !== 'BUSY' && code !== 'CANCELLED' && Date.now() - (this.failLogged.get(fk) || 0) > 60000) {
                 this.failLogged.set(fk, Date.now());
                 console.warn(`[GeminiWeb] ${code}: ${msg}`);
             }
@@ -898,7 +1088,9 @@ class GeminiWebRouter {
                 // Busy with another job: a passing "server" failure, so the key rotation moves
                 // straight on to the next key without parking this Gmail.
                 case 'BUSY': return { success: false, status: 502, code: 'GWEB_BUSY', error: msg, message: msg };
-                case 'QUOTA': return { success: false, status: 429, error: 'RATE_LIMIT_EXCEEDED', isDailyQuota: true, retryAfterMs: 30 * 60 * 1000, message: msg };
+                // Parked until Google says the credits come back (the service works it out).
+                case 'QUOTA': return { success: false, status: 429, error: 'RATE_LIMIT_EXCEEDED', isDailyQuota: true, retryAfterMs: r.retryAfterSec > 0 ? r.retryAfterSec * 1000 : QUOTA_WAIT_DEFAULT_MS, message: msg };
+                case 'CANCELLED': throw abortError();
                 case 'BLOCKED': return { success: false, status: 429, error: 'RATE_LIMIT_EXCEEDED', retryAfterMs: 15 * 60 * 1000, message: msg };
                 // Signed out by Google (or not back yet): a passing failure, not a bad key - it
                 // was parked 10 min like a refused API key, its episodes going to API keys. The
