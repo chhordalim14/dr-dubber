@@ -6,7 +6,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'backend', 'routes', 'gemini.js'), 'utf8');
+// CRLF on a Windows checkout (core.autocrlf) would hide the '\n}\n' the functions end at.
+const src = fs.readFileSync(path.join(__dirname, '..', 'backend', 'routes', 'gemini.js'), 'utf8').replace(/\r\n/g, '\n');
 const pick = (re) => { const m = src.match(re); assert.ok(m, `not found: ${re}`); return m[0]; };
 const consts = ['TRANSCRIBE_CHUNK_TARGET_SEC', 'TRANSCRIBE_SINGLE_MAX_SEC', 'SPREAD_MIN_CHUNK_SEC']
     .map((n) => pick(new RegExp(`const ${n} = [^;]+;`))).join('\n');
