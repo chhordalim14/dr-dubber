@@ -155,6 +155,7 @@ sequenceDiagram
 | `backend/lib/codecraft.js` | CodeCraft client for `cc_` keys (text only) |
 | `backend/lib/gemini-web-router.js`, `gemini-web.js`, `gemini-web-timing.js` | Gemini Web Router (section 10) |
 | `backend/lib/tts-worker.js` | Keeps one Edge TTS Python worker alive |
+| `backend/lib/request-errors.js` | Logs why requests from the window to the backend failed (Chromium's `net::ERR_…`), one line per burst |
 | `backend/lib/voxcpm-installer.js` | One-click VoxCPM2 install |
 | `backend/lib/bgm-cache.js` | Separated-stem cache and BGM job bookkeeping |
 | `backend/lib/text-blur.js`, `video-color.js` | FFmpeg filters for text blur and colour |
@@ -542,12 +543,12 @@ Removing a Gmail on the page deletes its cookies and its Chrome profile.
 
 ```mermaid
 flowchart TD
-    A["Generate Audio<br/>(selected lines)"] --> B["Worker pool in the window<br/>Concurrent Audio Generation, default 3 (1–10)"]
+    A["Generate Audio<br/>(selected lines)"] --> B["Worker pool in the window<br/>Concurrent Audio Generation, default 3 (1–10)<br/>at most 5 requests open across every tab"]
     B --> C["KhmerSpeech.normalizeForSpeech<br/>numbers, abbreviations, word lists, punctuation"]
     C --> D["POST /api/generate-audio<br/>voice: Male → Piseth, Female → Sreymom<br/>emotion → rate and volume"]
     D --> E{"In the cache?<br/>(2,000 entries, 2 h)"}
     E -- yes --> H
-    E -- no --> F["tts_generator.py --serve worker<br/>12 lines at once"]
+    E -- no --> F["tts_generator.py --serve worker<br/>12 lines at once, fewer while Microsoft refuses (EdgeGate)"]
     F -- "worker unusable" --> F2["One Python process per line<br/>(3 at once)"]
     F --> G["edge_tts → MP3, silence trimmed with FFmpeg"]
     F2 --> G
@@ -577,7 +578,10 @@ flowchart TD
   | Fear | +5% | +18% |
 - **Speed** is not baked into the file. It plays as `playbackRate` in the editor and as FFmpeg `atempo` in the render.
 - **Retries.** Up to 8 tries per line, waiting 1.5 s and doubling each time, up to 30 s (3 s base after a network error). A 4xx other than 429 is not retried. A Microsoft 403 refusal gets one more try.
-- **Worker** (`lib/tts-worker.js`). One `tts_generator.py --serve` process, talking JSON lines over stdin and stdout, with a 120 s timeout per line. If the worker dies, only its in-flight lines fail. After 3 deaths in a row, each line uses its own process.
+- **Requests from the window** (`withVoiceRequestSlot` in `studio-main.js`). At most 5 Edge requests are open at once across every tab; the other lines wait in the window. The window sends only 6 requests to one server at a time and queues the rest inside Chromium, where **Generate All Tabs** used to park 40–60 lines; on 2026-11-18 such a queue failed all at once (64 and then 43 lines "Failed to fetch" in the same millisecond, the server fine). Five, not six, leaves one connection for Transcribe and the status checks. Test: `tests/voice-and-bgm-load.test.js`.
+- **Worker** (`lib/tts-worker.js`). One `tts_generator.py --serve` process, talking JSON lines over stdin and stdout, with a 300 s timeout per line. If the worker dies, only its in-flight lines fail. After 3 deaths in a row, each line uses its own process.
+- **Microsoft busy** (`EdgeGate` in `tts_generator.py`). "No audio was received" is Microsoft turning lines away, not a problem with the text. On a refusal the worker halves how many lines it sends at once (down to 2) and sends nothing new for 2 s; each line voiced in a row brings one more back, up to 12. Still refused at 2 at once means Microsoft is counting lines per minute, so it rests: no new line for 30 s, then 60 s while refusals go on, until one is voiced again. A refused line gets up to 6 tries in the worker before the window's own retries. The log shows `[TTS busy] …`. Test: `tests/tts-edge-gate.test.js`.
+- **Failed requests to the backend.** `main.js` passes `session.webRequest.onErrorOccurred` for `localhost:3001` to `lib/request-errors.js`, which writes each burst as one line with Chromium's reason, e.g. `[Network] 43 request(s) from the window to the app's server failed: net::ERR_NETWORK_CHANGED (POST /api/generate-audio x43)`. `ERR_ABORTED` (Stop) and `ERR_CACHE_MISS` (cache-only lookups) are left out.
 - **Trim.** Silence below −45 dB is cut, keeping 10 ms before the voice and 80 ms after. Inner pauses over 0.5 s become 0.3 s.
 
 ### VoxCPM2
@@ -606,6 +610,7 @@ flowchart TD
   - `POST /api/generate` makes one line.
   - `POST /api/speakers` says who speaks each line.
   - `POST /api/release` frees the GPU. Isolate BGM calls it before using the GPU, and the next line loads the model again.
+  - **Idle unload.** After 15 minutes with no line spoken, the server unloads the model on any device (several GB of RAM on a PC without NVIDIA, held all session before); the next line loads it again, about 40 s. `VOXCPM_IDLE_MINUTES` changes the 15, and `0` keeps it loaded. Test: `tests/voxcpm-idle-unload.test.js`.
 - **Consistency.** Each voice has a fixed seed and a fixed Khmer "anchor" line, so it sounds the same in every line. Asking for the same line again draws a new take.
 - **Too-long lines** are shortened once before voicing, using an estimate of 9 letters per second.
 - **Fallback.** If VoxCPM2 is switched off during a run, the remaining lines go to Edge TTS.
@@ -642,7 +647,7 @@ In a series run, this happens without the user:
 
 ```mermaid
 flowchart TD
-    A["Isolate BGM / Isolate All (2 at once)"] --> B["POST /api/remove-vocals<br/>engine, GPU/CPU, removeMusic"]
+    A["Isolate BGM / Isolate All<br/>(2 tabs at once; 1 with 16 GB of RAM or less)"] --> B["POST /api/remove-vocals<br/>engine, GPU/CPU, removeMusic"]
     B --> C{"Stems cached?<br/>sha1(path, size, mtime, engine, model)"}
     C -- yes --> DONE
     C -- no --> R["Repair broken source audio"]
@@ -651,7 +656,7 @@ flowchart TD
     E -- "mdx / demucs / spleeter" --> V["vocal_separator.py<br/>chosen engine first, then the other two"]
     V -- "all ML engines failed" --> FB["FFmpeg phase cancellation<br/>method: ffmpeg_fallback (warned)"]
     V -- ok --> MR{"Remove music too?"}
-    MR -- yes --> CDX["music_remover.py (CDX23 Demucs)<br/>fails as an error, never keeps the music"]
+    MR -- yes --> CDX["music_remover.py (CDX23 Demucs, one at a time on the PC)<br/>fails as an error, never keeps the music"]
     MR -- no --> CA
     CDX --> CA["Cache stems (only from the engine asked for)"]
     CA --> DONE["Job done: bgmPath, vocalPath, method,<br/>fallbackReason → tab's bgmTrack"]
@@ -659,7 +664,17 @@ flowchart TD
     FB --> DONE
 ```
 
-- **Engines.** MDX-Net (`UVR-MDX-NET-Voc_FT`, ONNX) is the default. Demucs runs `htdemucs` with two stems, and Spleeter runs 2 stems. MDX-Net uses DirectML on Windows and moves to the CPU if the GPU fails. On macOS it runs on the CPU.
+- **Engines.** MDX-Net (`UVR-MDX-NET-Voc_FT`, ONNX) is the default. Demucs runs `htdemucs` with two stems, and Spleeter runs 2 stems. MDX-Net uses DirectML on Windows and Core ML on a Mac, and moves to the CPU if the GPU fails or gives back invalid numbers (`MDX_DEVICE=cpu`, set by **Hardware Acceleration → CPU**, keeps it there). Only the Windows setup puts the model in `backend/models`; elsewhere it is downloaded once (64 MB, sha256-checked) into `storage/models`. Without it every tab fell back to Spleeter.
+- **Remove music** (`music_remover.py`, CDX23) runs in the Demucs Python, on NVIDIA's GPU, else Apple's (MPS), else the CPU; a GPU failure or NaN output redoes it on the CPU.
+- **Memory.** Measured on a 10-minute tab (M4, 16 GB); the stems are the same bit for bit as before these changes:
+
+  | Step | Peak RAM | How it is kept down |
+  | --- | --- | --- |
+  | MDX-Net | 0.9 GB on Core ML, 1.7 GB on the CPU (was 1.4 / 3.1) | Decoded, separated and written a ~6 s chunk at a time (`stream_stem`), never the whole track; no ONNX memory-pattern planning on the CPU |
+  | Remove music | 3.7 GB on Apple's GPU, 1.9 GB on the CPU (was 6.1 / 3.1) | `separate_sfx`: Demucs' own segment loop, keeping only the effects stem and writing it as it goes (`apply_model` held all three stems of the whole tab) |
+  | Spleeter | about 6.4 GB | The whole tab through TensorFlow at once; nothing to stream |
+
+  Spleeter and Remove music each run one at a time on the PC (`one_at_a_time` in `vocal_separator.py`, a file lock the OS drops when Stop kills the holder); a waiting job logs that it waits. **Isolate All** does 1 tab at a time when `app:getHardwareSpecs` reports 16 GB of RAM or less (`bgmTabsAtOnce`), else 2. Tests: `tests/onnx-separator.test.js`, `tests/music-remover.test.js`, `tests/spleeter-one-at-a-time.test.js`, `tests/voice-and-bgm-load.test.js`.
 - **GPU sharing.** Before a GPU separation, the backend asks VoxCPM2 to release the GPU. If it can't, the separation runs on the CPU.
 - **Status.** The window polls `/api/bgm-job-status` every 2.5 s. **Stop** marks the job cancelled, then kills the process tree.
 - **Cache.** `storage/separated/bgm-cache/` keeps stems for 14 days and at most 4 GB. Work folders are removed after 24 h.
@@ -669,7 +684,7 @@ flowchart TD
 
 ### Finding burned-in subtitles
 
-`POST /api/detect-text` queues `text_detector.py <video> --fps 4`, at most `min(4, cpus/4)` at once. Results are cached in `storage/text_detect/`. While any detection runs, exports run at lower priority and new exports wait (section 15).
+`POST /api/detect-text` queues `text_detector.py <video> --fps 4`, at most `min(4, cpus/4)` at once, each about 0.5 GB of RAM. Its subtitle strip is decoded by NVIDIA's decoder, or VideoToolbox on a Mac (`DR_TEXT_HWACCEL` picks another, or `none`); without one it is decoded on the CPU. Results are cached in `storage/text_detect/`. While any detection runs, exports run at lower priority and new exports wait (section 15).
 
 ```mermaid
 flowchart TD
@@ -716,7 +731,7 @@ flowchart TD
 
 - **Encoder choice.** The render engine setting defaults to GPU (Auto) (`renderEngineSetting` in `studio-main.js`); a saved CPU choice is kept. Auto uses the first hardware encoder that passes its test, and `libx264` when none does, so a PC with no usable GPU exports exactly as with CPU. Until 2026-11-17 the default was CPU. Test: `tests/render-engine-default.test.js`.
 - **Bitrate.** 6500k at 720p and above, otherwise 4500k. libx264 uses `veryfast -crf 20`; audio is AAC 192k.
-- **NVIDIA decoding.** NVIDIA cards also decode on the GPU. If that fails, the render retries once without it.
+- **GPU decoding.** NVIDIA cards also decode on the GPU, and a Mac decodes with VideoToolbox (the same frames bit for bit, a little less CPU). If that fails, the render retries once without it, and the rest of the session decodes on the CPU. An export takes about 0.25–0.35 GB (720p, measured on a Mac). Test: `tests/render-hw-decode-mac.test.js`.
 - **Subtitles.** Burned in as ASS with the bundled fonts. HarfBuzz shaping is needed for Khmer. If FFmpeg has no subtitle filter, the subtitles are added as a soft track instead.
 - **Colour.** The colour presets ("Drama LUT") only set slider values. No `.cube` files are used.
 - **Missing voices.** If the voice files are missing, the render fails instead of exporting a silent video.

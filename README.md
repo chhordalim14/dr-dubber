@@ -13,7 +13,7 @@ Full guide (using the app, settings, architecture, releases, troubleshooting): [
 - **Transcribe**: Gemini direct transcription, or an on-device engine ([whisper_engine/](whisper_engine/), faster-whisper) followed by translation.
 - **Translate to Khmer**: drama-aware translation with genre styles (romance, action, horror, mystery, fantasy, family, youth, …). It keeps character names the same across episodes, shortens lines that are too long for their time slot, and catches Latin text that slips through.
 - **AI voices**: Microsoft Edge TTS Khmer voices (`km-KH-PisethNeural`, `km-KH-SreymomNeural`) with per-line emotion, speed and pitch. Each line keeps its Male/Female voice. VoxCPM2 voice cloning is optional.
-- **Isolate BGM**: removes the original voices and keeps the music and effects. MDX-Net (UVR-MDX-NET-Voc_FT, default, runs on the GPU through DirectML on Windows), Demucs, Spleeter or plain FFmpeg.
+- **Isolate BGM**: removes the original voices and keeps the music and effects. MDX-Net (UVR-MDX-NET-Voc_FT, default, runs on the GPU through DirectML on Windows and Core ML on a Mac), Demucs, Spleeter or plain FFmpeg.
 - **Blur Subtitles**: finds hard-coded on-screen text (RapidOCR) and blurs it.
 - **Timeline editor**: NLE-style timeline with video thumbnails, the original audio's waveform, and every dubbed line drawn as its own waveform.
 - **Dub Whole Series**: hands-free batch dubbing of a whole series. It joins or splits episodes into parts, rotates spare Gemini keys, resumes after errors, and exports with progress.

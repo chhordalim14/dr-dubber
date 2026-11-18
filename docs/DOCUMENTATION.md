@@ -37,7 +37,7 @@ Install Node.js 22, FFmpeg and a Gemini key, then `npm install` and `npm start`.
    cd dr-dubber
    npm install
    ```
-2. On Windows, set up the bundled Python environment (Edge TTS, the text detector and the MDX-Net model, about 64 MB): run `setup_python_env.bat`.
+2. On Windows, set up the bundled Python environment (Edge TTS, the text detector and the MDX-Net model, about 64 MB): run `setup_python_env.bat`. On a Mac, the MDX-Net model downloads itself the first time you isolate BGM.
 3. Start the app with `npm start`. This builds the Tailwind CSS, then launches Electron. You can also double-click `Run-DR-Dubber-Pro.bat` (Windows) or `Run-DR-Dubber-Pro.command` (macOS).
 4. Open **Settings** and paste your Gemini key. Add spare keys too: series dubbing rotates through them when one hits its quota.
 
@@ -135,10 +135,10 @@ Switch between English and Khmer with **EN / ខ្មែរ** in the header or 
 | API Saver mode | Fewer, longer requests: pieces of about 9 min (up to 10 min in one request), and no extra gap check. Turned off automatically while Gmails from the Gemini Web Router are used | On |
 | Transcription Engine | Direct (Gemini), Whisper + Translate | Direct (Gemini) |
 | Vocal Removal Engine | MDX-Net (Best), Demucs, Spleeter, FFmpeg (Instant) | MDX-Net |
-| Hardware Acceleration (Vocal Removal) | GPU, CPU | GPU on Windows, CPU on macOS |
+| Hardware Acceleration (Vocal Removal) | GPU, CPU. GPU: DirectML on Windows, Core ML (MDX-Net) and Apple's GPU (Remove music) on a Mac, each going back to the CPU by itself if the GPU fails | GPU |
 | Demucs Segment Size | 1–7 | 7 |
 | Final Video Rendering | GPU (Auto): uses NVIDIA, Intel Quick Sync, AMD or Mac hardware encoding when it works, otherwise the CPU. CPU (x264): always the CPU | GPU (Auto) |
-| Concurrent Audio Generation | 1–10 | 3 |
+| Concurrent Audio Generation | 1–10 lines per tab. Across every tab at most 5 Edge requests are open at once | 3 |
 | Save Path (For Exported Video) | Any folder | `C:\Export\AIDubber` on Windows |
 | Generated Audio Temp Path | Any folder | `C:\Temp\AIDubber` on Windows |
 | Auto Save Subtitle | After transcription, with gender tag, beside the source or in a custom folder | — |
@@ -153,6 +153,7 @@ Only needed to override a default. Nothing reads a `.env` file, although `.env.e
 | --- | --- | --- |
 | `PYTHON_PATH` / `PYTHON_BIN` | Auto-detected (bundled `backend/python_env` first) | Python used for the ML tools |
 | `PORT` | `3001` | Backend port, for `npm run server` only. The Electron app always uses 3001, and setting `PORT` there breaks it |
+| `VOXCPM_IDLE_MINUTES` | `15` | Minutes with no line spoken before the VoxCPM2 server unloads its model to free memory (the next line loads it again, about 40 s). `0` keeps it loaded |
 | `APP_STORAGE_DIR` | `./storage` in development; the app-data folder when installed | Storage folder, for `npm run server` only. The Electron app always sets it itself |
 
 ### Where files are stored
@@ -227,6 +228,9 @@ Most failures are a used-up Gemini quota, a missing Python or FFmpeg, or a BGM e
 | "Fix Missing skipped: the daily Gemini quota is used up." | Quota ran out mid-run | After the reset, run **All Tabs › Fix Missing in all tabs** |
 | "No working Python environment found for text-to-speech…" | Python not found | Windows: run `setup_python_env.bat`. Otherwise install Python 3.11 with "Add to PATH" and `pip install edge-tts`, or set `PYTHON_PATH` |
 | Isolate BGM crashes or hangs | GPU driver problem with MDX-Net | Set **Hardware Acceleration (Vocal Removal)** to CPU |
+| The computer freezes or runs out of memory during Dub Whole Series (16 GB of RAM) | Several heavy steps at once. The biggest are Spleeter (about 6.4 GB a tab) and Remove music (3.7 GB a tab on a Mac's GPU) | Keep **Vocal Removal Engine** on MDX-Net (0.9–1.7 GB a tab). On 16 GB or less the app already isolates one tab at a time and runs Spleeter and Remove music one at a time; turning **Remove music from BGM** off saves the most. Keep 20 GB or more free on the disk: a full disk stops the system from swapping |
+| Many `[Retry 1/8] Audio gen retry … No audio was received` lines | Microsoft is turning lines away because too many arrived too fast. It is not the text | Nothing to fix: the app sends fewer at once and rests 30–60 s, and every line is retried |
+| Dozens of `[Retry 1/8] Audio gen retry … Failed to fetch` lines at the same moment | Requests from the window to the app's own server were dropped all at once | The lines are retried by themselves. The next line in the log, `[Network] … failed: net::ERR_…`, names the reason (e.g. `ERR_NETWORK_CHANGED`: a VPN or Wi-Fi change) |
 | "BGM is only FFmpeg phase cancellation - it may have almost no music…" | The FFmpeg fallback engine ran | Switch **Vocal Removal Engine** to MDX-Net |
 | "DR Dubber Pro could not start" | Port 3001 is in use, often by a second copy | Close the other copy, or whatever else uses port 3001. The port can't be changed for the app |
 | "Unexpected Error" dialog | An uncaught error; the app keeps running | Send `storage/logs/crash.log` with a bug report |
