@@ -1535,6 +1535,15 @@
     return summary;
   }
 
+  // A result with holes: lines left without Khmer, a missed-dialogue check that failed or was
+  // cut short, a quota error, or pieces from a fallback model (they split lines differently).
+  // Never reused from disk - it is transcribed again - and the app never saves one itself.
+  function isIncompleteResult(result) {
+    const repair = (result && result.repair) || {};
+    return repair.stillUntranslated > 0 || !!repair.translateError || !!repair.quotaError || !!repair.gapsFailed || !!repair.gapsSkippedForTime ||
+      ((result && result.fallbackModels) || []).length > 0;
+  }
+
   async function loadSavedBatchResult(backendBase, filePath, signal) {
     try {
       const res = await fetch(`${backendBase}/api/batch-result/get`, {
@@ -1544,7 +1553,9 @@
         signal
       });
       const data = await res.json();
-      return data.found && data.result && Array.isArray(data.result.data) && data.result.data.length
+      // The server keeps an early transcript (Dub Whole Series, the next part) as it came, holes
+      // and all: reusing that one would keep its holes for good, as the batch never asks again.
+      return data.found && data.result && Array.isArray(data.result.data) && data.result.data.length && !isIncompleteResult(data.result)
         ? { success: true, ...data.result }
         : null;
     } catch (e) {
@@ -1697,9 +1708,7 @@
     // Kept for a later run only when it is complete: a result with holes (lines left without
     // Khmer, a missed-dialogue check that failed, lines merged by a fallback model) is
     // transcribed again next time instead of being reused as it is.
-    const repairReport = transcribeResult.repair || {};
-    const incomplete = repairReport.stillUntranslated > 0 || !!repairReport.translateError || !!repairReport.quotaError || !!repairReport.gapsFailed || !!repairReport.gapsSkippedForTime ||
-      (transcribeResult.fallbackModels || []).length > 0;
+    const incomplete = isIncompleteResult(transcribeResult);
     if (!item.reusedSaved && item.filePath && !incomplete && !early) { // early: the server saved it
       // Waited for (a local file, milliseconds): an early-transcribed piece must be on disk before
       // its part's Transcribe step looks for it.

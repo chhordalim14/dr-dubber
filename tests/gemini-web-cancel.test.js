@@ -79,6 +79,20 @@ describe('Gemini Web Router: stopping a job', () => {
         assert.equal(gw.inFlight.get('g1'), 0, 'the Gmail is free again');
     });
 
+    test('the service request timing out (job not stopped) is a timeout for the key rotation, not a stop', async () => {
+        const { gw, calls } = setup({
+            // call()'s own timer: fetch rejects with AbortError though nobody stopped the job
+            generate: async () => { throw Object.assign(new Error('This operation was aborted'), { name: 'AbortError' }); }
+        });
+        const ctrl = new AbortController();
+        const r = await gw.generate(KEY, AUDIO_PAYLOAD, ctrl.signal);
+        assert.equal(r.success, false);
+        assert.equal(r.status, 504);
+        assert.match(r.message, /no answer in time/);
+        assert.equal(calls.filter(c => c.pathname === '/cancel').length, 1, 'the request is still stopped in the service');
+        assert.equal(gw.inFlight.get('g1'), 0);
+    });
+
     test('a finished request leaves no abort listener behind on the job signal', async () => {
         const { gw } = setup({ generate: async () => ({ ok: true, text: 'Hello', email: 'a@gmail.com' }) });
         const ctrl = new AbortController();

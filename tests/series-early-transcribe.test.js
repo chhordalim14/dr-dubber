@@ -185,3 +185,93 @@ describe('the series uses it', () => {
         });
     });
 });
+
+// startEarlyTranscribe itself, with fakes around it. While it waits for a part still joining it
+// has no part (index -1), so the main run did not wait for it: it must never take the part the
+// main run is on, or both split the same file into the same folder.
+describe('startEarlyTranscribe: which part', () => {
+    const fnSrc = cut(main, '      function startEarlyTranscribe(i) {', '      stopSeriesEarlyTranscribe = () => {');
+    function run({ parts, i = 0, current = 0, settingsKeys = ['k1'], gmails = false, onWait = null }) {
+        const plan = { parts, current };
+        const split = [];
+        const early = [];
+        let waits = 0;
+        const env = {
+            plan, wanted: () => true,
+            window: { daiStudio: { transcribeFilesEarly: async (pieces) => { early.push(pieces); return { done: pieces.length, total: pieces.length, failed: 0 }; } } },
+            getGeminiKeys: () => settingsKeys, routerHasGmails: async () => gmails,
+            joiningIndices: () => parts.map((p, idx) => (p.status === 'joining' ? idx : -1)).filter((x) => x >= 0),
+            sleep: async () => { waits++; if (onWait) onWait(plan, waits); await new Promise((r) => setImmediate(r)); },
+            earlyPiecesFor: async () => null,
+            splitPartFile: async (k) => { split.push(k); return { pieces: [`/s/p${k}a.mp4`, `/s/p${k}b.mp4`], note: '', duration: 600 }; },
+            savePlan: () => { }, render: () => { }, splitMinutes: () => 7, console: { log: () => { }, warn: () => { } }
+        };
+        const api = new Function(...Object.keys(env), `let earlyRun = null; ${fnSrc}; return { start: startEarlyTranscribe, get run() { return earlyRun; } };`)(...Object.values(env));
+        api.start(i);
+        const job = api.run;
+        return { done: job ? job.promise : Promise.resolve(), job, split, early, api };
+    }
+
+    test('the next joined part is cut and transcribed', async () => {
+        const r = run({ parts: [{ status: 'done' }, { status: 'joined', outPath: '/j/p2.mp4' }] });
+        await r.done;
+        assert.deepEqual(r.split, [1]);
+        assert.equal(r.early.length, 1);
+    });
+
+    test('the main run moves on to the part this job waited for: it is left to the main run', async () => {
+        const parts = [{ status: 'done' }, { status: 'joining', outPath: '/j/p2.mp4' }];
+        // While waiting, the main run reaches part 2 (Continue) and it finishes joining.
+        const r = run({ parts, onWait: (plan) => { plan.current = 1; parts[1].status = 'joined'; } });
+        await r.done;
+        assert.deepEqual(r.split, [], 'part 2 was split by the early job too');
+        assert.equal(r.api.run, null, 'the job ended, so the main run can start the next early run');
+    });
+
+    test('...and it goes on to the part after that one when it is joined', async () => {
+        const parts = [{ status: 'done' }, { status: 'joining' }, { status: 'joined', outPath: '/j/p3.mp4' }];
+        const r = run({ parts, onWait: (plan) => { plan.current = 1; } });
+        await r.done;
+        assert.deepEqual(r.split, [2]);
+    });
+
+    test('no Settings key: runs on the Router\'s ready Gmails; neither: nothing starts', async () => {
+        const parts = () => [{ status: 'done' }, { status: 'joined', outPath: '/j/p2.mp4' }];
+        const withGmails = run({ parts: parts(), settingsKeys: [], gmails: true });
+        await withGmails.done;
+        assert.deepEqual(withGmails.split, [1]);
+        const none = run({ parts: parts(), settingsKeys: [], gmails: false });
+        await none.done;
+        assert.deepEqual(none.split, []);
+        assert.equal(none.api.run, null);
+    });
+});
+
+// The server saves an early transcript as it came (holes and all); the batch must not reuse one
+// with holes, or it keeps them for good - it is transcribed again, as the batch's own rule says.
+describe('loadSavedBatchResult: only complete results are reused', () => {
+    const fns = cut(dai, '  function isIncompleteResult(result) {', '  async function processSingleBatchItem(');
+    const load = (saved) => new Function('fetch', `${fns}; return loadSavedBatchResult;`)(
+        async () => ({ json: async () => (saved ? { found: true, result: saved } : { found: false }) }));
+    const lines = [{ start: '00:00:01.00', end: '00:00:02.00', text: 'ក' }];
+
+    test('a complete saved result is reused', async () => {
+        const r = await load({ data: lines, repair: {}, fallbackModels: [], early: true })('http://x', '/s/a.mp4');
+        assert.equal(r.success, true);
+        assert.equal(r.data.length, 1);
+    });
+    for (const [what, saved] of [
+        ['lines left without Khmer', { repair: { stillUntranslated: 2 } }],
+        ['a quota error in the repair', { repair: { quotaError: 'daily quota' } }],
+        ['a failed missed-dialogue check', { repair: { gapsFailed: 1 } }],
+        ['pieces from a fallback model', { repair: {}, fallbackModels: ['gemini-3.6-flash'] }]
+    ]) {
+        test(`${what}: not reused (transcribed again)`, async () => {
+            assert.equal(await load({ data: lines, early: true, ...saved })('http://x', '/s/a.mp4'), null);
+        });
+    }
+    test('nothing saved, or no lines: null', async () => {
+        assert.equal(await load(null)('http://x', '/s/a.mp4'), null);
+        assert.equal(await load({ data: [] })('http://x', '/s/a.mp4'), null);
+    });
+});

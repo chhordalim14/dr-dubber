@@ -125,11 +125,21 @@ describe('a tab\'s finished pieces are kept for its next try', () => {
     test('the route uses it: kept pieces are not asked, new pieces are kept, a finished tab clears it', () => {
         assert.match(src, /if \(pieces\) chunks = pieces\.chunks;/);
         assert.match(src, /let out = keptOut\(i\);/);
-        assert.match(src, /if \(pieces && out\.ok && out\.items\.length\) pieces\.outs\[i\] = out;/);
+        assert.match(src, /if \(pieces && out\.ok && !out\.truncated && !out\.fellBack && out\.items\.length\) pieces\.outs\[i\] = out;/);
         assert.match(src, /if \(pieces\) pieceMemory\.forEach\(\(e, k\) => \{ if \(e === pieces\) pieceMemory\.delete\(k\); \}\);/);
     });
 
     test('no spare-key pieces while Google is turning requests away', () => {
         assert.match(src, /const spreadLanes = spread === true && !webLanes && !strained \?/);
+    });
+});
+
+describe('piece memory keeps only pieces that can stand', () => {
+    test('a reply cut off, or from a fallback model, is asked again on the next try (as the cache skips it)', () => {
+        const store = src.match(/\n\s*if \(pieces && out\.ok[^\n]*pieces\.outs\[i\] = out;/);
+        assert.ok(store, 'the piece memory store moved - update this test');
+        assert.match(store[0], /!out\.truncated/);
+        assert.match(store[0], /!out\.fellBack/);
+        assert.match(src, /if \(out\.ok && !out\.truncated && out\.items\.length\) transcribeCacheSet\(cacheKey, out\);/);
     });
 });

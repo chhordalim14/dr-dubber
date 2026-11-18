@@ -760,15 +760,16 @@ class GeminiWebRouter {
             const frozen = await this.run(env.exe, env.pipFreeze());
             if (frozen.code !== 0 || !frozen.out.trim()) throw new Error('Could not record the installed packages, so nothing was changed.');
             fs.writeFileSync(freezeFile, frozen.out);
-            // pip --target replaces whole package folders, which Windows refuses while the running
-            // service has their .pyd files open: stop it first (libWorks starts it again).
-            if (env.bundled) await this.stopServiceAndWait();
+            // pip replaces package folders, which Windows refuses while the running service has
+            // their .pyd files open - with pip --target (bundled Python) and in a venv alike: stop
+            // it first (libWorks starts it again).
+            await this.stopServiceAndWait();
             say(`Installed now: gemini_webapi ${before || '?'}. Installing the newest version…`);
             const up = await this.run(env.exe, env.pipInstall(['--upgrade', '--disable-pip-version-check', '--no-input', 'gemini_webapi']), say);
             env.afterPip();
             const after = await this.libVersion();
             if (up.code === 0 && after && after === before) {
-                if (env.bundled) await this.ensureService(); // stopped above
+                await this.ensureService(); // stopped above
                 u.result = { status: 'current', version: after, message: `gemini_webapi ${after} is already the newest version.` };
                 say(u.result.message);
                 return;
@@ -781,7 +782,7 @@ class GeminiWebRouter {
                 return;
             }
             say(`The new version did not work: ${check.why}. Putting ${before || 'the old version'} back…`);
-            if (env.bundled) await this.stopServiceAndWait();
+            await this.stopServiceAndWait();
             const back = await this.run(env.exe, env.pipInstall(['--disable-pip-version-check', '--no-input', '-r', freezeFile]), say);
             env.afterPip();
             await this.restartService();
@@ -1143,6 +1144,14 @@ class GeminiWebRouter {
                     let settle = null;
                     await Promise.race([req.catch(() => {}), new Promise((res) => { settle = setTimeout(res, CANCEL_SETTLE_MS); })]);
                     clearTimeout(settle);
+                    // An AbortError with the job's signal still open is call()'s own timer (the
+                    // request waited past timeoutMs + 30 s, e.g. queued behind another job on
+                    // this Gmail): a timeout, not a stop. Thrown as AbortError it skipped the key
+                    // rotation and the clip came back empty - a silent hole in the transcript.
+                    if (!(signal && signal.aborted)) {
+                        const msg = `Gemini Web (${this.emailOf(key)}): no answer in time`;
+                        return { success: false, status: 504, error: msg, message: msg };
+                    }
                 }
                 throw e;
             } finally {

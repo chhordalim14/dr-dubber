@@ -23,7 +23,7 @@ fs.writeFileSync(PY, '');
 let world;
 function setup({ installed = '2.1.1', newest = '2.2.0', works = ['2.1.1', '2.2.0'], gmailReady = true } = {}) {
     fs.writeFileSync(path.join(ENV, 'ready.json'), JSON.stringify({ lib: installed }));
-    world = { version: installed, newest, works, up: true, restarts: 0, pip: [], tested: [] };
+    world = { version: installed, newest, works, up: true, restarts: 0, pip: [], tested: [], pipWhileUp: false };
     const gw = getGeminiWebRouter();
     gw._settings = null;
     gw.inFlight.clear();
@@ -36,6 +36,7 @@ function setup({ installed = '2.1.1', newest = '2.2.0', works = ['2.1.1', '2.2.0
         if (args[0] === '-c') return { code: 0, out: `${world.version}\n` };
         const pip = args.slice(2).filter(a => !a.startsWith('--')).join(' ');
         world.pip.push(pip);
+        if (pip.startsWith('install')) world.pipWhileUp = world.pipWhileUp || world.up; // files locked on Windows
         if (pip === 'freeze') return { code: 0, out: `gemini_webapi==${world.version}\ncurl_cffi==0.7\n` };
         if (pip === 'install gemini_webapi') { world.version = world.newest; return { code: 0, out: '' }; }
         if (pip.startsWith('install -r ')) {
@@ -101,13 +102,24 @@ describe('Gemini Web Router: updating the library', () => {
         assert.match(u.result.message, /2\.2\.0 did not work/);
     });
 
-    test('already the newest: nothing is restarted', async () => {
+    test('already the newest: the service comes back as it was, no test request', async () => {
         const gw = setup({ newest: '2.1.1' });
         gw.startLibUpdate();
         const u = await finished(gw);
         assert.equal(u.result.status, 'current');
-        assert.equal(world.restarts, 0);
+        assert.equal(world.restarts, 1);
+        assert.equal(world.up, true);
         assert.deepEqual(world.tested, []);
+    });
+
+    test('pip never runs while the service has the packages open (update and rollback), venv too', async () => {
+        for (const works of [['2.1.1', '2.2.0'], ['2.1.1']]) {
+            const gw = setup({ works });
+            gw.startLibUpdate();
+            await finished(gw);
+            assert.equal(world.pipWhileUp, false, `pip ran with the service up (works: ${works})`);
+            assert.equal(world.up, true, 'the service is running again at the end');
+        }
     });
 
     test('no Gmail ready before: only the service start is checked', async () => {

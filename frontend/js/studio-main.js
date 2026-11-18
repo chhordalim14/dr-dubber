@@ -17704,19 +17704,25 @@
       // step reuses the pieces and its Transcribe step finds the results ready (no Gemini
       // request). Best-effort: whatever fails here is done by that part's own steps as before.
       function startEarlyTranscribe(i) {
-        if (earlyRun || !plan || !wanted("transcribe") || !window.daiStudio?.transcribeFilesEarly || !getGeminiKeys().length) return;
+        if (earlyRun || !plan || !wanted("transcribe") || !window.daiStudio?.transcribeFilesEarly) return;
         const ctrl = new AbortController();
         const job = { index: -1, ctrl, split: null, promise: null, phase: "waiting", done: 0, total: 0, splitJobId: null };
         earlyRun = job;
         let piecesReady;
         job.split = new Promise((r) => { piecesReady = r; });
         job.promise = (async () => {
+          // A Settings key, or the Router's ready Gmails (they alone can dub a series).
+          if (!getGeminiKeys().length && !(await routerHasGmails())) return;
           // The next part to dub: the first joined one after this; one still joining is waited for.
+          // Never the part the main run is on (plan.current): while this job waits (index -1) the
+          // main run can move on to that part (Continue) and split it itself - both then split
+          // the same file into the same folder and overwrite each other's pieces.
+          const free = (idx) => idx !== i && idx !== plan.current;
           let k = -1;
           for (;;) {
             if (ctrl.signal.aborted || !plan) return;
-            k = plan.parts.findIndex((p, idx) => idx !== i && p.status === "joined");
-            if (k >= 0 || !joiningIndices().some((idx) => idx !== i)) break;
+            k = plan.parts.findIndex((p, idx) => free(idx) && p.status === "joined");
+            if (k >= 0 || !joiningIndices().some(free)) break;
             await sleep(2000);
           }
           if (k < 0 || ctrl.signal.aborted) return;

@@ -213,8 +213,13 @@ def quota_reset_at(client, now=None):
         metric = usage.get(window)
         if isinstance(metric, dict) and metric.get("reset_at"):
             try:
-                from datetime import datetime
-                ts = datetime.fromisoformat(metric["reset_at"]).timestamp()
+                from datetime import datetime, timezone
+                # Python 3.10 (the venv's minimum) can't read a "Z" suffix; a time with no zone
+                # is UTC from Google, not this PC's local time (7 hours off in Cambodia).
+                when = datetime.fromisoformat(str(metric["reset_at"]).replace("Z", "+00:00"))
+                if when.tzinfo is None:
+                    when = when.replace(tzinfo=timezone.utc)
+                ts = when.timestamp()
                 if future(ts):
                     other.append(ts)
             except (ValueError, TypeError):

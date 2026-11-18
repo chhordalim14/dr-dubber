@@ -12,14 +12,16 @@ const end = serverSource.indexOf('async function retranslateCues(');
 const block = serverSource.slice(start, end);
 const { createKeyRest } = require('../backend/lib/key-rest');
 
-function load({ pool = null } = {}) {
+function load({ pool = null, router = false } = {}) {
   const waits = [];
   // Backoff waits are recorded, not slept; the clock jumps ahead by each wait instead.
   let now = 1e12;
   const fastTimeout = (fn, ms) => { waits.push(ms); now += ms; return setTimeout(fn, 0); };
   const FakeDate = { now: () => now };
-  const api = new Function('setTimeout', 'console', 'Date', 'createKeyRest', 'pool', `
+  const ALS = require('node:async_hooks').AsyncLocalStorage;
+  const api = new Function('setTimeout', 'console', 'Date', 'createKeyRest', 'pool', 'ALS', `
     const formatWait = (ms) => Math.round(ms / 1000) + 's';
+    ${router ? "const keyAttemptContext = new ALS(); const isGeminiWebKey = (k) => String(k).startsWith('gweb:');" : ''}
     ${pool ? 'const notifyDRRouterRateLimited = (key, ms) => pool.parked.push(key);' : ''}
     const keyRest = createKeyRest({ now: () => Date.now() });
     const geminiModelCooldowns = new Map();
@@ -27,8 +29,8 @@ function load({ pool = null } = {}) {
     const msUntilPacificMidnight = () => 6 * 3600 * 1000; // the daily reset was 18 h ago
     const isCodeCraftKey = (k) => /^cc_/i.test(k);
     ${block}
-    return { geminiWithKeys, geminiShouldRetry, tryKeysOnce, geminiKeyStatus, geminiKeyAnswered, GEMINI_RETRY_DELAYS_MS, GEMINI_BUSY_RETRY_BUDGET_MS, poolPauseLeftMs, poolStrainedRecently, POOL_PAUSE_MS, POOL_PAUSE_MIN_KEYS };
-  `)(fastTimeout, { warn: () => { }, log: () => { } }, FakeDate, createKeyRest, pool);
+    return { geminiWithKeys, geminiShouldRetry, tryKeysOnce, geminiKeyStatus, geminiKeyAnswered, GEMINI_RETRY_DELAYS_MS, GEMINI_BUSY_RETRY_BUDGET_MS, poolPauseLeftMs, poolStrainedRecently, POOL_PAUSE_MS, POOL_PAUSE_MIN_KEYS${router ? ', keyAttemptContext' : ''} };
+  `)(fastTimeout, { warn: () => { }, log: () => { } }, FakeDate, createKeyRest, pool, ALS);
   return { ...api, waits, now: () => now };
 }
 
@@ -365,5 +367,32 @@ describe('pool pause', () => {
     const asked = [];
     await geminiWithKeys(cc, async (key) => { asked.push(key); return perMinute; }, null);
     assert.ok(asked.length >= cc.length, 'every CodeCraft key still asked');
+  });
+});
+
+// A busy Gmail answers "busy" at once only when an API key can take the request instead
+// (keyAttemptContext.apiBackup); during a pool pause no Google key can, so it queues instead.
+describe('Gemini Web Router Gmail backup during a pool pause', () => {
+  const keys = Array.from({ length: 10 }, (_, i) => `k${i + 1}`);
+  const backupSeen = async (api) => {
+    let seen = null;
+    // k99: a key that is fine itself (not one the pause was triggered with), so only the pause
+    // can rule it out as a backup.
+    await api.tryKeysOnce(['gweb:a', 'k99'], async (key) => {
+      if (key === 'gweb:a') seen = api.keyAttemptContext.getStore().apiBackup;
+      return { ok: true, key };
+    });
+    return seen;
+  };
+
+  test('no pause: an API key is a backup', async () => {
+    assert.equal(await backupSeen(load({ router: true })), true);
+  });
+
+  test('pool paused: the paused API keys are no backup', async () => {
+    const api = load({ router: true });
+    await api.tryKeysOnce(keys, async () => perMinute); // most keys limited at once: the pool pauses
+    assert.ok(api.poolPauseLeftMs() > 0, 'the pool should be paused');
+    assert.equal(await backupSeen(api), false);
   });
 });

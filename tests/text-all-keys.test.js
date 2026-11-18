@@ -68,7 +68,8 @@ describe('generateTextForKey', () => {
     });
 
     test('one key (as a string or in a list) is the direct call', async () => {
-        for (const given of ['k1', ['k1'], [' k1 ', 'k1', '']]) {
+        // ['k1', 'k1']: the window sends apiKey plus apiKeys, which starts with that same key.
+        for (const given of ['k1', ['k1'], [' k1 ', 'k1', ''], ['k1', 'k1']]) {
             const { generateTextForKey, asked } = load();
             const r = await generateTextForKey(given, 'm', {}, null);
             assert.equal(r.text, 'from k1');

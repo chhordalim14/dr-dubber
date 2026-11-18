@@ -809,8 +809,9 @@ async function generateText(key, model, payload, signal, opts = {}) {
 // the pool it is the direct single-key call. AI Refactor and Rewrite used to pass only the first
 // Gemini key here, so a rate-limited first key failed the job while the other keys sat unused.
 async function generateTextForKey(apiKeyOrKeys, model, payload, signal, opts = {}) {
+    // De-duplicated: the window sends apiKey and also apiKeys, which starts with that same key.
     const given = (Array.isArray(apiKeyOrKeys) ? apiKeyOrKeys : [apiKeyOrKeys])
-        .map(k => String(k || '').trim()).filter(Boolean);
+        .map(k => String(k || '').trim()).filter((k, i, a) => k && a.indexOf(k) === i);
     const keys = textKeys(given);
     if (!codecraftActive() && keys.length <= 1 && given.length === 1 && keys[0] === given[0]) {
         return executeGeminiGenerate(given[0], model, payload, signal, opts);
@@ -1580,7 +1581,10 @@ async function tryKeysOnce(keys, call) {
         try {
             // (Guarded like the DR Router hooks: tests run this block without the Gemini Web parts.)
             const attempt = typeof keyAttemptContext !== 'undefined' && keyAttemptContext && typeof isGeminiWebKey === 'function'
-                ? { apiBackup: usableGeminiKeys(keys).some(k => !isGeminiWebKey(k) && !tried.has(k)) } : null;
+                // An API key paused with the pool (Google turning free-tier requests away) is no
+                // backup: a busy Gmail would answer BUSY at once and the job sleep out the pause,
+                // where queueing on the Gmail answers sooner.
+                ? { apiBackup: usableGeminiKeys(keys).some(k => !isGeminiWebKey(k) && !tried.has(k) && !(isPausableKey(k) && poolPauseLeftMs() > 0)) } : null;
             out = attempt ? await keyAttemptContext.run(attempt, () => call(key)) : await call(key);
         } finally {
             const left = (geminiKeyInFlight.get(key) || 1) - 1;
@@ -2454,7 +2458,9 @@ function createGeminiRouter(options = {}) {
                         });
                     }
                     if (out.ok && !out.truncated && out.items.length) transcribeCacheSet(cacheKey, out);
-                    if (pieces && out.ok && out.items.length) pieces.outs[i] = out;
+                    // Kept for the tab's next try only when it can stand: a reply cut off, or one from a
+                    // fallback model (the batch counts it as incomplete), is asked again - as the cache does.
+                    if (pieces && out.ok && !out.truncated && !out.fellBack && out.items.length) pieces.outs[i] = out;
                     }
                     if (!out.ok) {
                         console.warn(`[Transcribe] Chunk ${i + 1}/${chunks.length} failed:`, out.result.error);
@@ -2551,7 +2557,8 @@ function createGeminiRouter(options = {}) {
             // itself (batch-result, as Batch Transcribe saves it), so it is there for that part's
             // Transcribe step even when the app misses this answer (2026-11-17: polls timed out
             // behind Generate voices and 4 finished tabs were lost). Kept with its repair report
-            // and fallback models, so that step still runs Fix Missing / notes the fallback.
+            // and fallback models: the batch reuses it only when it is complete
+            // (dai-transcribe-studio.js isIncompleteResult); one with holes is asked again.
             if (saveResult === true && sourceFilePath) {
                 try {
                     saveBatchResult(BATCH_RESULTS_DIR, sourceFilePath, { data, repair: repair || {}, fallbackModels, early: true });
