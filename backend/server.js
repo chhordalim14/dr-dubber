@@ -1139,6 +1139,9 @@ app.post('/api/remove-vocals', upload.any(), async (req, res) => {
     if (demucsSegment) pyArgs.push('--segment', demucsSegment);
     if (spleeterFolder) pyArgs.push('--spleeter-folder', spleeterFolder);
     if (spleeterPython) pyArgs.push('--spleeter-python', spleeterPython);
+    // MDX-Net's model is downloaded here the first time when backend/models has none
+    // (only the Windows setup puts it there; without it every job fell back to Spleeter).
+    pyArgs.push('--model-dir', MUSIC_MODEL_DIR);
 
     const pyScript = getPythonScriptPath('vocal_separator.py');
     const runEnv = {
@@ -1148,6 +1151,9 @@ app.post('/api/remove-vocals', upload.any(), async (req, res) => {
         PYTHONUTF8: '1',
         TF_CPP_MIN_LOG_LEVEL: '2'
     };
+    // Settings > Use CPU (Safe Mode) keeps MDX-Net off the GPU too (DirectML, Core ML), so it
+    // still helps when the GPU is what breaks Isolate BGM.
+    if (!useGPU) runEnv.MDX_DEVICE = 'cpu';
     if ((engine === 'mdx' || (engine === 'demucs' && useGPU)) && await lendVoxCpmGpu(req.body.voxServerUrl) === 'cpu') {
         console.warn(`[Vocal Separator] Job ${jobId}: VoxCPM2 is holding the GPU and can't release it; ${engineLabel} runs on the CPU.`);
         runEnv.MDX_DEVICE = 'cpu';

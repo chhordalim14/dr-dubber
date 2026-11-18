@@ -127,7 +127,9 @@ def read_frame(video, t, width, height):
 # CPU (four tabs at once, beside Transcribe, ran 4-10x slower than one alone); NVIDIA's decoder
 # (cuda) took 43 s of CPU and still kept ahead of the reading. Without that decoder FFmpeg stops
 # with no frame, and the strip is decoded on the CPU. DR_TEXT_HWACCEL: another decoder, or "none".
-HWACCEL = os.environ.get('DR_TEXT_HWACCEL', 'cuda').strip().lower()
+# A Mac has no NVIDIA decoder but VideoToolbox: the same lines (identical result), 30% less CPU
+# (45 s against 64 s for a 7-minute tab on an M4) and four tabs at once done in 35.5 s against 39 s.
+HWACCEL = os.environ.get('DR_TEXT_HWACCEL', 'videotoolbox' if sys.platform == 'darwin' else 'cuda').strip().lower()
 
 
 def open_strip(video, vf, frame_bytes):

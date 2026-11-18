@@ -220,8 +220,8 @@ describe('text_detector.py: reading the strip fast', () => {
         assert.ok(+svc.match(/DETECTOR_VERSION = (\d+)/)[1] >= 5, 'cached results with the notice as the row are read again');
     });
 
-    test('the strip is decoded by NVIDIA when it can be, else on the CPU', () => {
-        assert.match(py, /HWACCEL = os\.environ\.get\('DR_TEXT_HWACCEL', 'cuda'\)/);
+    test('the strip is decoded by NVIDIA (VideoToolbox on a Mac) when it can be, else on the CPU', () => {
+        assert.match(py, /HWACCEL = os\.environ\.get\('DR_TEXT_HWACCEL', 'videotoolbox' if sys\.platform == 'darwin' else 'cuda'\)/);
         // the last try is always without a decoder: a PC without one still reads its tabs
         assert.match(py, /\+ \[None\]:/);
         assert.match(py, /if len\(first\) == frame_bytes or hw is None:/);

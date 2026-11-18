@@ -11,7 +11,7 @@ const { spawnSync } = require('node:child_process');
 const repo = path.join(__dirname, '..');
 const roots = [repo, path.join(repo, '..', '..', '..'), 'C:\\dr-dubber'];
 const PY = roots.map((r) => path.join(r, 'backend', 'python_env', process.platform === 'win32' ? 'python.exe' : path.join('bin', 'python')))
-    .find((p) => fs.existsSync(p));
+    .find((p) => fs.existsSync(p)) || process.env.PYTHON;
 const SCRIPT = path.join(repo, 'backend', 'python', 'tts_generator.py');
 
 function runPy(body) {
@@ -90,4 +90,41 @@ print(json.dumps(asyncio.run(main())))
     assert.equal(out.ok, 36, `all lines voiced (refused ${out.refused} times)`);
     assert.ok(out.refused > 0, 'the stand-in did refuse the first crowd');
     assert.match(stderr, /\[TTS busy\]/);
+});
+
+// At 2 at once and still refused, Microsoft is counting lines per minute: 2 s pauses kept a line
+// refused for 11 minutes (2026-11-18). The gate then rests, longer while it goes on, and the
+// first line voiced again ends the rest.
+test('still refused at the floor: rests, doubles up to the cap, and a voiced line ends it', { skip: !PY && 'app python_env not found' }, () => {
+    const { out, stderr } = runPy(`
+async def main():
+    loop = asyncio.get_running_loop()
+    g = m.EdgeGate(); g.PAUSE_SECONDS = 0.05; g.REST_SECONDS = 0.3; g.MAX_REST_SECONDS = 0.6
+    g.setup(2)
+    a, b = await g.acquire(), await g.acquire()
+    r = {"limit": g.limit}
+    g.release("busy", a); r["rest1"] = g.rest
+    g.release("busy", b); r["sameCrowd"] = g.rest
+    t = loop.time(); k = await g.acquire(); r["waited1"] = loop.time() - t
+    g.release("busy", k); r["rest2"] = g.rest
+    t = loop.time(); k = await g.acquire(); r["waited2"] = loop.time() - t
+    g.release("busy", k); r["capped"] = g.rest
+    t = loop.time(); k = await g.acquire()
+    g.release("ok", k); r["afterOk"] = g.rest
+    t = loop.time(); k = await g.acquire(); r["noWait"] = loop.time() - t
+    g.release("busy", k); r["freshRest"] = g.rest
+    return r
+print(json.dumps(asyncio.run(main())))
+`);
+    assert.equal(out.limit, 2);
+    assert.equal(out.rest1, 0.3);
+    assert.equal(out.sameCrowd, 0.3, 'a line sent before the rest, refused too, does not double it');
+    assert.ok(out.waited1 >= 0.25, `no new line during the rest (waited ${out.waited1}s)`);
+    assert.equal(out.rest2, 0.6, 'refused again after resting: twice as long');
+    assert.ok(out.waited2 >= 0.5, `waited ${out.waited2}s`);
+    assert.equal(out.capped, 0.6, 'never longer than MAX_REST_SECONDS');
+    assert.equal(out.afterOk, 0, 'a voiced line ends the rest');
+    assert.ok(out.noWait < 0.1, 'and the next line goes at once');
+    assert.equal(out.freshRest, 0.3, 'a later refusal starts from REST_SECONDS again');
+    assert.match(stderr, /still turning lines away at 2 at once: no new line for 0\.3s/);
 });

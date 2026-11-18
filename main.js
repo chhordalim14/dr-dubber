@@ -294,6 +294,14 @@ if (!gotTheLock) {
             httpOnly: true,
             sameSite: 'strict'
         });
+        // The real reason behind a "Failed to fetch" to our own server, in the server log.
+        try {
+            const requestErrors = require('./backend/lib/request-errors').createRequestErrorLog();
+            session.defaultSession.webRequest.onErrorOccurred(
+                { urls: [`http://localhost:${PORT}/*`, `http://127.0.0.1:${PORT}/*`] },
+                (details) => requestErrors.onError(details)
+            );
+        } catch (e) { }
         createWindow();
 
         app.on('activate', () => {

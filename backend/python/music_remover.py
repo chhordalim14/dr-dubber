@@ -28,6 +28,9 @@ _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
+# Set before torch loads: a step Apple's GPU (MPS) can't do runs on the CPU instead of failing.
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
 MODEL_NAME = "97d170e1-dbb4db15.th"
 MODEL_URL = "https://github.com/ZFTurbo/MVSEP-CDX23-Cinematic-Sound-Demixing/releases/download/v.1.0.0/" + MODEL_NAME
 # Demucs checkpoints are named after the start of their sha256.
@@ -64,53 +67,112 @@ def ensure_model(model_dir):
     return path
 
 
-def remove_music(input_path, output_path, model_dir, ffmpeg="ffmpeg", device=None, threads=None):
-    import numpy as np
+def pick_device(torch):
+    """NVIDIA's GPU, else Apple's (an M4: 7.9x real time against 5.9x on 5 CPU threads, the
+    same effects stem: 117 dB apart), else the CPU."""
+    if torch.cuda.is_available():
+        return "cuda"
+    mps = getattr(torch.backends, "mps", None)
+    if mps is not None and mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+def free_gpu_memory(torch, device):
+    try:
+        if device == "cuda":
+            torch.cuda.empty_cache()
+        elif device == "mps":
+            torch.mps.empty_cache()
+    except Exception:
+        pass
+
+
+def separate_sfx(model, x, device, output_path, sfx_idx):
+    """
+    Writes the effects stem of x (a [1, 2, n] tensor) to output_path. It is apply_model's
+    own split loop (the same segments, weights and sums, so the same samples) but keeps
+    only the effects stem, and writes each stretch once no later segment reaches it:
+    apply_model built all three stems for the whole tab first, three more copies of it
+    (636 MB for 10 minutes, 2 GB for a joined episode).
+    """
+    import wave
+
     import torch
-    from demucs.apply import apply_model
+    from demucs.apply import TensorChunk, apply_model
+    import onnx_separator
+
+    dev = torch.device(device)
+    model.to(dev)
+    length = x.shape[-1]
+    seg = int(model.samplerate * float(model.segment))
+    stride = int((1 - OVERLAP) * seg)
+    offsets = range(0, length, stride)
+    weight = torch.cat([torch.arange(1, seg // 2 + 1, device=dev),
+                        torch.arange(seg - seg // 2, 0, -1, device=dev)])
+    weight = (weight / weight.max()) ** 1.0  # apply_model's transition_power
+    # The effects stem and the weights summed into it, from sample `base` on.
+    acc = torch.zeros(1, x.shape[1], seg)
+    acc_w = torch.zeros(seg)
+    base = 0
+    with wave.open(output_path, "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(onnx_separator.SAMPLE_RATE)
+        for k, offset in enumerate(offsets):
+            with torch.no_grad():
+                # No shifts: CDX23's script uses one random shift, which only makes two
+                # runs of a tab differ (by -14 dB) without averaging anything.
+                out = apply_model(model, TensorChunk(x, offset, seg), shifts=0, split=False,
+                                  overlap=OVERLAP, device=dev)
+            if dev.type != "cpu" and not torch.isfinite(out).all():
+                raise FloatingPointError("the GPU gave back invalid numbers")
+            n = out.shape[-1]
+            acc[..., offset - base:offset - base + n] += (weight[:n] * out[:, sfx_idx]).to("cpu")
+            acc_w[offset - base:offset - base + n] += weight[:n].to("cpu")
+            del out
+            # Nothing after this segment reaches back before the next one's start.
+            done = min(offset + stride, length) if k + 1 < len(offsets) else length
+            m = done - base
+            w.writeframes(onnx_separator.to_pcm16((acc[0, :, :m] / acc_w[:m]).numpy()))
+            acc[..., :seg - m] = acc[..., m:].clone()
+            acc[..., seg - m:] = 0
+            acc_w[:seg - m] = acc_w[m:].clone()
+            acc_w[seg - m:] = 0
+            base = done
+            sys.stderr.write(f"[music] {k + 1}/{len(offsets)}\n")
+            sys.stderr.flush()
+
+
+def remove_music(input_path, output_path, model_dir, ffmpeg="ffmpeg", device=None, threads=None):
+    import torch
     from demucs.states import load_model
-    import onnx_separator  # read_audio / write_wav: numpy + ffmpeg only
+    import onnx_separator  # read_audio: numpy + ffmpeg only
 
     if threads:
         torch.set_num_threads(int(threads))
     if device != "cpu":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        device = pick_device(torch)
     model = load_model(ensure_model(model_dir))
     model.eval()
     if model.samplerate != onnx_separator.SAMPLE_RATE:
         raise RuntimeError(f"the music model expects {model.samplerate} Hz audio")
 
-    mix = onnx_separator.read_audio(input_path, ffmpeg)
-    x = torch.from_numpy(mix[None])
-    stride = int((1 - OVERLAP) * model.samplerate * float(model.segment))
-    total = max(1, -(-x.shape[-1] // stride))
-    done = [0]
-
-    def progress(info):
-        if info.get("state") == "end":
-            done[0] += 1
-            sys.stderr.write(f"[music] {min(done[0], total)}/{total}\n")
-            sys.stderr.flush()
-
-    def run(dev):
-        done[0] = 0
-        model.to(dev)
-        with torch.no_grad():
-            # No shifts: CDX23's script uses one random shift, which only makes two runs
-            # of a tab differ (by -14 dB) without averaging anything.
-            return apply_model(model, x, shifts=0, overlap=OVERLAP, device=dev, callback=progress)[0]
-
+    x = torch.from_numpy(onnx_separator.read_audio(input_path, ffmpeg)[None])
+    sfx_idx = model.sources.index("sfx")
     try:
-        out = run(device)
-    except RuntimeError as e:
-        # A 6 GB laptop GPU can be full (VoxCPM2 still loaded): the CPU gives the same result.
-        if device == "cpu" or "out of memory" not in str(e).lower():
+        separate_sfx(model, x, device, output_path, sfx_idx)
+    except Exception as e:
+        # The CPU gives the same result. CUDA: a 6 GB laptop GPU can be full (VoxCPM2 still
+        # loaded). Apple's GPU (MPS): any failure, as torch's support for it is the newest.
+        if not (device == "mps" or isinstance(e, FloatingPointError)
+                or (device == "cuda" and isinstance(e, RuntimeError) and "out of memory" in str(e).lower())):
             raise
-        torch.cuda.empty_cache()
+        sys.stderr.write(f"[Remove music] the GPU ({device}) failed ({e}): running on the CPU\n")
+        sys.stderr.flush()
+        free_gpu_memory(torch, device)
         device = "cpu"
-        out = run(device)
-    sfx = out[model.sources.index("sfx")].numpy()
-    onnx_separator.write_wav(output_path, np.ascontiguousarray(sfx))
+        separate_sfx(model, x, device, output_path, sfx_idx)
     return device
 
 

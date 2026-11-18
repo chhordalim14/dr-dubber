@@ -60,7 +60,9 @@ test('Auto on a PC with no usable GPU: every hardware encoder is tested, the exp
         assert.ok(tested.includes('h264_nvenc') && tested.includes('h264_qsv') && tested.includes('h264_amf'), `tested: ${tested.join(', ')}`);
         assert.equal(renders.length, 1);
         assert.equal(codec(renders[0]), 'libx264');
-        assert.ok(!renders[0].includes('-hwaccel'), 'no NVIDIA decoding without a working NVENC');
+        // No NVIDIA decoding without a working NVENC (a Mac still decodes with VideoToolbox).
+        const decoder = renders[0].includes('-hwaccel') ? renders[0][renders[0].indexOf('-hwaccel') + 1] : null;
+        assert.equal(decoder, process.platform === 'darwin' ? 'videotoolbox' : null);
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }

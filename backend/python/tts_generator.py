@@ -341,9 +341,16 @@ class EdgeGate:
     into the same crowd). On a refusal: half as many at once (not below MIN_LIMIT) and no new
     line for PAUSE_SECONDS. Every `limit` lines voiced in a row: one more at once again, up to
     the start value. Off (no limit) until setup() is called, for the single-line command.
+
+    Already at MIN_LIMIT and still refused: Microsoft is counting lines per minute, not lines at
+    once (2026-11-18: refusals for 11 minutes at 2 at once, a 2 s pause each, and a line still
+    refused on its third try from the app). Then no new line for REST_SECONDS, doubled while it
+    goes on (up to MAX_REST_SECONDS); the first line voiced again ends it.
     """
     MIN_LIMIT = 2
     PAUSE_SECONDS = 2.0
+    REST_SECONDS = 30.0
+    MAX_REST_SECONDS = 60.0
 
     def __init__(self):
         self.max = 0
@@ -352,6 +359,7 @@ class EdgeGate:
         self.resume_at = 0.0
         self.cuts = 0
         self.ok_streak = 0
+        self.rest = 0.0
 
     def setup(self, max_limit: int):
         self.max = max(1, int(max_limit))
@@ -360,6 +368,7 @@ class EdgeGate:
         self.resume_at = 0.0
         self.cuts = 0
         self.ok_streak = 0
+        self.rest = 0.0
 
     async def acquire(self):
         """Waits for a free place; returns the ticket to give release()."""
@@ -382,14 +391,24 @@ class EdgeGate:
         now = asyncio.get_running_loop().time()
         if outcome == "busy":
             self.ok_streak = 0
-            self.resume_at = max(self.resume_at, now + self.PAUSE_SECONDS)
+            pause = self.PAUSE_SECONDS
             # Refusals of lines sent before the last cut are the crowd that cut was for: halve
             # once for them. A line sent since then refused too: still too many, halve again.
             if ticket == self.cuts and self.limit > self.MIN_LIMIT:
                 self.limit = max(self.MIN_LIMIT, self.limit // 2)
                 self.cuts += 1
                 print(f"[TTS busy] Microsoft is turning lines away: {self.limit} at once now", file=sys.stderr, flush=True)
-        elif outcome == "ok" and self.limit < self.max:
+            elif ticket == self.cuts:
+                # At the floor already: rest. Lines sent before this rest that are refused
+                # too are part of the same crowd (cuts moves on), so they don't double it.
+                self.rest = min(self.MAX_REST_SECONDS, self.rest * 2) if self.rest else self.REST_SECONDS
+                pause = self.rest
+                self.cuts += 1
+                print(f"[TTS busy] Microsoft is still turning lines away at {self.limit} at once: no new line for {pause:g}s", file=sys.stderr, flush=True)
+            self.resume_at = max(self.resume_at, now + pause)
+        elif outcome == "ok" and self.rest:
+            self.rest = 0.0
+        if outcome == "ok" and self.limit < self.max:
             self.ok_streak += 1
             if self.ok_streak >= self.limit:
                 self.limit += 1

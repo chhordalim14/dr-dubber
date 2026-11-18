@@ -1552,8 +1552,15 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         // through the whole blur + colour chain). Without a usable decoder FFmpeg stops at once
         // (it does not fall back by itself), so a render that fails with it is tried once more
         // without it; when that works, the rest of the session decodes on the CPU.
-        const hwDecode = !options._noHwDecode && !_hwDecodeBroken && !!(await detectAvailableEncoders()).nvenc;
-        if (hwDecode) args.push('-hwaccel', 'cuda');
+        // On a Mac (no NVIDIA) VideoToolbox decodes it instead: the same frames bit for bit
+        // (checked through the colour + sharpen chain), ~9% less CPU on an M4, same speed - and
+        // the same retry on the CPU if it ever fails.
+        const hwDecoder = (options._noHwDecode || _hwDecodeBroken) ? null
+            : (await detectAvailableEncoders()).nvenc ? 'cuda'
+            : process.platform === 'darwin' ? 'videotoolbox' : null;
+        const hwDecode = !!hwDecoder;
+        const hwDecoderLabel = hwDecoder === 'cuda' ? 'NVIDIA' : 'VideoToolbox';
+        if (hwDecode) args.push('-hwaccel', hwDecoder);
         args.push('-i', videoPath);
 
         // BGM input (input 1, if present)
@@ -1940,7 +1947,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         }
         args.push(outputPath);
 
-        console.log(`[Render] Spawning FFmpeg to render (${chosenEncoder}${hwDecode ? ', NVIDIA decoding' : ''}): ${outputPath}`);
+        console.log(`[Render] Spawning FFmpeg to render (${chosenEncoder}${hwDecode ? `, ${hwDecoderLabel} decoding` : ''}): ${outputPath}`);
         stopIfCancelled();
         const ffmpeg = spawn(getFFmpegBinary(), args, { windowsHide: true });
         job.proc = ffmpeg;
@@ -1988,7 +1995,7 @@ async function renderVideo(options, onProgress, onComplete, onError) {
                 // Failed with NVIDIA decoding the video: once more with the CPU decoding it (and the
                 // same encoder - the decoder may be what broke).
                 if (hwDecode && job.status !== 'cancelled') {
-                    console.warn(`[Render Auto-Fallback] FFmpeg failed (exit code ${code}) with NVIDIA decoding the video. Retrying with the CPU decoding it...`);
+                    console.warn(`[Render Auto-Fallback] FFmpeg failed (exit code ${code}) with ${hwDecoderLabel} decoding the video. Retrying with the CPU decoding it...`);
                     try { if (!outputPreexisted && fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch (e) { }
                     return renderVideo({
                         ...options,

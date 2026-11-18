@@ -203,7 +203,9 @@ test('voicing a tab finds its speakers first, and the server speaks /api/speaker
 
     const py = read('backend', 'python', 'voxcpm2_server.py');
     assert.match(py, /route == "\/api\/speakers"/);
-    assert.ok(py.indexOf('route == "/api/speakers"') < py.indexOf('Loading the model back after another GPU job'), 'answers while the model loads');
+    // Before the generate route, which waits for a released (GPU job, or idle) model to load back.
+    assert.ok(py.indexOf('route == "/api/speakers"') < py.indexOf('if route not in ("/api/generate", "/generate")'), 'answers while the model loads');
+    assert.ok(py.indexOf('if route not in ("/api/generate", "/generate")') < py.indexOf('wake_model()\n        if state["status"] != "ready"'), 'the model wakes on the generate route');
     assert.match(py, /import voxcpm2_speakers/);
     assert.match(read('backend', 'python', 'voxcpm2_speakers.py'), /def find_speakers\(wav, lines, known=None/);
 });

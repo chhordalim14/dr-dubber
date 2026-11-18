@@ -46,6 +46,15 @@ MAX_BODY = 64 * 1024 * 1024  # a reference clip is a few hundred KB
 MAX_SPEAKERS_BODY = 512 * 1024 * 1024  # a long movie's lines, sent by a remote app as base64
 
 state = {"status": "loading", "error": None, "device": None, "model": None, "sr": 48000}
+# Minutes with no line spoken before the model is let go, giving its memory back to the
+# rest of the app: a 2B model is several GB of RAM on a PC without NVIDIA (or of video
+# memory with one), held all session though the voices are often done in one sitting.
+# The next line loads it again (about 40 s). VOXCPM_IDLE_MINUTES=0 keeps it loaded.
+try:
+    IDLE_MINUTES = max(0.0, float(os.environ.get("VOXCPM_IDLE_MINUTES", "15")))
+except ValueError:
+    IDLE_MINUTES = 15.0
+last_use = {"t": time.time()}
 gen_lock = threading.Lock()  # one generation at a time: the model is not re-entrant
 speakers_lock = threading.Lock()  # one speaker search at a time (CPU; beside generation)
 use_lock = threading.Lock()  # held for a whole line, so the model is never released mid-line
@@ -514,6 +523,7 @@ def load_model():
             pass
         state["model"] = model
         state["status"] = "ready"
+        last_use["t"] = time.time()
         log(f"Model ready in {time.time() - t0:.0f}s (sample rate {state['sr']} Hz). Server is ready.")
     except Exception as e:  # noqa: BLE001 - shown to the user in the app's server log
         state["status"] = "error"
@@ -521,8 +531,9 @@ def load_model():
         log("Model failed to load:\n" + traceback.format_exc())
 
 
-def release_model():
-    """Unload the model so another GPU job (BGM isolation) gets the card.
+def release_model(idle=False):
+    """Unload the model so another GPU job (BGM isolation) gets the card, or (idle) after
+    IDLE_MINUTES with no line spoken, on any device.
 
     The two together overfill a 6 GB laptop GPU and Windows then pages video memory:
     a 98 s episode's MDX-Net isolation (8 s alone) ran for over 8 minutes, and lines
@@ -531,6 +542,8 @@ def release_model():
     with use_lock:
         if state["model"] is None:
             return False
+        if idle and time.time() - last_use["t"] < IDLE_MINUTES * 60:
+            return False  # a line came in while this waited for the lock
         state["model"] = None
         state["status"] = "sleeping"
         with denoiser_lock:
@@ -542,8 +555,21 @@ def release_model():
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-    log("Released the GPU for another job; the model loads again with the next line.")
+    if idle:
+        log(f"No line for {IDLE_MINUTES:g} minutes: unloaded the model to free memory; it loads again with the next line.")
+    else:
+        log("Released the GPU for another job; the model loads again with the next line.")
     return True
+
+
+def idle_watch():
+    while True:
+        time.sleep(30)
+        if state["status"] == "ready" and time.time() - last_use["t"] >= IDLE_MINUTES * 60:
+            try:
+                release_model(idle=True)
+            except Exception:  # noqa: BLE001 - never let the watcher die
+                log("Unloading the idle model failed:\n" + traceback.format_exc())
 
 
 def wake_model():
@@ -856,8 +882,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(500, {"success": False, "error": f"{type(e).__name__}: {e}"})
         if route not in ("/api/generate", "/generate"):
             return self._json(404, {"success": False, "error": "Not found"})
+        last_use["t"] = time.time()
         if state["status"] == "sleeping":
-            log("Loading the model back after another GPU job ...")
+            log("Loading the model back ...")
             wake_model()
         if state["status"] != "ready":
             msg = state["error"] if state["status"] == "error" else "The VoxCPM2 model is still loading. Try again in a moment."
@@ -873,6 +900,7 @@ class Handler(BaseHTTPRequestHandler):
                 if state["model"] is None:
                     return self._json(503, {"success": False, "error": state["error"] or "The VoxCPM2 model is not loaded."})
                 result = synthesize(payload)
+                last_use["t"] = time.time()
             self._json(200, result)
         except Exception as e:  # noqa: BLE001
             log("Generation failed:\n" + traceback.format_exc())
@@ -890,6 +918,8 @@ def main():
         log(f"Cannot bind to http://{args.host}:{args.port} - is another server already running? ({e})")
         return 1
     threading.Thread(target=load_model, daemon=True).start()
+    if IDLE_MINUTES > 0:
+        threading.Thread(target=idle_watch, daemon=True).start()
     log(f"Listening on http://{args.host}:{args.port} (model loading in the background)")
     try:
         httpd.serve_forever()

@@ -9,8 +9,10 @@ import os
 import os.path
 import subprocess
 import argparse
+import contextlib
 import json
 import re
+import tempfile
 import time
 
 # The bundled embeddable Python reads its path from python311._pth, which
@@ -390,6 +392,52 @@ def separate_demucs(input_audio, output_dir, demucs_folder=None, segment=None, d
         note_error("Demucs", str(e))
         return None
 
+@contextlib.contextmanager
+def one_at_a_time(name, waiting_note=""):
+    """
+    A lock shared by every separator process on this PC: one holder at a time, the
+    others wait their turn. Spleeter runs the whole tab through TensorFlow in one go
+    (a 7-minute tab peaked at 6.4 GB), and Isolate BGM All runs two tabs at once:
+    two of those filled a 16 GB Mac. The OS drops the lock when the holder ends,
+    also when Stop kills it.
+    """
+    f = open(os.path.join(tempfile.gettempdir(), f"dr_dubber_{name}.lock"), "a+b")
+    try:
+        if os.name == "nt":
+            import msvcrt
+            f.seek(0)
+            noted = False
+            while True:
+                try:
+                    msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    if waiting_note and not noted:
+                        sys.stderr.write(waiting_note + "\n")
+                        sys.stderr.flush()
+                        noted = True
+                    time.sleep(0.5)
+            try:
+                yield
+            finally:
+                f.seek(0)
+                try:
+                    msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+                except OSError:
+                    pass
+        else:
+            import fcntl
+            try:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                if waiting_note:
+                    sys.stderr.write(waiting_note + "\n")
+                    sys.stderr.flush()
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            yield
+    finally:
+        f.close()
+
 def separate_spleeter(input_audio, output_dir, spleeter_folder=None, spleeter_python_override=None):
     """
     ML-based separation via Spleeter's 2stems (vocals/accompaniment) model.
@@ -446,7 +494,8 @@ def separate_spleeter(input_audio, output_dir, spleeter_folder=None, spleeter_py
                 env["MODEL_PATH"] = cand
                 break
 
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=env)
+        with one_at_a_time("spleeter", "[Spleeter] waiting for another tab's Spleeter to finish (one at a time: each needs ~6 GB of RAM)"):
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=env)
 
         base_name = os.path.splitext(os.path.basename(input_audio))[0]
         stem_dir = os.path.join(job_dir, base_name)
@@ -473,10 +522,11 @@ def separate_spleeter(input_audio, output_dir, spleeter_folder=None, spleeter_py
         note_error("Spleeter", str(e))
         return None
 
-def separate_mdx(input_audio, output_dir, threads=None):
+def separate_mdx(input_audio, output_dir, threads=None, model_dir=None):
     """
     Built-in separation: UVR MDX-Net vocal model run with onnxruntime in this
-    same Python (onnx_separator.py). Ships with the app, nothing to install.
+    same Python (onnx_separator.py). The Windows installer ships the model in
+    backend/models; anywhere else it is downloaded into model_dir the first time.
     """
     # "is not installed" in these three: the app treats them like a missing
     # Spleeter/Demucs (keeps the FFmpeg BGM) rather than a separator that broke.
@@ -485,14 +535,22 @@ def separate_mdx(input_audio, output_dir, threads=None):
     except Exception as e:
         note_error("MDX-Net", f"the separator is not installed correctly ({e})")
         return None
-    model_path = onnx_separator.find_model()
-    if not model_path:
-        note_error("MDX-Net", f"the model {onnx_separator.DEFAULT_MODEL} is not installed in backend/models")
-        return None
     try:
         import onnxruntime  # noqa: F401
     except Exception as e:
         note_error("MDX-Net", f"onnxruntime is not installed in this Python ({e})")
+        return None
+    model_path = onnx_separator.find_model(model_dir=model_dir)
+    if not model_path and model_dir:
+        sys.stderr.write("[MDX-Net] downloading the model (~64 MB, only this once)\n")
+        sys.stderr.flush()
+        try:
+            model_path = onnx_separator.download_model(model_dir)
+        except Exception as e:
+            note_error("MDX-Net", f"the model {onnx_separator.DEFAULT_MODEL} is not installed in backend/models and could not be downloaded ({e})")
+            return None
+    if not model_path:
+        note_error("MDX-Net", f"the model {onnx_separator.DEFAULT_MODEL} is not installed in backend/models")
         return None
     try:
         job_suffix = f"{os.getpid()}_{int(time.time() * 1000)}"
@@ -585,19 +643,22 @@ def remove_music(bgm_path, output_dir, model_dir, demucs_folder=None, device=Non
         cmd += ["--device", "cpu"]
     if threads:
         cmd += ["--threads", str(threads)]
-    try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=thread_env(threads))
-    except Exception as e:
-        return {"success": False, "error": f"Remove music could not start ({e})"}
-    other = []
-    for line in proc.stderr:
-        if line.startswith("[music] "):
-            sys.stderr.write(line)
-            sys.stderr.flush()
-        else:
-            other.append(line)
-    out = proc.stdout.read()
-    proc.wait()
+    # One at a time on this PC: Demucs took 3.7 GB a tab on Apple's GPU (1.9 GB on the CPU),
+    # and Isolate BGM All runs two tabs at once - two of them together filled a 16 GB Mac.
+    with one_at_a_time("music", "[Remove music] waiting for another tab's Remove music to finish (one at a time: each needs several GB of RAM)"):
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=thread_env(threads))
+        except Exception as e:
+            return {"success": False, "error": f"Remove music could not start ({e})"}
+        other = []
+        for line in proc.stderr:
+            if line.startswith("[music] "):
+                sys.stderr.write(line)
+                sys.stderr.flush()
+            else:
+                other.append(line)
+        out = proc.stdout.read()
+        proc.wait()
     lines = [l.strip() for l in out.splitlines() if l.strip().startswith("{")]
     try:
         result = json.loads(lines[-1])
@@ -611,7 +672,7 @@ def ml_failure(engines):
     reasons = "; ".join(f"{name} could not run ({ENGINE_ERRORS.get(name, 'unknown error')})" for name in engines)
     return {"success": False, "error": reasons}
 
-def separate(input_audio, output_dir, engine="mdx", demucs_folder=None, segment=None, device=None, spleeter_folder=None, spleeter_python=None, threads=None):
+def separate(input_audio, output_dir, engine="mdx", demucs_folder=None, segment=None, device=None, spleeter_folder=None, spleeter_python=None, threads=None, model_dir=None):
     """
     Runs the chosen engine and, if it fails, the other ML engines (the
     built-in MDX-Net first, as it is always there). There is no phase-cancel
@@ -624,7 +685,7 @@ def separate(input_audio, output_dir, engine="mdx", demucs_folder=None, segment=
             return res
         return {"success": False, "error": "FFmpeg audio separation failed."}
 
-    run_mdx = lambda: separate_mdx(input_audio, output_dir, threads)
+    run_mdx = lambda: separate_mdx(input_audio, output_dir, threads, model_dir)
     run_demucs = lambda: separate_demucs(input_audio, output_dir, demucs_folder, segment, device, threads)
     run_spleeter = lambda: separate_spleeter(input_audio, output_dir, spleeter_folder=spleeter_folder, spleeter_python_override=spleeter_python)
     if engine in ("demucs", "auto"):
@@ -662,7 +723,7 @@ def main():
         parser.add_argument("--spleeter-python", default=None, help="Optional direct path to Spleeter Python binary")
         parser.add_argument("--threads", default=None, type=int, help="CPU threads the separator may use (its share when several tabs separate at once)")
         parser.add_argument("--remove-music", action="store_true", help="Take the music out of the BGM stem given as --input, keep the sound effects")
-        parser.add_argument("--model-dir", default=None, help="Where the music model is kept (downloaded there the first time)")
+        parser.add_argument("--model-dir", default=None, help="Where downloaded models are kept: the music model, and MDX-Net's when backend/models has none (downloaded there the first time)")
 
         args = parser.parse_args()
         if args.remove_music:
@@ -678,7 +739,8 @@ def main():
             device=args.device,
             spleeter_folder=args.spleeter_folder,
             spleeter_python=args.spleeter_python,
-            threads=args.threads
+            threads=args.threads,
+            model_dir=args.model_dir
         )
         print(json.dumps(result))
     except Exception as exc:

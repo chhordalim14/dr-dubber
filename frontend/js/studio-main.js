@@ -8683,14 +8683,11 @@
       document.getElementById("setting-temp-path").value = tempAudioPath;
       document.getElementById("setting-export-path").value = exportPath;
 
-      // On Mac: default to CPU if the user has never explicitly chosen (MPS is unstable with Demucs).
-      // On Windows: keep original behaviour (default GPU).
-      const isMacForGpu = navigator.platform.toUpperCase().includes("MAC") || navigator.userAgent.includes("Mac");
+      // GPU unless the user chose CPU, on a Mac too: MDX-Net runs on Core ML and Remove music on
+      // Apple's GPU (MPS), each going back to the CPU by itself if the GPU fails (it once
+      // defaulted to CPU on Mac, when MPS was unstable with Demucs).
       const savedGpuPref = localStorage.getItem("aiDubberUseGPU");
-      const useGpu =
-        savedGpuPref !== null
-          ? savedGpuPref !== "false" // respect whatever they explicitly saved
-          : !isMacForGpu; // no saved pref: Mac defaults CPU, Windows defaults GPU
+      const useGpu = savedGpuPref !== "false";
       document.querySelector('input[name="gpu-setting"][value="gpu"]').checked = useGpu;
       document.querySelector('input[name="gpu-setting"][value="cpu"]').checked = !useGpu;
 
@@ -21452,6 +21449,30 @@
       return bData;
     }
 
+    // Edge voice requests open to the server at once, across every tab. The window sends only 6
+    // requests to one server at a time; the rest wait in Chromium's own queue, and 8 tabs voicing
+    // together put 40-60 lines there. Something outside the app emptied that queue all at once
+    // (2026-11-18: 64 and 43 lines "Failed to fetch" in the same millisecond, the server fine and
+    // requests already being answered unharmed). 5 keeps lines waiting here instead and leaves
+    // one connection for Transcribe and the status checks; the server voices no faster anyway.
+    const VOICE_REQUESTS_AT_ONCE = 5;
+    let voiceRequestsOpen = 0;
+    const voiceRequestWaiters = [];
+    async function withVoiceRequestSlot(signal, send) {
+      while (voiceRequestsOpen >= VOICE_REQUESTS_AT_ONCE) {
+        if (signal && signal.aborted) throw new DOMException("Generation stopped", "AbortError");
+        await new Promise((resolve) => voiceRequestWaiters.push(resolve));
+      }
+      voiceRequestsOpen++;
+      try {
+        return await send();
+      } finally {
+        voiceRequestsOpen--;
+        const next = voiceRequestWaiters.shift();
+        if (next) next();
+      }
+    }
+
     async function generateStandardAudioForProject(targetProject, explicitIds = null, isBatch = false) {
       if (!targetProject || !targetProject.subtitles || targetProject.subtitles.length === 0) {
         return { success: false, error: "No subtitles" };
@@ -21637,7 +21658,7 @@
                 signal: jobAbortController.signal,
               });
             } else {
-              const response = await fetch("http://localhost:3001/api/generate-audio", {
+              const response = await withVoiceRequestSlot(jobAbortController.signal, () => fetch("http://localhost:3001/api/generate-audio", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -21652,8 +21673,8 @@
                   fitRate: nativeRateOf(sub), // its own pace, to last as long as the actor (Dub Whole Series)
                 }),
                 signal: jobAbortController.signal,
-              });
-              data = await response.json();
+              }).then(async (r) => ({ status: r.status, data: await r.json() })));
+              data = response.data;
               // A request the server rejects (bad input) fails the same way every time: don't retry it.
               if (!data.success && response.status >= 400 && response.status < 500 && response.status !== 429) attempt = maxRetries;
             }
@@ -24403,9 +24424,8 @@
           showToast("Extracting & Isolating BGM (This may take a while)...", "info");
         }
 
-        const isMacForGpu = navigator.platform.toUpperCase().includes("MAC") || navigator.userAgent.includes("Mac");
-        const savedGpuPref = localStorage.getItem("aiDubberUseGPU");
-        const useGPU = savedGpuPref !== null ? savedGpuPref !== "false" : !isMacForGpu;
+        // GPU unless chosen otherwise in Settings (Mac included: see the Settings loader).
+        const useGPU = localStorage.getItem("aiDubberUseGPU") !== "false";
         let vocalEngine = vocalEngineSetting();
         let demucsFolder = localStorage.getItem("aiDubberDemucsFolder") || "";
         let demucsSegment = localStorage.getItem("aiDubberDemucsSegment") || "7";
@@ -24613,6 +24633,17 @@
     // Returns { completed, total, stopped, fellBack, failed, substituted } when a run finishes,
     // or { ok: false, reason }. fellBack = tabs that only got the FFmpeg phase-cancel fallback,
     // failed = tabs with no BGM at all, substituted = tabs where the other ML engine stood in.
+    // 1 tab at a time with 16 GB of RAM or less (macOS reports a 16 GB Mac as 16), else 2.
+    // Unknown (no Electron): 2, as before.
+    async function bgmTabsAtOnce() {
+      try {
+        const specs = window.electronAPI && window.electronAPI.getHardwareSpecs ? await window.electronAPI.getHardwareSpecs() : null;
+        const ram = Number(specs && specs.ramGB);
+        if (ram > 0 && ram <= 16) return 1;
+      } catch (e) {}
+      return 2;
+    }
+
     async function isolateBgmAllProjects(opts = {}) {
       if (isIsolatingBgmAll) {
         const confirmed = opts.skipConfirm || await customConfirm("Stop BGM isolation for all project tabs?", "Stop All", "Yes, Stop");
@@ -24655,8 +24686,10 @@
       });
       if (typeof renderProjectTabs === "function") renderProjectTabs();
 
-      // 🚀 Concurrency Worker Pool: 2 background isolation workers
-      const poolSize = 2;
+      // Tabs isolated at once: 2, but 1 on a PC with 16 GB of RAM or less. Each separation
+      // takes ~1-1.7 GB (MDX-Net), Remove music 3.7 GB more on Apple's GPU, and Spleeter
+      // 6.4 GB: two tabs together, beside the rest of Dub Whole Series, froze a 16 GB Mac.
+      const poolSize = await bgmTabsAtOnce();
       const parallelJobs = Math.min(eligible.length, poolSize);
       let activeIdx = 0;
       let completed = 0;
@@ -24696,11 +24729,19 @@
       const tabNos = (list) => list.map((p) => projects.indexOf(p) + 1).join(", ");
       // Phase cancellation on a near-mono drama mix leaves almost no music, so it is never
       // counted as a quiet success - the user is told which tabs and why.
+      // A stand-in ML engine still gives real stems, but the user is told: MDX-Net's model was
+      // missing on a Mac install and every tab quietly ran Spleeter (~6 GB of RAM each).
+      const swapped = substituted.length
+        ? `tab ${tabNos(substituted)} used ${VOCAL_ENGINE_LABELS[substituted[0].bgmMethod] || "another engine"} instead (${String(substituted[0].bgmFallbackReason).split(";")[0]})`
+        : "";
       if (!stoppedByUser && !opts.quiet && (fellBack.length || failed.length)) {
         const parts = [];
         if (fellBack.length) parts.push(`tab ${tabNos(fellBack)} only got FFmpeg phase cancellation (${fellBack[0].bgmFallbackReason || "the ML engine could not run"})`);
         if (failed.length) parts.push(`tab ${tabNos(failed)} failed (${failed[0].bgmError || "unknown error"})`);
+        if (swapped) parts.push(swapped);
         showToast(`BGM isolation: ${parts.join("; ")}. Fix it or switch engine in Settings, then isolate again.`, "warning");
+      } else if (!stoppedByUser && !opts.quiet && swapped) {
+        showToast(`Completed BGM isolation for ${completed} of ${eligible.length} project(s), but ${swapped}.`, "warning");
       } else if (completed > 0) {
         showToast(`🎉 Completed BGM isolation for all ${completed} of ${eligible.length} project(s)!`, "success");
       }
