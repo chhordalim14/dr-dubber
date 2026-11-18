@@ -1444,8 +1444,12 @@ function queueTtsTask(task) {
 // (16 was faster still; kept lower so a busy night doesn't look like abuse to it).
 const TTS_LINES_AT_ONCE = 12;
 let ttsTrimNotesShown = 0;
+let ttsBusyNotesShown = 0;
 const ttsWorker = createTtsWorker({
     maxInFlight: TTS_LINES_AT_ONCE,
+    // While Microsoft turns lines away the generator sends as few as 2 at once (EdgeGate), so a
+    // line can wait there a while before its turn; each request to Microsoft has its own 30s limit.
+    timeoutMs: 300000,
     spawnWorker: () => {
         if (!PYTHON_CMD) throw new Error('No Python');
         const child = spawn(PYTHON_CMD, [getPythonScriptPath('tts_generator.py'), '--serve', '--concurrency', String(TTS_LINES_AT_ONCE)], {
@@ -1457,6 +1461,11 @@ const ttsWorker = createTtsWorker({
     },
     // Same notes as logTtsTrimNotes, capped over the worker's life instead of per process.
     onLog: (line) => {
+        if (line.startsWith('[TTS busy]')) { // tts_generator.py EdgeGate
+            if (++ttsBusyNotesShown <= 30) console.warn(line);
+            else if (ttsBusyNotesShown === 31) console.warn('[TTS busy] ...more changes not logged');
+            return;
+        }
         if (!line.startsWith('[TTS trim]')) return;
         if (++ttsTrimNotesShown <= 50) console.warn(line);
         else if (ttsTrimNotesShown === 51) console.warn('[TTS trim] ...more clips kept their original padding (not logged)');

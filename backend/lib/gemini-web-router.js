@@ -34,6 +34,11 @@ const isWin = process.platform === 'win32';
 const PROFILE_DIR = path.join(ENV_DIR, 'profiles');
 const VENV_PY = path.join(ENV_DIR, 'venv', isWin ? 'Scripts\\python.exe' : 'bin/python');
 const SERVER_SCRIPT = path.join(__dirname, '..', 'python', 'gemini_web_server.py').replace('app.asar', 'app.asar.unpacked');
+// When the PC has no Python 3.10+, the app's own Python is used (backend/python_env: the embeddable
+// Python 3.11 the installer ships). It has no venv module, so the library goes into LIB_DIR with
+// pip --target, and LIB_DIR is put first on sys.path when the Router's Python runs.
+const BUNDLED_PY = path.join(__dirname, '..', 'python_env', isWin ? 'python.exe' : 'bin/python3').replace('app.asar', 'app.asar.unpacked');
+const LIB_DIR = path.join(ENV_DIR, 'lib');
 const LIB_VERSION = '2.1.1';
 const SERVICE_PORT = 8790;
 const SIGNIN_TIMEOUT_MS = 6 * 60 * 1000;
@@ -70,6 +75,26 @@ function run(cmd, args, onLine) {
         p.on('error', (e) => resolve({ code: -1, out: String(e.message) }));
         p.on('close', (code) => resolve({ code, out }));
     });
+}
+
+// pip --target --upgrade replaces a package's folder but leaves the old version's .dist-info
+// beside the new one, and importlib.metadata / pip freeze then report the old version. Keep the
+// newest .dist-info of each package: the one pip just wrote (also after a rollback to an older one).
+function tidyLibDir() {
+    let names;
+    try { names = fs.readdirSync(LIB_DIR).filter(n => n.endsWith('.dist-info')); } catch (e) { return; }
+    const groups = new Map();
+    for (const n of names) {
+        const key = n.replace(/-[^-]+\.dist-info$/, '').toLowerCase().replace(/[-_.]+/g, '_');
+        let at = 0;
+        try { at = fs.statSync(path.join(LIB_DIR, n)).mtimeMs; } catch (e) { }
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push({ n, at });
+    }
+    for (const list of groups.values()) {
+        list.sort((a, b) => b.at - a.at);
+        for (const { n } of list.slice(1)) fs.rmSync(path.join(LIB_DIR, n), { recursive: true, force: true });
+    }
 }
 
 function findChrome() {
@@ -572,7 +597,38 @@ class GeminiWebRouter {
     }
 
     // ---- Python environment ----------------------------------------------------------------
-    envReady() { return fs.existsSync(VENV_PY) && fs.existsSync(path.join(ENV_DIR, 'ready.json')); }
+    // How to run the Router's Python: its own venv (made from a Python on the PC), or the app's
+    // Python with the library in LIB_DIR. null: neither is set up yet. The venv commands are the
+    // ones used before the bundled Python was an option, unchanged.
+    pyEnv() {
+        if (fs.existsSync(VENV_PY)) {
+            return {
+                exe: VENV_PY, bundled: false,
+                code: (src) => ['-c', src],
+                script: (file, args) => ['-I', file, ...args],
+                pipInstall: (args) => ['-m', 'pip', 'install', ...args],
+                pipFreeze: () => ['-m', 'pip', 'freeze', '--disable-pip-version-check'],
+                afterPip: () => {}
+            };
+        }
+        if (fs.existsSync(LIB_DIR) && fs.existsSync(BUNDLED_PY)) {
+            // -I keeps the user's PYTHONPATH and user site out; LIB_DIR goes first, so the
+            // library's own dependencies win over the ones the app's Python already has.
+            const withLib = `import sys; sys.path.insert(0, ${JSON.stringify(LIB_DIR)})`;
+            return {
+                exe: BUNDLED_PY, bundled: true,
+                code: (src) => ['-I', '-c', `${withLib}; ${src}`],
+                script: (file, args) => ['-I', '-c', `${withLib}; import runpy; sys.argv = [${JSON.stringify(file)}, *sys.argv[1:]]; runpy.run_path(${JSON.stringify(file)}, run_name='__main__')`, ...args],
+                // --upgrade: without it pip leaves a package already in the target folder as it is.
+                pipInstall: (args) => ['-I', '-m', 'pip', 'install', '--target', LIB_DIR, '--upgrade', '--no-warn-script-location', ...args],
+                pipFreeze: () => ['-I', '-m', 'pip', 'freeze', '--path', LIB_DIR, '--disable-pip-version-check'],
+                afterPip: tidyLibDir
+            };
+        }
+        return null;
+    }
+
+    envReady() { return !!this.pyEnv() && fs.existsSync(path.join(ENV_DIR, 'ready.json')); }
 
     async installEnv() {
         if (this.install.running) return;
@@ -580,7 +636,7 @@ class GeminiWebRouter {
         const say = (l) => { this.install.lines.push(l); if (this.install.lines.length > 200) this.install.lines.shift(); };
         try {
             fs.mkdirSync(ENV_DIR, { recursive: true });
-            if (!fs.existsSync(VENV_PY)) {
+            if (!this.pyEnv()) {
                 const tries = isWin ? [['py', ['-3.12']], ['py', ['-3.11']], ['py', ['-3.10']], ['python', []]] : [['python3', []], ['python', []]];
                 let made = false;
                 for (const [cmd, pre] of tries) {
@@ -590,10 +646,18 @@ class GeminiWebRouter {
                     const r = await run(cmd, [...pre, '-m', 'venv', path.join(ENV_DIR, 'venv')], say);
                     if (r.code === 0) { made = true; break; }
                 }
-                if (!made) throw new Error('Python 3.10 or newer was not found on this PC. Install it from python.org, then try again.');
+                if (!made) {
+                    if (!fs.existsSync(BUNDLED_PY)) throw new Error('Python 3.10 or newer was not found on this PC. Install it from python.org, then try again.');
+                    // A half-made venv from a failed try above would be picked before LIB_DIR.
+                    fs.rmSync(path.join(ENV_DIR, 'venv'), { recursive: true, force: true });
+                    say('No Python 3.10 or newer on this PC: using the Python that comes with DR Dubber.');
+                    fs.mkdirSync(LIB_DIR, { recursive: true });
+                }
             }
+            const env = this.pyEnv();
             say(`Installing gemini_webapi ${LIB_VERSION}`);
-            const r = await run(VENV_PY, ['-m', 'pip', 'install', '--disable-pip-version-check', '--no-input', `gemini_webapi==${LIB_VERSION}`], say);
+            const r = await run(env.exe, env.pipInstall(['--disable-pip-version-check', '--no-input', `gemini_webapi==${LIB_VERSION}`]), say);
+            env.afterPip();
             if (r.code !== 0) throw new Error('Installing gemini_webapi failed (see the log above).');
             writeJson(path.join(ENV_DIR, 'ready.json'), { lib: LIB_VERSION, at: Date.now() });
             say('Done.');
@@ -641,12 +705,14 @@ class GeminiWebRouter {
     }
 
     async libVersion() {
-        const r = await this.run(VENV_PY, ['-c', "import importlib.metadata as m; print(m.version('gemini_webapi'))"]);
+        const env = this.pyEnv();
+        if (!env) return null;
+        const r = await this.run(env.exe, env.code("import importlib.metadata as m; print(m.version('gemini_webapi'))"));
         const v = (r.out || '').trim().split(/\r?\n/).pop();
         return r.code === 0 && /^\d+(\.\d+)*/.test(v) ? v : null;
     }
 
-    async restartService() {
+    async stopServiceAndWait() {
         this.stopService();
         // Wait until the old service no longer answers, or ensureService takes it for another copy's.
         for (let i = 0; i < 20; i++) {
@@ -654,6 +720,10 @@ class GeminiWebRouter {
             await sleep(500);
         }
         this.external = false;
+    }
+
+    async restartService() {
+        await this.stopServiceAndWait();
         return this.ensureService();
     }
 
@@ -686,13 +756,19 @@ class GeminiWebRouter {
             const before = await this.libVersion();
             const st = await this.call('/status').catch(() => null);
             const hadReady = !!(st && st.accounts && st.accounts.some(a => a.enabled && a.state === 'ready'));
-            const frozen = await this.run(VENV_PY, ['-m', 'pip', 'freeze', '--disable-pip-version-check']);
+            const env = this.pyEnv();
+            const frozen = await this.run(env.exe, env.pipFreeze());
             if (frozen.code !== 0 || !frozen.out.trim()) throw new Error('Could not record the installed packages, so nothing was changed.');
             fs.writeFileSync(freezeFile, frozen.out);
+            // pip --target replaces whole package folders, which Windows refuses while the running
+            // service has their .pyd files open: stop it first (libWorks starts it again).
+            if (env.bundled) await this.stopServiceAndWait();
             say(`Installed now: gemini_webapi ${before || '?'}. Installing the newest version…`);
-            const up = await this.run(VENV_PY, ['-m', 'pip', 'install', '--upgrade', '--disable-pip-version-check', '--no-input', 'gemini_webapi'], say);
+            const up = await this.run(env.exe, env.pipInstall(['--upgrade', '--disable-pip-version-check', '--no-input', 'gemini_webapi']), say);
+            env.afterPip();
             const after = await this.libVersion();
             if (up.code === 0 && after && after === before) {
+                if (env.bundled) await this.ensureService(); // stopped above
                 u.result = { status: 'current', version: after, message: `gemini_webapi ${after} is already the newest version.` };
                 say(u.result.message);
                 return;
@@ -705,7 +781,9 @@ class GeminiWebRouter {
                 return;
             }
             say(`The new version did not work: ${check.why}. Putting ${before || 'the old version'} back…`);
-            const back = await this.run(VENV_PY, ['-m', 'pip', 'install', '--disable-pip-version-check', '--no-input', '-r', freezeFile], say);
+            if (env.bundled) await this.stopServiceAndWait();
+            const back = await this.run(env.exe, env.pipInstall(['--disable-pip-version-check', '--no-input', '-r', freezeFile]), say);
+            env.afterPip();
             await this.restartService();
             const now = await this.libVersion();
             if (back.code !== 0 || (before && now !== before)) {
@@ -778,7 +856,8 @@ class GeminiWebRouter {
         this.starting = (async () => {
             // A service left over from an earlier run (or the other copy of the app) answers already.
             try { const j = await this.call('/status', undefined, 1500); if (j && j.ok) { this.external = true; return true; } } catch (e) { }
-            const p = spawn(VENV_PY, ['-I', SERVER_SCRIPT, '--dir', DIR, '--port', String(SERVICE_PORT)], { windowsHide: true });
+            const env = this.pyEnv();
+            const p = spawn(env.exe, env.script(SERVER_SCRIPT, ['--dir', DIR, '--port', String(SERVICE_PORT)]), { windowsHide: true });
             trackProcess(p);
             let tail = '';
             const onData = (d) => {
@@ -1316,4 +1395,4 @@ class GeminiWebRouter {
 let instance = null;
 function getGeminiWebRouter() { return instance || (instance = new GeminiWebRouter()); }
 
-module.exports = { getGeminiWebRouter, KEY_PREFIX, payloadToPrompt, stripFences };
+module.exports = { getGeminiWebRouter, KEY_PREFIX, payloadToPrompt, stripFences, tidyLibDir, BUNDLED_PY, LIB_DIR };
