@@ -8,8 +8,8 @@ const path = require('path');
 const { resolveLocalFilePath, EXPORTS_DIR } = require('../lib/paths');
 const { isNetworkPath, safeOutputFileName } = require('../lib/security');
 
-// Exports at once. Measured 2026-11-08 (7.6-min tab, NVENC): 1 alone 119 s, 2 side by side 90 s
-// each, 3 87 s each - two is where the gain is.
+// Exports at once, by default. Measured 2026-11-08 (7.6-min tab, NVENC): 1 alone 119 s, 2 side by
+// side 90 s each, 3 87 s each - two is where the gain is. A small PC does one (lib/pc-profile.js).
 const MAX_RENDERS = 2;
 // A new export waits while a subtitle search runs (render_service.js: they slow each other down
 // many times over), but never longer than this - a search that hangs must not stop the exports.
@@ -20,6 +20,9 @@ module.exports = function createRenderRouter({
     renderingCount = () => (getRenderProgress().status === 'rendering' ? 1 : 0),
     renderingOutputs = () => [],
     searchBusy = () => false,
+    maxRenders = () => MAX_RENDERS,
+    // Why an export should wait for free RAM now (lib/memory-guard.js holdReason), or null.
+    memoryHold = () => null,
     now = () => Date.now(),
 }) {
     const router = express.Router();
@@ -67,9 +70,19 @@ module.exports = function createRenderRouter({
                 return res.status(409).json({ success: false, held: 'search', error: 'Waiting for the subtitle search to finish.' });
             }
         }
+        // Short of free RAM while another job of ours runs: wait for it (same 20-minute ceiling).
+        const lowMemory = memoryHold();
+        if (lowMemory) {
+            const since = heldSince.get(holdKey) || now();
+            heldSince.set(holdKey, since);
+            if (now() - since < SEARCH_HOLD_MAX_MS) {
+                return res.status(409).json({ success: false, held: 'memory', error: `Waiting for free memory (${lowMemory.freeMB} MB free).` });
+            }
+        }
         heldSince.delete(holdKey);
         for (const [k, t] of heldSince) if (now() - t > 2 * SEARCH_HOLD_MAX_MS) heldSince.delete(k);
-        if (renderingCount() + pendingRenders.size >= MAX_RENDERS
+        const renderCap = Math.max(1, Number(maxRenders()) || MAX_RENDERS);
+        if (renderingCount() + pendingRenders.size >= renderCap
             || (renderToken && (pendingRenders.has(renderToken) || getRenderProgress(renderToken).status === 'rendering'))) {
             return res.status(409).json({ success: false, error: 'A render is already in progress. Wait for it to finish or cancel it first.' });
         }

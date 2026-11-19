@@ -15,6 +15,7 @@ const security = require('../lib/security');
 const { isNetworkPath } = security;
 const { hasForeignText, stripForeignScript } = require('../lib/text-rules');
 const { trackProcess } = require('../lib/process-tracker');
+const { createLimiter } = require('../lib/limiter');
 const { secureFetch } = require('../lib/secure-fetch');
 
 function getDRRouterProxyForKey(apiKey) {
@@ -918,7 +919,21 @@ const TRANSCRIBE_RESPONSE_SCHEMA = {
 let _getFFmpegBinary = require('../ffmpeg_env').getFFmpegBinary;
 let _getFFprobeBinary = require('../ffmpeg_env').getFFprobeBinary;
 
+// FFmpeg runs for Transcribe at once, across every tab (Settings > Performance). Each clip cut
+// is an encode: 8 tabs with 4 lanes each started dozens of them together on a 4-core laptop.
+let _transcribeCutsAtOnce = () => 4;
+const ffmpegSlots = createLimiter(() => _transcribeCutsAtOnce());
+
 function runFFmpegCapture(args, signal) {
+    // Stopped while waiting for a slot: the same answer as an FFmpeg that was killed.
+    return ffmpegSlots.run(() => runFFmpegNow(args, signal), signal)
+        .catch((e) => {
+            if (e && e.name === 'AbortError') return { code: null, stderr: '' };
+            throw e;
+        });
+}
+
+function runFFmpegNow(args, signal) {
     return new Promise((resolve, reject) => {
         const proc = spawn(_getFFmpegBinary(), args, { windowsHide: true });
         trackProcess(proc);
@@ -2236,9 +2251,11 @@ function createGeminiRouter(options = {}) {
         getFFprobeBinary = require('../ffmpeg_env').getFFprobeBinary,
         backgroundable = (fn) => fn,
         saveTranscribeAudio = () => null,
-        keyRest = getDefaultKeyRest()
+        keyRest = getDefaultKeyRest(),
+        pcLimits = null
     } = options;
 
+    if (typeof pcLimits === 'function') _transcribeCutsAtOnce = () => pcLimits().transcribeCuts;
     _getFFmpegBinary = getFFmpegBinary;
     _getFFprobeBinary = getFFprobeBinary;
     geminiModelCooldowns = keyRest.modelLimits;

@@ -1120,7 +1120,11 @@
     try { n = parseInt(localStorage.getItem(key), 10); } catch (e) { } // storage blocked: the default
     return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt;
   };
-  const seriesParallelFiles = () => savedSeriesNumber('aiDubberSeriesParallel', 1, 20, SERIES_MAX_PARALLEL_FILES);
+  // A small PC works on fewer tabs at once (Settings > Performance, js/pc-profile.js); the saved
+  // "Episodes at once" still wins.
+  const pcLimitOr = (name, dflt) => (typeof pcLimit === 'function' ? pcLimit(name, dflt) : dflt);
+  const seriesParallelFiles = () => savedSeriesNumber('aiDubberSeriesParallel', 1, 20, pcLimitOr('transcribeTabs', SERIES_MAX_PARALLEL_FILES));
+  const batchParallelFiles = () => pcLimitOr('batchTabs', BATCH_MAX_PARALLEL_FILES);
 
   // How usable a key is for `model`, from /api/gemini-key-status: 0 ready, 1 maybe (limits on
   // other models, or not known yet), 9 resting (refused by Google, or out for the day).
@@ -1212,7 +1216,7 @@
       if (ready.length) ownKeyOrder = ready;
     }
     const retryLimit = keyPerTab ? seriesTabRetries() : TAB_RETRIES; // a tab that failed for a passing reason
-    const concurrency = Math.max(1, Math.min(maxParallel || (keyPerTab ? seriesParallelFiles() : BATCH_MAX_PARALLEL_FILES), ownKeyOrder.length, pendingItems.length));
+    const concurrency = Math.max(1, Math.min(maxParallel || (keyPerTab ? seriesParallelFiles() : batchParallelFiles()), ownKeyOrder.length, pendingItems.length));
     const keyStride = Math.max(1, Math.floor(apiKeys.length / concurrency));
     const batchAbort = state.batchAbortController;
     const todo = [...pendingItems];

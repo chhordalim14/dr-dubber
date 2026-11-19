@@ -73,6 +73,17 @@ const { isNetworkPath, isServableMedia, isAudioFile } = security;
 require('./lib/server-log').installServerLog(LOGS_DIR);
 const { hasForeignText, stripForeignScript, collapseRepeatedPartSuffix, buildTtsArgv } = require('./lib/text-rules');
 const { trackProcess } = require('./lib/process-tracker');
+// How much runs at once, from this PC's RAM and CPU (Settings > Performance), and the guard that
+// holds the next heavy job while free RAM is short (lib/pc-profile.js, lib/memory-guard.js).
+const pcProfile = require('./lib/pc-profile').createPcProfile({
+    settingsFile: path.join(STORAGE_BASE, 'performance.json'),
+    detectEncoders: () => detectAvailableEncoders(),
+});
+pcProfile.readSlowFacts().then(() => {
+    const p = pcProfile.describe();
+    console.log(`[Performance] ${p.tier}${p.mode === 'auto' ? ' (auto)' : ' (chosen in Settings)'}: ${p.hardware.ramGB} GB RAM, ${p.hardware.cores} CPU threads${p.hardware.gpu ? `, ${p.hardware.gpu.name}` : ''} -> ${JSON.stringify(p.limits)}`);
+});
+const { memoryGuard } = require('./lib/memory-guard');
 // Which Gemini keys are resting (refused, or over a limit) - kept on disk across restarts.
 // Shared with the other copy of the app (installed / repo), so one doesn't re-ask keys the other found resting.
 const { KEY_REST_FILE, KEY_REST_LEGACY_FILES } = require('./lib/paths');
@@ -818,6 +829,20 @@ function finishBgmJob(jobId, bgmPath, vocalPath, extra = {}) {
 
 // No silent fallback to the BGM with music: the user turned this on to keep copyrighted
 // music out, so a failure is an error the app shows.
+// Isolate BGM and Remove music wait here while the PC is short of free RAM and another job of
+// ours still runs (lib/memory-guard.js). The job's status says so meanwhile.
+async function waitForBgmMemory(jobId, kind) {
+    await memoryGuard.waitForRoom(kind, {
+        isCancelled: () => isBgmJobCancelled(jobId),
+        onWait: (r) => {
+            const job = bgmJobs.get(jobId);
+            if (job && job.status === 'processing') job.stage = `Waiting for free memory (${r.freeMB} MB free)`;
+        },
+    });
+    const job = bgmJobs.get(jobId);
+    if (job && job.status === 'processing' && /^Waiting for free memory/.test(job.stage || '')) job.stage = kind === 'music' ? 'music' : undefined;
+}
+
 async function removeMusicFromBgm(jobId, bgmPath, vocalPath, extra, music) {
     if (isBgmJobCancelled(jobId)) return;
     const fail = (error) => {
@@ -834,6 +859,7 @@ async function removeMusicFromBgm(jobId, bgmPath, vocalPath, extra, music) {
         '--threads', String(pickSeparatorThreads(os.cpus().length, music.parallelJobs))];
     if (music.demucsFolder) pyArgs.push('--demucs-folder', music.demucsFolder);
     if (!music.useGPU || await lendVoxCpmGpu(music.voxServerUrl) === 'cpu') pyArgs.push('--device', 'cpu');
+    await waitForBgmMemory(jobId, 'music');
     if (isBgmJobCancelled(jobId)) {
         removeDirQuietly(workDir);
         return;
@@ -1159,6 +1185,7 @@ app.post('/api/remove-vocals', upload.any(), async (req, res) => {
         runEnv.MDX_DEVICE = 'cpu';
         if (engine === 'demucs') pyArgs.push('--device', 'cpu');
     }
+    await waitForBgmMemory(jobId, 'separation');
     if (isBgmJobCancelled(jobId)) {
         removeDirQuietly(workDir);
         return;
@@ -1848,6 +1875,8 @@ const previewService = createPreviewService({
     getFFmpegBinary,
     getFFprobeBinary,
     detectAvailableEncoders,
+    maxRunning: () => pcProfile.limits().previews,
+    memoryHold: (kind) => memoryGuard.holdReason(kind),
     trackProcess
 });
 
@@ -1857,7 +1886,7 @@ const episodeJoiner = createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, d
 // Split Movie: one long movie -> ~30 minute parts, each dubbed as its own project.
 const videoSplitter = createVideoSplitter({ getFFmpegBinary, getFFprobeBinary, trackProcess });
 
-app.use('/api', require('./routes/system')({ detectAvailableEncoders }));
+app.use('/api', require('./routes/system')({ detectAvailableEncoders, pcProfile, memoryGuard }));
 app.use('/api', require('./routes/preview')({ previewService }));
 app.use('/api', require('./routes/waveform')({ getFFmpegBinary }));
 // The separated vocals of a video, when an ML engine has already isolated it (FFmpeg's
@@ -1873,7 +1902,11 @@ app.use('/api', require('./routes/voice-capture')({ getFFmpegBinary, getFFprobeB
 app.use('/api/episodes', require('./routes/episodes')({ episodeJoiner }));
 app.use('/api/split', require('./routes/split')({ videoSplitter }));
 // searchBusy: a subtitle search is running - new exports wait their turn (render_service.js).
-app.use('/api', require('./routes/render')({ upload, renderVideo, cancelRender, getRenderProgress, renderingCount, renderingOutputs, searchBusy: isSearchBusy, audioRepair }));
+app.use('/api', require('./routes/render')({
+    upload, renderVideo, cancelRender, getRenderProgress, renderingCount, renderingOutputs, searchBusy: isSearchBusy, audioRepair,
+    maxRenders: () => pcProfile.limits().renders,
+    memoryHold: () => memoryGuard.holdReason('render'),
+}));
 // On-screen subtitle detection (the render blurs them while they show).
 const textDetect = require('./text_detect_service').createTextDetectService({
     pythonCmd: PYTHON_CMD,
@@ -1885,8 +1918,15 @@ const textDetect = require('./text_detect_service').createTextDetectService({
     trackProcess,
     killProcessTree,
     onBusyChange: setSearchBusy,
+    maxRunning: () => pcProfile.limits().textDetect,
+    memoryHold: (kind) => memoryGuard.holdReason(kind),
 });
 app.use('/api', require('./routes/text-detect')({ textDetect }));
+// What the RAM guard waits for: our own heavy jobs, which end and give their memory back.
+memoryGuard.registerActivity('separations', () => bgmChildren.size);
+memoryGuard.registerActivity('renders', () => renderingCount());
+memoryGuard.registerActivity('textDetect', () => textDetect.runningCount());
+memoryGuard.registerActivity('previews', () => previewService.runningCount());
 app.use('/api', require('./routes/series-checkpoint')());
 const pronunciationRouter = require('./routes/pronunciation')({ getFFmpegBinary, getPythonScriptPath, trackProcess });
 app.use('/api', pronunciationRouter);
@@ -1900,7 +1940,8 @@ const geminiRouter = require('./routes/gemini')({
     audioRepair,
     backgroundable,
     saveTranscribeAudio,
-    keyRest
+    keyRest,
+    pcLimits: () => pcProfile.limits()
 });
 app.use('/api', geminiRouter);
 

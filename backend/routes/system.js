@@ -56,8 +56,28 @@ function openFolderSafely(folder, res) {
 
 // `detectAvailableEncoders` comes from render_service.js; injected so this
 // router doesn't need to depend on the whole render pipeline module graph.
-module.exports = function createSystemRouter({ detectAvailableEncoders }) {
+module.exports = function createSystemRouter({ detectAvailableEncoders, pcProfile = null, memoryGuard = null }) {
     const router = express.Router();
+
+    // Settings > Performance: this PC's group (light / standard / strong), the limits that go
+    // with it, and the user's choice (auto = from the hardware). lib/pc-profile.js.
+    router.get('/performance', async (req, res) => {
+        if (!pcProfile) return res.json({ success: false, error: 'Not available' });
+        await Promise.race([pcProfile.readSlowFacts(), new Promise((r) => setTimeout(r, 3000))]);
+        res.json({ success: true, ...pcProfile.describe(), freeMB: memoryGuard ? memoryGuard.freeMB() : null });
+    });
+
+    router.post('/performance', (req, res) => {
+        if (!pcProfile) return res.json({ success: false, error: 'Not available' });
+        try {
+            pcProfile.setMode(String((req.body && req.body.mode) || ''));
+        } catch (e) {
+            return res.status(400).json({ success: false, error: e.message });
+        }
+        const p = pcProfile.describe();
+        console.log(`[Performance] Settings: ${p.mode} -> ${p.tier} ${JSON.stringify(p.limits)}`);
+        res.json({ success: true, ...p });
+    });
 
     router.get('/hardware-encoders', async (req, res) => {
         try {

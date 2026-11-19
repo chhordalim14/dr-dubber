@@ -20,7 +20,10 @@ const NATIVE_AUDIO = new Set(['aac', 'mp3', 'opus', 'vorbis', 'flac', 'pcm_s16le
 const CACHE_VERSION = 1;
 const MAX_CONCURRENT_JOBS = 2;
 
-function createPreviewService({ previewDir, getFFmpegBinary, getFFprobeBinary, detectAvailableEncoders, trackProcess, audioRepair }) {
+// maxRunning: conversions at once (Settings > Performance); memoryHold: why the next one should
+// wait for free RAM (lib/memory-guard.js), or null.
+function createPreviewService({ previewDir, getFFmpegBinary, getFFprobeBinary, detectAvailableEncoders, trackProcess, audioRepair,
+    maxRunning = () => MAX_CONCURRENT_JOBS, memoryHold = () => null }) {
     fs.mkdirSync(previewDir, { recursive: true });
     const jobs = new Map();      // jobId -> job
     const jobsByKey = new Map(); // cacheKey -> jobId (dedupe: same file opened twice)
@@ -104,10 +107,17 @@ function createPreviewService({ previewDir, getFFmpegBinary, getFFprobeBinary, d
         return crypto.createHash('sha1').update(`${CACHE_VERSION}|${path.resolve(filePath)}|${stat.size}|${stat.mtimeMs}|${action}`).digest('hex').slice(0, 24);
     }
 
+    let pumpTimer = null;
     function pump() {
-        while (running < MAX_CONCURRENT_JOBS && queue.length) {
+        const cap = Math.max(1, Number(maxRunning()) || MAX_CONCURRENT_JOBS);
+        while (running < cap && queue.length) {
+            if (queue[0].status !== 'queued') { queue.shift(); continue; }
+            // Short of free RAM while something of ours runs: look again shortly.
+            if (memoryHold('preview')) {
+                if (!pumpTimer) pumpTimer = setTimeout(() => { pumpTimer = null; pump(); }, 3000);
+                return;
+            }
             const job = queue.shift();
-            if (job.status !== 'queued') continue;
             running++;
             runJob(job).finally(() => { running--; pump(); });
         }
@@ -225,7 +235,7 @@ function createPreviewService({ previewDir, getFFmpegBinary, getFFprobeBinary, d
         for (const [id, job] of jobs) if (job.createdAt < cutoff && !['queued', 'running'].includes(job.status)) jobs.delete(id);
     }, 10 * 60 * 1000).unref();
 
-    return { check, status, cancel };
+    return { check, status, cancel, runningCount: () => running };
 }
 
 module.exports = { createPreviewService };

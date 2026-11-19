@@ -4511,7 +4511,9 @@
       try { n = parseInt(localStorage.getItem(key), 10); } catch (e) { } // storage blocked: the default
       return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt;
     };
-    const seriesParallel = () => savedSeriesNumber("aiDubberSeriesParallel", 1, 20, FIX_MISSING_MAX_PARALLEL);
+    // The saved "Episodes at once" wins; without one, a small PC checks fewer tabs (js/pc-profile.js).
+    const seriesParallel = () => savedSeriesNumber("aiDubberSeriesParallel", 1, 20,
+      typeof pcLimit === "function" ? pcLimit("transcribeTabs", FIX_MISSING_MAX_PARALLEL) : FIX_MISSING_MAX_PARALLEL);
     const seriesRetryPasses = () => savedSeriesNumber("aiDubberSeriesRetries", 0, 5, 2);
 
     function stopFixMissingAll() {
@@ -16929,6 +16931,14 @@
         const sel = $(id);
         const saved = localStorage.getItem(key);
         if (saved !== null && [...sel.options].some((o) => o.value === saved)) sel.value = saved;
+        // Nothing chosen yet: "Episodes at once" shows this PC's default (Settings > Performance).
+        else if (key === "aiDubberSeriesParallel" && window.pcProfile) {
+          window.pcProfile.onChange(() => {
+            if (localStorage.getItem(key) !== null) return;
+            const dflt = String(pcLimit("transcribeTabs", 8));
+            if ([...sel.options].some((o) => o.value === dflt)) sel.value = dflt;
+          });
+        }
         sel.addEventListener("change", () => { try { localStorage.setItem(key, sel.value); } catch (e) { } });
       });
       const savePrefs = () => {
@@ -20031,6 +20041,8 @@
     // after another, a busy Google held up the whole step for every tab in turn.
     const SERIES_FIT_SPEED = 1.3; // only lines that clearly sound rushed are rewritten
     const SERIES_FIT_MAX_PARALLEL = 6; // tabs shortened at once (Batch Transcribe's cap)
+    // Fewer on a small PC (Settings > Performance, js/pc-profile.js).
+    const seriesFitAtOnce = () => (typeof pcLimit === "function" ? pcLimit("fitTabs", SERIES_FIT_MAX_PARALLEL) : SERIES_FIT_MAX_PARALLEL);
     async function fitFastLinesAllTabs({ onProgress = () => { }, checkStop = () => { } } = {}) {
       saveCurrentProjectState(); // the open tab's edits live in `subtitles`
       const tabDuration = (proj) => (proj.duration > 0 ? proj.duration : Infinity); // not the open tab's length
@@ -20097,7 +20109,7 @@
           }
         };
         // Every worker is waited for, so no answer lands in a tab after this returns.
-        await Promise.all(Array.from({ length: Math.min(SERIES_FIT_MAX_PARALLEL, keys.length, tabs.length) }, (_, w) => worker(w)));
+        await Promise.all(Array.from({ length: Math.min(seriesFitAtOnce(), keys.length, tabs.length) }, (_, w) => worker(w)));
         onProgress(done, total);
         // Stopped: the open tab still shows what was changed before the Stop (its next save
         // would otherwise write the old lines back).
@@ -20257,7 +20269,7 @@
           }
         }
       };
-      await Promise.all(Array.from({ length: Math.min(SERIES_FIT_MAX_PARALLEL, keys.length, todo.length) }, (_, w) => worker(w)));
+      await Promise.all(Array.from({ length: Math.min(seriesFitAtOnce(), keys.length, todo.length) }, (_, w) => worker(w)));
       onProgress(done, total);
       refreshActiveTabFromProject();
       if (stopError) throw stopError;
@@ -21455,11 +21467,13 @@
     // (2026-11-18: 64 and 43 lines "Failed to fetch" in the same millisecond, the server fine and
     // requests already being answered unharmed). 5 keeps lines waiting here instead and leaves
     // one connection for Transcribe and the status checks; the server voices no faster anyway.
+    // A small PC sends fewer (Settings > Performance, js/pc-profile.js).
     const VOICE_REQUESTS_AT_ONCE = 5;
+    const voiceRequestsAtOnce = () => (typeof pcLimit === "function" ? pcLimit("voiceRequests", VOICE_REQUESTS_AT_ONCE) : VOICE_REQUESTS_AT_ONCE);
     let voiceRequestsOpen = 0;
     const voiceRequestWaiters = [];
     async function withVoiceRequestSlot(signal, send) {
-      while (voiceRequestsOpen >= VOICE_REQUESTS_AT_ONCE) {
+      while (voiceRequestsOpen >= voiceRequestsAtOnce()) {
         if (signal && signal.aborted) throw new DOMException("Generation stopped", "AbortError");
         await new Promise((resolve) => voiceRequestWaiters.push(resolve));
       }
@@ -24635,7 +24649,10 @@
     // failed = tabs with no BGM at all, substituted = tabs where the other ML engine stood in.
     // 1 tab at a time with 16 GB of RAM or less (macOS reports a 16 GB Mac as 16), else 2.
     // Unknown (no Electron): 2, as before.
+    // Settings > Performance (backend/lib/pc-profile.js) decides once the server has answered.
     async function bgmTabsAtOnce() {
+      const fromProfile = typeof pcLimit === "function" ? pcLimit("isolateTabs", 0) : 0;
+      if (fromProfile > 0) return fromProfile;
       try {
         const specs = window.electronAPI && window.electronAPI.getHardwareSpecs ? await window.electronAPI.getHardwareSpecs() : null;
         const ram = Number(specs && specs.ramGB);
@@ -25367,9 +25384,10 @@
               let busy = null;
               try { busy = await res.clone().json(); } catch (_) { }
               attempt--;
-              if (busy && busy.held === "search") {
-                // A subtitle search is running: exports wait their turn (the server lets this one
-                // through after 20 minutes at most). Not counted as a busy try.
+              if (busy && (busy.held === "search" || busy.held === "memory")) {
+                // A subtitle search is running, or the PC is short of free RAM while another job
+                // runs: exports wait their turn (the server lets this one through after 20 minutes
+                // at most). Not counted as a busy try.
                 await new Promise((r) => setTimeout(r, 4000));
                 if (signal?.aborted) throw new DOMException("The render was stopped.", "AbortError");
                 continue;

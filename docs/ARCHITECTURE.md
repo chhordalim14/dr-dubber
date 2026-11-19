@@ -158,6 +158,10 @@ sequenceDiagram
 | `backend/lib/request-errors.js` | Logs why requests from the window to the backend failed (Chromium's `net::ERR_…`), one line per burst |
 | `backend/lib/voxcpm-installer.js` | One-click VoxCPM2 install |
 | `backend/lib/bgm-cache.js` | Separated-stem cache and BGM job bookkeeping |
+| `backend/lib/pc-profile.js` | Settings → Performance: the PC's group (light / standard / strong) from its RAM and CPU threads, and the limits of each group (`GET/POST /api/performance`, saved in `storage/performance.json`) |
+| `backend/lib/memory-guard.js` | Holds the next heavy job (export, Isolate BGM, Remove music, subtitle search, preview) while free RAM is short and another of ours runs |
+| `backend/lib/limiter.js` | At most N tasks at once; caps Transcribe's FFmpeg runs across every tab |
+| `frontend/js/pc-profile.js` | `pcLimit(name, fallback)` for the page, and the Performance section of Settings |
 | `backend/lib/text-blur.js`, `video-color.js` | FFmpeg filters for text blur and colour |
 | `backend/lib/batch-results.js` | Finished transcripts saved per video file |
 | `backend/lib/pronunciation.js` | Pronunciation checker driver |
@@ -674,7 +678,8 @@ flowchart TD
   | Remove music | 3.7 GB on Apple's GPU, 1.9 GB on the CPU (was 6.1 / 3.1) | `separate_sfx`: Demucs' own segment loop, keeping only the effects stem and writing it as it goes (`apply_model` held all three stems of the whole tab) |
   | Spleeter | about 6.4 GB | The whole tab through TensorFlow at once; nothing to stream |
 
-  Spleeter and Remove music each run one at a time on the PC (`one_at_a_time` in `vocal_separator.py`, a file lock the OS drops when Stop kills the holder); a waiting job logs that it waits. **Isolate All** does 1 tab at a time when `app:getHardwareSpecs` reports 16 GB of RAM or less (`bgmTabsAtOnce`), else 2. Tests: `tests/onnx-separator.test.js`, `tests/music-remover.test.js`, `tests/spleeter-one-at-a-time.test.js`, `tests/voice-and-bgm-load.test.js`.
+  Spleeter and Remove music each run one at a time on the PC (`one_at_a_time` in `vocal_separator.py`, a file lock the OS drops when Stop kills the holder); a waiting job logs that it waits. **Isolate All** does `isolateTabs` tabs at once from **Settings → Performance** (`lib/pc-profile.js`: 1 with 16 GB of RAM or less or on a light PC, else 2; `bgmTabsAtOnce` falls back to `app:getHardwareSpecs` until the profile has loaded).
+- **Waiting for free RAM.** Right before its Python starts, a separation (needs 2 GB free) or Remove music (2.5 GB) waits while free RAM is short and another of our heavy jobs runs (`waitForBgmMemory` → `lib/memory-guard.js`: separations, exports, subtitle searches and previews count). Never when nothing of ours runs, never longer than 20 minutes; Stop ends the wait. On a Mac free RAM comes from `vm_stat` (free + inactive + speculative + purgeable pages), since `os.freemem()` leaves out what macOS frees on demand. Tests: `tests/onnx-separator.test.js`, `tests/music-remover.test.js`, `tests/spleeter-one-at-a-time.test.js`, `tests/voice-and-bgm-load.test.js`.
 - **GPU sharing.** Before a GPU separation, the backend asks VoxCPM2 to release the GPU. If it can't, the separation runs on the CPU.
 - **Status.** The window polls `/api/bgm-job-status` every 2.5 s. **Stop** marks the job cancelled, then kills the process tree.
 - **Cache.** `storage/separated/bgm-cache/` keeps stems for 14 days and at most 4 GB. Work folders are removed after 24 h.
@@ -684,7 +689,7 @@ flowchart TD
 
 ### Finding burned-in subtitles
 
-`POST /api/detect-text` queues `text_detector.py <video> --fps 4`, at most `min(4, cpus/4)` at once, each about 0.5 GB of RAM. Its subtitle strip is decoded by NVIDIA's decoder, or VideoToolbox on a Mac (`DR_TEXT_HWACCEL` picks another, or `none`); without one it is decoded on the CPU. Results are cached in `storage/text_detect/`. While any detection runs, exports run at lower priority and new exports wait (section 15).
+`POST /api/detect-text` queues `text_detector.py <video> --fps 4`, at most `min(4, cpus/4)` at once (1 on a light PC, **Settings → Performance**), each about 0.5 GB of RAM; the next one waits while free RAM is short (`lib/memory-guard.js`). Its subtitle strip is decoded by NVIDIA's decoder, or VideoToolbox on a Mac (`DR_TEXT_HWACCEL` picks another, or `none`); without one it is decoded on the CPU. Results are cached in `storage/text_detect/`. While any detection runs, exports run at lower priority and new exports wait (section 15).
 
 ```mermaid
 flowchart TD
@@ -715,7 +720,7 @@ The window builds a config from the tab: voice clips with speed, pitch and rever
 
 ```mermaid
 flowchart TD
-    A["POST /api/render (max 2 at once;<br/>409 while a subtitle search runs)"] --> D["Dialogue stem: each clip trimmed, atempo,<br/>pitch (rubberband), reverb, delayed;<br/>mixed 40 clips per chunk"]
+    A["POST /api/render (max 2 at once, 1 on a light PC;<br/>409 while a subtitle search runs or free RAM is short)"] --> D["Dialogue stem: each clip trimmed, atempo,<br/>pitch (rubberband), reverb, delayed;<br/>mixed 40 clips per chunk"]
     D --> MS["Dialogue mastering (default on):<br/>high-pass 80 Hz, presence EQ, gentle compressor"]
     A --> BG["BGM: delay, volume, fades"]
     MS --> DK["Ducking: sidechain-compress BGM (and original audio)<br/>under the dialogue — light / standard / deep"]
@@ -940,7 +945,7 @@ All routes are under `http://127.0.0.1:3001` and need the token (section 3).
 | `pronunciation.js` | GET `/pronunciation`, POST `/pronunciation/enabled`, `/pronunciation/reject` | Pronunciation checker |
 | `preview.js` | POST `/check-video-preview`, GET `/preview-status`, POST `/cancel-preview` | Preview copies |
 | `waveform.js` | POST `/audio-peaks` | Waveform peaks |
-| `system.js` | GET `/hardware-encoders`, `/voices`, `/system-fonts`, `/system-memory`, `/select-folder`; POST `/open-folder`, `/open-logs-folder`, `/log-error`, `/log-audio-gen`, `/log-transcription`, `/clear-logs` | System info; the four log routes do nothing |
+| `system.js` | GET `/hardware-encoders`, `/voices`, `/system-fonts`, `/system-memory`, `/performance`, `/select-folder`; POST `/performance`, `/open-folder`, `/open-logs-folder`, `/log-error`, `/log-audio-gen`, `/log-transcription`, `/clear-logs` | System info; the four log routes do nothing |
 
 ### Local services
 

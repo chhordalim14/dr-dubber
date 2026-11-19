@@ -4558,6 +4558,22 @@
                 switch this to "Use CPU".</p>
             </div>
 
+            <!-- ── Performance (js/pc-profile.js, backend/lib/pc-profile.js) ── -->
+            <div class="flex flex-col gap-2 pt-4 border-t border-[var(--border-color)]">
+              <label for="setting-performance" class="text-sm text-[var(--text-bright)] font-medium">Performance</label>
+              <select id="setting-performance"
+                class="w-full px-3 py-2 rounded-lg border border-[var(--border-light)] bg-[var(--bg-base)] text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]">
+                <option value="auto">Auto (from this PC)</option>
+                <option value="light">Light - for a small PC</option>
+                <option value="standard">Standard</option>
+                <option value="strong">Strong - for a big PC</option>
+              </select>
+              <p id="performance-detected" class="text-[11px] text-[var(--text-secondary)]"></p>
+              <p id="performance-limits" class="text-[11px] text-[var(--text-secondary)]"></p>
+              <p id="performance-saved" class="text-[11px] text-emerald-400" aria-live="polite"></p>
+              <p class="text-[11px] text-[var(--text-muted)]">How much runs at the same time: exports, Isolate BGM, subtitle search and Transcribe. Light does less at once, so a PC with little memory stays smooth, but a series takes longer. When memory runs low, the next big job also waits for the one before it to finish.</p>
+            </div>
+
             <!-- ── Vocal Removal Engine ── -->
             <div class="flex flex-col gap-3 pt-4 border-t border-[var(--border-color)]">
               <label class="text-sm text-[var(--text-bright)] font-medium">Vocal Removal Engine</label>
@@ -6653,6 +6669,7 @@
   </div>
 
   <script src="js/gemini-models.js"></script>
+  <script src="js/pc-profile.js"></script>
   <script src="js/text-ai.js"></script>
   <script src="js/name-consistency.js"></script>
   <script src="js/subtitle-layout.js"></script>

@@ -70,7 +70,7 @@ test('Isolate BGM All: 1 tab at a time with 16 GB of RAM or less, else 2', async
 });
 
 test('Remove music runs under the one-at-a-time lock the separators share', () => {
-  const py = fs.readFileSync(path.join(repo, 'backend', 'python', 'vocal_separator.py'), 'utf8');
+  const py = fs.readFileSync(path.join(repo, 'backend', 'python', 'vocal_separator.py'), 'utf8').replace(/\r\n/g, '\n'); // a Windows checkout has CRLF
   const fn = py.slice(py.indexOf('def remove_music('), py.indexOf('def ml_failure('));
   assert.match(fn, /with one_at_a_time\("music", "[^"]+"\):\n\s+try:\n\s+proc = subprocess\.Popen/);
   // Everything that reads the running process stays inside the lock.
@@ -96,7 +96,7 @@ test('a burst of failed requests is one log line with Chromium\'s reason; Stop (
 });
 
 test('main.js passes failed requests to the app\'s server on to the log', () => {
-  const main = fs.readFileSync(path.join(repo, 'main.js'), 'utf8');
+  const main = fs.readFileSync(path.join(repo, 'main.js'), 'utf8').replace(/\r\n/g, '\n'); // a Windows checkout has CRLF
   assert.match(main, /webRequest\.onErrorOccurred\(\s*\{ urls: \[`http:\/\/localhost:\$\{PORT\}\/\*`, `http:\/\/127\.0\.0\.1:\$\{PORT\}\/\*`\] \}/);
   assert.ok(main.indexOf('onErrorOccurred') < main.indexOf('createWindow();\n\n        app.on'), 'hooked up before the window opens');
 });

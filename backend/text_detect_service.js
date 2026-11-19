@@ -29,6 +29,8 @@ function createTextDetectService({
     // Called with true when a search is queued or running and false when none is left (the
     // exports wait their turn meanwhile - render_service.js setSearchBusy).
     onBusyChange = () => { },
+    // Why the next search should wait for free RAM (lib/memory-guard.js holdReason), or null.
+    memoryHold = () => null,
 }) {
     const jobs = new Map();      // id -> job
     const byVideo = new Map();   // cache key -> id of the job queued/running for it
@@ -140,8 +142,18 @@ function createTextDetectService({
         });
     }
 
+    // maxRunning may be a number or a function (Settings > Performance changes it while running).
+    let pumpTimer = null;
     function pump() {
-        while (running.size < maxRunning && queue.length) runJob(queue.shift());
+        const cap = Math.max(1, Number(typeof maxRunning === 'function' ? maxRunning() : maxRunning) || 1);
+        while (running.size < cap && queue.length) {
+            // Short of free RAM while something of ours runs: look again shortly.
+            if (memoryHold('textDetect')) {
+                if (!pumpTimer) pumpTimer = setTimeout(() => { pumpTimer = null; pump(); }, 3000);
+                return;
+            }
+            runJob(queue.shift());
+        }
     }
 
     // Starts (or joins) detection for a video. Returns the job as the status call does.
@@ -183,7 +195,7 @@ function createTextDetectService({
         return { success: true };
     }
 
-    return { start, status, cancel, ensureDeps, busy, _jobs: jobs, _queue: queue };
+    return { start, status, cancel, ensureDeps, busy, runningCount: () => running.size, _jobs: jobs, _queue: queue };
 }
 
 module.exports = { createTextDetectService, DETECTOR_VERSION, defaultMaxRunning };
