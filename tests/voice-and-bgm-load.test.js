@@ -10,7 +10,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const repo = path.join(__dirname, '..');
-const page = fs.readFileSync(path.join(repo, 'frontend', 'js', 'studio-main.js'), 'utf8');
+const page = fs.readFileSync(path.join(repo, 'frontend', 'js', 'studio-main.js'), 'utf8').replace(/\r\n/g, '\n'); // a Windows checkout has CRLF
 
 // A function of studio-main.js, run on its own: from `start` to the line closing it.
 function pageSnippet(start, end) {
