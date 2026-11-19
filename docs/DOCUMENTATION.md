@@ -202,10 +202,10 @@ A release is a version bump, a Windows installer on GitHub Releases, and an edit
 
 | Field | Meaning | Today |
 | --- | --- | --- |
-| `version` | Latest version, compared as semver | `1.18.2` |
-| `link` | Windows installer URL | `DR.Dubber.Pro.Setup.1.18.2.exe` on the v1.18.2 release |
+| `version` | Latest version, compared as semver | `1.19.0` |
+| `link` | Windows installer URL | `DR.Dubber.Pro.Setup.1.19.0.exe` on the v1.19.0 release |
 | `mac_link` | macOS `.dmg` URL | Still the v1.2.1 arm64 `.dmg` |
-| `notes` | Release notes shown in the dialog and the app's release notes | v1.18.2 notes |
+| `notes` | Release notes shown in the dialog and the app's release notes | v1.19.0 notes |
 
 ### Cutting a release
 
