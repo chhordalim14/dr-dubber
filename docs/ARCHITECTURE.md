@@ -552,7 +552,7 @@ flowchart TD
     C --> D["POST /api/generate-audio<br/>voice: Male → Piseth, Female → Sreymom<br/>emotion → rate and volume"]
     D --> E{"In the cache?<br/>(2,000 entries, 2 h)"}
     E -- yes --> H
-    E -- no --> F["tts_generator.py --serve worker<br/>12 lines at once, fewer while Microsoft refuses (EdgeGate)"]
+    E -- no --> F["tts_generator.py --serve worker<br/>12 lines at once"]
     F -- "worker unusable" --> F2["One Python process per line<br/>(3 at once)"]
     F --> G["edge_tts → MP3, silence trimmed with FFmpeg"]
     F2 --> G
@@ -584,7 +584,7 @@ flowchart TD
 - **Retries.** Up to 8 tries per line, waiting 1.5 s and doubling each time, up to 30 s (3 s base after a network error). A 4xx other than 429 is not retried. A Microsoft 403 refusal gets one more try.
 - **Requests from the window** (`withVoiceRequestSlot` in `studio-main.js`). At most 5 Edge requests are open at once across every tab; the other lines wait in the window. The window sends only 6 requests to one server at a time and queues the rest inside Chromium, where **Generate All Tabs** used to park 40–60 lines; on 2026-11-18 such a queue failed all at once (64 and then 43 lines "Failed to fetch" in the same millisecond, the server fine). Five, not six, leaves one connection for Transcribe and the status checks. Test: `tests/voice-and-bgm-load.test.js`.
 - **Worker** (`lib/tts-worker.js`). One `tts_generator.py --serve` process, talking JSON lines over stdin and stdout, with a 300 s timeout per line. If the worker dies, only its in-flight lines fail. After 3 deaths in a row, each line uses its own process.
-- **Microsoft busy** (`EdgeGate` in `tts_generator.py`). "No audio was received" is Microsoft turning lines away, not a problem with the text. On a refusal the worker halves how many lines it sends at once (down to 2) and sends nothing new for 2 s; each line voiced in a row brings one more back, up to 12. Still refused at 2 at once means Microsoft is counting lines per minute, so it rests: no new line for 30 s, then 60 s while refusals go on, until one is voiced again. A refused line gets up to 6 tries in the worker before the window's own retries. The log shows `[TTS busy] …`. Test: `tests/tts-edge-gate.test.js`.
+- **Microsoft busy.** "No audio was received" is Microsoft turning a line away for a few seconds, not a problem with the text. The worker tries that line again itself, up to 10 times (about 30 s of waits: 1.5 s, 3 s, then 4.5 s each), and keeps sending the other lines meanwhile; only then does the line go back to the window's own retries. There is no gate that holds every line back: one (down to 2 at once, then no line for 30-60 s) made 150 lines take 500-1427 s instead of ~220 s, and lines ran past the server's time limit (240 s, only for a stuck worker). Test: `tests/tts-edge-busy.test.js`.
 - **Failed requests to the backend.** `main.js` passes `session.webRequest.onErrorOccurred` for `localhost:3001` to `lib/request-errors.js`, which writes each burst as one line with Chromium's reason, e.g. `[Network] 43 request(s) from the window to the app's server failed: net::ERR_NETWORK_CHANGED (POST /api/generate-audio x43)`. `ERR_ABORTED` (Stop) and `ERR_CACHE_MISS` (cache-only lookups) are left out.
 - **Trim.** Silence below −45 dB is cut, keeping 10 ms before the voice and 80 ms after. Inner pauses over 0.5 s become 0.3 s.
 

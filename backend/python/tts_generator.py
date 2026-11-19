@@ -328,109 +328,16 @@ async def generate_single_item(text: str, voice: str, rate: str, pitch: str, vol
         return await _generate_speech_core(text, voice, rate, pitch, volume, output_path)
 
 TTS_TIMEOUT_SECONDS = 30
-BUSY_ATTEMPTS = 6  # tries for a line Microsoft keeps turning away ("No audio was received")
+BUSY_ATTEMPTS = 10  # tries for a line Microsoft keeps turning away ("No audio was received"): ~30 s of waits
+BUSY_WAIT_SECONDS = 1.5  # wait before the next try of a refused line: 1.5, 3, then 4.5 s
 
 def _is_busy_error(message: str) -> bool:
     return "no audio was received" in (message or "").lower()
 
-class EdgeGate:
-    """
-    How many lines go to Microsoft at once, adjusted to how it answers. "No audio was received"
-    is Microsoft turning lines away when too many arrive at once (Dub Whole Series: 12 at a time
-    for minutes, 2026-11-17 the app's own retries kept failing too, because every retry came back
-    into the same crowd). On a refusal: half as many at once (not below MIN_LIMIT) and no new
-    line for PAUSE_SECONDS. Every `limit` lines voiced in a row: one more at once again, up to
-    the start value. Off (no limit) until setup() is called, for the single-line command.
-
-    Already at MIN_LIMIT and still refused: Microsoft is counting lines per minute, not lines at
-    once (2026-11-18: refusals for 11 minutes at 2 at once, a 2 s pause each, and a line still
-    refused on its third try from the app). Then no new line for REST_SECONDS, doubled while it
-    goes on (up to MAX_REST_SECONDS); the first line voiced again ends it.
-    """
-    MIN_LIMIT = 2
-    PAUSE_SECONDS = 2.0
-    REST_SECONDS = 30.0
-    MAX_REST_SECONDS = 60.0
-
-    def __init__(self):
-        self.max = 0
-        self.limit = 0
-        self.active = 0
-        self.resume_at = 0.0
-        self.cuts = 0
-        self.ok_streak = 0
-        self.rest = 0.0
-
-    def setup(self, max_limit: int):
-        self.max = max(1, int(max_limit))
-        self.limit = self.max
-        self.active = 0
-        self.resume_at = 0.0
-        self.cuts = 0
-        self.ok_streak = 0
-        self.rest = 0.0
-
-    async def acquire(self):
-        """Waits for a free place; returns the ticket to give release()."""
-        if not self.max:
-            return 0
-        loop = asyncio.get_running_loop()
-        while True:
-            now = loop.time()
-            # Nothing awaits between this check and the count, so no other line slips in between.
-            if now >= self.resume_at and self.active < self.limit:
-                self.active += 1
-                return self.cuts
-            await asyncio.sleep(min(0.25, max(0.05, self.resume_at - now)))
-
-    def release(self, outcome: str, ticket: int):
-        """outcome: "ok", "busy" (Microsoft refused it) or anything else (no change)."""
-        if not self.max:
-            return
-        self.active = max(0, self.active - 1)
-        now = asyncio.get_running_loop().time()
-        if outcome == "busy":
-            self.ok_streak = 0
-            pause = self.PAUSE_SECONDS
-            # Refusals of lines sent before the last cut are the crowd that cut was for: halve
-            # once for them. A line sent since then refused too: still too many, halve again.
-            if ticket == self.cuts and self.limit > self.MIN_LIMIT:
-                self.limit = max(self.MIN_LIMIT, self.limit // 2)
-                self.cuts += 1
-                print(f"[TTS busy] Microsoft is turning lines away: {self.limit} at once now", file=sys.stderr, flush=True)
-            elif ticket == self.cuts:
-                # At the floor already: rest. Lines sent before this rest that are refused
-                # too are part of the same crowd (cuts moves on), so they don't double it.
-                self.rest = min(self.MAX_REST_SECONDS, self.rest * 2) if self.rest else self.REST_SECONDS
-                pause = self.rest
-                self.cuts += 1
-                print(f"[TTS busy] Microsoft is still turning lines away at {self.limit} at once: no new line for {pause:g}s", file=sys.stderr, flush=True)
-            self.resume_at = max(self.resume_at, now + pause)
-        elif outcome == "ok" and self.rest:
-            self.rest = 0.0
-        if outcome == "ok" and self.limit < self.max:
-            self.ok_streak += 1
-            if self.ok_streak >= self.limit:
-                self.limit += 1
-                self.ok_streak = 0
-                if self.limit == self.max:
-                    print(f"[TTS busy] Microsoft is answering again: {self.limit} at once", file=sys.stderr, flush=True)
-
-EDGE_GATE = EdgeGate()
 
 async def _edge_save(communicate, output_path: str):
-    """One request to Microsoft, through EDGE_GATE."""
-    ticket = await EDGE_GATE.acquire()
-    outcome = "other"
-    try:
-        await asyncio.wait_for(communicate.save(output_path), timeout=TTS_TIMEOUT_SECONDS)
-        outcome = "ok"
-    except Exception as e:
-        if _is_busy_error(str(e)):
-            outcome = "busy"
-        raise
-    finally:
-        EDGE_GATE.release(outcome, ticket)
+    """One request to Microsoft, with its own time limit."""
+    await asyncio.wait_for(communicate.save(output_path), timeout=TTS_TIMEOUT_SECONDS)
 
 async def _generate_speech_core(text: str, voice: str, rate: str, pitch: str, volume: str, output_path: str):
     try:
@@ -493,12 +400,15 @@ async def _generate_speech_core(text: str, voice: str, rate: str, pitch: str, vo
             # many arrive at once (2026-11-09: 228 of ~1800 series lines; the app's own retry
             # 1.5 s later got through on the first try for 210 of them, and 0.4/0.8 s here
             # was too soon). Wait long enough here, so the line does not go back to the app.
-            # EDGE_GATE sends fewer lines at once after one, so a refused line gets more tries
-            # here: sent back to the app, it only came back into the same crowd.
+            # No gate that holds every other line back while one is refused: one (EdgeGate,
+            # 2026-11-17/18: down to 2 at once, then no line for 30-60 s) made 150 lines take
+            # 500-1427 s instead of ~220 s and lines ran past the server's time limit, so the app
+            # retried them anyway. Measured 2026-11-19 on 300 real lines each: this way, all
+            # voiced, no time-outs; 13 lines went back to the app at 6 tries, 1 at 10.
             busy = _is_busy_error(last_error)
             if attempt >= (BUSY_ATTEMPTS if busy else max_attempts):
                 break
-            await asyncio.sleep(1.5 * min(attempt, 3) if busy else 0.4 * attempt)
+            await asyncio.sleep(BUSY_WAIT_SECONDS * min(attempt, 3) if busy else 0.4 * attempt)
 
         # Ensure no corrupt 0-byte file lingers on disk
         if os.path.exists(output_path) and os.path.getsize(output_path) == 0:
@@ -528,7 +438,6 @@ async def generate_batch(batch_items, max_concurrency=6):
     Drastically faster than launching separate Python processes.
     """
     sem = asyncio.Semaphore(max_concurrency)
-    EDGE_GATE.setup(max_concurrency)
     tasks = []
 
     async def worker(item):
@@ -583,7 +492,6 @@ async def serve(max_concurrency=6):
     """
     loop = asyncio.get_running_loop()
     sem = asyncio.Semaphore(max_concurrency)
-    EDGE_GATE.setup(max_concurrency)
     tasks = {}
     lines = asyncio.Queue()
 
