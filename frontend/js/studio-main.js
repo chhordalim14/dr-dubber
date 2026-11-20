@@ -21636,7 +21636,7 @@
           delete activeAudios[subId];
         }
 
-        const maxRetries = targetProject._maxRetries || 8;
+        const maxRetries = targetProject._maxRetries || 2;
         let attempt = 0;
         let success = false;
 
@@ -21816,10 +21816,10 @@
 
             const isNetworkError = error.message === "Failed to fetch" || error.message?.includes("NetworkError") || error.message?.includes("net::ERR");
             console.warn(`[Retry ${attempt}/${maxRetries}] Audio gen retry for subtitle ${subId}:`, error.message);
-            // Microsoft's voice service refusing the connection (403 at the handshake: an edge-tts
-            // it no longer accepts, or a blocked network) answers every try the same way. Eight
-            // tries with waits of up to 30s held a whole part for half an hour: one more, then stop.
-            if (isEdgeTtsRefusal(error.message)) attempt = Math.max(attempt, maxRetries - 1);
+            // Fast-fail refusals (403 handshake refusal) and "No audio was received" (already retried in generator):
+            // allow at most 1 quick retry instead of cycling through retries.
+            const isRefusalOrExhausted = isEdgeTtsRefusal(error.message) || /no audio was received/i.test(String(error.message || ""));
+            if (isRefusalOrExhausted) attempt = Math.max(attempt, maxRetries - 1);
 
             if (attempt >= maxRetries) {
               const safeIndex = targetProject.subtitles.findIndex((s) => s.id === subId);
@@ -21832,8 +21832,8 @@
                 if (liveIdx > -1) subtitles[liveIdx].audioStatus = "error";
               }
             } else {
-              const baseDelay = isNetworkError ? 3000 : 1500;
-              const backoff = Math.min(baseDelay * Math.pow(2, attempt - 1), 30000);
+              const baseDelay = isNetworkError ? 2000 : 1500;
+              const backoff = Math.min(baseDelay * Math.pow(1.5, attempt - 1), 4000);
               const retryIndex = targetProject.subtitles.findIndex((s) => s.id === subId);
               if (retryIndex > -1) {
                 targetProject.subtitles[retryIndex].audioStatus = "generating";
@@ -22307,7 +22307,7 @@
 
           const subIdx = () => proj.subtitles.findIndex((s) => s.id === sub.id);
 
-          const maxRetries = proj._maxRetries || 8;
+          const maxRetries = proj._maxRetries || 2;
           let attempt = 0;
           let success = false;
 
@@ -22467,7 +22467,7 @@
                   if (liveIdx > -1) subtitles[liveIdx].audioStatus = "error";
                 }
               } else {
-                const backoff = Math.min(1500 * Math.pow(2, attempt - 1), 30000);
+                const backoff = Math.min(1500 * Math.pow(1.5, attempt - 1), 4000);
                 const waitStart = Date.now();
                 while (Date.now() - waitStart < backoff) {
                   if (cancelRef.cancelled) break;

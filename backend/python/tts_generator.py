@@ -328,8 +328,8 @@ async def generate_single_item(text: str, voice: str, rate: str, pitch: str, vol
         return await _generate_speech_core(text, voice, rate, pitch, volume, output_path)
 
 TTS_TIMEOUT_SECONDS = 30
-BUSY_ATTEMPTS = 10  # tries for a line Microsoft keeps turning away ("No audio was received"): ~30 s of waits
-BUSY_WAIT_SECONDS = 1.5  # wait before the next try of a refused line: 1.5, 3, then 4.5 s
+BUSY_ATTEMPTS = 5  # tries for a line Microsoft keeps turning away ("No audio was received"): ~9 s of waits
+BUSY_WAIT_SECONDS = 1.0  # wait before the next try of a refused line: 1.0, 2.0, then 3.0 s
 
 def _is_busy_error(message: str) -> bool:
     return "no audio was received" in (message or "").lower()

@@ -1473,9 +1473,8 @@ function queueTtsTask(task) {
 
 // One Python process serving every voice line, TTS_LINES_AT_ONCE at a time (the same as batch
 // mode). The regulator above is only for the one-process-per-line fallback.
-// 12: Microsoft answered 48 lines at 12 at once in 4.6s against 8.1s at 6, with nothing refused
-// (16 was faster still; kept lower so a busy night doesn't look like abuse to it).
-const TTS_LINES_AT_ONCE = 12;
+// 5: Kept moderate to prevent Microsoft from turning lines away with "No audio was received" (rate-limiting).
+const TTS_LINES_AT_ONCE = 5;
 let ttsTrimNotesShown = 0;
 const ttsWorker = createTtsWorker({
     maxInFlight: TTS_LINES_AT_ONCE,

@@ -56,14 +56,14 @@ ${body}
 }
 
 test('a refused line is tried again in the generator and voiced', { skip: !PY && 'app python_env not found' }, () => {
-    const out = runPy('tries < 9', `
+    const out = runPy('tries < 4', `
 async def main():
     r = await line("a", tempfile.mkdtemp())
     return {"success": r.get("success"), "tries": state["tries"]["a"]}
 print(json.dumps(asyncio.run(main())))
 `);
     assert.equal(out.success, true);
-    assert.equal(out.tries, 10, 'voiced on the last try the generator gives it');
+    assert.equal(out.tries, 5, 'voiced on the last try the generator gives it');
 });
 
 test('a line refused every time goes back to the app with Microsoft\'s answer', { skip: !PY && 'app python_env not found' }, () => {
@@ -75,13 +75,13 @@ print(json.dumps(asyncio.run(main())))
 `);
     assert.equal(out.success, false);
     assert.match(out.error, /No audio was received/);
-    assert.equal(out.tries, 10);
+    assert.equal(out.tries, 5);
 });
 
 // Through generate_batch, which sets the generator up the way --serve does (the old gate only
 // switched on there).
 test('one refused line never holds the other lines back', { skip: !PY && 'app python_env not found' }, () => {
-    const out = runPy('text == "stuck" and tries < 5', `
+    const out = runPy('text == "stuck" and tries < 3', `
 import io, contextlib, time
 async def main():
     d = tempfile.mkdtemp()
