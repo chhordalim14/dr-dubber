@@ -68,6 +68,12 @@
 
     const VOCAL_ENGINE_LABELS = { mdx: "MDX-Net", spleeter: "Spleeter", demucs: "Demucs", ffmpeg: "FFmpeg" };
 
+    function maxPastStates() {
+      const getFn = typeof pcLimit === "function" ? pcLimit : (typeof window !== "undefined" && typeof window.pcLimit === "function" ? window.pcLimit : null);
+      const isLight = getFn ? getFn("renders", 2) === 1 : false;
+      return isLight ? 15 : 25;
+    }
+
     // Rich text for the free-text overlay boxes: those are contentEditable
     // and intentionally hold per-character colour runs (<span style="color:…">
     // from execCommand foreColor) plus line breaks. Parse in an inert
@@ -1721,7 +1727,7 @@
         if (!p) return;
         // Push an undo snapshot into that project's pastStates BEFORE overwriting
         p.pastStates = p.pastStates || [];
-        if (p.pastStates.length > 50) p.pastStates.shift();
+        while (p.pastStates.length >= maxPastStates()) p.pastStates.shift();
         p.pastStates.push({
           subs: JSON.parse(JSON.stringify(p.subtitles || [])),
           bgm: JSON.parse(JSON.stringify(p.bgmTrack || {})),
@@ -2964,8 +2970,11 @@
       // Build ONE fresh Audio object per subtitle and explicitly call .load()
       // so the browser starts buffering immediately — not lazily on first play.
       // This is the only reliable fix for silent A1 audio after tab switch.
+      // Pre-warm up to the first 20 ready clips to prevent allocating hundreds of elements at once.
+      // The timeline playback loop lazily loads upcoming clips on-demand 3s ahead.
       if (p.subtitles) {
-        p.subtitles.forEach((sub) => {
+        const readySubs = p.subtitles.filter((sub) => sub.audioStatus === "ready" && sub.audioUrl);
+        readySubs.slice(0, 20).forEach((sub) => {
           if (sub.audioStatus === "ready" && sub.audioUrl) {
             // Always destroy any leftover Audio object — including ones written by
             // background-tab generation warm-ups — so we always start fresh.
@@ -5531,6 +5540,24 @@
     let isMuted = false;
     let currentVolume = 1;
     const activeAudios = {};
+    const MAX_ACTIVE_AUDIOS = 40;
+    function pruneActiveAudios() {
+      const keys = Object.keys(activeAudios);
+      if (keys.length <= MAX_ACTIVE_AUDIOS) return;
+      const toEvict = keys.length - MAX_ACTIVE_AUDIOS;
+      let evicted = 0;
+      for (const k of keys) {
+        if (evicted >= toEvict) break;
+        const a = activeAudios[k];
+        if (a && a.paused) {
+          if (typeof window.releaseAudioChain === "function") window.releaseAudioChain(a);
+          a.removeAttribute("src");
+          a.load();
+          delete activeAudios[k];
+          evicted++;
+        }
+      }
+    }
     let bgmAudio = null;
 
     // ============================================================
@@ -9172,7 +9199,7 @@
       showToast(`${modeLabels[refactorMode] || "Refactoring"}...`, "info");
 
       // Save state to undo history before making the change
-      if (pastStates.length > 50) pastStates.shift();
+      while (pastStates.length >= maxPastStates()) pastStates.shift();
       pastStates.push({
         subs: JSON.parse(JSON.stringify(subtitles)),
         bgm: JSON.parse(JSON.stringify(bgmTrack)),
@@ -9262,7 +9289,7 @@
 
       // Save to undo history if active project
       if (targetProject === projects[activeProjectIndex]) {
-        if (pastStates.length > 50) pastStates.shift();
+        while (pastStates.length >= maxPastStates()) pastStates.shift();
         pastStates.push({
           subs: JSON.parse(JSON.stringify(subtitles)),
           bgm: JSON.parse(JSON.stringify(bgmTrack)),
@@ -10336,6 +10363,10 @@
         const profile = data.profiles.find((p) => p.id === profileId);
         if (!profile) return;
         // Cross-platform safe: store the native OS path and derive a clean display name
+        if (typeof window !== "undefined" && window._voxAudioBase64Cache) {
+          if (profile.audioPath) window._voxAudioBase64Cache.delete(profile.audioPath);
+          window._voxAudioBase64Cache.delete(result.filePath);
+        }
         profile.audioPath = result.filePath;
         profile.audioName = result.fileName || result.filePath.split(/[\\/]/).pop();
         delete profile.isNew;
@@ -11484,11 +11515,21 @@
     // Call this right before you delete, move, or edit anything!
     // ADDED: customDetached parameter to handle drag snapshots safely
     const saveStateToPast = (customSubs = null, customBgm = null, customDetached = null) => {
-      if (pastStates.length > 50) pastStates.shift(); // Keep max 50 states
+      while (pastStates.length >= maxPastStates()) pastStates.shift();
 
       const cloneObj = (o) => (typeof structuredClone === "function" ? structuredClone(o) : JSON.parse(JSON.stringify(o)));
+      const rawSubs = customSubs || subtitles;
+      const cleanSubs = Array.isArray(rawSubs) ? rawSubs.map((s) => {
+        if (!s) return s;
+        const copy = { ...s };
+        delete copy._retryInfo;
+        delete copy._cancelGenRef;
+        delete copy.generateAbortController;
+        return copy;
+      }) : rawSubs;
+
       pastStates.push({
-        subs: cloneObj(customSubs || subtitles),
+        subs: cloneObj(cleanSubs),
         bgm: cloneObj(customBgm || bgmTrack),
         // ADDED: Snapshot the detached audios into history
         detached: cloneObj(customDetached || detachedAudios || []),
@@ -14894,7 +14935,7 @@
           textInput.classList.remove("subtitle-text-modified");
 
           if (textInput._origText !== undefined && textInput._origText !== textInput.value) {
-            if (pastStates.length > 50) pastStates.shift();
+            while (pastStates.length >= maxPastStates()) pastStates.shift();
             // Deep clone (like every other history entry), but built ONCE on
             // a real edit instead of stringifying the whole script on every
             // focus AND every blur.
@@ -21234,6 +21275,17 @@
       return filePath && Number.isFinite(start) && end > start ? { filePath, start, end } : null;
     }
 
+    const voxAudioBase64Cache = (typeof window !== "undefined" && window._voxAudioBase64Cache) || (typeof window !== "undefined" ? (window._voxAudioBase64Cache = new Map()) : new Map());
+    const MAX_VOX_AUDIO_CACHE = 5;
+    function setVoxAudioCache(key, value) {
+      if (!voxAudioBase64Cache || !key || !value) return;
+      if (voxAudioBase64Cache.size >= MAX_VOX_AUDIO_CACHE) {
+        const oldestKey = voxAudioBase64Cache.keys().next().value;
+        if (oldestKey) voxAudioBase64Cache.delete(oldestKey);
+      }
+      voxAudioBase64Cache.set(key, value);
+    }
+
     async function executeVoxCpm2Synthesis({ text, serverUrl, tempPath, profile, index, speed = 1.0, emotion = 'Neutral', fitSeconds = null, line = null, signal }) {
       const srvUrl = (serverUrl || "http://127.0.0.1:8808").trim();
       const isRemote = srvUrl && !srvUrl.includes("localhost") && !srvUrl.includes("127.0.0.1");
@@ -21269,22 +21321,35 @@
       const feelingKey = Object.keys(profile?.emotionClips || {}).find((k) => k.toLowerCase() === String(emotion || "").toLowerCase());
       const feeling = feelingKey && profile.emotionClips[feelingKey];
       if (!feelingBase64 && feeling?.path && window.electronAPI?.readFileAsBase64) {
-        const f = await window.electronAPI.readFileAsBase64(feeling.path).catch(() => null);
-        if (f?.success && (f.base64 || f.data)) {
-          feelingBase64 = f.base64 || f.data;
+        const cachedFeeling = voxAudioBase64Cache.get(feeling.path);
+        if (cachedFeeling) {
+          feelingBase64 = cachedFeeling;
           feelingFrom = "emotion";
+        } else {
+          const f = await window.electronAPI.readFileAsBase64(feeling.path).catch(() => null);
+          if (f?.success && (f.base64 || f.data)) {
+            feelingBase64 = f.base64 || f.data;
+            feelingFrom = "emotion";
+            setVoxAudioCache(feeling.path, feelingBase64);
+          }
         }
       }
 
       let refBase64 = null;
       if (profile && profile.audioPath && window.electronAPI && typeof window.electronAPI.readFileAsBase64 === "function") {
-        try {
-          const rRes = await window.electronAPI.readFileAsBase64(profile.audioPath);
-          // app:readFileAsBase64 answers { success, base64, mime }.
-          if (rRes && rRes.success && (rRes.base64 || rRes.data)) {
-            refBase64 = rRes.base64 || rRes.data;
-          }
-        } catch (_) {}
+        const cachedRef = voxAudioBase64Cache.get(profile.audioPath);
+        if (cachedRef) {
+          refBase64 = cachedRef;
+        } else {
+          try {
+            const rRes = await window.electronAPI.readFileAsBase64(profile.audioPath);
+            // app:readFileAsBase64 answers { success, base64, mime }.
+            if (rRes && rRes.success && (rRes.base64 || rRes.data)) {
+              refBase64 = rRes.base64 || rRes.data;
+              setVoxAudioCache(profile.audioPath, refBase64);
+            }
+          } catch (_) {}
+        }
       }
 
       const saveAudioViaBackend = async (audioBase64) => {
@@ -21470,7 +21535,9 @@
     // A small PC sends fewer (Settings > Performance, js/pc-profile.js).
     const VOICE_REQUESTS_AT_ONCE = 5;
     const voiceRequestsAtOnce = () => (typeof pcLimit === "function" ? pcLimit("voiceRequests", VOICE_REQUESTS_AT_ONCE) : VOICE_REQUESTS_AT_ONCE);
+    const VOICE_STAGGER_MS = typeof window !== "undefined" && window.__VOICE_STAGGER_MS !== undefined ? window.__VOICE_STAGGER_MS : (typeof window !== "undefined" ? 100 : 0);
     let voiceRequestsOpen = 0;
+    let lastVoiceRequestTime = 0;
     const voiceRequestWaiters = [];
     async function withVoiceRequestSlot(signal, send) {
       while (voiceRequestsOpen >= voiceRequestsAtOnce()) {
@@ -21479,6 +21546,18 @@
       }
       voiceRequestsOpen++;
       try {
+        if (signal && signal.aborted) throw new DOMException("Generation stopped", "AbortError");
+        if (VOICE_STAGGER_MS > 0) {
+          const now = Date.now();
+          const waitMs = Math.max(0, lastVoiceRequestTime + VOICE_STAGGER_MS - now);
+          if (waitMs > 0) {
+            lastVoiceRequestTime = now + waitMs;
+            await new Promise((r) => setTimeout(r, waitMs));
+          } else {
+            lastVoiceRequestTime = now;
+          }
+          if (signal && signal.aborted) throw new DOMException("Generation stopped", "AbortError");
+        }
         return await send();
       } finally {
         voiceRequestsOpen--;
@@ -21616,9 +21695,27 @@
         let currentIndex = targetProject.subtitles.findIndex((s) => s.id === subId);
         if (currentIndex === -1) return;
 
-        // Nothing to speak (empty, "♪", "..."): edge-tts has no audio for it, and 8 retries
-        // would hold a worker for ~2 minutes before failing anyway.
-        if (!isSpeakableText(targetProject.subtitles[currentIndex].text)) return;
+        // Pre-flight check: if a subtitle line contains no speakable Khmer/alphanumeric
+        // characters (only punctuation/spaces/"♪"), generate a silent 0.3s clip locally
+        // without sending an API request. This prevents Edge-TTS from failing on empty text.
+        if (!isSpeakableText(targetProject.subtitles[currentIndex].text)) {
+          const silentBlobUrl = typeof createSilentAudio === "function" ? await createSilentAudio(0.3) : "";
+          const safeIdx = targetProject.subtitles.findIndex((s) => s.id === subId);
+          if (safeIdx > -1) {
+            const s = targetProject.subtitles[safeIdx];
+            const startTime = parseFloat(s.textStart || 0);
+            s.audioStatus = "ready";
+            delete s.audioError;
+            s.audioUrl = silentBlobUrl;
+            s.file = silentBlobUrl;
+            s.baseAudioDuration = 0.3;
+            s.audioStart = startTime.toFixed(2);
+            s.audioEnd = (startTime + 0.3).toFixed(2);
+            syncLiveAudio(s);
+            batchedRenderSubtitlesImmediate(s);
+          }
+          return;
+        }
 
         // A stopped line keeps its old voice if it had one, otherwise it is pending again.
         const resetStoppedLine = () => {
@@ -21732,6 +21829,7 @@
                   preWarmAudio.load();
                   preWarmAudio.playbackRate = targetProject.subtitles[safeIndex].speed || 1.0;
                   preWarmAudio.volume = Math.min(1.0, targetProject.subtitles[safeIndex].volume ?? 1.0);
+                  if (typeof pruneActiveAudios === "function") pruneActiveAudios();
                   activeAudios[subId] = preWarmAudio;
                 }
               }
@@ -21819,7 +21917,11 @@
             // Fast-fail refusals (403 handshake refusal) and "No audio was received" (already retried in generator):
             // allow at most 1 quick retry instead of cycling through retries.
             const isRefusalOrExhausted = isEdgeTtsRefusal(error.message) || /no audio was received/i.test(String(error.message || ""));
+            const isNonRecoverable = /empty text after sanitization/i.test(String(error.message || "")) ||
+                                    /empty text/i.test(String(error.message || "")) ||
+                                    /unsupported language/i.test(String(error.message || ""));
             if (isRefusalOrExhausted) attempt = Math.max(attempt, maxRetries - 1);
+            if (isNonRecoverable) attempt = maxRetries;
 
             if (attempt >= maxRetries) {
               const safeIndex = targetProject.subtitles.findIndex((s) => s.id === subId);
@@ -22307,6 +22409,31 @@
 
           const subIdx = () => proj.subtitles.findIndex((s) => s.id === sub.id);
 
+          // Pre-flight check: if a subtitle line contains no speakable Khmer/alphanumeric
+          // characters, generate a silent 0.3s clip locally without sending an API request.
+          if (!isSpeakableText(sub.text)) {
+            const silentBlobUrl = typeof createSilentAudio === "function" ? await createSilentAudio(0.3) : "";
+            const i = subIdx();
+            if (i > -1) {
+              const startTime = parseFloat(proj.subtitles[i].textStart || 0);
+              proj.subtitles[i].audioStatus = "ready";
+              delete proj.subtitles[i].audioError;
+              proj.subtitles[i].audioUrl = silentBlobUrl;
+              proj.subtitles[i].file = silentBlobUrl;
+              proj.subtitles[i].baseAudioDuration = 0.3;
+              proj.subtitles[i].audioStart = startTime.toFixed(2);
+              proj.subtitles[i].audioEnd = (startTime + 0.3).toFixed(2);
+              if (projects[activeProjectIndex] === proj) {
+                const liveIdx = subtitles.findIndex((s) => s.id === sub.id);
+                if (liveIdx > -1) {
+                  subtitles[liveIdx] = { ...proj.subtitles[i] };
+                  if (typeof updateSubtitleRowStatus === "function") updateSubtitleRowStatus(subtitles[liveIdx]);
+                }
+              }
+            }
+            continue;
+          }
+
           const maxRetries = proj._maxRetries || 2;
           let attempt = 0;
           let success = false;
@@ -22387,6 +22514,7 @@
                     preWarmAudio.load();
                     preWarmAudio.playbackRate = proj.subtitles[i].speed || 1.0;
                     preWarmAudio.volume = Math.min(1.0, proj.subtitles[i].volume ?? 1.0);
+                    if (typeof pruneActiveAudios === "function") pruneActiveAudios();
                     activeAudios[sub.id] = preWarmAudio;
                   }
                 }
@@ -22440,6 +22568,7 @@
                         warmAudio.load();
                         warmAudio.playbackRate = warmSub.speed || 1.0;
                         warmAudio.volume = Math.min(1.0, warmSub.volume ?? 1.0);
+                        if (typeof pruneActiveAudios === "function") pruneActiveAudios();
                         activeAudios[sub.id] = warmAudio;
                       }
                       resolveVoxMeta();
@@ -22459,6 +22588,10 @@
                 cancelRef.cancelled = true;
                 break;
               }
+              const isNonRecoverable = /empty text after sanitization/i.test(String(err.message || "")) ||
+                                      /empty text/i.test(String(err.message || "")) ||
+                                      /no audio was received/i.test(String(err.message || ""));
+              if (isNonRecoverable) attempt = maxRetries;
               if (attempt >= maxRetries) {
                 const i = subIdx();
                 if (i > -1) proj.subtitles[i].audioStatus = "error";
@@ -22787,6 +22920,7 @@
       audio.preload = "auto";
       audio.src = fullUrl;
       audio.load();
+      if (typeof pruneActiveAudios === "function") pruneActiveAudios();
       activeAudios[sub.id] = audio;
       attachPitchNode(audio).catch((e) => console.warn("[Pitch] routing failed:", e.message));
       return audio;
@@ -22984,6 +23118,7 @@
                 audio.preload = "auto";
                 audio.src = fullUrl;
                 audio.load();
+                if (typeof pruneActiveAudios === "function") pruneActiveAudios();
                 activeAudios[a.id] = audio;
               }
 
@@ -24323,6 +24458,8 @@
       if (canvas) {
         const ctx = canvas.getContext("2d");
         ctx.clearRect(0, 0, canvas.width, canvas.height);
+        canvas.width = 1;
+        canvas.height = 1;
       }
     }
 

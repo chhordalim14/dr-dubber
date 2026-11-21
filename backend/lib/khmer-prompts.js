@@ -131,7 +131,15 @@ ${KHMER_FORMS_OF_ADDRESS}
 7. VOICE ACTING & NATURAL CADENCE (ចង្វាក់សន្ទនា និងអារម្មណ៍តួអង្គ):
    - Translate for the EAR, not just the eyes: lines must sound natural and fluid when spoken aloud by a voice actor.
    - For emotional pauses, use clean ellipsis "..." to give the voice breathing room between dramatic thoughts.
-   - For urgent shouts or battle calls, use short, punchy wording matching visual lip bursts (!, ?!).`;
+   - For urgent shouts or battle calls, use short, punchy wording matching visual lip bursts (!, ?!).
+
+8. KHMER TTS & PRONUNCIATION NORMALIZATION (ស្តង់ដារអក្ខរាវិរុទ្ធ និងបញ្ចេញសំឡេង TTS):
+   - Follow standard Khmer Dictionary (Chuon Nath / NCKL) spelling.
+   - Numbers (0-9 and ០-៩) must be normalized into full Khmer words (e.g. 25 -> ម្ភៃប្រាំ, 100 -> មួយរយ, 2026 -> ពីរពាន់ម្ភៃប្រាំមួយ, ទី 1 -> ទីមួយ).
+   - Decimals: Spoken natural style with "ចុច" (e.g. 44.6 -> សែសិបបួន ចុច ប្រាំមួយ, 99.99 -> កៅសិបប្រាំបួន ចុច កៅសិបប្រាំបួន).
+   - Repetition mark ៗ: Expand to spoken repetition (e.g. លឿនៗ -> លឿន លឿន, ផ្សេងៗ -> ផ្សេង ផ្សេង).
+   - Currencies: $10 -> ដប់ដុល្លារ, 100៛ -> មួយរយរៀល, €20 -> ម្ភៃអឺរ៉ូ, 100฿ -> មួយរយបាត, ¥500 -> ប្រាំរយយ័ន.
+   - English terms & brand names: Transliterate all English words and brand names into phonetic Khmer script (e.g. VIP -> វីអាយភី, Facebook -> ហ្វេសប៊ុក, YouTube -> យូធូប, Wi-Fi -> វ៉ាយហ្វាយ, Video -> វីដេអូ, App -> អែប, OK -> អូខេ).`;
 
 function getKhmerDramaRegisterGuidance(genreRegister) {
     if (genreRegister === 'historical' || genreRegister === 'imperial' || genreRegister === 'wuxia') {

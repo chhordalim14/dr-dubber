@@ -90,6 +90,15 @@ describe('forms of address', () => {
         assert.match(KHMER_DUBBING_RULES, /A parent NEVER calls their child "បង", "អូន", or "ឯង"/);
         assert.match(KHMER_DUBBING_RULES, /A child NEVER calls parents "បង", "អូន", "ឯង", "លោក", or "អ្នក"/);
     });
+
+    test('TTS normalization standards: dictionary compliance, numbers in words, transliterations', () => {
+        assert.match(KHMER_DUBBING_RULES, /KHMER TTS & PRONUNCIATION NORMALIZATION/);
+        assert.match(KHMER_DUBBING_RULES, /Chuon Nath \/ NCKL/);
+        assert.match(KHMER_DUBBING_RULES, /Numbers \(0-9 and ០-៩\) must be normalized into full Khmer words/);
+        assert.match(KHMER_DUBBING_RULES, /Decimals: Spoken natural style with "ចុច"/);
+        assert.match(KHMER_DUBBING_RULES, /Repetition mark ៗ: Expand to spoken repetition/);
+        assert.match(KHMER_DUBBING_RULES, /Transliterate all English words and brand names/);
+    });
 });
 
 describe('translate-srt keeps timing', () => {
