@@ -124,26 +124,35 @@
   // Settings keys are backups; with "Gmails only" the Gmails alone. DR Router's window.drPool did
   // this until it was removed (bcb7540): series then ran only as many tabs as Settings keys, e.g.
   // 2 tabs for 10 Gmails, and a PC with Gmails but no Settings key could not start one.
-  const routerPool = { keys: [], routerFirst: false, gmailOnly: false };
+  const routerPool = { keys: [], routerFirst: false, gmailOnly: false, taskSplit: false };
   async function refreshRouterKeys() {
     try {
       const res = await fetch(`${getBackendBase()}/api/gemini-web/dubber-keys`);
       const d = await res.json();
       if (d && d.success && Array.isArray(d.keys)) {
-        Object.assign(routerPool, { keys: d.keys.filter(Boolean), routerFirst: !!d.routerFirst, gmailOnly: !!d.gmailOnly });
+        Object.assign(routerPool, { keys: d.keys.filter(Boolean), routerFirst: !!d.routerFirst, gmailOnly: !!d.gmailOnly, taskSplit: !!d.taskSplit });
       }
     } catch (e) { /* backend not up yet: keep the last list */ }
     return { ...routerPool, keys: routerPool.keys.slice() };
   }
-  function mergeRouterKeys(own) {
+  function mergeRouterKeys(own, task = 'general') {
     const web = routerPool.keys.filter((k) => !own.includes(k));
     if (!web.length) return own;
+    if (routerPool.taskSplit) {
+      if (task === 'transcribe' || task === 'audio') {
+        return own.length ? [...own, ...web] : web;
+      }
+      if (task === 'translate' || task === 'text' || task === 'refactor') {
+        return [...web, ...own];
+      }
+    }
     if (routerPool.routerFirst) return routerPool.gmailOnly ? web : [...web, ...own];
     return [...own, ...web];
   }
-  const getActiveApiKeys = () => mergeRouterKeys(getSettingsApiKeys());
+  const getActiveApiKeys = (task = 'general') => mergeRouterKeys(getSettingsApiKeys(), task);
   // studio-main.js asks before refusing to start for lack of a Settings key.
   window.geminiRouterKeys = refreshRouterKeys;
+  window.getActiveApiKeys = getActiveApiKeys;
   // A Gmail is listed only while ready: it ranks with the ready keys, not after them.
   const isRouterKey = (k) => String(k || '').startsWith('gweb:');
 
@@ -1154,7 +1163,7 @@
     if (!(onlyIds instanceof Set)) onlyIds = null;
 
     await refreshRouterKeys(); // the Router's ready Gmails, as of now
-    const apiKeys = getActiveApiKeys();
+    const apiKeys = getActiveApiKeys('transcribe');
     if (apiKeys.length === 0) {
       showToast('Please add at least one Gemini API Key in Settings ➔ General, or sign in a Gmail in the Gemini Web Router.', 'error');
       document.getElementById('btn-open-settings')?.click();
@@ -1237,7 +1246,7 @@
       .slice(0, SERIES_MAX_LANES_PER_TAB - 1));
     const takeSpareKey = async () => {
       await refreshRouterKeys(); // a Gmail signed in or back from its credit refill counts
-      const candidates = getActiveApiKeys().filter((k) => !ownedKeys.has(k) && !outKeys.has(k));
+      const candidates = getActiveApiKeys('transcribe').filter((k) => !ownedKeys.has(k) && !outKeys.has(k));
       if (!candidates.length) return null;
       let statuses = [];
       try {
@@ -1292,7 +1301,7 @@
         }
         const item = todo.shift();
         inFlight++;
-        const liveKeys = getActiveApiKeys(); // keys added while the batch runs are backups too
+        const liveKeys = getActiveApiKeys('transcribe'); // keys added while the batch runs are backups too
         const offset = (pendingItems.indexOf(item) * keyStride) % Math.max(1, liveKeys.length);
         const laneKeys = keyPerTab && ownKey ? laneKeysOf(w, ownKey) : [];
         state.runningItemIds.add(item.id);
@@ -1514,7 +1523,7 @@
         running.set(item.requestId, true);
         try {
           await processSingleBatchItem(item, {
-            apiKeys: [ownKey, ...laneKeys, ...getActiveApiKeys().filter((k) => k !== ownKey && !laneKeys.includes(k))],
+            apiKeys: [ownKey, ...laneKeys, ...getActiveApiKeys('transcribe').filter((k) => k !== ownKey && !laneKeys.includes(k))],
             maxLanes: 1 + laneKeys.length,
             spread: laneKeys.length > 0,
             stayOnModel: true,
@@ -2236,7 +2245,7 @@
       return;
     }
     // No Gemini key but CodeCraft set up (Settings → API): the server translates with CodeCraft.
-    const apiKeys = getActiveApiKeys().length ? getActiveApiKeys() : (window.textAi?.ready() ? [''] : []);
+    const apiKeys = getActiveApiKeys('translate').length ? getActiveApiKeys('translate') : (window.textAi?.ready() ? [''] : []);
     if (apiKeys.length === 0) {
       showToast('Please add your Gemini API Key in Settings ➔ General.', 'error');
       document.getElementById('btn-open-settings')?.click();

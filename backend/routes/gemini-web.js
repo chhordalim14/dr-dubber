@@ -22,7 +22,14 @@ module.exports = function createGeminiWebRoutes() {
         try {
             const s = gw.settings();
             const on = !!s.useForDubbing;
-            res.json({ success: true, keys: gw.keysForDubber(), routerFirst: on && s.routerFirst !== false, gmailOnly: on && s.gmailOnly === true });
+            const out = {
+                success: true,
+                keys: gw.keysForDubber(),
+                routerFirst: on && s.routerFirst !== false,
+                gmailOnly: on && s.gmailOnly === true
+            };
+            if (on && s.taskSplit) out.taskSplit = true;
+            res.json(out);
         } catch (e) {
             res.json({ success: true, keys: [], routerFirst: false, gmailOnly: false });
         }

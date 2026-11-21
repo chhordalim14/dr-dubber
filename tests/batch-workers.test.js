@@ -244,4 +244,9 @@ describe('mergeRouterKeys (Settings keys + the Router\'s ready Gmails)', () => {
         const merge = load({ keys: [], routerFirst: false, gmailOnly: false });
         assert.deepEqual(merge(['k1', 'k2']), ['k1', 'k2']);
     });
+    test('Smart Task Split: API keys lead for transcribe, Gmails lead for translate', () => {
+        const merge = load({ keys: ['gweb:a'], routerFirst: true, gmailOnly: false, taskSplit: true });
+        assert.deepEqual(merge(['k1'], 'transcribe'), ['k1', 'gweb:a']);
+        assert.deepEqual(merge(['k1'], 'translate'), ['gweb:a', 'k1']);
+    });
 });

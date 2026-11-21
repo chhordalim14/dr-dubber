@@ -9174,13 +9174,12 @@
 
       const refactorMode = mode || getSelectedRefactorMode();
 
-      // Retrieve active Gemini API Key
+      // Retrieve active Gemini API Key / Router keys
       let activeKey = "";
+      let refactorKeys = [];
       try {
-        const keys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]");
-        if (Array.isArray(keys) && keys.length > 0) {
-          activeKey = keys[0];
-        }
+        refactorKeys = (typeof window.getActiveApiKeys === "function" && window.getActiveApiKeys("refactor")) || JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]").filter(Boolean);
+        if (refactorKeys.length > 0) activeKey = refactorKeys[0];
       } catch (e) { }
 
       if (!activeKey && !window.textAi?.ready()) {
@@ -9222,7 +9221,7 @@
             genre: activeDramaGenre || "historical",
             glossary: glossary,
             apiKey: activeKey,
-            apiKeys: JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]").filter(Boolean),
+            apiKeys: refactorKeys.length ? refactorKeys : JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]").filter(Boolean),
             model: activeModel,
           }),
         });
@@ -9253,9 +9252,10 @@
       }
 
       let activeKey = "";
+      let refactorKeys = [];
       try {
-        const keys = JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]");
-        if (Array.isArray(keys) && keys.length > 0) activeKey = keys[0];
+        refactorKeys = (typeof window.getActiveApiKeys === "function" && window.getActiveApiKeys("refactor")) || JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]").filter(Boolean);
+        if (refactorKeys.length > 0) activeKey = refactorKeys[0];
       } catch (e) { }
 
       if (!activeKey && !window.textAi?.ready()) {
@@ -9309,7 +9309,7 @@
             genre: activeDramaGenre || "historical",
             glossary: glossary,
             apiKey: activeKey,
-            apiKeys: JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]").filter(Boolean),
+            apiKeys: refactorKeys.length ? refactorKeys : JSON.parse(localStorage.getItem("aiDubberApiKeys") || "[]").filter(Boolean),
             model: activeModel,
           }),
         });

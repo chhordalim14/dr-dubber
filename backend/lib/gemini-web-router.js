@@ -183,7 +183,7 @@ class GeminiWebRouter {
     // request, so cached for a few seconds.
     settings() {
         if (this._settings && Date.now() - this._settings.at < 3000) return this._settings.value;
-        const value = { useForDubbing: true, model: '', thinking: 'standard', routerFirst: true, gmailOnly: false, freeProxies: true, ...readJson(SETTINGS_FILE, {}) };
+        const value = { useForDubbing: true, model: '', thinking: 'standard', routerFirst: true, gmailOnly: false, taskSplit: false, freeProxies: true, ...readJson(SETTINGS_FILE, {}) };
         this._settings = { at: Date.now(), value };
         return value;
     }
@@ -192,12 +192,14 @@ class GeminiWebRouter {
         if ('useForDubbing' in patch) clean.useForDubbing = !!patch.useForDubbing;
         if ('routerFirst' in patch) clean.routerFirst = !!patch.routerFirst;
         if ('gmailOnly' in patch) clean.gmailOnly = !!patch.gmailOnly;
+        if ('taskSplit' in patch) clean.taskSplit = !!patch.taskSplit;
         if ('freeProxies' in patch) clean.freeProxies = !!patch.freeProxies;
         if ('model' in patch) clean.model = String(patch.model || '').slice(0, 80);
         if ('thinking' in patch) clean.thinking = patch.thinking === 'extended' ? 'extended' : 'standard';
         if (clean.useForDubbing === false) {
             clean.routerFirst = false;
             clean.gmailOnly = false;
+            clean.taskSplit = false;
         }
         const s = { ...this.settings(), ...clean };
         writeJson(SETTINGS_FILE, s);

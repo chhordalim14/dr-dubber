@@ -40,7 +40,7 @@
 #gemini-web-modal .gw-muted{color:var(--text-muted)}
 #gemini-web-modal .gw-pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid var(--border-light);color:var(--text-secondary);white-space:nowrap}
 #gemini-web-modal .gw-pill.on{color:var(--gw-ok);border-color:color-mix(in srgb,var(--gw-ok) 45%,transparent);background:color-mix(in srgb,var(--gw-ok) 10%,transparent)}
-#gemini-web-modal .gw-seg{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:4px;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-base)}
+#gemini-web-modal .gw-seg{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;padding:4px;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-base)}
 #gemini-web-modal .gw-seg button{padding:7px 8px;border-radius:7px;font-size:12.5px;font-weight:600;color:var(--text-secondary)}
 #gemini-web-modal .gw-seg button:hover{color:var(--text-bright);background:var(--bg-hover)}
 #gemini-web-modal .gw-seg button.sel{color:#fff;background:var(--accent-primary)}
@@ -148,15 +148,17 @@
   const stateOf = (a) => (a.busy ? 'busy' : a.state);
   const time = (sec) => new Date(sec * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-  // The four ways the Router can work, from the three settings it keeps.
+  // The five ways the Router can work, from the settings it keeps.
   const MODES = [
-    { key: 'off', label: 'Off', set: { useForDubbing: false, routerFirst: false, gmailOnly: false }, hint: 'Transcribe and translate use only your Gemini API keys from Settings.' },
-    { key: 'shared', label: 'Share with API keys', set: { useForDubbing: true, routerFirst: false, gmailOnly: false }, hint: 'Gmails and API keys share the work.' },
-    { key: 'first', label: 'Gmails first', set: { useForDubbing: true, routerFirst: true, gmailOnly: false }, hint: 'Gmails do the work; API keys step in only when every Gmail is busy, out of credits or signed out. Saves API quota.' },
-    { key: 'only', label: 'Gmails only', set: { useForDubbing: true, routerFirst: true, gmailOnly: true }, hint: 'No API keys while any Gmail works: a job waits for a free Gmail. API keys are used only if no Gmail can sign in.' }
+    { key: 'off', label: 'Off', set: { useForDubbing: false, routerFirst: false, gmailOnly: false, taskSplit: false }, hint: 'Transcribe and translate use only your Gemini API keys from Settings.' },
+    { key: 'split', label: 'Smart Split', set: { useForDubbing: true, routerFirst: true, gmailOnly: false, taskSplit: true }, hint: 'Recommended: API keys transcribe audio with exact timestamps; Gmails translate & refactor to save API quota. Both act as auto-failover backups for each other.' },
+    { key: 'shared', label: 'Share with API keys', set: { useForDubbing: true, routerFirst: false, gmailOnly: false, taskSplit: false }, hint: 'Gmails and API keys share the work.' },
+    { key: 'first', label: 'Gmails first', set: { useForDubbing: true, routerFirst: true, gmailOnly: false, taskSplit: false }, hint: 'Gmails do the work; API keys step in only when every Gmail is busy, out of credits or signed out. Saves API quota.' },
+    { key: 'only', label: 'Gmails only', set: { useForDubbing: true, routerFirst: true, gmailOnly: true, taskSplit: false }, hint: 'No API keys while any Gmail works: a job waits for a free Gmail. API keys are used only if no Gmail can sign in.' }
   ];
   function modeOf(s) {
     if (!s || !s.useForDubbing) return 'off';
+    if (s.taskSplit === true) return 'split';
     if (s.gmailOnly === true) return 'only';
     return s.routerFirst !== false ? 'first' : 'shared';
   }
@@ -437,7 +439,13 @@
       if (t.dataset.mode) {
         const m = MODES.find((x) => x.key === t.dataset.mode);
         await api('/settings', { body: m.set });
-        message({ off: 'Router off: transcribe & translate use your API keys only.', shared: 'Gmails and API keys now share the work.', first: 'Gmails first: API keys only as backup.', only: 'Gmails only: API keys are used only if no Gmail can sign in.' }[m.key], 'text-emerald-300');
+        message({
+          off: 'Router off: transcribe & translate use your API keys only.',
+          split: 'Smart Split active: API keys transcribe audio; Gmails translate & refactor.',
+          shared: 'Gmails and API keys now share the work.',
+          first: 'Gmails first: API keys only as backup.',
+          only: 'Gmails only: API keys are used only if no Gmail can sign in.'
+        }[m.key], 'text-emerald-300');
         return refresh();
       }
       if (t.id === 'gw-add-toggle') { addOpen = !((addOpen == null ? !(data.accounts || []).length : addOpen)); render(); if (addOpen) el.querySelector('#gw-email')?.focus(); return; }

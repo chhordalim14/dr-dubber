@@ -12,15 +12,17 @@ describe('Gemini Web Router toggle & API key routing', () => {
     });
 
     test('setSettings({ useForDubbing: false }) explicitly resets routerFirst and gmailOnly to false', () => {
-        gw.setSettings({ useForDubbing: true, routerFirst: true, gmailOnly: true });
+        gw.setSettings({ useForDubbing: true, routerFirst: true, gmailOnly: true, taskSplit: true });
         assert.equal(gw.settings().useForDubbing, true);
         assert.equal(gw.settings().routerFirst, true);
         assert.equal(gw.settings().gmailOnly, true);
+        assert.equal(gw.settings().taskSplit, true);
 
         gw.setSettings({ useForDubbing: false });
         assert.equal(gw.settings().useForDubbing, false);
         assert.equal(gw.settings().routerFirst, false);
         assert.equal(gw.settings().gmailOnly, false);
+        assert.equal(gw.settings().taskSplit, false);
     });
 
     test('keysForDubber returns empty array when useForDubbing is false', () => {
@@ -53,6 +55,14 @@ describe('Gemini Web Router toggle & API key routing', () => {
         // When useForDubbing is true with gmailOnly
         gw.setSettings({ useForDubbing: true, routerFirst: true, gmailOnly: true });
         assert.deepEqual(scope.orderPool(['AIzaSyAPIKey1', 'gweb:acc1']), ['gweb:acc1']);
+
+        // When taskSplit is true (Smart Split):
+        gw.setSettings({ useForDubbing: true, routerFirst: true, gmailOnly: false, taskSplit: true });
+        // Transcribe task routes to API keys first
+        assert.deepEqual(scope.orderPool(['AIzaSyAPIKey1', 'gweb:acc1'], 'transcribe'), ['AIzaSyAPIKey1', 'gweb:acc1']);
+        // Translate & Text task routes to Gmails first
+        assert.deepEqual(scope.orderPool(['AIzaSyAPIKey1', 'gweb:acc1'], 'translate'), ['gweb:acc1', 'AIzaSyAPIKey1']);
+        assert.deepEqual(scope.orderPool(['AIzaSyAPIKey1', 'gweb:acc1'], 'text'), ['gweb:acc1', 'AIzaSyAPIKey1']);
 
         // When useForDubbing is toggled back to false, strictly strips gweb:
         gw.setSettings({ useForDubbing: false });

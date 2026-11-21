@@ -741,15 +741,29 @@ function geminiWebFirst() {
         return !!(s && s.useForDubbing && s.routerFirst !== false);
     } catch (e) { return false; }
 }
-function orderPool(keys) {
+function orderPool(keys, task = 'general') {
     let s = {};
     try { s = geminiWeb().settings(); } catch (e) {}
     if (!s || !s.useForDubbing) {
         return keys.filter(k => !isGeminiWebKey(k));
     }
-    if (!geminiWebFirst()) return keys;
     const web = keys.filter(isGeminiWebKey);
+    const nonWeb = keys.filter(k => !isGeminiWebKey(k));
     if (!web.length) return keys;
+
+    // Smart Task Split:
+    // - Audio/Transcribe: non-web API keys lead (exact audio timestamps, native JSON schema); Gmails as backup
+    // - Text/Translate/Refactor: Gmail accounts lead (saves quota on 10,000s of lines); API keys as backup
+    if (s.taskSplit) {
+        if (task === 'transcribe' || task === 'audio') {
+            return nonWeb.length ? [...nonWeb, ...web] : web;
+        }
+        if (task === 'text' || task === 'translate' || task === 'refactor') {
+            return web.length ? [...web, ...nonWeb] : nonWeb;
+        }
+    }
+
+    if (!geminiWebFirst()) return keys;
     // "Gmails only" (router page): no API key while a Gmail is there - a job waits for a free
     // Gmail instead. With no Gmail at all (none signed in) the API keys still do the work.
     const gmailOnly = s.gmailOnly === true;
@@ -769,7 +783,7 @@ function textKeys(geminiKeys, enabled = true) {
     const rawKeys = Array.isArray(geminiKeys) ? geminiKeys : (geminiKeys ? [geminiKeys] : []);
     const drKeys = getDRRouterKeys();
     const combined = rawKeys.filter(Boolean).length ? [...rawKeys, ...drKeys] : drKeys;
-    const keys = orderPool(combined.map(k => String(k || '').trim()).filter((k, i, a) => k && a.indexOf(k) === i));
+    const keys = orderPool(combined.map(k => String(k || '').trim()).filter((k, i, a) => k && a.indexOf(k) === i), 'text');
     if (!(enabled && codecraftActive())) return keys;
     return [...codecraftKeysByLoad(), ...keys.filter(k => !textAi.keys.includes(k))];
 }
@@ -2314,7 +2328,7 @@ function createGeminiRouter(options = {}) {
             .map(k => String(k || '').trim())
             .filter((k, i, a) => k && a.indexOf(k) === i);
         const dpKeys = getDRRouterKeys();
-        const keyPool = orderPool(rawKeys.length ? [...rawKeys, ...dpKeys.filter(k => !rawKeys.includes(k))] : dpKeys);
+        const keyPool = orderPool(rawKeys.length ? [...rawKeys, ...dpKeys.filter(k => !rawKeys.includes(k))] : dpKeys, 'transcribe');
         if (!keyPool.length) {
             return res.status(400).json({
                 success: false,
@@ -2620,7 +2634,7 @@ function createGeminiRouter(options = {}) {
         const laneCap = Math.max(1, Math.min(TRANSCRIBE_MAX_LANES, parseInt(maxLanes, 10) || TRANSCRIBE_MAX_LANES));
         const rawKeys = [apiKey, ...(Array.isArray(apiKeys) ? apiKeys : [])].map(k => String(k || '').trim()).filter((k, i, a) => k && a.indexOf(k) === i);
         const dpKeys = getDRRouterKeys();
-        const keyPool = orderPool(rawKeys.length ? [...rawKeys, ...dpKeys.filter(k => !rawKeys.includes(k))] : dpKeys);
+        const keyPool = orderPool(rawKeys.length ? [...rawKeys, ...dpKeys.filter(k => !rawKeys.includes(k))] : dpKeys, 'transcribe');
         if (!keyPool.length && !codecraftActive()) return res.status(400).json({ success: false, error: 'INVALID_API_KEY', message: 'Gemini API key is required.' });
 
         const abortCtrl = new AbortController();
