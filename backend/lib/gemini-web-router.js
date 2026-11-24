@@ -45,6 +45,18 @@ const SIGNIN_TIMEOUT_MS = 6 * 60 * 1000;
 const KEEPER_MS = 10 * 60 * 1000;           // how often sign-ins are checked
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+// Google cookies from Chrome, by name. Some names exist once per Google site (OSID: one for
+// gemini.google.com, others for mail/myaccount...): gemini.google.com's copy wins, then
+// .google.com's. Since 2026-11-24 Gemini needs SID and its own OSID besides __Secure-1PSID(TS).
+function googleCookieJar(cookies) {
+    const rank = (d) => (/(^|\.)gemini\.google\.com$/.test(d) ? 2 : (d === '.google.com' || d === 'google.com') ? 1 : 0);
+    const jar = {};
+    cookies.filter(c => /(^|\.)google\.com$/.test(c.domain))
+        .sort((a, b) => rank(a.domain) - rank(b.domain))
+        .forEach(c => { jar[c.name] = c.value; });
+    return jar;
+}
 const abortError = () => Object.assign(new Error('Aborted'), { name: 'AbortError' });
 const QUOTA_WAIT_DEFAULT_MS = 30 * 60 * 1000; // out of credits and Google gave no reset time
 const CANCEL_SETTLE_MS = 10000; // how long a stopped request may take to let go of its Gmail
@@ -1000,8 +1012,7 @@ class GeminiWebRouter {
                 const who = await session.account();
                 if (!who.signedIn || (who.email && who.email.toLowerCase() !== acc.email.toLowerCase())) return false;
                 const { cookies } = await session.cdp.send('Storage.getCookies');
-                const jar = {};
-                for (const c of cookies.filter((c) => /(^|\.)google\.com$/.test(c.domain))) jar[c.name] = c.value;
+                const jar = googleCookieJar(cookies);
                 if (!jar['__Secure-1PSID']) return false;
                 writeJson(path.join(COOKIE_DIR, `${id}.json`), jar);
                 this.saveAccounts(this.accounts().map((a) => (a.id === id ? { ...a, refreshedAt: Date.now() } : a)));
@@ -1378,8 +1389,7 @@ class GeminiWebRouter {
         s.message = 'Signed in. Saving…';
         await sleep(1500);
         const { cookies } = await page.cdp.send('Storage.getCookies');
-        const jar = {};
-        for (const c of cookies.filter(c => /(^|\.)google\.com$/.test(c.domain))) jar[c.name] = c.value;
+        const jar = googleCookieJar(cookies);
         if (!jar['__Secure-1PSID']) throw new Error('Signed in, but Google gave no sign-in cookie. Try again.');
         writeJson(path.join(COOKIE_DIR, `${id}.json`), jar);
         await this.closeChrome(s);

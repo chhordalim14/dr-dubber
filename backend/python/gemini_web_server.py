@@ -27,8 +27,10 @@ import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+for _stream in (sys.stdout, sys.stderr):
+    _reconfig = getattr(_stream, "reconfigure", None)
+    if callable(_reconfig):
+        _reconfig(encoding="utf-8", errors="replace")
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--dir", required=True)
@@ -40,6 +42,11 @@ COOKIE_DIR = os.path.join(BASE, "cookies")
 os.makedirs(COOKIE_DIR, exist_ok=True)
 # The library caches rotated cookies here (keyed by account), instead of the user's home.
 os.environ.setdefault("GEMINI_COOKIE_PATH", os.path.join(BASE, "cookie_cache"))
+
+# The gemini_webapi library is installed in ~/DR Dubber Gemini Web/lib. Ensure it is in sys.path.
+_gw_lib = os.path.join(os.path.expanduser("~"), "DR Dubber Gemini Web", "lib")
+if os.path.isdir(_gw_lib) and _gw_lib not in sys.path:
+    sys.path.insert(0, _gw_lib)
 
 from loguru import logger  # noqa: E402
 from gemini_webapi import GeminiClient  # noqa: E402
@@ -66,7 +73,7 @@ def log(msg):
 
 def read_json(path, default):
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8-sig") as f:
             return json.load(f)
     except Exception:
         return default
@@ -90,12 +97,23 @@ def mask_proxy(url):
 async def outside_ip(proxy, timeout=20):
     """The public address requests leave from (through the proxy, if any)."""
     from curl_cffi.requests import AsyncSession
-    async with AsyncSession(proxy=proxy, impersonate="chrome") as s:
+    async with AsyncSession(proxy=proxy, impersonate="chrome", verify=False) as s:
         r = await s.get("https://api.ipify.org?format=json", timeout=timeout)
         return r.json().get("ip")
 
 
-_direct_ip_cache = {"ip": None, "at": 0}
+from typing import Any, TypedDict
+
+# Sent along with __Secure-1PSID / __Secure-1PSIDTS (see Account.start).
+EXTRA_SIGNIN_COOKIES = ("SID", "OSID")
+
+_direct_ip_cache: dict[str, Any] = {"ip": None, "at": 0.0}
+
+
+class ProxyResult(TypedDict):
+    proxy: str
+    ip: str
+    ms: int
 
 
 async def direct_outside_ip():
@@ -135,7 +153,7 @@ async def test_proxies(body):
             avoid_ips.add(acc.ip)
 
     seen_ips = set(avoid_ips)
-    working = []
+    working: list[ProxyResult] = []
     batch_size = 60
 
     async def one_round(s):
@@ -149,9 +167,9 @@ async def test_proxies(body):
             return None, None
         return ip, int((time.time() - t0) * 1000)
 
-    async def check_one(p):
+    async def check_one(p: str) -> ProxyResult | None:
         try:
-            async with AsyncSession(proxy=p, impersonate="chrome") as s:
+            async with AsyncSession(proxy=p, impersonate="chrome", verify=False) as s:
                 ip = None
                 times = []
                 for k in range(rounds):
@@ -160,10 +178,12 @@ async def test_proxies(body):
                     got, ms = await one_round(s)
                     # A proxy whose address changes between two asks (a rotating gateway) would
                     # show the Gmail from a new place on every request.
-                    if not got or got in seen_ips or (ip and got != ip) or ms > max_ms:
+                    if not got or ms is None or got in seen_ips or (ip and got != ip) or ms > max_ms:
                         return None
                     ip = got
                     times.append(ms)
+                if not ip or not times:
+                    return None
                 return {"proxy": p, "ip": ip, "ms": int(sum(times) / len(times))}
         except Exception:
             return None
@@ -173,7 +193,8 @@ async def test_proxies(body):
             break
         chunk = candidates[i:i + batch_size]
         res = await asyncio.gather(*(check_one(p) for p in chunk))
-        for item in sorted((x for x in res if x), key=lambda x: x["ms"]):
+        valid_items: list[ProxyResult] = [x for x in res if x is not None]
+        for item in sorted(valid_items, key=lambda x: x["ms"]):
             if item["ip"] in seen_ips:
                 continue
             seen_ips.add(item["ip"])
@@ -239,6 +260,8 @@ def quota_wait(client, now=None):
 
 
 class Account:
+    last_start: float = 0
+
     def __init__(self, meta):
         self.id = meta["id"]
         self.email = meta.get("email", "")
@@ -260,6 +283,12 @@ class Account:
         self.ip = None        # the address Google sees (through the proxy, if any)
         self.models = []      # [{name, display, available}] this account offers
         self.refreshed_at = meta.get("refreshedAt")  # set by DR Dubber when it copies fresh cookies
+        self.last_start = 0
+        self.start_fails = 0  # starts in a row that ended in "error" (network, proxy, timeout)
+
+    def retry_after(self):
+        """Seconds before a failed start is tried again: 2, 4, 8 min, then every 15 min."""
+        return min(900, 120 * 2 ** max(0, self.start_fails - 1))
 
     def cookie_file(self):
         return os.path.join(COOKIE_DIR, f"{self.id}.json")
@@ -317,6 +346,7 @@ class Account:
             self.state, self.error = "signed_out", "Not signed in yet"
             return
         self.state, self.error = "starting", None
+        c = None
         try:
             if self.proxy:
                 try:
@@ -324,6 +354,7 @@ class Account:
                 except Exception as e:
                     self.ip = None
                     self.state, self.error = "error", f"The proxy does not work: {type(e).__name__}: {str(e)[:160]}"
+                    self.start_fails += 1
                     log(f"{self.email}: proxy failed ({self.error})")
                     return
             else:
@@ -331,9 +362,12 @@ class Account:
                     self.ip = await direct_outside_ip()
                 except Exception:
                     self.ip = None
-            # Only the two sign-in cookies: with every Google cookie loaded, Gemini answered
+            # Only the sign-in cookies: with every Google cookie loaded, Gemini answered
             # "Gemini Apps Activity is off" and ignored the attached audio (tested 2026-11-07).
-            c = GeminiClient(cookies["__Secure-1PSID"], cookies.get("__Secure-1PSIDTS"), proxy=self.proxy)
+            # Since 2026-11-24 the two __Secure-1PSID(TS) alone send gemini.google.com to the
+            # Google sign-in page; with SID and Gemini's OSID added the Gmail is AVAILABLE again.
+            c = GeminiClient(cookies["__Secure-1PSID"], cookies.get("__Secure-1PSIDTS"), proxy=self.proxy, verify=False)
+            c.cookies = {k: cookies[k] for k in EXTRA_SIGNIN_COOKIES if cookies.get(k)}
             await asyncio.wait_for(c.init(timeout=600, auto_close=False, auto_refresh=True, refresh_interval=540), 45)
             # A session Google ended still "starts": Gemini answers text signed out (model
             # "gemini-flash-lite", no credits) but refuses uploads. Seen 2026-11-08: four Gmails
@@ -355,13 +389,35 @@ class Account:
             self.read_quota()
             self.save_cookies()
             self.state = "ready"
+            self.start_fails = 0
             log(f"{self.email}: ready" + (f" ({self.quota['remaining']}/{self.quota['total']} credits)" if self.quota else ""))
         except gx.AuthError as e:
             self.state, self.error = "signed_out", f"Google signed this account out: {e}"
             log(f"{self.email}: signed out ({e})")
         except Exception as e:
-            self.state, self.error = "error", str(e) or type(e).__name__
+            if c is not None and "identityfrontend" in str(getattr(c, "build_label", "") or ""):
+                # Google answered with its sign-in page, not Gemini: the cookies are not accepted.
+                # gemini_webapi 2.1.1 then gets a 400, and its retry waits on init's own lock until
+                # our timeout - so this shows up as a timeout, but it is a sign-out (not the proxy).
+                self.state, self.error = "signed_out", "Google sent this sign-in to its sign-in page (cookies not accepted)"
+                log(f"{self.email}: signed out ({self.error})")
+                return
+            if isinstance(e, (asyncio.TimeoutError, TimeoutError)):
+                # str() of a timeout is empty. Keep "Timed out": DR Dubber's proxyDead() looks for it.
+                where = "through the proxy" if self.proxy else "from this PC"
+                self.error = f"Timed out: Gemini did not answer within 45 s {where}"
+            else:
+                self.error = str(e) or type(e).__name__
+            self.state = "error"
+            self.start_fails += 1
             log(f"{self.email}: could not start: {self.error}")
+        finally:
+            # A client whose init failed was never kept: close it, or each retry leaks a session.
+            if c is not None and c is not self.client:
+                try:
+                    await c.close()
+                except Exception:
+                    pass
 
     async def stop(self, save=True):
         if self.client:
@@ -418,9 +474,6 @@ async def reload_accounts():
         await asyncio.gather(*starts)
 
 
-Account.last_start = 0
-
-
 def pick_account(wanted):
     if wanted:
         a = accounts.get(wanted)
@@ -438,7 +491,7 @@ def pick_account(wanted):
     for k in range(n):
         i = order[(rr["next"] + k) % n]
         a = accounts.get(i)
-        if a in ready and a.busy == 0 and a.waiting == 0:
+        if a and a in ready and a.busy == 0 and a.waiting == 0:
             rr["next"] = (order.index(i) + 1) % n
             return a, None, None
     a = min(ready, key=lambda x: x.busy + x.waiting)
@@ -573,6 +626,9 @@ async def refresh_quota(wanted):
                 a.error = f"Credits check failed: {e}"
 
 
+retry_tasks = set()  # keeps the retry starts referenced until they finish
+
+
 async def housekeeping():
     while True:
         await asyncio.sleep(60)
@@ -583,6 +639,15 @@ async def housekeeping():
         for a in list(accounts.values()):
             if a.state == "limited" and a.limited_until and a.limited_until < now:
                 a.state, a.error, a.limited_until = "ready", None, 0
+            # A start that failed on the network (dead proxy, DNS drop, timeout) was never tried
+            # again: /reload restarts an errored Gmail only when its cookie file is newer. Seen
+            # 2026-11-24: a short DNS drop at the no-proxy fallback after sign-in left a Gmail dead.
+            if a.enabled and a.state == "error" and now - (a.last_start or 0) >= a.retry_after():
+                a.state, a.last_start = "starting", now  # before any await, so nothing else restarts it too
+                log(f"{a.email}: trying to start again (attempt {a.start_fails + 1})")
+                t = asyncio.ensure_future(a.start())
+                retry_tasks.add(t)
+                t.add_done_callback(retry_tasks.discard)
             a.save_cookies()
 
 
@@ -591,7 +656,7 @@ def run_coro(coro, timeout=None):
 
 
 class Handler(BaseHTTPRequestHandler):
-    def log_message(self, *a):
+    def log_message(self, format, *args):
         pass
 
     def reply(self, code, obj):
