@@ -16,6 +16,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const { spawn, execFile } = require('child_process');
+const { EXPORT_BITRATES_K, hwEncoderArgs, HW_ENCODER_KEY, hwEncoderFromTag } = require('./export_video_settings');
 
 const VIDEO_EXTS = new Set(['.mp4', '.mkv', '.mov', '.m4v', '.avi', '.wmv', '.flv', '.ts', '.m2ts', '.mts', '.webm', '.mpg', '.mpeg', '.3gp', '.3g2', '.vob', '.rmvb', '.rm', '.asf', '.f4v', '.ogv', '.divx', '.mxf', '.dv', '.mpe', '.m2v', '.mjpeg', '.qt']);
 // Audio-only series (audio dramas, radio plays): used when the folder has no video at all.
@@ -74,6 +75,7 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
             video: v ? {
                 codec: v.codec_name, width: v.width, height: v.height, fps: v.r_frame_rate, pixFmt: v.pix_fmt,
                 bitRate: parseInt(v.bit_rate || (info.format && info.format.bit_rate) || 0, 10) || 0,
+                encoderTag: (v.tags && v.tags.encoder) || '',
                 // Stream copy is only safe when the codec headers match exactly.
                 signature: crypto.createHash('sha1').update(`${v.codec_name}|${v.codec_tag_string}|${v.profile}|${v.width}x${v.height}|${v.r_frame_rate}|${v.pix_fmt}|${String(v.extradata || '').replace(/\s+/g, '')}`).digest('hex'),
             } : null,
@@ -176,10 +178,13 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
 
     const lastLine = (t) => String(t || '').split('\n').map(l => l.trim()).filter(Boolean).pop() || '';
 
+    // bitRate: the episodes' average video bitrate (bps). A little over it, not more: until
+    // 2026-11-25 this was 1.3x the highest episode's, so a converted series grew (a 3 h series of
+    // 5.6 Mbps dubbed parts was joined at 7 Mbps: 9 GB).
     async function videoEncoderArgs(bitRate) {
         let enc = {};
         try { enc = await detectAvailableEncoders(); } catch (e) { }
-        const kbps = Math.round(Math.min(12000, Math.max(2500, (bitRate || 5000000) * 1.3 / 1000)));
+        const kbps = Math.round(Math.min(12000, Math.max(1500, (bitRate || 5000000) * 1.1 / 1000)));
         if (enc.videotoolbox) return ['-c:v', 'h264_videotoolbox', '-b:v', `${kbps}k`, '-allow_sw', '1'];
         if (enc.nvenc) return ['-c:v', 'h264_nvenc', '-preset', 'p5', '-b:v', `${kbps}k`];
         if (enc.qsv) return ['-c:v', 'h264_qsv', '-b:v', `${kbps}k`];
@@ -189,30 +194,52 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
     const fitFilter = (W, H, fps) => `scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${fps},format=yuv420p`;
 
     // Most episodes identical, a few not (2026-11-08: 137 dubbed episodes at 25 fps, 7 at 30
-    // because their sources were): only the odd ones are encoded, with the export's own NVENC
-    // settings at the others' size and frame rate, and kept only if their codec headers then
-    // match the others byte for byte - the whole part is then joined without re-encoding (that
-    // series: 20 min of converting all 144 -> ~9 s per odd episode). Any mismatch: false, and
-    // the part is converted as before. eps' pieces are replaced in place on success.
+    // because their sources were): only the odd ones are encoded, with the export's own
+    // hardware encoder settings at the others' size and frame rate, and kept only if their codec
+    // headers then match the others byte for byte - the whole part is then joined without
+    // re-encoding (that series: 20 min of converting all 144 -> ~9 s per odd episode). Any
+    // mismatch: false, and the part is converted as before. eps' pieces are replaced in place
+    // on success.
+    // The bitrate is in the header, and an export's depends on its source: it is found by
+    // encoding one second at each of the export's steps, nearest the others' bitrate first.
+    // Until 2026-11-25 this was NVENC only: on Intel Quick Sync one odd part of 23 (a source
+    // misread as 50 fps) made a 3 h series be converted whole.
     async function matchOddEpisodes(job, eps, pieces, workDir, progress) {
         const counts = new Map();
         eps.forEach(e => counts.set(e.video.signature, (counts.get(e.video.signature) || 0) + 1));
         const [sig, n] = [...counts].sort((a, b) => b[1] - a[1])[0];
-        if (n < eps.length * 0.75) return false;
+        // Converting the odd ones is less work than converting all, while they are fewer.
+        if (n < eps.length * 0.5) return false;
         const ref = eps.find(e => e.video.signature === sig).video;
         if (ref.codec !== 'h264') return false;
         let enc = {};
         try { enc = await detectAvailableEncoders(); } catch (e) { }
-        if (!enc.nvenc) return false;
-        const bitrate = ref.width * ref.height >= 1280 * 720 ? '6500k' : '4500k'; // render_service's applyEncoderSettings
+        // The export's encoder, from its tag. No tag: NVENC, as before the tag was read.
+        const codec = hwEncoderFromTag(ref.encoderTag) || (ref.encoderTag ? null : 'h264_nvenc');
+        if (!codec || !enc[HW_ENCODER_KEY[codec]]) return false;
+        const odd = eps.map((e, i) => i).filter(i => eps[i].video.signature !== sig);
+        const encodeOdd = (i, kbps, out, seconds) => runFFmpeg(job, ['-hide_banner', '-nostdin', '-y', '-i', eps[i].path, '-map', '0:v:0', '-an', '-sn', '-dn',
+            '-vf', fitFilter(ref.width, ref.height, ref.fps), '-threads', '8', ...hwEncoderArgs(codec, kbps),
+            '-pix_fmt', 'yuv420p', '-t', seconds.toFixed(6), out]);
+        const refKbps = ref.bitRate / 1000;
+        let kbps = null;
+        for (const k of [...EXPORT_BITRATES_K].sort((a, b) => Math.abs(a - refKbps) - Math.abs(b - refKbps))) {
+            if (aborted(job)) throw new Error('cancelled');
+            const sample = path.join(workDir, `bitrate_${k}.mp4`);
+            const r = await encodeOdd(odd[0], k, sample, Math.min(1, eps[odd[0]].duration));
+            if (r.code !== 0) return false;
+            const got = describe(await probe(sample));
+            if (got.video && got.video.signature === sig) { kbps = k; break; }
+        }
+        if (!kbps) {
+            console.log(`[Join] ${eps[odd[0]].name}: no ${codec} bitrate gives the other episodes' video headers - converting the whole part`);
+            return false;
+        }
         const replaced = [];
-        for (let i = 0; i < eps.length; i++) {
-            if (eps[i].video.signature === sig) continue;
+        for (const i of odd) {
             if (aborted(job)) throw new Error('cancelled');
             const out = path.join(workDir, `odd${String(i).padStart(4, '0')}.mp4`);
-            const r = await runFFmpeg(job, ['-hide_banner', '-nostdin', '-y', '-i', eps[i].path, '-map', '0:v:0', '-an', '-sn', '-dn',
-                '-vf', fitFilter(ref.width, ref.height, ref.fps), '-threads', '8', '-c:v', 'h264_nvenc', '-preset', 'p4', '-tune', 'hq', '-b:v', bitrate,
-                '-pix_fmt', 'yuv420p', '-t', eps[i].duration.toFixed(6), out]);
+            const r = await encodeOdd(i, kbps, out, eps[i].duration);
             if (r.code !== 0) return false;
             const got = describe(await probe(out));
             if (!got.video || got.video.signature !== sig) {
@@ -296,7 +323,9 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
             const H = h0 % 2 ? h0 + 1 : h0;
             const fpsCommon = mostCommon(e => e.video.fps || '30');
             const fps = fpsCommon && fpsCommon !== '0/0' ? fpsCommon : '30';
-            const enc = await videoEncoderArgs(Math.max(...withVideo.map(e => e.video.bitRate || 0)));
+            const timed = withVideo.filter(e => e.video.bitRate > 0);
+            const secs = timed.reduce((s, e) => s + e.duration, 0);
+            const enc = await videoEncoderArgs(secs > 0 ? timed.reduce((s, e) => s + e.video.bitRate * e.duration, 0) / secs : 0);
             // A hardware encoder is held back by feeding it frames, not by its own speed: three
             // episodes at once is ~1.7x faster (measured on Intel QSV). libx264 already uses every
             // core, so running two at once is slower. (GPU decoding was tried: slower than CPU.)

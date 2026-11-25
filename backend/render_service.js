@@ -7,6 +7,7 @@ const os = require('os');
 const { getFFmpegBinary, getFFprobeBinary } = require('./ffmpeg_env');
 const { buildTextBlurFilters, probeDisplaySize } = require('./lib/text-blur');
 const { buildColorFilters } = require('./lib/video-color');
+const { exportBitrateK, hwEncoderArgs, HW_ENCODER_KEY, exportFrameRate, sourceVideoKbps } = require('./export_video_settings');
 
 
 function escapeFfmpegFilterPath(p) {
@@ -187,6 +188,7 @@ async function probeMediaFile(videoPath) {
         const info = {
             duration,
             dimensions,
+            formatBitRate: parseInt(format.bit_rate, 10) || 0,
             hasAudio: !!audioStream,
             videoStream,
             audioStream
@@ -1214,7 +1216,8 @@ function resolveTargetDimensions(options) {
     return { targetW, targetH, fit, useBgBlur, bgBlurRadius };
 }
 
-async function applyEncoderSettings(args, encoderPreference, targetW, targetH) {
+// outW/outH: the exported picture's size. source: probeMediaFile() of the video, for its bitrate.
+async function applyEncoderSettings(args, encoderPreference, outW, outH, source) {
     const encoders = await detectAvailableEncoders();
     let chosen = encoderPreference || 'auto';
 
@@ -1230,19 +1233,13 @@ async function applyEncoderSettings(args, encoderPreference, targetW, targetH) {
     const renderThreads = Math.max(2, Math.min(cpuCores - 1, 8));
     args.push('-threads', String(renderThreads));
 
-    const isHighRes = (!targetW || !targetH || (targetW * targetH >= 1280 * 720));
-    const bitrate = isHighRes ? '6500k' : '4500k';
+    const vs = source && source.videoStream;
+    const kbps = exportBitrateK({ outW, outH, srcW: vs && vs.width, srcH: vs && vs.height, srcKbps: sourceVideoKbps(source) });
 
-    if (chosen === 'h264_nvenc' && encoders.nvenc) {
-        args.push('-c:v', 'h264_nvenc', '-preset', 'p4', '-tune', 'hq', '-b:v', bitrate);
-    } else if (chosen === 'h264_qsv' && encoders.qsv) {
-        args.push('-c:v', 'h264_qsv', '-preset', 'veryfast', '-b:v', bitrate);
-    } else if (chosen === 'h264_amf' && encoders.amf) {
-        args.push('-c:v', 'h264_amf', '-usage', 'transcoding', '-quality', 'speed', '-b:v', bitrate);
-    } else if (chosen === 'h264_mf' && encoders.mf) {
-        args.push('-c:v', 'h264_mf', '-b:v', bitrate);
-    } else if (chosen === 'h264_videotoolbox' && encoders.videotoolbox) {
-        args.push('-c:v', 'h264_videotoolbox', '-b:v', bitrate);
+    const hw = encoders[HW_ENCODER_KEY[chosen]] ? hwEncoderArgs(chosen, kbps) : null;
+    if (hw) {
+        args.push(...hw);
+        console.log(`[Render] Video bitrate ${kbps}k (source ${Math.round(sourceVideoKbps(source)) || '?'}k${vs ? ` at ${vs.width}x${vs.height}` : ''}, output ${outW}x${outH})`);
     } else {
         chosen = 'libx264';
         args.push('-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'fastdecode', '-crf', '20');
@@ -1934,7 +1931,13 @@ async function renderVideo(options, onProgress, onComplete, onError) {
         }
 
         // Hardware-Accelerated Video Encoder Configuration
-        const chosenEncoder = await applyEncoderSettings(args, encoder, targetW, targetH);
+        const sourceInfo = await probeMediaFile(videoPath);
+        const chosenEncoder = await applyEncoderSettings(args, encoder, canvasW, canvasH, sourceInfo);
+        const forcedRate = exportFrameRate(sourceInfo && sourceInfo.videoStream);
+        if (forcedRate) {
+            console.log(`[Render] Source says ${sourceInfo.videoStream.r_frame_rate} fps but its frames come at ${sourceInfo.videoStream.avg_frame_rate}: exporting at ${forcedRate}`);
+            args.push('-r', forcedRate);
+        }
 
         args.push('-c:a', 'aac');
         args.push('-b:a', '192k');

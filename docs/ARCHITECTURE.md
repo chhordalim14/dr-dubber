@@ -735,7 +735,8 @@ flowchart TD
 ```
 
 - **Encoder choice.** The render engine setting defaults to GPU (Auto) (`renderEngineSetting` in `studio-main.js`); a saved CPU choice is kept. Auto uses the first hardware encoder that passes its test, and `libx264` when none does, so a PC with no usable GPU exports exactly as with CPU. Until 2026-11-17 the default was CPU. Test: `tests/render-engine-default.test.js`.
-- **Bitrate.** 6500k at 720p and above, otherwise 4500k. libx264 uses `veryfast -crf 20`; audio is AAC 192k.
+- **Bitrate.** Follows the source (`backend/export_video_settings.js`): 2.5x the source video bitrate, times the square root of any upscale, rounded up to a step of 1000/1500/2000/3000/3500/4500/6500k. At least 3500k at 1080p, 2000k at 720p and 1500k below (HD whatever the source; Quick Sync VMAF on upscaled 720p drama with Khmer subtitles: 2000k 96, 3000k 98, 6500k 99); at most 6500k (720p and above) or 4500k, the old fixed values, which are also used when the source bitrate is unknown. Until 2026-11-25 it was always the fixed value: a 3 h series of 0.3 Mbps 720p episodes came out at 9 GB (about 5 GB now). Fixed steps because the bitrate is written into the H.264 header, and parts must match to be joined without re-encoding. libx264 uses `veryfast -crf 20`; audio is AAC 192k. Test: `tests/export-video-settings.test.js`.
+- **Frame rate.** Kept from the source, unless the source reports at least 1.5x the rate its frames really come at (a split piece said 50 fps for 25): then the nearest standard rate to the real one.
 - **GPU decoding.** NVIDIA cards also decode on the GPU, and a Mac decodes with VideoToolbox (the same frames bit for bit, a little less CPU). If that fails, the render retries once without it, and the rest of the session decodes on the CPU. An export takes about 0.25–0.35 GB (720p, measured on a Mac). Test: `tests/render-hw-decode-mac.test.js`.
 - **Subtitles.** Burned in as ASS with the bundled fonts. HarfBuzz shaping is needed for Khmer. If FFmpeg has no subtitle filter, the subtitles are added as a soft track instead.
 - **Colour.** The colour presets ("Drama LUT") only set slider values. No `.cube` files are used.
@@ -750,7 +751,7 @@ flowchart TD
 2. **Group** into parts in the window (`planEpisodeParts`). A part closes when the next episode would take it over the target × 1.08. A last part under 35% of the target joins the one before.
 3. **Join each part:**
    - **Audio.** Each episode is decoded, resampled to 48 kHz, padded or trimmed to its exact length, then encoded once to AAC.
-   - **Video.** Stream copy when every episode's codec headers match. If at least 75% match, only the odd episodes are re-encoded. Otherwise everything is encoded to the most common size and frame rate.
+   - **Video.** Stream copy when every episode's codec headers match. If at least half match, only the odd episodes are re-encoded, with the export's own hardware encoder (read from the encoder tag) and its bitrate step (found by a 1 s test encode per step), and kept only if the headers then match. A full conversion uses 1.1x the episodes' average bitrate (it was 1.3x the highest). Otherwise everything is encoded to the most common size and frame rate.
    - **Output.** `<series>_partNN.mp4` and `_episodes.txt` (each episode's start time). The file is written as `.part.mp4` and renamed when complete. A part is reused if its episodes have not changed.
 
 ### Split (`video_splitter.js`)
