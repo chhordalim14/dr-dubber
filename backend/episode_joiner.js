@@ -80,6 +80,12 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
                 signature: crypto.createHash('sha1').update(`${v.codec_name}|${v.codec_tag_string}|${v.profile}|${v.width}x${v.height}|${v.r_frame_rate}|${v.pix_fmt}|${String(v.extradata || '').replace(/\s+/g, '')}`).digest('hex'),
             } : null,
             audio: a ? { index: a.index, codec: a.codec_name, sampleRate: parseInt(a.sample_rate, 10), channels: a.channels } : null,
+            // A picture no FFmpeg can decode: Douyin / Hongguo episodes in ByteDance's own codec
+            // (tag "bvc2", 28 of 79 in one series on 2026-11-25). Joining one used to fail only
+            // when its picture was converted, and the join then stayed at 0%.
+            undecodable: v && (!v.codec_name || v.codec_name === 'unknown' || v.codec_name === 'none')
+                ? `its video can't be read (codec "${v.codec_tag_string || 'unknown'}"${/^bvc/i.test(v.codec_tag_string || '') ? ', ByteDance BVC' : ''}) - download it again as H.264 or HEVC`
+                : null,
         };
     }
 
@@ -105,6 +111,7 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
                 Object.assign(f, describe(info));
                 if (!f.video && !f.audio) f.error = 'no audio or video';
                 else if (!(f.duration > 0)) f.error = 'unknown duration';
+                else if (f.undecodable) f.error = f.undecodable;
             }
         }));
 
@@ -125,6 +132,8 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
         if (unnumbered && files.filter(f => !f.error).length > 1) warnings.push(`${unnumbered} file(s) have no episode number and were sorted by name.`);
         const broken = files.filter(f => f.error);
         if (broken.length) warnings.push(`${broken.length} file(s) can't be read and will be skipped: ${broken.slice(0, 5).map(f => f.name).join(', ')}${broken.length > 5 ? '…' : ''}`);
+        const bvc = broken.filter(f => /ByteDance BVC/.test(f.error));
+        if (bvc.length) warnings.push(`${bvc.length} episode(s) are in ByteDance's BVC video format, which no video tool can read: download them again as H.264 or HEVC (often called "compatible" or "MP4/H.264" in the downloader).`);
 
         // A folder of parts this app already joined ("DR Dubber Joined"): every video is a
         // "<series>_partNN.mp4" with its "_episodes.txt". Those are ready parts, not episodes.
@@ -263,7 +272,13 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
         let encTail = '';
         encoder.stderr.on('data', (d) => { encTail = (encTail + d).slice(-2000); });
         encoder.stdin.on('error', () => { });
-        const encoderDone = new Promise((resolve) => { encoder.on('close', resolve); encoder.on('error', () => resolve(-1)); });
+        // A decoder writing to an encoder that has gone (killed because the video half failed)
+        // waits for 'drain' forever: the join then sat at 0% with one FFmpeg left (2026-11-25).
+        let encoderGone = false, dec = null;
+        const encoderDone = new Promise((resolve) => {
+            const gone = (code) => { encoderGone = true; if (dec) { try { dec.kill('SIGKILL'); } catch (e) { } } resolve(code); };
+            encoder.on('close', gone); encoder.on('error', () => gone(-1));
+        });
         try {
             for (const ep of part.episodes) {
                 if (aborted(job)) throw new Error('cancelled');
@@ -271,20 +286,25 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
                 if (audioRepair && ep.audio) src = await audioRepair.getAudioSource(ep.path).catch(() => src);
                 if (src.repaired) job.repairedEpisodes.push(ep.name);
                 const map = !ep.audio ? null : src.repaired ? '0:a:0' : (await audioRepair?.defaultAudioMap(ep.path)) || '0:a:0';
+                // Stopped while the audio above was being looked at: killAll has already run.
+                if (aborted(job)) throw new Error('cancelled');
+                if (encoderGone) throw new Error(`audio encoding failed: ${lastLine(encTail)}`);
                 const d = ep.duration.toFixed(6);
                 // aresample=async pads a delayed audio start so each episode stays aligned to its video.
                 const args = ['-hide_banner', '-nostdin', '-max_error_rate', '1'];
                 if (map) args.push('-i', src.path, '-map', map, '-af', `aresample=${AUDIO_RATE}:async=1:first_pts=0,aformat=sample_fmts=s16:channel_layouts=stereo,apad,atrim=end=${d}`);
                 else args.push('-f', 'lavfi', '-i', `anullsrc=r=${AUDIO_RATE}:cl=stereo`, '-af', `atrim=end=${d}`);
                 args.push('-f', 's16le', '-ar', String(AUDIO_RATE), '-ac', '2', 'pipe:1');
-                const dec = track(job, spawn(getFFmpegBinary(), args, { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }));
+                const proc = dec = track(job, spawn(getFFmpegBinary(), args, { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }));
                 await new Promise((resolve, reject) => {
-                    dec.stdout.on('data', (chunk) => {
-                        if (!encoder.stdin.write(chunk)) { dec.stdout.pause(); encoder.stdin.once('drain', () => dec.stdout.resume()); }
+                    proc.stdout.on('data', (chunk) => {
+                        if (!encoder.stdin.write(chunk)) { proc.stdout.pause(); encoder.stdin.once('drain', () => proc.stdout.resume()); }
                     });
-                    dec.on('error', reject);
-                    dec.on('close', (code) => (code === 0 || aborted(job)) ? resolve() : reject(new Error(`audio of ${ep.name} could not be decoded (exit ${code})`)));
+                    proc.on('error', reject);
+                    proc.on('close', (code) => (code === 0 || aborted(job)) ? resolve()
+                        : reject(new Error(encoderGone ? `audio encoding failed: ${lastLine(encTail)}` : `audio of ${ep.name} could not be decoded (exit ${code})`)));
                 });
+                dec = null;
                 progress(ep.duration);
             }
         } finally {
@@ -403,8 +423,8 @@ function createEpisodeJoiner({ getFFmpegBinary, getFFprobeBinary, detectAvailabl
                     info = await probe(file);
                 }
                 const d = info.error ? null : describe(info);
-                if (!d || (!d.video && !d.audio) || !(d.duration > 0)) {
-                    (part.unreadable = part.unreadable || []).push(`${path.basename(file)} (${info.error || 'no audio or video'})`);
+                if (!d || (!d.video && !d.audio) || !(d.duration > 0) || d.undecodable) {
+                    (part.unreadable = part.unreadable || []).push(`${path.basename(file)} (${info.error || (d && d.undecodable) || 'no audio or video'})`);
                     continue;
                 }
                 part.found[i] = { path: file, name: path.basename(file), episode: episodeNumber(path.basename(file)), ...d };

@@ -105,6 +105,40 @@ describe('episode joiner', { skip }, () => {
         assert.ok(!fs.existsSync(path.join(out, 'S_part05.mp4')));
     });
 
+    // ByteDance's BVC2 (Douyin / Hongguo downloads) has no decoder anywhere. Made here by renaming
+    // an H.264 track's 'avc1' to 'bvc2': ffprobe then says codec "unknown", tag "bvc2", like the
+    // real files (2026-11-25: 28 of a 79-episode series; the join sat at 0%).
+    test('an episode in a video codec nothing can decode is flagged by the scan and fails its part', async () => {
+        const dir = path.join(root, 'bvc');
+        fs.mkdirSync(dir);
+        fs.copyFileSync(path.join(vdir, 'E01.mp4'), path.join(dir, 'E01.mp4'));
+        const b = fs.readFileSync(path.join(vdir, 'E02.mp4'));
+        for (let i; (i = b.indexOf('avc1')) >= 0;) b.write('bvc2', i);
+        fs.writeFileSync(path.join(dir, 'E02.mp4'), b);
+        const r = await joiner.scan(dir);
+        assert.equal(r.files[0].error, null);
+        assert.match(r.files[1].error, /can't be read \(codec "bvc2", ByteDance BVC\)/);
+        assert.ok(r.warnings.some((w) => /1 episode\(s\) are in ByteDance's BVC video format/.test(w)), r.warnings.join(' | '));
+        const st = await join([[path.join(dir, 'E01.mp4'), path.join(dir, 'E02.mp4')]], [1], 'Bvc');
+        assert.equal(st.parts[0].status, 'error');
+        assert.match(st.parts[0].error, /E02\.mp4 \(its video can't be read/);
+    });
+
+    test('stop while an episode\'s audio is being checked ends the job (it used to sit at 0% forever)', async () => {
+        const slow = createEpisodeJoiner({
+            getFFmpegBinary: () => FF, getFFprobeBinary: () => FP, trackProcess: null, detectAvailableEncoders: async () => ({}),
+            audioRepair: {
+                getAudioSource: async (p) => { await new Promise((r) => setTimeout(r, 1500)); return { path: p, repaired: false }; },
+                defaultAudioMap: async () => '0:a:0',
+            },
+        });
+        const id = await slow.start({ parts: [['E01.mp4', 'E03.avi'].map((n) => path.join(vdir, n))], partNumbers: [1], outDir: out, seriesName: 'Slow' });
+        await new Promise((r) => setTimeout(r, 700)); // files read, first audio check under way
+        slow.cancel(id);
+        const st = await Promise.race([waitJob(() => slow.status(id)), new Promise((r) => setTimeout(() => r({ status: 'still running after 15 s' }), 15000))]);
+        assert.equal(st.status, 'cancelled');
+    });
+
     test('mixed formats and sizes join into one playable part of the right length', async () => {
         const files = ['E01.mp4', 'E02.mp4', 'E03.avi', 'E04.wmv'].map((n) => path.join(vdir, n));
         const st = await join([files], [4]);

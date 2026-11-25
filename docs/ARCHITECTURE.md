@@ -752,6 +752,7 @@ flowchart TD
 3. **Join each part:**
    - **Audio.** Each episode is decoded, resampled to 48 kHz, padded or trimmed to its exact length, then encoded once to AAC.
    - **Video.** Stream copy when every episode's codec headers match. If at least half match, only the odd episodes are re-encoded, with the export's own hardware encoder (read from the encoder tag) and its bitrate step (found by a 1 s test encode per step), and kept only if the headers then match. A full conversion uses 1.1x the episodes' average bitrate (it was 1.3x the highest). Otherwise everything is encoded to the most common size and frame rate.
+   - **Unreadable video.** An episode whose video codec FFmpeg doesn't know (ffprobe `unknown`; ByteDance BVC2 from Douyin / Hongguo, tag `bvc2`) is marked unreadable by the scan, with a warning to download it again as H.264 or HEVC, and fails its part if it is sent anyway. Until 2026-11-25 such a part failed only at video conversion, and the job then sat at 0%: an audio decoder started after the stop wrote to the stopped encoder forever. The audio half now stops when its encoder has gone.
    - **Output.** `<series>_partNN.mp4` and `_episodes.txt` (each episode's start time). The file is written as `.part.mp4` and renamed when complete. A part is reused if its episodes have not changed.
 
 ### Split (`video_splitter.js`)
