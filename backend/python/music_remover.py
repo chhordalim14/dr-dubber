@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Takes the music out of a BGM stem and keeps the sound effects (footsteps,
-hits, doors, rain, crowds), for dubs whose music may be copyrighted.
+hits, doors, rain, crowds), for dubs whose music may be copyrighted. With
+--keep music it does the opposite: keeps only the music and drops the effects.
 
 Uses ZFTurbo's MVSEP-CDX23 model (MIT licence): a Demucs 4 network trained on
 the Divide-and-Remaster film dataset that splits a soundtrack into music,
@@ -88,11 +89,15 @@ def free_gpu_memory(torch, device):
         pass
 
 
-def separate_sfx(model, x, device, output_path, sfx_idx):
+# What Settings > Remove music can keep: the model's stem of that name.
+KEEP_STEMS = ("sfx", "music")
+
+
+def separate_stem(model, x, device, output_path, stem_idx):
     """
-    Writes the effects stem of x (a [1, 2, n] tensor) to output_path. It is apply_model's
+    Writes one stem of x (a [1, 2, n] tensor) to output_path. It is apply_model's
     own split loop (the same segments, weights and sums, so the same samples) but keeps
-    only the effects stem, and writes each stretch once no later segment reaches it:
+    only that stem, and writes each stretch once no later segment reaches it:
     apply_model built all three stems for the whole tab first, three more copies of it
     (636 MB for 10 minutes, 2 GB for a joined episode).
     """
@@ -111,7 +116,7 @@ def separate_sfx(model, x, device, output_path, sfx_idx):
     weight = torch.cat([torch.arange(1, seg // 2 + 1, device=dev),
                         torch.arange(seg - seg // 2, 0, -1, device=dev)])
     weight = (weight / weight.max()) ** 1.0  # apply_model's transition_power
-    # The effects stem and the weights summed into it, from sample `base` on.
+    # The kept stem and the weights summed into it, from sample `base` on.
     acc = torch.zeros(1, x.shape[1], seg)
     acc_w = torch.zeros(seg)
     base = 0
@@ -128,7 +133,7 @@ def separate_sfx(model, x, device, output_path, sfx_idx):
             if dev.type != "cpu" and not torch.isfinite(out).all():
                 raise FloatingPointError("the GPU gave back invalid numbers")
             n = out.shape[-1]
-            acc[..., offset - base:offset - base + n] += (weight[:n] * out[:, sfx_idx]).to("cpu")
+            acc[..., offset - base:offset - base + n] += (weight[:n] * out[:, stem_idx]).to("cpu")
             acc_w[offset - base:offset - base + n] += weight[:n].to("cpu")
             del out
             # Nothing after this segment reaches back before the next one's start.
@@ -144,7 +149,9 @@ def separate_sfx(model, x, device, output_path, sfx_idx):
             sys.stderr.flush()
 
 
-def remove_music(input_path, output_path, model_dir, ffmpeg="ffmpeg", device=None, threads=None):
+def remove_music(input_path, output_path, model_dir, ffmpeg="ffmpeg", device=None, threads=None, keep="sfx"):
+    if keep not in KEEP_STEMS:
+        raise ValueError(f"unknown stem to keep: {keep}")
     import torch
     from demucs.states import load_model
     import onnx_separator  # read_audio: numpy + ffmpeg only
@@ -159,9 +166,9 @@ def remove_music(input_path, output_path, model_dir, ffmpeg="ffmpeg", device=Non
         raise RuntimeError(f"the music model expects {model.samplerate} Hz audio")
 
     x = torch.from_numpy(onnx_separator.read_audio(input_path, ffmpeg)[None])
-    sfx_idx = model.sources.index("sfx")
+    stem_idx = model.sources.index(keep)
     try:
-        separate_sfx(model, x, device, output_path, sfx_idx)
+        separate_stem(model, x, device, output_path, stem_idx)
     except Exception as e:
         # The CPU gives the same result. CUDA: a 6 GB laptop GPU can be full (VoxCPM2 still
         # loaded). Apple's GPU (MPS): any failure, as torch's support for it is the newest.
@@ -172,7 +179,7 @@ def remove_music(input_path, output_path, model_dir, ffmpeg="ffmpeg", device=Non
         sys.stderr.flush()
         free_gpu_memory(torch, device)
         device = "cpu"
-        separate_sfx(model, x, device, output_path, sfx_idx)
+        separate_stem(model, x, device, output_path, stem_idx)
     return device
 
 
@@ -182,8 +189,9 @@ def main():
         sys.stderr.reconfigure(encoding="utf-8")
     except Exception:
         pass
-    parser = argparse.ArgumentParser(description="Remove the music from a BGM stem, keep the sound effects")
+    parser = argparse.ArgumentParser(description="Remove the music from a BGM stem, keep the sound effects (or keep only the music)")
     parser.add_argument("--input", required=True)
+    parser.add_argument("--keep", default="sfx", choices=KEEP_STEMS, help="sfx: the sound effects (default); music: only the music")
     parser.add_argument("--output", required=True)
     parser.add_argument("--model-dir", required=True)
     parser.add_argument("--ffmpeg", default="ffmpeg")
@@ -191,8 +199,8 @@ def main():
     parser.add_argument("--threads", default=None, type=int)
     args = parser.parse_args()
     try:
-        device = remove_music(args.input, args.output, args.model_dir, args.ffmpeg, args.device, args.threads)
-        print(json.dumps({"success": True, "bgm": os.path.abspath(args.output), "device": device}))
+        device = remove_music(args.input, args.output, args.model_dir, args.ffmpeg, args.device, args.threads, args.keep)
+        print(json.dumps({"success": True, "bgm": os.path.abspath(args.output), "device": device, "keep": args.keep}))
     except MemoryError:
         print(json.dumps({"success": False, "error": "not enough free memory for this audio"}))
     except Exception as e:

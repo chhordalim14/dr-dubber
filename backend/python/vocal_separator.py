@@ -621,11 +621,12 @@ def separate_ffmpeg(input_audio, output_dir):
         sys.stderr.write(f"[FFmpeg] exception: {e}\n")
         return None
 
-def remove_music(bgm_path, output_dir, model_dir, demucs_folder=None, device=None, threads=None):
+def remove_music(bgm_path, output_dir, model_dir, demucs_folder=None, device=None, threads=None, keep="sfx"):
     """
     Second pass for "Remove music from BGM": music_remover.py takes the music
-    out of a finished BGM stem and keeps the sound effects. It needs torch, so
-    it runs in the Demucs Python; its "[music] n/N" progress is passed on.
+    out of a finished BGM stem and keeps the sound effects (keep="music": keeps
+    only the music instead). It needs torch, so it runs in the Demucs Python;
+    its "[music] n/N" progress is passed on.
     """
     demucs_python = find_demucs_python(demucs_folder)
     if not demucs_python:
@@ -638,6 +639,7 @@ def remove_music(bgm_path, output_dir, model_dir, demucs_folder=None, device=Non
         "--output", os.path.join(job_dir, "accompaniment.wav"),
         "--model-dir", model_dir,
         "--ffmpeg", get_ffmpeg_executable(),
+        "--keep", keep,
     ]
     if device == "cpu":
         cmd += ["--device", "cpu"]
@@ -723,12 +725,13 @@ def main():
         parser.add_argument("--spleeter-python", default=None, help="Optional direct path to Spleeter Python binary")
         parser.add_argument("--threads", default=None, type=int, help="CPU threads the separator may use (its share when several tabs separate at once)")
         parser.add_argument("--remove-music", action="store_true", help="Take the music out of the BGM stem given as --input, keep the sound effects")
+        parser.add_argument("--keep", default="sfx", choices=("sfx", "music"), help="With --remove-music: sfx keeps the sound effects (default), music keeps only the music")
         parser.add_argument("--model-dir", default=None, help="Where downloaded models are kept: the music model, and MDX-Net's when backend/models has none (downloaded there the first time)")
 
         args = parser.parse_args()
         if args.remove_music:
             model_dir = args.model_dir or os.path.join(_SCRIPT_DIR, "..", "models")
-            print(json.dumps(remove_music(args.input, args.output, model_dir, args.demucs_folder, args.device, args.threads)))
+            print(json.dumps(remove_music(args.input, args.output, model_dir, args.demucs_folder, args.device, args.threads, args.keep)))
             return
         result = separate(
             args.input,

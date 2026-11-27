@@ -64,13 +64,24 @@ test('every finished separation goes through the music pass', () => {
   assert.equal(direct.length, 3);
   const fn = src.slice(src.indexOf('function finishBgmJob('), src.indexOf('async function removeMusicFromBgm('));
   assert.match(fn, /if \(!music\) \{\s*bgmJobs\.set\(jobId, bgmDoneJob\(/);
-  assert.match(src, /bgmDoneJob\(cachedNoMusic\.bgm, cachedNoMusic\.vocal, \{[^}]*musicRemoved: true/);
-  assert.match(src, /bgmJobs\.set\(jobId, bgmDoneJob\(outBgm, outVocal, \{ \.\.\.extra, musicRemoved: true \}\)\)/);
+  assert.match(src, /bgmDoneJob\(cachedNoMusic\.bgm, cachedNoMusic\.vocal, \{[^}]*\.\.\.musicPassResult\(bgmKeep\)/);
+  assert.match(src, /bgmJobs\.set\(jobId, bgmDoneJob\(outBgm, outVocal, \{ \.\.\.extra, \.\.\.musicPassResult\(music\.keep\) \}\)\)/);
+});
+
+test('"Keep: Music only" has its own cache key and reaches the Python as --keep music', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'backend', 'server.js'), 'utf8');
+  assert.match(src, /const MUSIC_ONLY_MODEL = '\+musiconly:/);
+  assert.notEqual(src.match(/const NO_MUSIC_MODEL = '([^']+)'/)[1], src.match(/const MUSIC_ONLY_MODEL = '([^']+)'/)[1]);
+  assert.match(src, /const musicPassModel = bgmKeep === 'music' \? MUSIC_ONLY_MODEL : NO_MUSIC_MODEL;/);
+  assert.match(src, /'--keep', music\.keep/);
+  const vs = fs.readFileSync(path.join(PY_DIR, 'vocal_separator.py'), 'utf8');
+  assert.match(vs, /"--keep", keep,/);
+  assert.match(vs, /args\.threads, args\.keep\)/);
 });
 
 // Device choice and the GPU -> CPU fallback, with stand-in torch / demucs modules (no GPU,
 // model or audio needed). `fail` makes the run on that device throw (or give NaN).
-function runRemoveMusic({ cuda = false, mps = false, fail = null, device = null, nan = false }) {
+function runRemoveMusic({ cuda = false, mps = false, fail = null, device = null, nan = false, keep = null }) {
   const code = `
 import json, sys, types
 sys.path.insert(0, ${JSON.stringify(PY_DIR)})
@@ -89,14 +100,19 @@ import onnx_separator, music_remover
 import numpy
 onnx_separator.read_audio = lambda p, f="ffmpeg": numpy.zeros((2, 44100), numpy.float32)
 music_remover.ensure_model = lambda d: "model.th"
-def separate_sfx(model, x, device, output_path, sfx_idx):
+stems = []
+def separate_stem(model, x, device, output_path, stem_idx):
     runs.append(device)
+    stems.append(model.sources[stem_idx])
     if device == ${fail ? JSON.stringify(fail) : 'None'}: raise ${fail === 'cuda' ? 'RuntimeError("CUDA error: an illegal memory access")' : 'NotImplementedError("op not on MPS")'}
     if ${nan ? 'True' : 'False'} and device != "cpu": raise FloatingPointError("the GPU gave back invalid numbers")
-music_remover.separate_sfx = separate_sfx
+music_remover.separate_stem = separate_stem
 try:
-    dev = music_remover.remove_music("in.wav", "out.wav", "models", device=${device ? JSON.stringify(device) : 'None'})
-    print(json.dumps({"device": dev, "runs": runs}))
+    kw = {${keep ? `"keep": ${JSON.stringify(keep)}` : ''}}
+    dev = music_remover.remove_music("in.wav", "out.wav", "models", device=${device ? JSON.stringify(device) : 'None'}, **kw)
+    out = {"device": dev, "runs": runs}
+    if ${keep ? 'True' : 'False'}: out["stems"] = stems
+    print(json.dumps(out))
 except Exception as e:
     print(json.dumps({"error": type(e).__name__, "runs": runs}))
 `;
@@ -121,7 +137,15 @@ test('any failure on Apple\'s GPU, or NaN from any GPU, is redone on the CPU', {
   assert.deepEqual(runRemoveMusic({ cuda: true, fail: 'cuda' }), { error: 'RuntimeError', runs: ['cuda'] });
 });
 
-// separate_sfx is apply_model's split loop keeping only the effects stem, written as it goes
+test('keep "sfx" (the default) writes the effects stem, keep "music" the music stem; anything else is refused', { skip: !hasNumpy && 'no Python with numpy' }, () => {
+  assert.deepEqual(runRemoveMusic({ keep: 'sfx' }), { device: 'cpu', runs: ['cpu'], stems: ['sfx'] });
+  assert.deepEqual(runRemoveMusic({ keep: 'music' }), { device: 'cpu', runs: ['cpu'], stems: ['music'] });
+  // The GPU -> CPU rerun keeps the same stem.
+  assert.deepEqual(runRemoveMusic({ mps: true, fail: 'mps', keep: 'music' }), { device: 'cpu', runs: ['mps', 'cpu'], stems: ['music', 'music'] });
+  assert.deepEqual(runRemoveMusic({ keep: 'speech' }), { error: 'ValueError', runs: [] });
+});
+
+// separate_stem is apply_model's split loop keeping only one stem, written as it goes
 // (apply_model held all three stems of the whole tab: 636 MB more for 10 minutes). It must
 // write exactly the samples apply_model gives. Needs torch + demucs: the app's Demucs Python
 // when it is there (backend/demucs-env), else $PYTHON.
@@ -156,7 +180,7 @@ for n in (5, seg - 1, seg, seg + 1, stride * 4, stride * 4 + 1, 44100 * 3 + 123)
     with torch.no_grad():
         ref = apply_model(m, x, shifts=0, overlap=music_remover.OVERLAP, device="cpu")[0][1]
     out = ${JSON.stringify(dir)} + f"/sfx_{n}.wav"
-    music_remover.separate_sfx(m, x, "cpu", out, 1)
+    music_remover.separate_stem(m, x, "cpu", out, 1)
     with wave.open(out) as w:
         got = w.readframes(w.getnframes())
     res.append(got == onnx_separator.to_pcm16(ref.numpy()))
@@ -176,7 +200,7 @@ m2 = NaNs().eval()
 m2.to = lambda d: m2
 nan_caught = False
 try:
-    music_remover.separate_sfx(m2, torch.randn(1, 2, 44100), "fake-gpu", ${JSON.stringify(dir)} + "/nan.wav", 1)
+    music_remover.separate_stem(m2, torch.randn(1, 2, 44100), "fake-gpu", ${JSON.stringify(dir)} + "/nan.wav", 1)
 except FloatingPointError:
     nan_caught = True
 print(json.dumps({"same": res, "nan_caught": nan_caught}))

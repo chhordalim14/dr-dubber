@@ -9076,8 +9076,29 @@
       removeMusicToggle.checked = localStorage.getItem("aiDubberRemoveMusic") === "true";
       removeMusicToggle.addEventListener("change", () => {
         localStorage.setItem("aiDubberRemoveMusic", removeMusicToggle.checked ? "true" : "false");
-        if (removeMusicToggle.checked) showToast("Music will be removed from the BGM. Isolate BGM again on tabs that already have one.", "info");
+        if (removeMusicToggle.checked) showToast(localStorage.getItem("aiDubberRemoveMusicKeep") === "music" ? "Sound effects will be removed from the BGM, only the music stays. Isolate BGM again on tabs that already have one." : "Music will be removed from the BGM. Isolate BGM again on tabs that already have one.", "info");
+        syncRemoveMusicKeep();
       });
+    }
+    // What Remove music keeps: the sound effects (default) or only the music.
+    const removeMusicKeepRadios = document.querySelectorAll('input[name="remove-music-keep"]');
+    function syncRemoveMusicKeep() {
+      const on = !removeMusicToggle || removeMusicToggle.checked;
+      removeMusicKeepRadios.forEach((r) => { r.disabled = !on; });
+      const box = document.getElementById("setting-remove-music-keep");
+      if (box) box.style.opacity = on ? "" : "0.5";
+    }
+    if (removeMusicKeepRadios.length) {
+      const keep = localStorage.getItem("aiDubberRemoveMusicKeep") === "music" ? "music" : "sfx";
+      removeMusicKeepRadios.forEach((r) => {
+        r.checked = r.value === keep;
+        r.addEventListener("change", () => {
+          if (!r.checked) return;
+          localStorage.setItem("aiDubberRemoveMusicKeep", r.value);
+          showToast(r.value === "music" ? "Remove music will keep only the music and drop the sound effects. Isolate BGM again on tabs that already have one." : "Remove music will keep only the sound effects. Isolate BGM again on tabs that already have one.", "info");
+        });
+      });
+      syncRemoveMusicKeep();
     }
 
     // Pronunciation list (khmer-speech.js): saved and applied as it is typed
@@ -24738,6 +24759,8 @@
         let spleeterFolder = localStorage.getItem("aiDubberSpleeterFolder") || "";
         // Settings > Remove music from BGM: the server takes the music out after separating.
         const removeMusic = localStorage.getItem("aiDubberRemoveMusic") === "true";
+        // ...and what it keeps: "sfx" (the sound effects) or "music" (only the music).
+        const bgmKeep = localStorage.getItem("aiDubberRemoveMusicKeep") === "music" ? "music" : "sfx";
         // A local VoxCPM2 server is asked to lend its GPU while this runs.
         const voxServerUrl = typeof voxCmp2Load === "function" ? voxCmp2Load().serverUrl || "" : "";
 
@@ -24759,6 +24782,7 @@
               spleeterFolder,
               voxServerUrl,
               removeMusic,
+              bgmKeep,
               parallelJobs: opts.parallelJobs || 1,
             }),
             signal: targetProject.isolateAbortController.signal,
@@ -24785,7 +24809,10 @@
           if (demucsSegment) formData.append("demucsSegment", demucsSegment);
           if (spleeterFolder) formData.append("spleeterFolder", spleeterFolder);
           if (voxServerUrl) formData.append("voxServerUrl", voxServerUrl);
-          if (removeMusic) formData.append("removeMusic", "true");
+          if (removeMusic) {
+            formData.append("removeMusic", "true");
+            formData.append("bgmKeep", bgmKeep);
+          }
           formData.append("parallelJobs", String(opts.parallelJobs || 1));
 
           response = await fetch("http://localhost:3001/api/remove-vocals", {
@@ -24856,7 +24883,7 @@
         targetProject.bgmTrack = {
           src: `http://localhost:3001${data.url}`,
           file: data.file,
-          name: (targetProject.file?.name || "Audio") + (data.musicRemoved ? " (Sound effects)" : " (Instrumental)"),
+          name: (targetProject.file?.name || "Audio") + (data.musicOnly ? " (Music only)" : data.musicRemoved ? " (Sound effects)" : " (Instrumental)"),
           start: 0,
           duration: Math.min(bgmRealDuration, videoDuration),
           volume: getGlobalBgmVolume(),
@@ -24894,7 +24921,8 @@
             } else if (data.fallbackReason) {
               showToast(`BGM isolated, but not with the engine you picked:${fallbackNote}`, "warning");
             } else {
-              if (data.musicRemoved) showToast(data.cached ? "BGM without music reused from the earlier result for this video." : "BGM isolated and music removed: sound effects kept.", "success");
+              if (data.musicOnly) showToast(data.cached ? "Music-only BGM reused from the earlier result for this video." : "BGM isolated and sound effects removed: only the music kept.", "success");
+              else if (data.musicRemoved) showToast(data.cached ? "BGM without music reused from the earlier result for this video." : "BGM isolated and music removed: sound effects kept.", "success");
               else showToast(data.cached ? "BGM isolated (reused the earlier result for this video)." : "BGM successfully isolated!", "success");
             }
           }

@@ -173,7 +173,7 @@ sequenceDiagram
 | Script | Role |
 | --- | --- |
 | `tts_generator.py` | Edge TTS: one line, or a worker serving many (`--serve`) |
-| `vocal_separator.py`, `onnx_separator.py`, `music_remover.py` | Isolate BGM: MDX-Net, Demucs, Spleeter, plus an optional pass that removes the music too |
+| `vocal_separator.py`, `onnx_separator.py`, `music_remover.py` | Isolate BGM: MDX-Net, Demucs, Spleeter, plus an optional pass that removes the music too (or, with Keep: Music only, the sound effects) |
 | `text_detector.py` | RapidOCR burned-in subtitle detection |
 | `voxcpm2_server.py`, `voxcpm2_speakers.py`, `voxcpm2_fetch_model.py` | VoxCPM2 server (copied to `app.py`), speaker voice prints, model download |
 | `pronunciation_checker.py` | Compares Edge's Khmer to Google's reading |
@@ -233,7 +233,7 @@ API keys and settings live in the window's localStorage, not in a file. The main
 | `aiDubberModel`, `aiDubberApiSaver`, `aiDubberReviewPass` | Gemini model and options |
 | `aiDubberTextProvider`, `aiDubberCodecraftKeys`, `aiDubberCodecraftModel`, `aiDubberCodecraftBackup` | CodeCraft text provider |
 | `aiDubberTranscriptionEngine`, `aiDubberWhisperFolder` | Transcription engine |
-| `aiDubberVocalEngine`, `aiDubberUseGPU`, `aiDubberDemucsSegment`, `aiDubberRemoveMusic` | Isolate BGM |
+| `aiDubberVocalEngine`, `aiDubberUseGPU`, `aiDubberDemucsSegment`, `aiDubberRemoveMusic`, `aiDubberRemoveMusicKeep` (`sfx` or `music`) | Isolate BGM |
 | `aiDubberRenderEngine`, `aiDubberNormalizeLoudness`, `aiDubberDialogueMastering`, `drDubberDuckingEnabled`, `drDubberDuckingDepth`, `aiDubberBgmVolume` | Render and mix |
 | `aiDubberConcurrentAudio`, `aiDubberExportPath`, `aiDubberTempPath` | Voices and output folders |
 | `aiDubberAutoSaveSrt*` | Auto-save subtitles |
@@ -651,7 +651,7 @@ In a series run, this happens without the user:
 
 ```mermaid
 flowchart TD
-    A["Isolate BGM / Isolate All<br/>(2 tabs at once; 1 with 16 GB of RAM or less)"] --> B["POST /api/remove-vocals<br/>engine, GPU/CPU, removeMusic"]
+    A["Isolate BGM / Isolate All<br/>(2 tabs at once; 1 with 16 GB of RAM or less)"] --> B["POST /api/remove-vocals<br/>engine, GPU/CPU, removeMusic, bgmKeep"]
     B --> C{"Stems cached?<br/>sha1(path, size, mtime, engine, model)"}
     C -- yes --> DONE
     C -- no --> R["Repair broken source audio"]
@@ -669,7 +669,7 @@ flowchart TD
 ```
 
 - **Engines.** MDX-Net (`UVR-MDX-NET-Voc_FT`, ONNX) is the default. Demucs runs `htdemucs` with two stems, and Spleeter runs 2 stems. MDX-Net uses DirectML on Windows and Core ML on a Mac, and moves to the CPU if the GPU fails or gives back invalid numbers (`MDX_DEVICE=cpu`, set by **Hardware Acceleration → CPU**, keeps it there). Only the Windows setup puts the model in `backend/models`; elsewhere it is downloaded once (64 MB, sha256-checked) into `storage/models`. Without it every tab fell back to Spleeter.
-- **Remove music** (`music_remover.py`, CDX23) runs in the Demucs Python, on NVIDIA's GPU, else Apple's (MPS), else the CPU; a GPU failure or NaN output redoes it on the CPU.
+- **Remove music** (`music_remover.py`, CDX23) keeps the sound effects stem, or the music stem with Keep: Music only (`--keep music`, cached on its own key). It runs in the Demucs Python, on NVIDIA's GPU, else Apple's (MPS), else the CPU; a GPU failure or NaN output redoes it on the CPU.
 - **Memory.** Measured on a 10-minute tab (M4, 16 GB); the stems are the same bit for bit as before these changes:
 
   | Step | Peak RAM | How it is kept down |

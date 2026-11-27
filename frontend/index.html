@@ -4719,6 +4719,18 @@
                   <span class="text-[11px] text-[var(--text-muted)] leading-relaxed">For music that may be copyrighted: after the voice is removed, the music is taken out too and only sound effects (footsteps, hits, doors, rain) stay. A little music can remain under loud effects. Needs Demucs: pick Demucs above once to set its folder, then any engine can be used. The 54 MB model downloads the first time. Adds about half a tab's length per tab on CPU.</span>
                 </span>
               </label>
+              <!-- What the Remove music pass keeps (aiDubberRemoveMusicKeep: sfx | music) -->
+              <div id="setting-remove-music-keep" class="flex flex-col gap-1.5 ml-7">
+                <span class="text-[11px] text-[var(--text-secondary)] font-medium">Keep in the BGM:</span>
+                <label class="flex items-start gap-2 cursor-pointer">
+                  <input type="radio" name="remove-music-keep" value="sfx" class="mt-0.5 w-3.5 h-3.5 accent-emerald-500 shrink-0 cursor-pointer" />
+                  <span class="text-[11px] text-[var(--text-bright)]">Sound effects only <span class="text-[var(--text-muted)]">(no music)</span></span>
+                </label>
+                <label class="flex items-start gap-2 cursor-pointer">
+                  <input type="radio" name="remove-music-keep" value="music" class="mt-0.5 w-3.5 h-3.5 accent-emerald-500 shrink-0 cursor-pointer" />
+                  <span class="text-[11px] text-[var(--text-bright)]">Music only <span class="text-[var(--text-muted)]">(no sound effects: doors, hits, footsteps are dropped)</span></span>
+                </label>
+              </div>
             </div>
 
             <div class="flex flex-col gap-3 pt-4 border-t border-[var(--border-color)]">

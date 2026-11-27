@@ -771,8 +771,15 @@ const bgmChildren = new Map(); // jobId -> running separator process, so Stop ca
 // (MVSEP-CDX23, needs the Demucs Python), takes the music out of the finished BGM and keeps
 // the sound effects. Its result is cached on its own key, so turning the setting on reuses
 // a tab's earlier voice/BGM split. The model is downloaded to <storage>/models (kept across
-// app updates).
+// app updates). "Keep: Music only" (bgmKeep 'music') runs the same pass but keeps the music
+// stem and drops the effects; it has its own cache key.
 const NO_MUSIC_MODEL = '+nomusic:cdx23-dbb4db15';
+const MUSIC_ONLY_MODEL = '+musiconly:cdx23-dbb4db15';
+const BGM_KEEP_CHOICES = ['sfx', 'music'];
+// What the app is told about a BGM that went through the music pass.
+function musicPassResult(keep) {
+    return keep === 'music' ? { musicOnly: true, bgmKeep: 'music' } : { musicRemoved: true, bgmKeep: 'sfx' };
+}
 const MUSIC_MODEL_DIR = path.join(STORAGE_BASE, 'models');
 const bgmMusicJobs = new Map(); // jobId -> what the music pass needs, until it starts
 
@@ -856,7 +863,7 @@ async function removeMusicFromBgm(jobId, bgmPath, vocalPath, extra, music) {
     const workDir = path.join(SEPARATED_DIR, 'bgm-work', `${String(jobId).replace(/[^\w.-]/g, '_')}_nomusic`);
     try { fs.mkdirSync(workDir, { recursive: true }); } catch (e) {}
     const pyArgs = ['--remove-music', '--input', bgmPath, '--output', workDir, '--model-dir', MUSIC_MODEL_DIR,
-        '--threads', String(pickSeparatorThreads(os.cpus().length, music.parallelJobs))];
+        '--keep', music.keep, '--threads', String(pickSeparatorThreads(os.cpus().length, music.parallelJobs))];
     if (music.demucsFolder) pyArgs.push('--demucs-folder', music.demucsFolder);
     if (!music.useGPU || await lendVoxCpmGpu(music.voxServerUrl) === 'cpu') pyArgs.push('--device', 'cpu');
     await waitForBgmMemory(jobId, 'music');
@@ -919,8 +926,8 @@ async function removeMusicFromBgm(jobId, bgmPath, vocalPath, extra, music) {
             }
         } catch (e) {}
     }
-    console.log(`[Remove Music] Job ${jobId}: music removed from the BGM (${data.device || 'cpu'}).`);
-    bgmJobs.set(jobId, bgmDoneJob(outBgm, outVocal, { ...extra, musicRemoved: true }));
+    console.log(`[Remove Music] Job ${jobId}: ${music.keep === 'music' ? 'sound effects removed, music kept' : 'music removed from the BGM'} (${data.device || 'cpu'}).`);
+    bgmJobs.set(jobId, bgmDoneJob(outBgm, outVocal, { ...extra, ...musicPassResult(music.keep) }));
 }
 
 // Cached stems not used for 14 days, work folders left by a crash or Stop, and the FFmpeg
@@ -1079,17 +1086,20 @@ app.post('/api/remove-vocals', upload.any(), async (req, res) => {
     if (!BGM_ENGINES.includes(engine)) engine = DEFAULT_BGM_ENGINE;
     const cacheKey = (sourcePath && engine !== 'ffmpeg') ? cacheKeyForFile(sourcePath, engine, bgmEngineModel(engine)) : null;
     const removeMusic = req.body.removeMusic === true || req.body.removeMusic === 'true';
-    const noMusicKey = (removeMusic && sourcePath && engine !== 'ffmpeg') ? cacheKeyForFile(sourcePath, engine, bgmEngineModel(engine) + NO_MUSIC_MODEL) : null;
+    const bgmKeep = BGM_KEEP_CHOICES.includes(req.body.bgmKeep) ? req.body.bgmKeep : 'sfx';
+    const musicPassModel = bgmKeep === 'music' ? MUSIC_ONLY_MODEL : NO_MUSIC_MODEL;
+    const noMusicKey = (removeMusic && sourcePath && engine !== 'ffmpeg') ? cacheKeyForFile(sourcePath, engine, bgmEngineModel(engine) + musicPassModel) : null;
 
     const cachedNoMusic = lookupCachedStems(SEPARATED_DIR, noMusicKey);
     if (cachedNoMusic) {
-        console.log(`[Vocal Separator] Job ${jobId}: reusing cached ${engine} stems without music for ${path.basename(sourcePath)}`);
-        bgmJobs.set(jobId, bgmDoneJob(cachedNoMusic.bgm, cachedNoMusic.vocal, { method: cachedNoMusic.method || engine, requestedEngine: engine, cached: true, musicRemoved: true }));
+        console.log(`[Vocal Separator] Job ${jobId}: reusing cached ${engine} stems (${bgmKeep === 'music' ? 'music only' : 'without music'}) for ${path.basename(sourcePath)}`);
+        bgmJobs.set(jobId, bgmDoneJob(cachedNoMusic.bgm, cachedNoMusic.vocal, { method: cachedNoMusic.method || engine, requestedEngine: engine, cached: true, ...musicPassResult(bgmKeep) }));
         return res.json({ success: true, jobId: jobId, status: 'processing' });
     }
     if (removeMusic) {
         bgmMusicJobs.set(jobId, {
             engine,
+            keep: bgmKeep,
             cacheKey: noMusicKey,
             sourcePath,
             useGPU: req.body.useGPU === true || req.body.useGPU === 'true',
