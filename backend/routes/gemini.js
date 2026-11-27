@@ -1223,11 +1223,42 @@ async function transcribeClipWithGemini({ apiKey, model, audioBase64, mimeType, 
 // while it works the PC hears the same clip and each line gets the time of its own Chinese
 // characters (lib/gemini-web-timing.js). Without the VoxCPM2 install the website's times stay.
 const gwebTimelineCache = new Map(); // clipHash -> Promise<timeline>
+// The Gmail's reply says Google could not open the uploaded clip, instead of transcribing it.
+// Seen 2026-11-27 on every Gmail, with or without a proxy: "[The file 'part1.mp3' could not be
+// opened]", "无法打开音频文件 `part1.mp3`", "ឯកសារ ... មិនអាចបើកបាន". Gemini then sometimes answers
+// "[]", which counted as a piece with no dialogue; it can even make up what it "heard" (a test
+// tone was "a cat meowing"). Only asked of replies that gave no lines, so dialogue such as
+// "I can't open the door" in a transcript is never taken for it.
+const GWEB_UPLOAD_OPEN_FAIL_RE = /(could\s*n[o']t|can\s*n?[o']t|cannot|unable to|was\s*n[o']t able to|failed to)\s+(be\s+)?(open|load|access|read|play)|(could\s*n[o']t|was\s*n[o']t|is\s*n[o']t)\s+(be\s+)?(opened|loaded|received|attached)|isn't attached properly|无法(打开|开启|读取|開啟|访问|播放)|無法(打開|開啟|讀取|存取|播放)|不能打开|打不开|មិនអាចបើក|មិនអាចស្ដាប់|ไม่สามารถเปิด/i;
+const GWEB_UPLOAD_FILE_RE = /part\d+\.(mp3|mp4|wav|ogg|m4a|webm)|attach|audio|video|file|文件|檔案|档案|音频|音訊|音頻|音檔|視頻|视频|ឯកសារ|អូឌីយ៉ូ|វីដេអូ|ไฟล์/i;
+function gwebUploadUnreadable(raw) {
+    const t = String(raw || '');
+    return GWEB_UPLOAD_OPEN_FAIL_RE.test(t) && GWEB_UPLOAD_FILE_RE.test(t);
+}
+// An answer with no lines is not "no dialogue" when the PC heard speech in the clip, or (no PC
+// timing) the clip is a long piece: it goes to the next Gmail or API key instead.
+function gwebEmptyAnswerIsFailure(itemCount, clipSec, timeline) {
+    if (itemCount > 0) return false;
+    // timeline: the Chinese characters the PC heard; a stray one or two in a quiet stretch is not speech.
+    if (timeline) return timeline.length >= 5;
+    return clipSec > 90;
+}
+// Google's uploads were broken for every Gmail at once (2026-11-27), so one unreadable upload
+// sends audio to the API keys for a while instead of trying each Gmail in turn first.
+const GWEB_AUDIO_PAUSE_MS = 10 * 60 * 1000;
+let gwebAudioPausedUntil = 0;
+function gwebAudioPauseLeftMs() {
+    return Math.max(0, gwebAudioPausedUntil - Date.now());
+}
+
 async function transcribeClipWithGeminiWeb({ apiKey, payload, audioBase64, mimeType, clipSec, signal, timeoutMs, usage }) {
     const timing = require('../lib/gemini-web-timing');
     // Router first / multiple Gmails: a Gmail busy with another job hands this clip to the next
     // free Gmail (or API backup) at once, before any PC timing is started for it.
     const ctx = keyAttemptContext && keyAttemptContext.getStore();
+    if (ctx && ctx.apiBackup && gwebAudioPauseLeftMs() > 0) {
+        return { ok: false, result: { status: 502, code: 'GWEB_AUDIO_PAUSED', error: 'Gemini Web could not open uploaded audio a moment ago: the API keys take audio for now.' } };
+    }
     if (ctx && (ctx.apiBackup || ctx.hasAlternativeKey)) {
         const busy = geminiWeb().busyResult(apiKey);
         if (busy) { noteRouterUsage(apiKey, busy); return { ok: false, result: busy }; }
@@ -1262,6 +1293,15 @@ async function transcribeClipWithGeminiWeb({ apiKey, payload, audioBase64, mimeT
         addTokenUsage(usage, result);
         const raw = result.text || '';
         const parsed = parseJsonArrayLoose(raw);
+        if ((!parsed || !parsed.length) && gwebUploadUnreadable(raw)) {
+            // Asking the same Gmail again gets the same answer: the next Gmail or API key takes it.
+            gwebAudioPausedUntil = Date.now() + GWEB_AUDIO_PAUSE_MS;
+            const who = (result.gweb && result.gweb.email) || 'Gemini Web';
+            console.warn(`[Transcribe] ${who} could not open the uploaded audio ("${raw.replace(/\s+/g, ' ').slice(0, 120)}"); audio goes to the API keys for ${GWEB_AUDIO_PAUSE_MS / 60000} min`);
+            lastFailure = { ok: false, result: { status: 502, code: 'GWEB_FILE_UNREADABLE', error: 'Gemini Web could not open the uploaded audio.', message: `Gemini Web could not open the uploaded audio (Google's upload failed). Reply began: ${raw.slice(0, 160)}` }, raw };
+            if (best && !best.items.length) best = null; // an earlier answer with lines still stands
+            break;
+        }
         if (!parsed) {
             console.error('[Transcribe] Unparseable Gemini Web output:', raw.slice(0, 500));
             lastFailure = { ok: false, result: { status: 502, error: 'Gemini Web returned an unreadable transcript.', message: `Gemini Web returned an unreadable transcript. Reply began: ${raw.slice(0, 160)}` }, raw };
@@ -1282,6 +1322,10 @@ async function transcribeClipWithGeminiWeb({ apiKey, payload, audioBase64, mimeT
         const short = coverage != null ? coverage < 0.75 : looksIncomplete(items, clipSec, false);
         if (!short) break;
         if (attempt === 0) console.warn(`[Transcribe] Gemini Web answer looks incomplete (${items.length} line(s)${coverage != null ? `, ${Math.round(coverage * 100)}% of the speech` : ''}) - asking again`);
+    }
+    if (best && gwebEmptyAnswerIsFailure(best.items.length, clipSec, timelineP ? await timelineP : null)) {
+        console.warn(`[Transcribe] Gemini Web gave no lines for a ${Math.round(clipSec)}s piece with speech - trying the next Gmail or API key`);
+        return { ok: false, result: { status: 502, code: 'GWEB_EMPTY', error: 'Gemini Web gave no lines for this piece.', message: `Gemini Web gave no lines for a ${Math.round(clipSec)} s piece that has speech.` }, raw: best.raw };
     }
     if (best) { delete best.coverage; return best; }
     return lastFailure;
@@ -3716,5 +3760,7 @@ Object.assign(module.exports, {
     activeTranscribeRequests,
     transcribeProgress,
     buildTranscribePrompt,
-    parseJsonArrayLoose
+    parseJsonArrayLoose,
+    gwebUploadUnreadable,
+    gwebEmptyAnswerIsFailure
 });
