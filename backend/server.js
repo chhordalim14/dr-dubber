@@ -1475,12 +1475,16 @@ function queueTtsTask(task) {
 // mode). The regulator above is only for the one-process-per-line fallback.
 // 5: Kept moderate to prevent Microsoft from turning lines away with "No audio was received" (rate-limiting).
 const TTS_LINES_AT_ONCE = 5;
+// Lines handed to the worker at once. Still only TTS_LINES_AT_ONCE requests at Microsoft at a
+// time (the generator's own limit); the rest are refused lines waiting to be tried again or
+// lines being trimmed, so those never leave Microsoft's places empty.
+const TTS_WORKER_LINES = 10;
 let ttsTrimNotesShown = 0;
 const ttsWorker = createTtsWorker({
-    maxInFlight: TTS_LINES_AT_ONCE,
+    maxInFlight: TTS_WORKER_LINES,
     // Only for a stuck generator. A line answers well before this there: Microsoft's refusals
-    // come back within seconds (up to 10 tries, ~30 s of waits between them), and a try that
-    // hangs (30 s limit each) ends the line on the 3rd.
+    // come back within seconds (5 tries, ~9 s of waits between them), and a try that hangs
+    // (15 s limit each) ends the line on the 3rd.
     timeoutMs: 240000,
     spawnWorker: () => {
         if (!PYTHON_CMD) throw new Error('No Python');

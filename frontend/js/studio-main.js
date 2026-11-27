@@ -17963,7 +17963,19 @@
 
       async function generateStep() {
         const missingVoice = () => projects.reduce((n, p) => n + liveSubtitlesOf(p).filter((s) => isSpeakableText(s.text) && (s.audioStatus !== "ready" || !s.file)).length, 0);
+        // Where the step's time goes, for its note: voicing (Microsoft / VoxCPM2) or Gemini
+        // (shortening rushed lines, lines for subtitles that had none). 2026-11-27: Generate took
+        // 26-63 min for 700-1700 lines, but voicing alone measured ~3.5 lines a second.
+        const took = { voice: 0, shorten: 0, rescue: 0 };
         const runGenerate = async () => {
+          const t0 = Date.now();
+          try {
+            return await runGenerateOnce();
+          } finally {
+            took.voice += Date.now() - t0;
+          }
+        };
+        async function runGenerateOnce() {
           if (voxCmp2Load().enabled) {
             await voxCmp2EnsureServer({ onStart: () => setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Starting the VoxCPM2 server`) });
             checkStop();
@@ -17976,7 +17988,7 @@
           }
           if (g.stopped) throw stoppedError();
           return g;
-        };
+        }
 
         // On Continue with every line already voiced, Generate All would redo every line.
         const alreadyVoiced = !missingVoice() && projects.some((p) => liveSubtitlesOf(p).some((s) => s.audioStatus === "ready"));
@@ -17986,7 +17998,9 @@
           for (let pass = 1; pass <= seriesRetryPasses() && missingVoice(); pass++) {
             const count = missingVoice();
             setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Generate again: ${count} line(s) (${pass}/${seriesRetryPasses()})`);
+            const w0 = Date.now();
             await sleep(count <= 2 ? 1500 : 3500);
+            took.voice += Date.now() - w0;
             checkStop();
             g = await runGenerate();
           }
@@ -18004,10 +18018,12 @@
         // Not repeated until none are left: taking the worst rushing out is enough, and a
         // line that is only a little fast keeps its full translation.
         setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Checking rushed lines`);
+        const s0 = Date.now();
         const fit = await fitFastLinesAllTabs({
           checkStop,
           onProgress: (done, total) => setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Shortening rushed lines ${done}/${total}`),
         });
+        took.shorten += Date.now() - s0;
         if (fit.shortened) {
           setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Voicing ${fit.shortened} shortened line(s)`);
           g = await runGenerate();
@@ -18039,7 +18055,9 @@
           checkStop();
           const n = silentNow().length;
           setLabel(`Part ${plan.current + 1}/${plan.parts.length} · ${n} subtitle(s) with no voice: asking again (${pass}/2)`);
+          const r0 = Date.now();
           const fill = await fillMissingScreenLinesAllTabs({ checkStop, lastResort: true });
+          took.rescue += Date.now() - r0;
           if (fill.added) {
             rescued += fill.added;
             setLabel(`Part ${plan.current + 1}/${plan.parts.length} · Voicing ${fill.added} line(s) for subtitles that had none`);
@@ -18048,6 +18066,7 @@
             fillShortVoicesAllTabs();
           } else if (silentNow().length) {
             await sleep(15000); // nobody answered: give the Gmails a moment before the last try
+            took.rescue += 15000;
           }
         }
         const silent = silentNow();
@@ -18067,6 +18086,9 @@
         if (paced) note += ` · ${paced} line(s) said at their own pace to fit the actor`;
         if (slowed) note += ` · ${slowed} short voice(s) slowed to last as long as the actor`;
         if (rescued) note += ` · ${rescued} subtitle(s) that had no voice got one`;
+        const times = [["voicing", took.voice], ["shortening (Gemini)", took.shorten], ["missing lines (Gemini)", took.rescue]]
+          .filter(([, ms]) => ms >= 1000).map(([what, ms]) => `${what} ${fmtDur(ms / 1000)}`);
+        if (times.length) note += ` · time: ${times.join(", ")}`;
         return note;
       }
 

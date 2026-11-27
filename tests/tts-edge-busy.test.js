@@ -100,3 +100,30 @@ print(json.dumps(asyncio.run(main())))
     assert.equal(out.lastDone, 'stuck', 'the others finished while the refused line waited');
     assert.ok(out.seconds < 1.5, `no pause for every line while one is refused (took ${out.seconds.toFixed(2)}s)`);
 });
+
+// The place at Microsoft is held only for the request: refused lines waiting to be tried again
+// leave it to the next line (2026-11-27: Microsoft refusing, the 5 places all held by waiting
+// lines - 150 lines took 340 s instead of ~45 s).
+test('refused lines waiting to be tried again leave their place to the other lines', { skip: !PY && 'app python_env not found' }, () => {
+    const out = runPy('text.startswith("busy") and tries < 1', `
+import time
+m.BUSY_WAIT_SECONDS = 0.5
+async def main():
+    d = tempfile.mkdtemp()
+    sem = asyncio.Semaphore(2)
+    t = time.monotonic()
+    names = ["busy1", "busy2"] + [f"l{i}" for i in range(10)]
+    at = {}
+    async def one(n):
+        r = await line(n, d, sem)
+        at[n] = time.monotonic() - t
+        return r
+    res = await asyncio.gather(*(one(n) for n in names))
+    others = max(at[n] for n in names if n.startswith("l"))
+    return {"ok": sum(1 for r in res if r.get("success")), "peak": state["peak"], "others": others}
+print(json.dumps(asyncio.run(main())))
+`);
+    assert.equal(out.ok, 12, 'every line voiced');
+    assert.ok(out.peak <= 2, `never more than the limit at Microsoft (${out.peak})`);
+    assert.ok(out.others < 0.4, `the other lines did not wait for the refused ones (${out.others.toFixed(2)}s)`);
+});
