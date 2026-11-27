@@ -62,15 +62,67 @@ module.exports = function createEpisodesRouter({ episodeJoiner }) {
         res.json({ success: true, deleted, freed, refused: refused.length });
     });
 
+    // "Keep only the joined full video": once Name_Dubbed_full.mp4 exists and is non-empty,
+    // remove the individual exported part videos sitting beside it in the same export folder.
+    // Never touches keepFile itself or anything outside its folder.
+    router.post('/delete-part-exports', (req, res) => {
+        const body = req.body || {};
+        const keepRaw = resolveLocalFilePath(body.keepFile) || body.keepFile;
+        if (!isValidFullKeepFile(keepRaw)) {
+            return res.json({ success: false, error: 'Joined full video not found' });
+        }
+        const keepResolved = path.resolve(keepRaw);
+        const paths = [].concat(body.paths || []).slice(0, 2000);
+        let deleted = 0, freed = 0;
+        const refused = [];
+        for (const raw of paths) {
+            const p = resolveLocalFilePath(raw) || raw;
+            if (!isPartExportFile(p, keepResolved)) { refused.push(String(raw)); continue; }
+            try {
+                const st = fs.statSync(path.resolve(p));
+                if (!st.isFile()) continue;
+                fs.rmSync(path.resolve(p), { force: true });
+                deleted++;
+                freed += st.size;
+            } catch (e) { /* already gone */ }
+        }
+        if (refused.length) console.warn(`[Series] Refused to delete ${refused.length} file(s) outside the full export folder`);
+        res.json({ success: true, deleted, freed, refused: refused.length });
+    });
+
     return router;
 };
 
 const WORKING_DIRS = new Set(['DR Dubber Joined', 'DR Dubber Split']);
 const WORKING_EXTS = new Set(['.mp4', '.mkv', '.mov', '.m4v', '.webm', '.m4a', '.mp3', '.txt']);
+const EXPORT_VIDEO_EXTS = new Set(['.mp4', '.mkv', '.mov', '.m4v', '.webm']);
 function isWorkingFile(p) {
     if (typeof p !== 'string' || !path.isAbsolute(p) || isNetworkPath(p)) return false;
     const resolved = path.resolve(p);
     if (resolved !== path.normalize(p)) return false; // no "..", no tricks
     return WORKING_DIRS.has(path.basename(path.dirname(resolved))) && WORKING_EXTS.has(path.extname(resolved).toLowerCase());
 }
+function isValidFullKeepFile(keepFile) {
+    if (typeof keepFile !== 'string' || !path.isAbsolute(keepFile) || isNetworkPath(keepFile)) return false;
+    const resolved = path.resolve(keepFile);
+    if (resolved !== path.normalize(keepFile)) return false;
+    if (!EXPORT_VIDEO_EXTS.has(path.extname(resolved).toLowerCase())) return false;
+    try {
+        const st = fs.statSync(resolved);
+        return st.isFile() && st.size > 0;
+    } catch (e) {
+        return false;
+    }
+}
+function isPartExportFile(p, keepFile) {
+    if (typeof p !== 'string' || !path.isAbsolute(p) || isNetworkPath(p)) return false;
+    if (typeof keepFile !== 'string' || !path.isAbsolute(keepFile) || isNetworkPath(keepFile)) return false;
+    const resolved = path.resolve(p);
+    const keepResolved = path.resolve(keepFile);
+    if (resolved !== path.normalize(p) || keepResolved !== path.normalize(keepFile)) return false;
+    if (resolved === keepResolved) return false;
+    if (path.dirname(resolved) !== path.dirname(keepResolved)) return false;
+    return EXPORT_VIDEO_EXTS.has(path.extname(resolved).toLowerCase());
+}
 module.exports.isWorkingFile = isWorkingFile;
+module.exports.isPartExportFile = isPartExportFile;

@@ -302,6 +302,16 @@ class GeminiWebRouter {
             .sort((a, b) => (b.lastOk || 0) - (a.lastOk || 0))
             .map(e => e.url);
     }
+    recentlyFailedFreeKeys() {
+        const h = this.proxyHistory();
+        const cutoff = Date.now() - 10 * 60 * 1000;
+        const dead = new Set();
+        for (const [k, e] of Object.entries(h)) {
+            if (!e || this.isOwnProxy(e.url)) continue;
+            if ((e.lastFail || 0) > cutoff && (e.lastFail || 0) > (e.lastOk || 0)) dead.add(k);
+        }
+        return dead;
+    }
 
     async fetchPublicProxyCandidates() {
         if (this.publicProxyCache.list.length && Date.now() - this.publicProxyCache.at < 3 * 60 * 1000) {
@@ -374,15 +384,16 @@ class GeminiWebRouter {
         if (results.length >= need || ownOnly || this.settings().freeProxies === false) return results;
 
         const seen = new Set();
+        const recentlyFailed = this.recentlyFailedFreeKeys();
         const free = [];
         for (const u of [...this.provenFreeProxies(), ...(await this.fetchPublicProxyCandidates())]) {
             const k = this.proxyKey(u);
-            if (seen.has(k) || usedKeys.has(k)) continue;
+            if (seen.has(k) || usedKeys.has(k) || recentlyFailed.has(k)) continue;
             seen.add(k);
             free.push(u);
         }
-        // Free ones must be quick both times: the slow ones are the ones that die next.
-        take(await this.testProxies(free.slice(0, 360), { accountId, avoidIps: [...usedIps], need: need - results.length + 2, timeoutSec: 5, maxMs: 5000 }), 'free');
+        // Free ones must be quick both times: return as soon as enough fast ones pass.
+        take(await this.testProxies(free.slice(0, 360), { accountId, avoidIps: [...usedIps], need: need - results.length, timeoutSec: 4, maxMs: 4000 }), 'free');
         return results;
     }
 
@@ -938,7 +949,7 @@ class GeminiWebRouter {
                         this.reload().catch(() => {});
                         continue;
                     }
-                    if (Date.now() - since >= 3 * 60 * 1000 && Date.now() - (this.proxyRotateTried.get(acc.id) || 0) >= 10 * 60 * 1000) {
+                    if (Date.now() - since >= 60 * 1000 && Date.now() - (this.proxyRotateTried.get(acc.id) || 0) >= 2 * 60 * 1000) {
                         this.proxyRotateTried.set(acc.id, Date.now());
                         if (this.proxySourceOf(acc) === 'free') this.noteProxy(acc.proxy, false);
                         try {

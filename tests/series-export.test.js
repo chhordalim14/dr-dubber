@@ -60,11 +60,17 @@ function makeSeries({ parts = 3, outcome = () => 'done', renderMs = 10, dubMs = 
     const mergeScope = () => scope;
     // "Delete the joined and split working files" (off unless the test turns it on).
     const cleanWorkingWanted = () => !!env.clean;
+    const keepFullOnlyWanted = () => !!env.keepFullOnly;
     const postJson = async (url, body) => {
       if (/delete-working/.test(url)) {
         env.deleted = (env.deleted || []).concat(body.paths);
         env.log.push('delete working files');
         return { success: true, deleted: body.paths.length, freed: body.paths.length * 1e9, refused: 0 };
+      }
+      if (/delete-part-exports/.test(url)) {
+        env.partExportsDeleted = (env.partExportsDeleted || []).concat({ paths: body.paths, keepFile: body.keepFile });
+        env.log.push('delete part exports');
+        return { success: true, deleted: body.paths.length, freed: body.paths.length * 5e8, refused: 0 };
       }
       env.joins.push(body);
       env.log.push('join part' + body.partNumbers[0]);
@@ -272,6 +278,23 @@ describe('Dub Whole Series hands-free export', () => {
     await api.exportAndContinue();
     assert.ok(plan.fullMerged);
     assert.equal(env.deleted, undefined);
+    assert.equal(env.partExportsDeleted, undefined);
+  });
+
+  test('"Keep only the joined full video": removes part exports only after Show_Dubbed_full.mp4 succeeds', async () => {
+    const { env, plan, api } = makeSeries({ parts: 2, merge: true, scope: 'series', joinError: 'disk full' });
+    env.keepFullOnly = true;
+    await api.exportAndContinue();
+    assert.equal(env.partExportsDeleted, undefined, 'join failed: part exports stay for Continue');
+    env.joinError = null;
+    await api.retryMerges();
+    assert.equal(plan.fullMerged, 'D:/out/Show_Dubbed_full.mp4');
+    assert.equal(plan.partsCleaned, true);
+    assert.equal(env.partExportsDeleted.length, 1);
+    assert.equal(env.partExportsDeleted[0].keepFile, 'D:/out/Show_Dubbed_full.mp4');
+    assert.equal(env.partExportsDeleted[0].paths.length, 6);
+    assert.ok(lastIndex(env.log, /^join /) < firstIndex(env.log, /^delete part exports$/));
+    assert.ok(env.toasts.some((t) => /Kept Show_Dubbed_full\.mp4 and removed 6 part video\(s\)/.test(t.m)));
   });
 
   test('a join that failed after the last part: Continue joins it again (nothing else is left to do)', async () => {

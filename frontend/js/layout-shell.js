@@ -62,9 +62,11 @@
         if (e.target.closest("[data-rail-close], [data-click]")) setOpen(null);
       });
 
-      // Close on a click anywhere else, or Escape.
+      // Close on Escape; on narrow screens where the drawer floats over the preview,
+      // also close on a click outside the drawer and rail.
       document.addEventListener("mousedown", (e) => {
-        if (openPanel && !drawer.contains(e.target) && !rail.contains(e.target)) setOpen(null);
+        if (!openPanel || window.innerWidth > 1180) return;
+        if (!drawer.contains(e.target) && !rail.contains(e.target)) setOpen(null);
       });
       document.addEventListener("keydown", (e) => {
         if (e.key === "Escape" && openPanel) setOpen(null);

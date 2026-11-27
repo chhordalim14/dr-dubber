@@ -192,4 +192,19 @@ describe('Gemini Web Router: one address per Gmail', () => {
         // A free proxy is never used by the sign-in Chrome.
         assert.equal(gw.chromeProxyFor({ proxy: 'http://free1:1', autoProxy: true, proxySource: 'free' }), null);
     });
+
+    test('recently failed free proxies are skipped during candidate lookup', async () => {
+        const world = { 'http://free1:1': { ip: '2.0.0.1' }, 'http://free2:2': { ip: '2.0.0.2' } };
+        const { gw, calls } = setup({
+            gmails: [{ id: 'a', email: 'a@gmail.com' }, { id: 'b', email: 'b@gmail.com' }],
+            free: ['http://free1:1', 'http://free2:2'],
+            world
+        });
+        gw.noteProxy('http://free1:1', false);
+        const found = await gw.findWorkingProxies({ accountId: 'b', need: 1 });
+        assert.equal(found.length, 1);
+        assert.equal(found[0].proxy, 'http://free2:2');
+        const tested = calls.find((c) => c.p === '/test-proxies').body.proxies;
+        assert.ok(!tested.includes('http://free1:1'), 'recently failed free proxy is not re-tested');
+    });
 });

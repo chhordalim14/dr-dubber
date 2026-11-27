@@ -1248,6 +1248,7 @@
         </div>
         <div class="hdr-menu__sep"></div>
         <button type="button" class="hdr-menu__item" data-click="btn-load-video"><i data-lucide="plus"></i><span>Open video in new tab</span></button>
+        <button id="btn-clear" type="button" class="hdr-menu__item hdr-menu__item--danger" title="Clear all open tabs and workspace data"><i data-lucide="trash-2"></i><span>Clear All Data</span></button>
       </div>
     </div>
     <!-- Mirrors Settings › Auto Save Subtitle (layout-shell.js): shows the last
@@ -1256,39 +1257,8 @@
       title="Auto-save subtitles (.srt) after transcribing. Click to turn on or off; options are in Settings.">
       <i data-lucide="cloud-upload"></i><span id="hdr-autosave-text">Auto Save off</span>
     </button>
-    <!-- Header actions, left to right: tools · output · app -->
+    <!-- Header actions, left to right: output · app -->
     <div class="app-header__actions">
-      <div class="hdr-menu-wrap">
-        <button type="button" class="hdr-btn hdr-btn--outline" data-hdr-menu="hdr-tools-menu" aria-haspopup="true" aria-expanded="false" title="AI &amp; Creative Tools">
-          <i data-lucide="zap" class="w-4 h-4 text-amber-400"></i>
-          <span>Quick Tools</span>
-        </button>
-        <div id="hdr-tools-menu" class="hdr-menu" hidden>
-          <p class="hdr-menu__title">AI Studio Tools</p>
-          <button id="btn-open-title-ai" type="button" class="hdr-menu__item" title="Khmer Movie Title Suggestions">
-            <i data-lucide="sparkles" class="hdr-menu__magic"></i><span>Movie Title Ideas</span>
-          </button>
-          <button type="button" class="hdr-menu__item" data-click="btn-all-tabs-unify-names" title="Make character names and spelling consistent across all tabs">
-            <i data-lucide="spell-check" class="text-rose-400"></i><span>Make names consistent</span>
-          </button>
-          <button type="button" class="hdr-menu__item" data-click="btn-open-daitranscribe-deck" title="Open DAI-Transcribe Batch Studio">
-            <i data-lucide="sparkles" class="text-emerald-400"></i><span>DAI-Transcribe Studio</span>
-          </button>
-          <button type="button" class="hdr-menu__item" data-click="btn-dub-series" title="Dub Whole Series: join, split, transcribe, voice and isolate BGM">
-            <i data-lucide="library-big" class="text-violet-400"></i><span>Dub Whole Series</span>
-          </button>
-          <button type="button" class="hdr-menu__item" data-click="btn-vox-speakers" title="Speakers &amp; Cloned Voices">
-            <i data-lucide="users" class="text-sky-400"></i><span>Speakers</span>
-          </button>
-          <div class="hdr-menu__sep"></div>
-          <button type="button" class="hdr-menu__item" data-click="btn-import-srt" title="Import SRT subtitles">
-            <i data-lucide="file-down"></i><span>Import SRT</span>
-          </button>
-          <button type="button" class="hdr-menu__item" data-click="btn-load-video" title="Open another video in a new tab">
-            <i data-lucide="film"></i><span>Open Video</span>
-          </button>
-        </div>
-      </div>
       <!-- Export: the main half renders the video; the chevron opens Export SRT -->
       <div class="hdr-menu-wrap hdr-split">
         <button id="btn-render" class="hdr-btn hdr-btn--primary group" title="Final Studio Render">
@@ -1329,278 +1299,13 @@
     </div>
   </header>
 
-  <!-- MAIN CONTENT AREA: rail | workspace (subtitles + timeline) | preview -->
+  <!-- MAIN CONTENT AREA: rail | docked drawer | preview | subtitles (+ timeline below) -->
   <main class="app-shell">
-
-    <!-- Floating tools drawer -->
-    <aside id="rail-drawer" class="hidden" aria-label="Tools">
-      <!-- Each tool is a list row: the button is the row, a one-line description
-           sits under its name (outside the button, which studio-main.js rewrites
-           while busy), and "all tabs" variants are small chips on the same row. -->
-      <section class="drawer-panel" data-rail-panel="setup">
-        <header class="drawer-head">
-          <div>
-            <h2>Media</h2>
-            <p>Load your video and subtitles to start a dub.</p>
-          </div>
-          <button type="button" class="drawer-close" data-rail-close title="Close"><i data-lucide="x"></i></button>
-        </header>
-
-        <p class="dw-group">Open</p>
-        <div class="dw-list">
-          <input type="file" id="video-upload" accept="video/*,audio/*,.mkv,.avi,.wmv,.flv,.ts,.m2ts,.mts,.mpg,.mpeg,.vob,.rmvb,.rm,.3gp,.webm,.mov,.m4v,.divx,.ogv,.mxf,.asf,.f4v,.wma,.ac3,.dts,.aiff,.mka" class="hidden" />
-            <div class="dw-item">
-              <button id="btn-load-video"
-                class="group flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-sky-500/10 border border-[var(--border-light)] hover:border-sky-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
-                <i data-lucide="film" class="w-4 h-4 text-sky-400 shrink-0 group-hover:scale-110 transition-transform"></i>
-                <span class="truncate">Load Video</span>
-              </button>
-              <span class="dw-desc">Open a video or audio file in a new tab</span>
-            </div>
-          <input type="file" id="srt-upload" accept=".srt" class="hidden" multiple />
-            <div class="dw-item">
-              <button id="btn-import-srt"
-                class="group flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-indigo-500/10 border border-[var(--border-light)] hover:border-indigo-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
-                <i data-lucide="file-down" class="w-4 h-4 text-indigo-400 shrink-0 group-hover:scale-110 transition-transform"></i>
-                <span class="truncate">Import SRT</span>
-              </button>
-              <span class="dw-desc">Add subtitles from .srt files</span>
-            </div>
-        </div>
-
-        <p class="dw-group">Long videos &amp; series</p>
-        <div class="dw-list">
-            <div class="dw-item">
-              <button id="btn-join-episodes" title="Join many short episodes into ~1 hour parts to dub"
-                class="group flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-emerald-500/10 border border-[var(--border-light)] hover:border-emerald-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
-                <i data-lucide="layers" class="w-4 h-4 text-emerald-400 shrink-0 group-hover:scale-110 transition-transform"></i>
-                <span class="truncate">Join Episodes</span>
-              </button>
-              <span class="dw-desc">Join short episodes into ~1 hour parts</span>
-            </div>
-            <div class="dw-item">
-              <button id="btn-split-movie" title="Split a long movie (2-3 hours) into parts, each dubbed as its own tab"
-                class="group flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-amber-500/10 border border-[var(--border-light)] hover:border-amber-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
-                <i data-lucide="scissors" class="w-4 h-4 text-amber-400 shrink-0 group-hover:scale-110 transition-transform"></i>
-                <span class="truncate">Split Movie</span>
-              </button>
-              <span class="dw-desc">Cut a 2-3 hour movie into parts</span>
-            </div>
-            <div class="dw-item">
-              <button id="btn-dub-series" title="One click: join episodes, split, transcribe, generate voices and isolate BGM, one part at a time"
-                class="col-span-2 group flex items-center justify-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-violet-500/10 border border-violet-500/40 hover:border-violet-400 rounded-xl text-xs font-bold text-violet-200 transition-all active:scale-[0.97]">
-                <i data-lucide="wand-sparkles" class="w-4 h-4 text-violet-400 shrink-0 group-hover:scale-110 transition-transform"></i>
-                <span class="truncate">Dub Whole Series</span>
-              </button>
-              <span class="dw-desc">All steps for a whole series, in one go</span>
-            </div>
-        </div>
-
-        <p class="dw-group">Batch</p>
-        <div class="dw-list">
-            <!-- DAI-Transcribe Batch Studio Button -->
-            <div class="dw-item dw-item--accent">
-              <button id="btn-open-daitranscribe-deck" title="Open DAI-Transcribe Batch Studio"
-                onclick="window.daiStudio && window.daiStudio.open('batch')"
-                class="col-span-2 group flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-xs font-bold text-white transition-all duration-300 ease-out hover:-translate-y-0.5 active:scale-[0.97] shadow-lg">
-                <i data-lucide="sparkles" class="w-4 h-4 text-white transition-transform duration-300 group-hover:rotate-12 group-hover:scale-110"></i>
-                <span>DAI-Transcribe Studio (Batch)</span>
-                <span class="ml-1 px-1.5 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-wider bg-white/20 text-white border border-white/30">PRO</span>
-              </button>
-              <span class="dw-desc">Transcribe many videos at once</span>
-            </div>
-        </div>
-
-        <div class="drawer-foot">
-          <button id="btn-clear"
-            class="group w-full py-2 px-4 rounded-xl text-xs font-medium text-rose-400 hover:text-rose-300 bg-rose-500/5 hover:bg-rose-500/10 border border-rose-500/20 hover:border-rose-500/40 flex items-center justify-center gap-2 transition-all active:scale-[0.98]">
-            <i data-lucide="trash-2" class="w-3.5 h-3.5 group-hover:scale-110 transition-transform"></i>
-            <span>Clear All Data</span>
-          </button>
-        </div>
-      </section>
-
-      <section class="drawer-panel" data-rail-panel="audio">
-        <header class="drawer-head">
-          <div>
-            <h2>Audio &amp; dubbing</h2>
-            <p>Separate the music, load dubbed voices and background music.</p>
-          </div>
-          <button type="button" class="drawer-close" data-rail-close title="Close"><i data-lucide="x"></i></button>
-        </header>
-
-        <p class="dw-group">Background music</p>
-        <div class="dw-list">
-            <div class="dw-item dw-item--chip">
-              <button id="btn-isolate-bgm"
-                class="group flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-pink-500/10 border border-[var(--border-light)] hover:border-pink-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
-                <i id="icon-isolate" data-lucide="wand-2" class="w-4 h-4 text-pink-400 shrink-0 group-hover:scale-110 transition-transform"></i>
-                <span id="text-isolate" class="truncate">Isolate BGM</span>
-              </button>
-              <button id="btn-isolate-bgm-all" title="Isolate BGM for ALL open project tabs"
-                class="group flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-pink-500/10 border border-[var(--border-light)] hover:border-pink-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
-                <i id="icon-isolate-all" data-lucide="layers" class="w-4 h-4 text-pink-400 shrink-0 group-hover:scale-110 transition-transform"></i>
-                <span id="text-isolate-all" class="truncate">Isolate All</span>
-              </button>
-              <span class="dw-desc">Separate the music from the voices</span>
-            </div>
-          <input type="file" id="bgm-upload" accept="audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg,.oga,.opus,.wma,.ac3,.eac3,.dts,.aif,.aiff,.caf,.mp2,.mka,.amr,.ape,.wv,.alac,.ra,.mid" class="hidden" />
-            <div class="dw-item">
-              <button id="btn-load-bgm"
-                class="group col-span-2 flex items-center justify-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-purple-500/10 border border-[var(--border-light)] hover:border-purple-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
-                <i data-lucide="music" class="w-4 h-4 text-purple-400 shrink-0 group-hover:scale-110 transition-transform"></i>
-                <span>Load Background Music (BGM)</span>
-              </button>
-              <span class="dw-desc">Add a music track under the dub</span>
-            </div>
-            <!-- Studio Auto-Ducking -->
-            <div class="dw-item dw-item--card">
-              <div class="flex items-center justify-between">
-                <div class="flex items-center gap-1.5">
-                  <i data-lucide="sliders" class="w-3.5 h-3.5 text-cyan-400"></i>
-                  <span class="text-xs font-semibold text-[var(--text-primary)]">Auto-Ducking (BGM & Video)</span>
-                </div>
-                <label class="relative inline-flex items-center cursor-pointer">
-                  <input type="checkbox" id="deck-toggle-ducking" class="sr-only peer" checked
-                    onchange="syncDuckingToggle(this.checked)" />
-                  <div class="w-8 h-[18px] bg-[var(--border-light)] rounded-full peer peer-checked:bg-cyan-500 transition-colors duration-200"></div>
-                  <div class="absolute left-0.5 top-0.5 w-3.5 h-3.5 bg-white rounded-full shadow transition-transform duration-200 peer-checked:translate-x-3.5"></div>
-                </label>
-              </div>
-              <p class="text-[10px] text-[var(--text-muted)] leading-tight -mt-0.5">Smoothly lowers background sound when dialogue is spoken.</p>
-              <div class="grid grid-cols-3 gap-1 pt-0.5" id="deck-ducking-depth-container">
-                <button type="button" onclick="setDuckingDepth('light')" id="deck-duck-depth-light"
-                  class="deck-duck-btn h-6 rounded-md text-[10px] font-semibold border border-[var(--border-light)] text-[var(--text-secondary)] hover:border-cyan-400/50 transition-all">Light (-8dB)</button>
-                <button type="button" onclick="setDuckingDepth('standard')" id="deck-duck-depth-standard"
-                  class="deck-duck-btn h-6 rounded-md text-[10px] font-semibold border border-cyan-400 bg-cyan-400/15 text-cyan-300 transition-all">Standard (-14dB)</button>
-                <button type="button" onclick="setDuckingDepth('deep')" id="deck-duck-depth-deep"
-                  class="deck-duck-btn h-6 rounded-md text-[10px] font-semibold border border-[var(--border-light)] text-[var(--text-secondary)] hover:border-cyan-400/50 transition-all">Deep (-20dB)</button>
-              </div>
-            </div>
-        </div>
-
-        <p class="dw-group">Voices</p>
-        <div class="dw-list">
-          <input type="file" id="a1-audio-upload" accept="audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg,.oga,.opus,.wma,.ac3,.eac3,.dts,.aif,.aiff,.caf,.mp2,.mka,.amr,.ape,.wv,.alac,.ra,.mid" class="hidden" multiple />
-            <div class="dw-item">
-              <button id="btn-load-a1-audio"
-                class="group col-span-2 flex items-center justify-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-amber-500/10 border border-[var(--border-light)] hover:border-amber-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
-                <i data-lucide="audio-waveform" class="w-4 h-4 text-amber-400 shrink-0 group-hover:scale-110 transition-transform"></i>
-                <span>Load A1 Dubbed Audio (Multiple)</span>
-              </button>
-              <span class="dw-desc">Put ready-made voice files on the A1 track</span>
-            </div>
-        </div>
-
-        <p class="dw-group">Original video</p>
-        <div class="dw-list">
-            <div class="dw-item dw-item--switch">
-              <button id="btn-mute-audio"
-                class="group col-span-2 flex items-center justify-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-emerald-500/10 border border-[var(--border-light)] hover:border-emerald-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
-                <i id="icon-workspace-mute" data-lucide="mic" class="w-4 h-4 text-emerald-400 shrink-0 group-hover:scale-110 transition-transform"></i>
-                <span>Mute Original Video Audio</span>
-              </button>
-              <span class="dw-desc">Turn the video&#39;s own sound off or on</span>
-            </div>
-        </div>
-      </section>
-
-      <section class="drawer-panel" data-rail-panel="video">
-        <header class="drawer-head">
-          <div>
-            <h2>Video tools &amp; censor</h2>
-            <p>Blur burned-in text and line subtitles up with the picture.</p>
-          </div>
-          <button type="button" class="drawer-close" data-rail-close title="Close"><i data-lucide="x"></i></button>
-        </header>
-
-        <p class="dw-group">Censor</p>
-        <div class="dw-list">
-            <div class="dw-item dw-item--chip">
-              <button id="btn-add-blur"
-                class="group flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-amber-500/10 border border-[var(--border-light)] hover:border-amber-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
-                <i data-lucide="square-dashed" class="w-4 h-4 text-amber-400 shrink-0 group-hover:scale-110 transition-transform"></i>
-                <span class="truncate">Blur Censor</span>
-              </button>
-              <button id="btn-apply-blur-all" title="Apply blur boxes to all project tabs"
-                class="group flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-amber-500/10 border border-[var(--border-light)] hover:border-amber-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
-                <i id="icon-apply-blur-all" data-lucide="layers" class="w-4 h-4 text-amber-400 shrink-0 group-hover:scale-110 transition-transform"></i>
-                <span id="text-apply-blur-all" class="truncate">Blur to All</span>
-              </button>
-              <span class="dw-desc">Draw a blur box on the video</span>
-            </div>
-            <div class="dw-item dw-item--chip">
-              <button id="btn-detect-text" title="Find the burned-in subtitles in this tab's video and blur each one only while it shows - in the preview and the export"
-                class="group flex-1 min-w-0 flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-amber-500/10 border border-[var(--border-light)] hover:border-amber-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
-                <i data-lucide="scan-text" class="w-4 h-4 text-amber-400 shrink-0 group-hover:scale-110 transition-transform"></i>
-                <span id="text-detect-text" class="truncate">Blur Subtitles</span>
-              </button>
-              <label id="text-blur-toggle-wrap" class="hidden flex items-center gap-1.5 text-[11px] text-[var(--text-secondary)] cursor-pointer shrink-0" title="Blur the found subtitles in the preview and the export">
-                <input id="text-blur-toggle" type="checkbox" class="accent-amber-500" checked> On
-              </label>
-              <span class="dw-desc">Blur burned-in subtitles while they show</span>
-            </div>
-        </div>
-                  <p id="text-blur-status" class="hidden text-[10px] text-[var(--text-muted)] leading-tight -mt-1"></p>
-
-        <p class="dw-group">Subtitles</p>
-        <div class="dw-list">
-            <div class="dw-item">
-              <button id="btn-sync-screen" title="Show each subtitle exactly while its original line shows in the video (its voice starts with it), and draw it where the original subtitle was"
-                class="group w-full min-w-0 flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-sky-500/10 border border-[var(--border-light)] hover:border-sky-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
-                <i data-lucide="captions" class="w-4 h-4 text-sky-400 shrink-0 group-hover:scale-110 transition-transform"></i>
-                <span id="text-sync-screen" class="truncate">Match Subtitles to Video</span>
-              </button>
-              <span class="dw-desc">Time each line to the original subtitle</span>
-            </div>
-        </div>
-      </section>
-
-      <!-- Effects: shortcuts to the look tools of the preview tool strip (data-click
-           presses the real button, so each opens its usual panel) -->
-      <section class="drawer-panel" data-rail-panel="effects">
-        <header class="drawer-head">
-          <div>
-            <h2>Effects</h2>
-            <p>Grade the picture and set its frame. Changes show live in the preview.</p>
-          </div>
-          <button type="button" class="drawer-close" data-rail-close title="Close"><i data-lucide="x"></i></button>
-        </header>
-
-        <p class="dw-group">Look</p>
-        <div class="dw-list">
-            <div class="dw-item">
-              <button type="button" data-click="btn-color-adjust"><i data-lucide="palette"></i><span class="truncate">Color</span></button>
-              <span class="dw-desc">Drama LUTs and fine colour grading</span>
-            </div>
-            <div class="dw-item">
-              <button type="button" data-click="btn-vignette"><i data-lucide="aperture"></i><span class="truncate">Vignette</span></button>
-              <span class="dw-desc">Darken the edges of the picture</span>
-            </div>
-            <div class="dw-item">
-              <button type="button" data-click="btn-video-preset"><i data-lucide="swatch-book"></i><span class="truncate">Video Presets</span></button>
-              <span class="dw-desc">Save and reuse a whole look</span>
-            </div>
-        </div>
-
-        <p class="dw-group">Frame</p>
-        <div class="dw-list">
-            <div class="dw-item">
-              <button type="button" data-click="btn-aspect-ratio"><i data-lucide="ratio"></i><span class="truncate">Aspect Ratio</span></button>
-              <span class="dw-desc">Change the output shape (9:16, 16:9, ...)</span>
-            </div>
-            <div class="dw-item">
-              <button type="button" data-click="btn-crop-mode"><i data-lucide="crop"></i><span class="truncate">Crop</span></button>
-              <span class="dw-desc">Cut the picture to a window, pan and zoom</span>
-            </div>
-        </div>
-      </section>
-    </aside>
 
     <!-- WORKSPACE: Subtitle table & Timeline -->
     <div class="app-stage">
       <div class="app-stage__top">
-        <!-- Studio tools rail: each tab opens its tools in the drawer; Series opens its window -->
+        <!-- Studio tools rail: each tab opens its docked tools drawer beside the preview -->
         <nav id="app-rail" aria-label="Studio tools">
           <div class="rail-seg">
             <button type="button" class="rail-btn" data-rail="setup" title="Media: load video, subtitles, episodes">
@@ -1609,16 +1314,11 @@
             <button type="button" class="rail-btn" data-rail="audio" title="Audio &amp; dubbing tracks">
               <i data-lucide="music-2"></i><span>Audio</span>
             </button>
-            <button type="button" class="rail-btn" data-rail="video" title="Video tools &amp; censor">
-              <i data-lucide="square-play"></i><span>Video</span>
+            <button type="button" class="rail-btn" data-rail="video" title="Censor &amp; Subtitle Sync">
+              <i data-lucide="scan-eye"></i><span>Censor</span>
             </button>
-            <!-- Shortcut: opens the Dub Whole Series window (same button as Media › Long videos) -->
-            <button type="button" class="rail-btn" data-click="btn-dub-series"
-              title="Dub Whole Series: join episodes, split, transcribe, generate voices and isolate BGM, one part at a time">
+            <button type="button" class="rail-btn" data-rail="batch" title="Series &amp; Batch Automation">
               <i data-lucide="library-big"></i><span>Series</span>
-            </button>
-            <button type="button" class="rail-btn" data-rail="effects" title="Effects: colour, vignette, presets, aspect ratio">
-              <i data-lucide="wand-sparkles"></i><span>Effects</span>
             </button>
           </div>
           <div class="rail-art" aria-hidden="true">
@@ -1630,6 +1330,228 @@
             <p>Better Dubbing<br />Bigger Stories</p>
           </div>
         </nav>
+
+        <!-- Docked tools drawer (sits beside the rail without covering the preview toolbar) -->
+        <aside id="rail-drawer" class="shell-card hidden" aria-label="Tools">
+          <!-- Each tool is a list row: the button is the row, a one-line description
+               sits under its name (outside the button, which studio-main.js rewrites
+               while busy), and "all tabs" variants are small chips on the same row. -->
+          <section class="drawer-panel" data-rail-panel="setup">
+            <header class="drawer-head">
+              <div>
+                <h2>Media</h2>
+                <p>Load your video, subtitles, or prepare long episodes.</p>
+              </div>
+              <button type="button" class="drawer-close" data-rail-close title="Close"><i data-lucide="x"></i></button>
+            </header>
+
+            <p class="dw-group">Open</p>
+            <div class="dw-list">
+              <input type="file" id="video-upload" accept="video/*,audio/*,.mkv,.avi,.wmv,.flv,.ts,.m2ts,.mts,.mpg,.mpeg,.vob,.rmvb,.rm,.3gp,.webm,.mov,.m4v,.divx,.ogv,.mxf,.asf,.f4v,.wma,.ac3,.dts,.aiff,.mka" class="hidden" />
+                <div class="dw-item">
+                  <button id="btn-load-video"
+                    class="group flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-sky-500/10 border border-[var(--border-light)] hover:border-sky-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
+                    <i data-lucide="film" class="w-4 h-4 text-sky-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+                    <span class="truncate">Load Video</span>
+                  </button>
+                  <span class="dw-desc">Open a video or audio file in a new tab</span>
+                </div>
+              <input type="file" id="srt-upload" accept=".srt" class="hidden" multiple />
+                <div class="dw-item">
+                  <button id="btn-import-srt"
+                    class="group flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-indigo-500/10 border border-[var(--border-light)] hover:border-indigo-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
+                    <i data-lucide="file-down" class="w-4 h-4 text-indigo-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+                    <span class="truncate">Import SRT</span>
+                  </button>
+                  <span class="dw-desc">Add subtitles from .srt files</span>
+                </div>
+            </div>
+
+            <p class="dw-group">Long videos &amp; series</p>
+            <div class="dw-list">
+                <div class="dw-item">
+                  <button id="btn-join-episodes" title="Join many short episodes into ~1 hour parts to dub"
+                    class="group flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-emerald-500/10 border border-[var(--border-light)] hover:border-emerald-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
+                    <i data-lucide="layers" class="w-4 h-4 text-emerald-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+                    <span class="truncate">Join Episodes</span>
+                  </button>
+                  <span class="dw-desc">Join short episodes into ~1 hour parts</span>
+                </div>
+                <div class="dw-item">
+                  <button id="btn-split-movie" title="Split a long movie (2-3 hours) into parts, each dubbed as its own tab"
+                    class="group flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-amber-500/10 border border-[var(--border-light)] hover:border-amber-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
+                    <i data-lucide="scissors" class="w-4 h-4 text-amber-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+                    <span class="truncate">Split Movie</span>
+                  </button>
+                  <span class="dw-desc">Cut a 2-3 hour movie into parts</span>
+                </div>
+            </div>
+          </section>
+
+          <section class="drawer-panel" data-rail-panel="audio">
+            <header class="drawer-head">
+              <div>
+                <h2>Audio &amp; dubbing</h2>
+                <p>Separate the music, load dubbed voices and background music.</p>
+              </div>
+              <button type="button" class="drawer-close" data-rail-close title="Close"><i data-lucide="x"></i></button>
+            </header>
+
+            <p class="dw-group">Background music</p>
+            <div class="dw-list">
+                <div class="dw-item dw-item--chip">
+                  <button id="btn-isolate-bgm"
+                    class="group flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-pink-500/10 border border-[var(--border-light)] hover:border-pink-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
+                    <i id="icon-isolate" data-lucide="wand-2" class="w-4 h-4 text-pink-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+                    <span id="text-isolate" class="truncate">Isolate BGM</span>
+                  </button>
+                  <button id="btn-isolate-bgm-all" title="Isolate BGM for ALL open project tabs"
+                    class="group flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-pink-500/10 border border-[var(--border-light)] hover:border-pink-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
+                    <i id="icon-isolate-all" data-lucide="layers" class="w-4 h-4 text-pink-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+                    <span id="text-isolate-all" class="truncate">Isolate All</span>
+                  </button>
+                  <span class="dw-desc">Separate the music from the voices</span>
+                </div>
+              <input type="file" id="bgm-upload" accept="audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg,.oga,.opus,.wma,.ac3,.eac3,.dts,.aif,.aiff,.caf,.mp2,.mka,.amr,.ape,.wv,.alac,.ra,.mid" class="hidden" />
+                <div class="dw-item">
+                  <button id="btn-load-bgm"
+                    class="group col-span-2 flex items-center justify-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-purple-500/10 border border-[var(--border-light)] hover:border-purple-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
+                    <i data-lucide="music" class="w-4 h-4 text-purple-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+                    <span>Load Background Music (BGM)</span>
+                  </button>
+                  <span class="dw-desc">Add a music track under the dub</span>
+                </div>
+                <!-- Studio Auto-Ducking -->
+                <div class="dw-item dw-item--card">
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-1.5">
+                      <i data-lucide="sliders" class="w-3.5 h-3.5 text-cyan-400"></i>
+                      <span class="text-xs font-semibold text-[var(--text-primary)]">Auto-Ducking (BGM & Video)</span>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" id="deck-toggle-ducking" class="sr-only peer" checked
+                        onchange="syncDuckingToggle(this.checked)" />
+                      <div class="w-8 h-[18px] bg-[var(--border-light)] rounded-full peer peer-checked:bg-cyan-500 transition-colors duration-200"></div>
+                      <div class="absolute left-0.5 top-0.5 w-3.5 h-3.5 bg-white rounded-full shadow transition-transform duration-200 peer-checked:translate-x-3.5"></div>
+                    </label>
+                  </div>
+                  <p class="text-[10px] text-[var(--text-muted)] leading-tight -mt-0.5">Smoothly lowers background sound when dialogue is spoken.</p>
+                  <div class="grid grid-cols-3 gap-1 pt-0.5" id="deck-ducking-depth-container">
+                    <button type="button" onclick="setDuckingDepth('light')" id="deck-duck-depth-light"
+                      class="deck-duck-btn h-6 rounded-md text-[10px] font-semibold border border-[var(--border-light)] text-[var(--text-secondary)] hover:border-cyan-400/50 transition-all">Light (-8dB)</button>
+                    <button type="button" onclick="setDuckingDepth('standard')" id="deck-duck-depth-standard"
+                      class="deck-duck-btn h-6 rounded-md text-[10px] font-semibold border border-cyan-400 bg-cyan-400/15 text-cyan-300 transition-all">Standard (-14dB)</button>
+                    <button type="button" onclick="setDuckingDepth('deep')" id="deck-duck-depth-deep"
+                      class="deck-duck-btn h-6 rounded-md text-[10px] font-semibold border border-[var(--border-light)] text-[var(--text-secondary)] hover:border-cyan-400/50 transition-all">Deep (-20dB)</button>
+                  </div>
+                </div>
+            </div>
+
+            <p class="dw-group">Voices</p>
+            <div class="dw-list">
+              <input type="file" id="a1-audio-upload" accept="audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg,.oga,.opus,.wma,.ac3,.eac3,.dts,.aif,.aiff,.caf,.mp2,.mka,.amr,.ape,.wv,.alac,.ra,.mid" class="hidden" multiple />
+                <div class="dw-item">
+                  <button id="btn-load-a1-audio"
+                    class="group col-span-2 flex items-center justify-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-amber-500/10 border border-[var(--border-light)] hover:border-amber-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
+                    <i data-lucide="audio-waveform" class="w-4 h-4 text-amber-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+                    <span>Load A1 Dubbed Audio (Multiple)</span>
+                  </button>
+                  <span class="dw-desc">Put ready-made voice files on the A1 track</span>
+                </div>
+            </div>
+
+            <!-- Kept hidden for Original Audio track mute button (#btn-mute-a0) to delegate clicks -->
+            <div hidden aria-hidden="true">
+              <button id="btn-mute-audio" type="button">
+                <i id="icon-workspace-mute" data-lucide="mic"></i>
+                <span>Mute Original Video Audio</span>
+              </button>
+            </div>
+          </section>
+
+          <section class="drawer-panel" data-rail-panel="video">
+            <header class="drawer-head">
+              <div>
+                <h2>Censor &amp; Sync</h2>
+                <p>Hide burned-in text and align subtitles with the picture.</p>
+              </div>
+              <button type="button" class="drawer-close" data-rail-close title="Close"><i data-lucide="x"></i></button>
+            </header>
+
+            <p class="dw-group">Censor</p>
+            <div class="dw-list">
+                <div class="dw-item dw-item--chip">
+                  <button id="btn-add-blur"
+                    class="group flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-amber-500/10 border border-[var(--border-light)] hover:border-amber-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
+                    <i data-lucide="square-dashed" class="w-4 h-4 text-amber-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+                    <span class="truncate">Blur Censor</span>
+                  </button>
+                  <button id="btn-apply-blur-all" title="Apply blur boxes to all project tabs"
+                    class="group flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-amber-500/10 border border-[var(--border-light)] hover:border-amber-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
+                    <i id="icon-apply-blur-all" data-lucide="layers" class="w-4 h-4 text-amber-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+                    <span id="text-apply-blur-all" class="truncate">Blur to All</span>
+                  </button>
+                  <span class="dw-desc">Draw a blur box on the video</span>
+                </div>
+                <div class="dw-item dw-item--chip">
+                  <button id="btn-detect-text" title="Find the burned-in subtitles in this tab's video and blur each one only while it shows - in the preview and the export"
+                    class="group flex-1 min-w-0 flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-amber-500/10 border border-[var(--border-light)] hover:border-amber-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
+                    <i data-lucide="scan-text" class="w-4 h-4 text-amber-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+                    <span id="text-detect-text" class="truncate">Blur Subtitles</span>
+                  </button>
+                  <label id="text-blur-toggle-wrap" class="hidden flex items-center gap-1.5 text-[11px] text-[var(--text-secondary)] cursor-pointer shrink-0" title="Blur the found subtitles in the preview and the export">
+                    <input id="text-blur-toggle" type="checkbox" class="accent-amber-500" checked> On
+                  </label>
+                  <span class="dw-desc">Blur burned-in subtitles while they show</span>
+                </div>
+            </div>
+            <p id="text-blur-status" class="hidden text-[10px] text-[var(--text-muted)] leading-tight -mt-1"></p>
+
+            <p class="dw-group">Subtitles</p>
+            <div class="dw-list">
+                <div class="dw-item">
+                  <button id="btn-sync-screen" title="Show each subtitle exactly while its original line shows in the video (its voice starts with it), and draw it where the original subtitle was"
+                    class="group w-full min-w-0 flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-sky-500/10 border border-[var(--border-light)] hover:border-sky-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
+                    <i data-lucide="captions" class="w-4 h-4 text-sky-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+                    <span id="text-sync-screen" class="truncate">Match Subtitles to Video</span>
+                  </button>
+                  <span class="dw-desc">Time each line to the original subtitle</span>
+                </div>
+            </div>
+          </section>
+
+          <section class="drawer-panel" data-rail-panel="batch">
+            <header class="drawer-head">
+              <div>
+                <h2>Series &amp; Batch</h2>
+                <p>Automate multiple episodes or videos at once.</p>
+              </div>
+              <button type="button" class="drawer-close" data-rail-close title="Close"><i data-lucide="x"></i></button>
+            </header>
+
+            <p class="dw-group">Automation</p>
+            <div class="dw-list">
+                <div class="dw-item">
+                  <button id="btn-dub-series" title="One click: join episodes, split, transcribe, generate voices and isolate BGM, one part at a time"
+                    class="group flex items-center gap-2 px-3 py-2.5 bg-[var(--bg-panel)] hover:bg-violet-500/10 border border-[var(--border-light)] hover:border-violet-500/40 rounded-xl text-xs font-semibold text-[var(--text-primary)] transition-all active:scale-[0.97]">
+                    <i data-lucide="wand-sparkles" class="w-4 h-4 text-violet-400 shrink-0 group-hover:scale-110 transition-transform"></i>
+                    <span class="truncate">Dub Whole Series</span>
+                  </button>
+                  <span class="dw-desc">All steps for a whole series, in one go</span>
+                </div>
+                <div class="dw-item dw-item--accent">
+                  <button id="btn-open-daitranscribe-deck" title="Open DAI-Transcribe Batch Studio"
+                    onclick="window.daiStudio && window.daiStudio.open('batch')"
+                    class="group flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs font-bold text-[var(--text-primary)] transition-all active:scale-[0.97]">
+                    <i data-lucide="sparkles" class="w-4 h-4 shrink-0 transition-transform duration-300 group-hover:rotate-12 group-hover:scale-110"></i>
+                    <span class="truncate">DAI-Transcribe Studio</span>
+                    <span class="ml-auto px-1.5 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-wider">PRO</span>
+                  </button>
+                  <span class="dw-desc">Transcribe many videos at once</span>
+                </div>
+            </div>
+          </section>
+        </aside>
         <!-- PREVIEW (id kept as left-sidebar for older code paths) -->
         <aside id="left-sidebar">
           <div id="preview-card" class="shell-card">
@@ -2201,66 +2123,8 @@
 
               </div>
           </div>
-          <!-- AI Dubbing: DAI studio · unify names · every tab · fixes -->
+          <!-- AI Dubbing: fixes · unify names · title ideas · all tabs -->
           <div class="card-toolbar subs-pane" role="tabpanel" data-subs-pane="ai" hidden>
-              <!-- DAI-Transcribe Toolbar Shortcut -->
-              <button id="btn-open-daitranscribe-toolbar" title="Open DAI-Transcribe Batch Studio"
-                onclick="window.daiStudio && window.daiStudio.open('batch')"
-                class="btn-accent-soft group h-8 px-2.5 sm:px-3 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all active:scale-[0.95]">
-                <i data-lucide="sparkles" class="w-3.5 h-3.5 shrink-0 group-hover:scale-110 transition-transform"></i>
-                <span class="hidden md:inline">DAI-Transcribe</span>
-                <span class="md:hidden">DAI</span>
-              </button>
-
-              <!-- Quick Unify Names shortcut button -->
-              <button id="btn-quick-unify-names" type="button" data-click="btn-all-tabs-unify-names"
-                class="group h-8 px-2.5 sm:px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-rose-300 hover:border-rose-400/50 shadow-sm active:scale-[0.95]"
-                title="Make character names and spelling consistent across all tabs">
-                <i data-lucide="spell-check" class="w-3.5 h-3.5 text-rose-300 shrink-0 group-hover:scale-110 transition-transform"></i>
-                <span>Unify Names</span>
-              </button>
-              <!-- All Tabs menu: every action that runs on all open tabs -->
-              <div class="relative">
-                <button id="btn-transcribe-all" title="Run on every open tab: Transcribe, Fix Missing, Translate"
-                  class="group h-8 px-2.5 sm:px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-white hover:border-emerald-500/50 shadow-sm active:scale-[0.95]">
-                  <i id="icon-transcribe-all" data-lucide="layers" class="w-3.5 h-3.5 text-emerald-400 shrink-0"></i>
-                  <span id="text-transcribe-all">All Tabs</span>
-                  <i data-lucide="chevron-down" class="w-3 h-3 text-emerald-400/70 shrink-0"></i>
-                </button>
-                <div id="all-tabs-dropdown-menu"
-                  class="hidden absolute bottom-full mb-1.5 left-0 w-[290px] bg-studio-card border border-white/[0.12] shadow-2xl rounded-xl p-2.5 z-[999] animate-dropdown origin-bottom-left font-sans backdrop-blur-xl">
-                  <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-2 py-1">Every open tab</div>
-                  <button id="btn-all-tabs-transcribe" class="w-full text-left px-2.5 py-1.5 text-xs flex items-start gap-2 rounded-lg hover:bg-white/[0.08] text-slate-200 cursor-pointer transition-colors">
-                    <i data-lucide="sparkles" class="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5"></i>
-                    <span class="flex flex-col"><span class="font-medium">Transcribe all tabs</span><span class="text-[10px] text-slate-400">Speech → Khmer subtitles, several tabs at once</span></span>
-                  </button>
-                  <button id="btn-all-tabs-fix-missing" class="w-full text-left px-2.5 py-1.5 text-xs flex items-start gap-2 rounded-lg hover:bg-white/[0.08] text-slate-200 cursor-pointer transition-colors">
-                    <i data-lucide="scan-search" class="w-3.5 h-3.5 text-sky-400 shrink-0 mt-0.5"></i>
-                    <span class="flex flex-col"><span class="font-medium">Fix Missing in all tabs</span><span class="text-[10px] text-slate-400">Recover missed lines, translate lines without Khmer</span></span>
-                  </button>
-                  <button id="btn-all-tabs-pipeline" class="w-full text-left px-2.5 py-1.5 text-xs flex items-start gap-2 rounded-lg hover:bg-white/[0.08] text-slate-200 cursor-pointer transition-colors">
-                    <i data-lucide="list-checks" class="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5"></i>
-                    <span class="flex flex-col"><span class="font-medium">Transcribe, then Fix Missing</span><span class="text-[10px] text-slate-400">Both in order - one click for a whole series</span></span>
-                  </button>
-                  <button id="btn-all-tabs-unify-names" class="w-full text-left px-2.5 py-1.5 text-xs flex items-start gap-2 rounded-lg hover:bg-white/[0.08] text-slate-200 cursor-pointer transition-colors">
-                    <i data-lucide="spell-check" class="w-3.5 h-3.5 text-rose-300 shrink-0 mt-0.5"></i>
-                    <span class="flex flex-col"><span class="font-medium">Make names consistent…</span><span class="text-[10px] text-slate-400">Same Khmer name for each character and place in every tab</span></span>
-                  </button>
-                  <button id="btn-all-tabs-blur-text" class="w-full text-left px-2.5 py-1.5 text-xs flex items-start gap-2 rounded-lg hover:bg-white/[0.08] text-slate-200 cursor-pointer transition-colors">
-                    <i data-lucide="scan-text" class="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5"></i>
-                    <span class="flex flex-col"><span class="font-medium">Blur subtitles in all tabs</span><span class="text-[10px] text-slate-400">Find the burned-in subtitles; blur each only while it shows</span></span>
-                  </button>
-                  <button id="btn-all-tabs-sync-screen" class="w-full text-left px-2.5 py-1.5 text-xs flex items-start gap-2 rounded-lg hover:bg-white/[0.08] text-slate-200 cursor-pointer transition-colors">
-                    <i data-lucide="captions" class="w-3.5 h-3.5 text-sky-400 shrink-0 mt-0.5"></i>
-                    <span class="flex flex-col"><span class="font-medium">Match subtitles to video in all tabs</span><span class="text-[10px] text-slate-400">Each subtitle shows while its original line does, in its place</span></span>
-                  </button>
-                  <div class="my-1.5 border-t border-white/[0.08]"></div>
-                  <button id="btn-all-tabs-translate" class="w-full text-left px-2.5 py-1.5 text-xs flex items-start gap-2 rounded-lg hover:bg-white/[0.08] text-slate-200 cursor-pointer transition-colors">
-                    <i data-lucide="languages" class="w-3.5 h-3.5 text-indigo-400 shrink-0 mt-0.5"></i>
-                    <span class="flex flex-col"><span class="font-medium">DAI Translate all tabs…</span><span class="text-[10px] text-slate-400">Re-translate existing transcripts (opens DAI Translate)</span></span>
-                  </button>
-                </div>
-              </div>
               <!-- AI fix strip: Fix Missing + AI Refactor -->
               <div class="flex items-center bg-[var(--bg-hover)] border border-[var(--border-color)] rounded-lg p-0.5 shrink-0 flex-nowrap">
                 <button id="btn-fix-missing" style="--tile: var(--tile-mint)"
@@ -2276,7 +2140,7 @@
                     class="group h-7 px-2.5 rounded-md text-xs font-medium flex items-center gap-1.5 text-[var(--text-secondary)] hover:text-[var(--text-bright)] hover:bg-emerald-500/10 transition-all shrink-0"
                     title="⚡ AI Refactor & Polish Subtitles (Natural Spoken & Short Dubbing Tone)">
                     <i data-lucide="wand-2" class="w-3.5 h-3.5 text-emerald-400 group-hover:scale-110 transition-transform"></i>
-                    <span>AI Refactor</span>
+                    <span>Refactor</span>
                     <i data-lucide="chevron-down" class="w-3 h-3 text-emerald-400/70 shrink-0"></i>
                   </button>
 
@@ -2321,6 +2185,61 @@
                       <span>😆 Comedy (កំប្លែង)</span>
                     </label>
                   </div>
+                </div>
+              </div>
+
+              <!-- Unify Names -->
+              <button id="btn-all-tabs-unify-names" type="button"
+                class="group h-8 px-2.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-rose-300 hover:border-rose-400/50 active:scale-[0.95] shrink-0"
+                title="Make character names and spelling consistent across all tabs">
+                <i data-lucide="spell-check" class="w-3.5 h-3.5 text-rose-300 shrink-0 group-hover:scale-110 transition-transform"></i>
+                <span>Names</span>
+              </button>
+
+              <!-- Khmer Movie Title Ideas -->
+              <button id="btn-open-title-ai" type="button"
+                class="group h-8 px-2.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border border-[var(--border-color)] transition-all active:scale-[0.95] shrink-0"
+                title="Khmer Movie Title Suggestions">
+                <i data-lucide="sparkles" class="w-3.5 h-3.5 shrink-0 group-hover:scale-110 transition-transform"></i>
+                <span>Titles</span>
+              </button>
+
+              <!-- All Tabs menu: batch actions across open tabs -->
+              <div class="relative ml-auto shrink-0">
+                <button id="btn-transcribe-all" title="Run on every open tab: Transcribe, Fix Missing, Translate"
+                  class="group h-8 px-2.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all bg-[var(--bg-hover)] border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-white hover:border-emerald-500/50 active:scale-[0.95]">
+                  <i id="icon-transcribe-all" data-lucide="layers" class="w-3.5 h-3.5 text-emerald-400 shrink-0"></i>
+                  <span id="text-transcribe-all">All Tabs</span>
+                  <i data-lucide="chevron-down" class="w-3 h-3 text-emerald-400/70 shrink-0"></i>
+                </button>
+                <div id="all-tabs-dropdown-menu"
+                  class="hidden absolute bottom-full mb-1.5 left-0 w-[290px] bg-studio-card border border-white/[0.12] shadow-2xl rounded-xl p-2.5 z-[999] animate-dropdown origin-bottom-left font-sans backdrop-blur-xl">
+                  <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-2 py-1">Every open tab</div>
+                  <button id="btn-all-tabs-transcribe" class="w-full text-left px-2.5 py-1.5 text-xs flex items-start gap-2 rounded-lg hover:bg-white/[0.08] text-slate-200 cursor-pointer transition-colors">
+                    <i data-lucide="sparkles" class="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5"></i>
+                    <span class="flex flex-col"><span class="font-medium">Transcribe all tabs</span><span class="text-[10px] text-slate-400">Speech → Khmer subtitles, several tabs at once</span></span>
+                  </button>
+                  <button id="btn-all-tabs-fix-missing" class="w-full text-left px-2.5 py-1.5 text-xs flex items-start gap-2 rounded-lg hover:bg-white/[0.08] text-slate-200 cursor-pointer transition-colors">
+                    <i data-lucide="scan-search" class="w-3.5 h-3.5 text-sky-400 shrink-0 mt-0.5"></i>
+                    <span class="flex flex-col"><span class="font-medium">Fix Missing in all tabs</span><span class="text-[10px] text-slate-400">Recover missed lines, translate lines without Khmer</span></span>
+                  </button>
+                  <button id="btn-all-tabs-pipeline" class="w-full text-left px-2.5 py-1.5 text-xs flex items-start gap-2 rounded-lg hover:bg-white/[0.08] text-slate-200 cursor-pointer transition-colors">
+                    <i data-lucide="list-checks" class="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5"></i>
+                    <span class="flex flex-col"><span class="font-medium">Transcribe, then Fix Missing</span><span class="text-[10px] text-slate-400">Both in order - one click for a whole series</span></span>
+                  </button>
+                  <button id="btn-all-tabs-blur-text" class="w-full text-left px-2.5 py-1.5 text-xs flex items-start gap-2 rounded-lg hover:bg-white/[0.08] text-slate-200 cursor-pointer transition-colors">
+                    <i data-lucide="scan-text" class="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5"></i>
+                    <span class="flex flex-col"><span class="font-medium">Blur subtitles in all tabs</span><span class="text-[10px] text-slate-400">Find the burned-in subtitles; blur each only while it shows</span></span>
+                  </button>
+                  <button id="btn-all-tabs-sync-screen" class="w-full text-left px-2.5 py-1.5 text-xs flex items-start gap-2 rounded-lg hover:bg-white/[0.08] text-slate-200 cursor-pointer transition-colors">
+                    <i data-lucide="captions" class="w-3.5 h-3.5 text-sky-400 shrink-0 mt-0.5"></i>
+                    <span class="flex flex-col"><span class="font-medium">Match subtitles to video in all tabs</span><span class="text-[10px] text-slate-400">Each subtitle shows while its original line does, in its place</span></span>
+                  </button>
+                  <div class="my-1.5 border-t border-white/[0.08]"></div>
+                  <button id="btn-all-tabs-translate" class="w-full text-left px-2.5 py-1.5 text-xs flex items-start gap-2 rounded-lg hover:bg-white/[0.08] text-slate-200 cursor-pointer transition-colors">
+                    <i data-lucide="languages" class="w-3.5 h-3.5 text-indigo-400 shrink-0 mt-0.5"></i>
+                    <span class="flex flex-col"><span class="font-medium">DAI Translate all tabs…</span><span class="text-[10px] text-slate-400">Re-translate existing transcripts (opens DAI Translate)</span></span>
+                  </button>
                 </div>
               </div>
           </div>
@@ -2447,7 +2366,6 @@
           </div>
           <div class="subs-foot">
             <span>Total Subtitles: <b id="subs-total">0</b></span>
-            <button type="button" class="subs-foot__btn" data-click="btn-import-srt" title="Import SRT subtitles"><i data-lucide="file-down"></i><span>Import SRT</span></button>
           </div>
         </section>
       </div>
@@ -3657,6 +3575,12 @@
                 <option value="part">one video per part</option>
                 <option value="series">one video for the whole series</option>
               </select>
+            </div>
+            <div id="ds-keep-full-row" class="ds-hf-sub" title="Once the whole series is joined into one video (Name_Dubbed_full.mp4), the individual exported part videos beside it are deleted so only the full dubbed video stays.">
+              <label class="ds-inline-switch">
+                <input id="ds-keep-full" type="checkbox" class="ds-switch ds-switch--sm" checked>
+                <span>Keep only the joined full video (remove part files)</span>
+              </label>
             </div>
             <div id="ds-clean-row" class="ds-hf-sub" title="Once every part is exported (and joined, if you asked for that), the joined parts in &quot;DR Dubber Joined&quot; and their split tabs in &quot;DR Dubber Split&quot; that this series made are deleted - they are copies of the episodes, often many GB. Your episodes and the dubbed videos are never touched.">
               <label class="ds-inline-switch">

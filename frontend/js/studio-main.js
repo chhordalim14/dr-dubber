@@ -348,40 +348,124 @@
       true,
     );
 
-    // --- THEME CONSTANTS (From Reference) ---
-    // Default look: "Midnight Indigo" (deep blue-navy panels, an indigo accent
-    // that runs into violet on the main actions).
+    // --- THEME CONSTANTS ---
+    // Default look: "Fresh Sun (Yellow)" (crisp neutral charcoal surfaces that
+    // match video framing cleanly, paired with a fresh golden-yellow accent).
     const defaultThemes = {
       dark: {
-        bgBase: "#060a1f",
-        bgPanel: "#0b1130",
-        bgHover: "#131b42",
-        borderColor: "#1a2452",
-        borderLight: "#28366e",
-        textBright: "#f1f4ff",
-        textPrimary: "#d0d7f5",
-        textSecondary: "#97a2d0",
-        textMuted: "#68739f",
-        accentPrimary: "#5b5ff7",
-        accentText: "#a3adff",
+        bgBase: "#111215",
+        bgPanel: "#181a1f",
+        bgHover: "#22252c",
+        borderColor: "#272b33",
+        borderLight: "#353a45",
+        textBright: "#f2f4f7",
+        textPrimary: "#d4d8df",
+        textSecondary: "#9ca3af",
+        textMuted: "#6b7280",
+        accentPrimary: "#eab308",
+        accentText: "#fde047",
       },
       light: {
-        bgBase: "#f1f3fc",
-        bgPanel: "#ffffff",
-        bgHover: "#eceffc",
-        borderColor: "#dfe3f5",
-        borderLight: "#c9cfec",
-        textBright: "#111637",
-        textPrimary: "#2f365e",
-        textSecondary: "#555d86",
-        textMuted: "#838aab",
-        accentPrimary: "#4f53e8",
-        accentText: "#3c3fcf",
+        bgBase: "#f1f3f6",
+        bgPanel: "#fafafa",
+        bgHover: "#e7eaef",
+        borderColor: "#dce0e7",
+        borderLight: "#c8ced8",
+        textBright: "#111827",
+        textPrimary: "#374151",
+        textSecondary: "#5b6472",
+        textMuted: "#838c99",
+        accentPrimary: "#d99b08",
+        accentText: "#a16207",
       },
     };
 
     const presetThemes = {
-      "Midnight Indigo": defaultThemes,
+      "Fresh Sun (Yellow)": defaultThemes,
+      "Fresh Mint": {
+        dark: {
+          bgBase: "#111619",
+          bgPanel: "#171d22",
+          bgHover: "#20282f",
+          borderColor: "#26313a",
+          borderLight: "#33414c",
+          textBright: "#eef4f3",
+          textPrimary: "#cdd9d8",
+          textSecondary: "#92a3a5",
+          textMuted: "#68797c",
+          accentPrimary: "#129c8d",
+          accentText: "#5eead4",
+        },
+        light: {
+          bgBase: "#eef4f3",
+          bgPanel: "#f8fbfa",
+          bgHover: "#e4efed",
+          borderColor: "#d3e2df",
+          borderLight: "#bfd3cf",
+          textBright: "#102022",
+          textPrimary: "#263a3d",
+          textSecondary: "#4c6366",
+          textMuted: "#768c8f",
+          accentPrimary: "#0d9488",
+          accentText: "#0f766e",
+        },
+      },
+      "Studio Charcoal (Eye Care)": {
+        dark: {
+          bgBase: "#141518",
+          bgPanel: "#1b1d22",
+          bgHover: "#24272e",
+          borderColor: "#2a2d35",
+          borderLight: "#373b46",
+          textBright: "#eaedf2",
+          textPrimary: "#cfd4dd",
+          textSecondary: "#98a0ae",
+          textMuted: "#6e7685",
+          accentPrimary: "#5277d6",
+          accentText: "#8faeff",
+        },
+        light: {
+          bgBase: "#eceef2",
+          bgPanel: "#f7f8fa",
+          bgHover: "#e5e8ee",
+          borderColor: "#d8dce4",
+          borderLight: "#c5cbd6",
+          textBright: "#181b22",
+          textPrimary: "#303542",
+          textSecondary: "#586070",
+          textMuted: "#7c8494",
+          accentPrimary: "#4266c5",
+          accentText: "#3151ab",
+        },
+      },
+      "Midnight Indigo": {
+        dark: {
+          bgBase: "#060a1f",
+          bgPanel: "#0b1130",
+          bgHover: "#131b42",
+          borderColor: "#1a2452",
+          borderLight: "#28366e",
+          textBright: "#f1f4ff",
+          textPrimary: "#d0d7f5",
+          textSecondary: "#97a2d0",
+          textMuted: "#68739f",
+          accentPrimary: "#5b5ff7",
+          accentText: "#a3adff",
+        },
+        light: {
+          bgBase: "#f1f3fc",
+          bgPanel: "#ffffff",
+          bgHover: "#eceffc",
+          borderColor: "#dfe3f5",
+          borderLight: "#c9cfec",
+          textBright: "#111637",
+          textPrimary: "#2f365e",
+          textSecondary: "#555d86",
+          textMuted: "#838aab",
+          accentPrimary: "#4f53e8",
+          accentText: "#3c3fcf",
+        },
+      },
       // Navy with a violet accent (the default before Midnight Indigo).
       "Midnight Violet": {
         dark: {
@@ -10902,6 +10986,19 @@
     const setCssVar = (name, value) => document.documentElement.style.setProperty(`--${name}`, value);
     const toKebabCase = (str) => str.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
 
+    // Pick dark ink on bright accents (yellow/gold/lime) and white ink on deeper accents.
+    const syncAccentInk = (hex) => {
+      const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || "").trim());
+      if (!m) return;
+      const n = parseInt(m[1], 16);
+      const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => {
+        const c = v / 255;
+        return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+      });
+      const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      document.documentElement.style.setProperty("--accent-ink", lum > 0.36 ? "#1b1607" : "#ffffff");
+    };
+
     const applyStoredTheme = () => {
       const mode = getActiveMode();
       const storedThemes = JSON.parse(localStorage.getItem("aiDubberThemes") || '{"dark":{}, "light":{}}');
@@ -10914,6 +11011,7 @@
       Object.keys(activeTheme).forEach((key) => {
         document.documentElement.style.setProperty(toCssVar(key), activeTheme[key]);
       });
+      syncAccentInk(activeTheme.accentPrimary);
     };
 
     const renderThemePickers = () => {
@@ -10949,6 +11047,7 @@
 
           // 1. Live Update UI
           document.documentElement.style.setProperty(toCssVar(key), val);
+          if (key === "accentPrimary") syncAccentInk(val);
           e.target.nextElementSibling.textContent = val;
 
           // 2. Save to LocalStorage
@@ -10992,7 +11091,7 @@
           return `
       <button data-preset="${name}"
         class="preset-theme-btn w-full flex items-center gap-2.5 px-3 py-2 rounded-lg transition-all duration-150 text-xs font-medium text-left
-               ${isActive ? "bg-[var(--accent-primary)] text-white" : "hover:bg-[var(--bg-hover)] text-[var(--text-primary)] hover:text-[var(--text-bright)]"}">
+               ${isActive ? "bg-[var(--accent-primary)] text-[var(--accent-ink)]" : "hover:bg-[var(--bg-hover)] text-[var(--text-primary)] hover:text-[var(--text-bright)]"}">
         <span class="flex gap-0.5 shrink-0">
           <span class="w-3 h-3 rounded-full border border-white/10" style="background:${p.bgBase}"></span>
           <span class="w-3 h-3 rounded-full border border-white/10" style="background:${p.bgPanel}"></span>
@@ -11033,6 +11132,7 @@
           Object.entries(preset).forEach(([key, val]) => {
             document.documentElement.style.setProperty(toCssVar(key), val);
           });
+          syncAccentInk(preset.accentPrimary);
 
           let themes = JSON.parse(localStorage.getItem("aiDubberThemes") || '{"dark":{}, "light":{}}');
           themes[mode] = { ...preset };
@@ -16959,6 +17059,7 @@
           if (prefs.mergeScope === "series" || prefs.mergeScope === "part") $("ds-merge-scope").value = prefs.mergeScope;
           if (typeof prefs.episodeTabs === "boolean") $("ds-episodes").checked = prefs.episodeTabs;
           if (typeof prefs.cleanWorking === "boolean") $("ds-clean").checked = prefs.cleanWorking;
+          if (typeof prefs.keepFullOnly === "boolean" && $("ds-keep-full")) $("ds-keep-full").checked = prefs.keepFullOnly;
         }
         // "Each episode its own tab" is new: the first time, every episode's own video plus the
         // whole series joined once at the end (with Hands-free).
@@ -16989,6 +17090,7 @@
         prefs.merge = $("ds-merge").checked;
         prefs.mergeScope = mergeScope();
         prefs.cleanWorking = $("ds-clean").checked;
+        if ($("ds-keep-full")) prefs.keepFullOnly = $("ds-keep-full").checked;
         prefs.colorFilter = colorSel.value;
         try { localStorage.setItem("aiDubberSeriesPrefs", JSON.stringify(prefs)); } catch (e) { }
       };
@@ -16996,6 +17098,8 @@
       const handsFree = () => !!$("ds-handsfree")?.checked;
       // "Delete the joined and split working files when the series is exported".
       const cleanWorkingWanted = () => !!$("ds-clean")?.checked;
+      // "Keep only the joined full video": delete individual exported part files once Name_Dubbed_full.mp4 exists.
+      const keepFullOnlyWanted = () => !!$("ds-keep-full")?.checked;
       // Hands-free: each exported part's tab videos are joined into one video.
       const mergeWanted = () => handsFree() && $("ds-merge").checked;
       // "part": one video per part, joined as each part is exported. "series": the whole series in
@@ -17003,6 +17107,7 @@
       const mergeScope = () => ($("ds-merge-scope")?.value === "series" ? "series" : "part");
       $("ds-merge").addEventListener("change", () => { savePrefs(); render(); });
       $("ds-clean").addEventListener("change", savePrefs);
+      $("ds-keep-full")?.addEventListener("change", savePrefs);
       $("ds-merge-scope")?.addEventListener("change", () => { savePrefs(); render(); });
       // A finished part whose hands-free export didn't complete, with its tabs still open (tabs
       // open after its own were closed belong to something else).
@@ -17214,6 +17319,8 @@
         $("ds-merge").disabled = !handsFree();
         $("ds-merge-scope").disabled = !mergeWanted();
         $("ds-merge-row").classList.toggle("hidden", !handsFree()); // joining needs hands-free
+        if ($("ds-keep-full")) $("ds-keep-full").disabled = !handsFree() || !mergeWanted() || mergeScope() !== "series";
+        $("ds-keep-full-row")?.classList.toggle("hidden", !handsFree() || !mergeWanted() || mergeScope() !== "series");
         // Episodes as tabs make no working files; the rest have joined parts and split tabs.
         $("ds-clean-row").classList.toggle("hidden", !handsFree() || episodeTabsShown());
         const folder = plan?.folder || scan?.folder || "";
@@ -18373,6 +18480,7 @@
             }
             await joinWholeSeries();
             checkStop();
+            await deletePartExports();
             await deleteWorkingFiles();
             const merged = plan.parts.filter((p) => p.merged).length;
             const joined = mergeScope() === "series"
@@ -18422,6 +18530,25 @@
           if (r.deleted) showToast(`Deleted ${r.deleted} working file(s) - ${(r.freed / 1024 ** 3).toFixed(1)} GB freed. The episodes and dubbed videos are kept.`, "success");
         } catch (e) {
           showToast(`The working files could not be deleted (${e.message}). They are in "DR Dubber Joined" next to the episodes.`, "warning");
+        }
+      }
+
+      // "Keep only the joined full video": once every part is exported and Name_Dubbed_full.mp4
+      // exists, delete the individual exported part videos beside it. A failure only warns.
+      async function deletePartExports() {
+        const wanted = typeof keepFullOnlyWanted === "function" && keepFullOnlyWanted();
+        if (!plan || plan.partsCleaned || !wanted || !handsFree() || !mergeWanted() || mergeScope() !== "series") return;
+        if (!plan.fullMerged || !plan.parts.every((p) => p.exported)) return;
+        const paths = [...new Set(plan.parts.flatMap((p) => p.outputs || []))].filter((p) => p && p !== plan.fullMerged);
+        if (!paths.length) return;
+        try {
+          const r = await postJson(`${API}/episodes/delete-part-exports`, { paths, keepFile: plan.fullMerged });
+          if (!r?.success) throw new Error(r?.error || "no answer");
+          plan.partsCleaned = true;
+          savePlan();
+          if (r.deleted) showToast(`Kept ${plan.fullMerged.split(/[\\/]/).pop()} and removed ${r.deleted} part video(s) - ${(r.freed / 1024 ** 3).toFixed(1)} GB freed.`, "success");
+        } catch (e) {
+          showToast(`The part videos could not be deleted (${e.message}). They are next to ${plan.fullMerged.split(/[\\/]/).pop()}.`, "warning");
         }
       }
 
@@ -18598,6 +18725,7 @@
           checkStop();
           if (plan.fullMerged) showToast(`The whole series is joined into one video: ${plan.fullMerged.split(/[\\/]/).pop()} ✓`, "success");
         }
+        await deletePartExports();
         await deleteWorkingFiles();
       }
 
@@ -20529,7 +20657,7 @@
     // worked out for (ttsRateFor): an edited line is said at its normal pace again.
     const NATIVE_MIN_RATE = -15; // Edge's slowest pace that still sounds natural
     const NATIVE_MAX_RATE = 35;
-    const NATIVE_MIN_CHANGE = 0.04; // a stretch this small is not heard
+    const NATIVE_MIN_CHANGE = 0.06; // a stretch this small is not heard — avoids extra Edge round-trips
     function nativeRateOf(sub) {
       return sub && sub.ttsRateFor === sub.text ? parseFloat(sub.ttsRate) || 0 : 0;
     }
@@ -21835,7 +21963,7 @@
                 success = true;
                 batchedRenderSubtitlesImmediate(targetProject.subtitles[safeIndex]);
 
-                if (projects[activeProjectIndex] === targetProject) {
+                if (!isBatch && projects[activeProjectIndex] === targetProject) {
                   if (activeAudios[subId]) {
                     activeAudios[subId].pause();
                     if (typeof window.releaseAudioChain === "function") window.releaseAudioChain(activeAudios[subId]);
@@ -22019,6 +22147,7 @@
         await Promise.race([Promise.allSettled(metadataPromises), new Promise((r) => setTimeout(r, META_TIMEOUT))]);
 
         const succeededCount = targetProject.subtitles.filter((s) => idsToProcess.includes(s.id) && s.audioStatus === "ready").length;
+        const failedCount = targetProject.subtitles.filter((s) => idsToProcess.includes(s.id) && s.audioStatus === "error").length;
 
         // Apply Auto-Fit & Sync End
         let optimizedCount = 0;
@@ -22078,7 +22207,11 @@
         }
 
         if (!isBatch && !cancelRef.cancelled) {
-          showToast("Audio Generation Complete!", "success");
+          if (failedCount > 0) {
+            showToast(`Generated ${succeededCount}/${idsToProcess.length} line(s) — ${failedCount} failed (click Generate to retry).`, "warning");
+          } else {
+            showToast("Audio Generation Complete!", "success");
+          }
           Stats.inc(Stats.keys.lines, succeededCount);
         }
 
@@ -26877,7 +27010,7 @@
                 proj.titleIdeas = { status: "done", suggestions, synopsis, sig, auto: true, at: Date.now() };
                 if (projects[activeProjectIndex] === proj) {
                   if (titleDrawerOpen()) showTitleIdeasForActiveTab();
-                  else showToast(`✨ ${suggestions.length} title ideas are ready for "${projectTabName(proj)}" - Quick Tools › Movie Title Ideas`, "info");
+                  else showToast(`✨ ${suggestions.length} title ideas are ready for "${projectTabName(proj)}" - AI Dubbing › Title Ideas`, "info");
                 }
               } catch (err) {
                 proj.titleIdeas = { status: "failed", error: err.message || String(err), sig, auto: true };

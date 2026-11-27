@@ -102,7 +102,7 @@ async def outside_ip(proxy, timeout=20):
         return r.json().get("ip")
 
 
-from typing import Any, TypedDict
+from typing import Any, Optional, TypedDict
 
 # Sent along with __Secure-1PSID / __Secure-1PSIDTS (see Account.start).
 EXTRA_SIGNIN_COOKIES = ("SID", "OSID")
@@ -154,54 +154,66 @@ async def test_proxies(body):
 
     seen_ips = set(avoid_ips)
     working: list[ProxyResult] = []
-    batch_size = 60
+    sem = asyncio.Semaphore(80)
 
     async def one_round(s):
         t0 = time.time()
-        r = await s.get("https://api.ipify.org?format=json", timeout=timeout_sec)
-        if r.status_code != 200:
+        r, g = await asyncio.gather(
+            s.get("https://api.ipify.org?format=json", timeout=timeout_sec),
+            s.get("https://gemini.google.com/app", timeout=timeout_sec + 1.5, allow_redirects=True),
+        )
+        if r.status_code != 200 or g.status_code != 200 or "gemini" not in g.text.lower():
             return None, None
         ip = (r.json() or {}).get("ip")
-        g = await s.get("https://gemini.google.com/app", timeout=timeout_sec + 2, allow_redirects=True)
-        if g.status_code != 200 or "gemini" not in g.text.lower():
-            return None, None
         return ip, int((time.time() - t0) * 1000)
 
-    async def check_one(p: str) -> ProxyResult | None:
-        try:
-            async with AsyncSession(proxy=p, impersonate="chrome", verify=False) as s:
-                ip = None
-                times = []
-                for k in range(rounds):
-                    if k:
-                        await asyncio.sleep(1.5)
-                    got, ms = await one_round(s)
-                    # A proxy whose address changes between two asks (a rotating gateway) would
-                    # show the Gmail from a new place on every request.
-                    if not got or ms is None or got in seen_ips or (ip and got != ip) or ms > max_ms:
+    async def check_one(p: str) -> Optional[ProxyResult]:
+        async with sem:
+            try:
+                async with AsyncSession(proxy=p, impersonate="chrome", verify=False) as s:
+                    ip = None
+                    times = []
+                    for k in range(rounds):
+                        if k:
+                            await asyncio.sleep(0.6)
+                        got, ms = await one_round(s)
+                        # A proxy whose address changes between two asks (a rotating gateway) would
+                        # show the Gmail from a new place on every request.
+                        if not got or ms is None or got in seen_ips or (ip and got != ip) or ms > max_ms:
+                            return None
+                        ip = got
+                        times.append(ms)
+                    if not ip or not times:
                         return None
-                    ip = got
-                    times.append(ms)
-                if not ip or not times:
-                    return None
-                return {"proxy": p, "ip": ip, "ms": int(sum(times) / len(times))}
-        except Exception:
-            return None
+                    return {"proxy": p, "ip": ip, "ms": int(sum(times) / len(times))}
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                return None
 
-    for i in range(0, len(candidates), batch_size):
-        if len(working) >= need:
-            break
-        chunk = candidates[i:i + batch_size]
-        res = await asyncio.gather(*(check_one(p) for p in chunk))
-        valid_items: list[ProxyResult] = [x for x in res if x is not None]
-        for item in sorted(valid_items, key=lambda x: x["ms"]):
-            if item["ip"] in seen_ips:
+    # Launch checks concurrently under a bounded semaphore and return immediately once `need`
+    # fast working proxies pass, cancelling slower/dead candidates right away.
+    tasks = [asyncio.create_task(check_one(p)) for p in candidates]
+    try:
+        for fut in asyncio.as_completed(tasks):
+            try:
+                item = await fut
+            except asyncio.CancelledError:
+                continue
+            if not item or item["ip"] in seen_ips:
                 continue
             seen_ips.add(item["ip"])
             working.append(item)
             if len(working) >= need:
                 break
+    finally:
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
+    working.sort(key=lambda x: x["ms"])
     return {"ok": True, "proxies": working, "directIp": direct_ip}
 
 
@@ -350,7 +362,7 @@ class Account:
         try:
             if self.proxy:
                 try:
-                    self.ip = await outside_ip(self.proxy, timeout=10)
+                    self.ip = await outside_ip(self.proxy, timeout=6)
                 except Exception as e:
                     self.ip = None
                     self.state, self.error = "error", f"The proxy does not work: {type(e).__name__}: {str(e)[:160]}"
@@ -368,7 +380,7 @@ class Account:
             # Google sign-in page; with SID and Gemini's OSID added the Gmail is AVAILABLE again.
             c = GeminiClient(cookies["__Secure-1PSID"], cookies.get("__Secure-1PSIDTS"), proxy=self.proxy, verify=False)
             c.cookies = {k: cookies[k] for k in EXTRA_SIGNIN_COOKIES if cookies.get(k)}
-            await asyncio.wait_for(c.init(timeout=600, auto_close=False, auto_refresh=True, refresh_interval=540), 45)
+            await asyncio.wait_for(c.init(timeout=600, auto_close=False, auto_refresh=True, refresh_interval=540), 25)
             # A session Google ended still "starts": Gemini answers text signed out (model
             # "gemini-flash-lite", no credits) but refuses uploads. Seen 2026-11-08: four Gmails
             # ran a whole series like that, every episode silently going to an API key.

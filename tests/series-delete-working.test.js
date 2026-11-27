@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const createEpisodesRouter = require('../backend/routes/episodes');
-const { isWorkingFile } = createEpisodesRouter;
+const { isWorkingFile, isPartExportFile } = createEpisodesRouter;
 
 describe('deleting the series\' working files', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'drdub-working-'));
@@ -43,6 +43,45 @@ describe('deleting the series\' working files', () => {
     assert.deepEqual(out, { success: true, deleted: 3, freed: 3000, refused: 3 });
     assert.ok(!fs.existsSync(part) && !fs.existsSync(list) && !fs.existsSync(piece));
     assert.ok(fs.existsSync(episode) && fs.existsSync(exported) && fs.existsSync(program), 'everything else stays');
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+});
+
+describe('deleting individual part exports after joining the full series', () => {
+  test('deletes only sibling part videos next to an existing full video, never the full video or other folders', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'drdub-fullkeep-'));
+    const outDir = path.join(root, 'Show_Dubbed');
+    const otherDir = path.join(root, 'Originals');
+    fs.mkdirSync(outDir, { recursive: true });
+    fs.mkdirSync(otherDir, { recursive: true });
+    const make = (p, bytes = 1000) => { fs.writeFileSync(p, 'x'.repeat(bytes)); return p; };
+    const full = make(path.join(outDir, 'Show_Dubbed_full.mp4'), 5000);
+    const p1 = make(path.join(outDir, 'Show_part01_Khmer_Dubbed.mp4'), 1200);
+    const p2 = make(path.join(outDir, 'Show_part02_Khmer_Dubbed.mp4'), 1300);
+    const orig = make(path.join(otherDir, 'E01.mp4'), 1000);
+    const notes = make(path.join(outDir, 'notes.txt'), 100);
+
+    assert.equal(isPartExportFile(p1, full), true);
+    assert.equal(isPartExportFile(full, full), false, 'never delete keepFile itself');
+    assert.equal(isPartExportFile(orig, full), false, 'never delete outside the export folder');
+    assert.equal(isPartExportFile(notes, full), false, 'never delete non-video files');
+    assert.equal(isPartExportFile(`${outDir}${path.sep}..${path.sep}Originals${path.sep}E01.mp4`, full), false);
+
+    const router = createEpisodesRouter({ episodeJoiner: {} });
+    const handler = router.stack.find((l) => l.route && l.route.path === '/delete-part-exports').route.stack[0].handle;
+
+    // Missing or empty keepFile refuses everything.
+    let missingOut = null;
+    handler({ body: { paths: [p1], keepFile: path.join(outDir, 'Missing_full.mp4') } }, { json: (d) => { missingOut = d; } });
+    assert.equal(missingOut.success, false);
+    assert.ok(fs.existsSync(p1), 'parts stay untouched when full file is missing');
+
+    // Existing full video allows sibling part deletion, keeps full + other folders + non-videos.
+    let okOut = null;
+    handler({ body: { paths: [p1, p2, full, orig, notes], keepFile: full } }, { json: (d) => { okOut = d; } });
+    assert.deepEqual(okOut, { success: true, deleted: 2, freed: 2500, refused: 3 });
+    assert.ok(!fs.existsSync(p1) && !fs.existsSync(p2));
+    assert.ok(fs.existsSync(full) && fs.existsSync(orig) && fs.existsSync(notes));
     fs.rmSync(root, { recursive: true, force: true });
   });
 });
