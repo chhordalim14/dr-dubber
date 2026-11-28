@@ -158,7 +158,19 @@ function applyGlossaryToSheet(sheet, glossary) {
         if (str(original) && KHMER_RE.test(str(khmer))) fixed.set(str(original), str(khmer));
     }
     if (!fixed.size) return s;
-    s.characters = s.characters.map(c => (fixed.has(c.name) ? { ...c, khmer: fixed.get(c.name) } : c));
+    // A renamed person keeps no trace of the old spelling: how others call them changes too
+    // (唐峻 -> 沈奕 "ស៊ូស៊ូ" when 沈奕 is now សិនអ៊ី), or Gemini gets both spellings for one person.
+    const nameOf = seriesNameOf(s, []);
+    const renamed = new Map(); // person -> [old, new]
+    s.characters = s.characters.map(c => {
+        if (!fixed.has(c.name) || fixed.get(c.name) === c.khmer) return c;
+        renamed.set(nameOf(c.name), [c.khmer, fixed.get(c.name)]);
+        return { ...c, khmer: fixed.get(c.name) };
+    });
+    s.address = s.address.map(x => {
+        const r = renamed.get(nameOf(x.listener));
+        return r && x.calls.includes(r[0]) ? { ...x, calls: x.calls.split(r[0]).join(r[1]) } : x;
+    });
     s.terms = s.terms.map(t => (fixed.has(t.original) ? { ...t, khmer: fixed.get(t.original) } : t));
     return s;
 }
@@ -205,11 +217,13 @@ function seriesNameOf(sheet, speakers) {
         if ((gender === 'Male' || gender === 'Female') && !sex.has(r)) sex.set(r, gender);
         return n;
     };
+    const order = (n) => [...parent.keys()].indexOf(n);
     const join = (a, b) => {
         if (!a || !b) return;
-        const [ra, rb] = [root(a), root(b)];
+        let [ra, rb] = [root(a), root(b)];
         if (ra === rb || (sex.has(ra) && sex.has(rb) && sex.get(ra) !== sex.get(rb))) return;
-        parent.set(rb, ra); // ra was added first: its name stays
+        if (order(rb) < order(ra)) [ra, rb] = [rb, ra]; // the name added first stays the person's name
+        parent.set(rb, ra);
         if (!sex.has(ra) && sex.has(rb)) sex.set(ra, sex.get(rb));
     };
     for (const c of s.characters) add(c.name, c.gender);
@@ -241,7 +255,11 @@ function foldSheet(sheet) {
     const s = normalizeSheet(sheet);
     const nameOf = seriesNameOf(s, []);
     const byName = new Map();
-    for (const c of s.characters) {
+    // The person's own entry first, then the other spellings into it: the person's name can be
+    // listed after one of its spellings (沈弈 before 沈奕), which left one person as two.
+    const roots = s.characters.filter(c => nameOf(c.name) === c.name);
+    const others = s.characters.filter(c => nameOf(c.name) !== c.name);
+    for (const c of [...roots, ...others]) {
         const main = byName.get(nameOf(c.name));
         if (!main) {
             byName.set(c.name, { ...c, aliases: [...(c.aliases || [])] });
@@ -256,6 +274,22 @@ function foldSheet(sheet) {
         address: s.address.map(x => ({ ...x, speaker: nameOf(x.speaker), listener: nameOf(x.listener) })),
         terms: s.terms
     });
+}
+
+// Different people with one Khmer name: the viewer can't tell who is meant (沈奕 the hero and 沈鸿
+// his uncle were both ស៊ូស៊ូ). -> [{ khmer, names: [{ name, english }] }], one entry per spelling
+// shared by two or more people. Shared titles (唐总) and the spellings of one person are not people
+// of their own.
+function findNameClashes(sheet) {
+    const s = foldSheet(sheet);
+    const byKhmer = new Map();
+    for (const c of s.characters) {
+        if (isSharedTitle(c.name, s.characters)) continue;
+        const key = c.khmer.replace(/\s+/g, '');
+        if (!byKhmer.has(key)) byKhmer.set(key, { khmer: c.khmer, names: [] });
+        byKhmer.get(key).names.push({ name: c.name, ...(c.english ? { english: c.english } : {}) });
+    }
+    return [...byKhmer.values()].filter(g => g.names.length > 1);
 }
 
 // The series' speakers list with one entry per person: lines counted together, pictures kept.
@@ -327,7 +361,7 @@ function buildCharacterSheetPrompt({ lines, known, glossaryHint = '', speakers =
 Read the dialogue below. Each line is the original-language dialogue; [Male]/[Female] is the speaker's gender heard in the audio, and "=> ..." is the Khmer already used for that line, when there is one.
 
 Return a JSON object with:
-- "characters": every named character who speaks or is talked about (at most ${MAX_CHARACTERS}): "name" exactly as written in the original dialogue (the shortest form, e.g. 林峰 not 林峰哥哥), "khmer" the Khmer spelling to use (a natural Khmer transliteration; when the Khmer lines already spell the name, copy that spelling exactly), "gender" Male / Female / Unknown, "role" 1-4 English words (e.g. "emperor", "heroine's maid"), "aliases" the other ways the dialogue writes THE SAME person (a same-sounding character such as 陆宴辞 for 陆晏辞, the given name alone, a title only they hold; usually none). One person is ONE entry: never list another spelling of someone as a character of their own. "english" the name in English letters for the user, who reads no Chinese: a name in pinyin without tone marks, surname first, each part capitalised (陆晏辞 -> Lu Yanci), a role translated (母亲 -> Mother, 助理 -> Assistant).
+- "characters": every named character who speaks or is talked about (at most ${MAX_CHARACTERS}): "name" exactly as written in the original dialogue (the shortest form, e.g. 林峰 not 林峰哥哥), "khmer" the Khmer spelling to use (a natural Khmer transliteration of THIS name's sound; when the Khmer lines already spell the name, copy that spelling exactly - unless it is another person's name). Every person gets a Khmer name of their own: two different people never share one spelling, and one surname is written the same way for everyone who has it (沈征 = សិនជឹង, so 沈奕 = សិនអ៊ី and 沈鸿 = សិនហុង, not ស៊ូស៊ូ for both), "gender" Male / Female / Unknown, "role" 1-4 English words (e.g. "emperor", "heroine's maid"), "aliases" the other ways the dialogue writes THE SAME person (a same-sounding character such as 陆宴辞 for 陆晏辞, the given name alone, a title only they hold; usually none). One person is ONE entry: never list another spelling of someone as a character of their own. "english" the name in English letters for the user, who reads no Chinese: a name in pinyin without tone marks, surname first, each part capitalised (陆晏辞 -> Lu Yanci), a role translated (母亲 -> Mother, 助理 -> Assistant).
 - "address": for characters who talk to each other (at most ${MAX_ADDRESS} pairs): "speaker" and "listener" (names as in "characters"), "calls" the Khmer word the speaker uses for the listener, "self" the Khmer word the speaker uses for themself. Choose them by the relationship:
 ${KHMER_FORMS_OF_ADDRESS}
 - "terms": recurring named places, sects, clans, companies, titles, techniques or items (at most ${MAX_TERMS}): "original" exactly as written, "khmer" the Khmer to use.
@@ -486,6 +520,7 @@ module.exports = {
     seriesEnglishOf,
     foldSheet,
     foldSpeakers,
+    findNameClashes,
     addSeriesSpeakers,
     formatSpeakersForPrompt,
     castDir,

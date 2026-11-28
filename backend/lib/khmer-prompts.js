@@ -21,6 +21,20 @@ function khmerMaxSyllables(seconds) {
     return Math.max(2, Math.round(s * KHMER_SYLLABLES_PER_SEC));
 }
 
+// The time a line's Khmer may take: its own duration plus the pause before the next line, up to
+// PAUSE_MAX_SEC. Chinese says a lot in few syllables, so a budget from the line's own duration
+// alone left most lines too short to keep their meaning. Voicing uses the same pause
+// (findOverlongLines). nextStart: the next line's start (null/undefined: unknown, no pause).
+const PAUSE_MAX_SEC = 1.0;
+const PAUSE_GAP_SEC = 0.05;
+function secondsWithPause(start, end, nextStart) {
+    const own = Number(end) - Number(start);
+    if (!(own > 0)) return null;
+    const pause = Number.isFinite(Number(nextStart)) && nextStart !== null
+        ? Math.max(0, Math.min(PAUSE_MAX_SEC, Number(nextStart) - PAUSE_GAP_SEC - Number(end))) : 0;
+    return Number((own + pause).toFixed(2));
+}
+
 // How long a subtitle line lasts, from whichever timing fields the caller sent:
 // a fitted slot, the editor's textStart/textEnd, or plain start/end.
 function lineSeconds(sub) {
@@ -83,22 +97,44 @@ const KHMER_FORMS_OF_ADDRESS = `2. FORMS OF ADDRESS (របៀបហៅគ្ន
 
 const KHMER_DUBBING_RULES = `💎 NATURAL & READABLE KHMER DUBBING RULES (ខ្លឹម ងាយអាន ឥតទាក់ ដូចរឿងភាគទូរទស្សន៍):
 
-1. LENGTH MATCHES THE ORIGINAL LINE (វែងខ្លីស្របនឹងសំដីដើម):
-   - The Khmer line must take about as long to say as the original: about ${Math.floor(KHMER_SYLLABLES_PER_SEC)} to ${Math.ceil(KHMER_SYLLABLES_PER_SEC)} Khmer syllables per second of the line's duration (start to end).
+0. MEANING FIRST - A KHMER VIEWER MUST UNDERSTAND EVERY LINE (ន័យត្រូវ ស្ដាប់យល់ភ្លាម):
+   - Priority, in this order: (1) the line says what the speaker MEANS; (2) it sounds like natural spoken Khmer; (3) it fits the time. Never give up (1) for (3).
+   - Read the scene first: who is talking to whom, what just happened, and what the line is for (a threat, a deal, a joke, teasing, a warning).
+   - Keep every fact the story needs: who, what, which, where, when, numbers, names and every "not". ❌ "ដឹងតែវាចូល ណាបានហើយ" (lost "which road") -> ✅ "ឲ្យតែដឹងថាវាចូលផ្លូវណា".
+   - Chinese sayings, polite set phrases, jokes and wordplay (成语, 俗语, 客套话): translate what they MEAN, never word for word:
+     * 久仰 (meeting someone for the first time) -> "ឮឈ្មោះលោកយូរហើយ" (❌ "យូរហើយដែលមិនបានជួប" - they have never met)
+     * 我们各取所需 -> "យើងម្នាក់បានម្យ៉ាង" (❌ "យើងត្រូវរៀងខ្លួន" - that says the opposite)
+     * 我是来帮你翻盘的 -> "ខ្ញុំមកជួយឲ្យលោកឈ្នះវិញ"
+     * 你属狐狸的？ (teasing: you're so quick and crafty) -> "នាងជាកញ្ជ្រោងមែនទេ?" (❌ "កើតឆ្នាំកញ្ជ្រោង" - there is no fox year; calling someone កញ្ជ្រោង already means crafty)
+   - Choose the exact word for the thing: 测 = វាស់ (measure), not រក (look for); 柴 = អុស (firewood); 会 (will) is not គប្បី (ought to).
+   - Each line translates its own original: never repeat a neighbouring line's Khmer.
+
+1. LENGTH FITS THE TIME - AFTER THE MEANING (វែងខ្លីស្របនឹងសំដីដើម):
+   - The Khmer line should take about as long to say as the original: about ${Math.floor(KHMER_SYLLABLES_PER_SEC)} to ${Math.ceil(KHMER_SYLLABLES_PER_SEC)} Khmer syllables per second of the line's duration (start to end).
    - A short line stays short. A long line keeps its full meaning in natural spoken Khmer. Never summarize content away, and never pad.
+   - Make a line fit by dropping filler and words the scene already makes clear - never the meaning. When the full meaning really cannot fit, the line may run a little over (about 20%).
    - Say it the way people talk: no textbook sentences or multi-clause explanations.
 
 ${KHMER_FORMS_OF_ADDRESS}
 
-3. ABSOLUTE BAN ON ROBOTIC & FORMAL TEXTBOOK WORDS (ហាមដាច់ខាតពាក្យអូសបន្លាយបែបសៀវភៅ):
+3. NATURAL KHMER SENTENCES (វេយ្យាករណ៍និយាយធម្មជាតិ):
+   - Drop "you" / "I" when the scene makes clear who is meant - spoken Khmer does this all the time: "你有火？" -> "មានភ្លើងទេ?"; "你真要比？" -> "ចង់ប្រកួតមែនហ្អេស?"; "你捆柴挺快" -> "ចងអុសបានលឿនណាស់។"
+   - When a pronoun is needed, put it at the START of the sentence, chosen by FORMS OF ADDRESS - never stuck between the topic and the rest: ❌ "ចងអុស អ្នកឯងលឿនណាស់" -> ✅ "អ្នកឯងចងអុសបានលឿនណាស់" or just "ចងអុសបានលឿនណាស់".
+   - Word order: (who) + verb + object + បាន + how + final particle: "ចាប់ទន្សាយបានលឿនម្ល៉េះ", "ចងអុសបានលឿនណាស់".
+   - "បាន" AFTER a verb (can / manage to: "ចងបានលឿន", "ចូលបាន") is natural spoken Khmer - use it. Only the past-tense "បាន" BEFORE a verb is usually not needed (rule 4).
+   - A final particle carries the tone: "តើ" at the END = indeed / after all ("ខ្ញុំឲ្យនាងប្រើអន្ទាក់តើ"); "ដែរ" = also, quite, or softer ("ក្រអឺតដែរតើ!", "ក៏ទៅដល់ដែរ"); "ចុះ" = go ahead / let it be; "ហើយ" = already; "ទៅ" = a suggestion; "ហ្អេស" / "ហី" = a surprised question.
+   - Written and formal words do not belong in dialogue: ❌ "ពួកវាគប្បីនឹងយឺត" -> ✅ "ពួកវាដើរយឺតខ្លួនឯងហើយ"; ❌ "ឱ្យនាងឃើញថាអ្វីជាសមត្ថភាពពិតប្រាកដ" -> ✅ "ចាំមើលស្នាដៃខ្ញុំ!"
+   - Spell every word in full with standard spelling: never a vowel sign without its consonant or a vowel sign written twice ("ធ្វើុត", "ទេី", "នេេះ" are broken).
+
+4. ABSOLUTE BAN ON ROBOTIC & FORMAL TEXTBOOK WORDS (ហាមដាច់ខាតពាក្យអូសបន្លាយបែបសៀវភៅ):
    - 🚫 BAN "តើ..." at the beginning of questions (e.g. ❌ "តើបងធ្វើអ្វី?" -> ✅ "បងធ្វើអីហ្នឹង?").
-   - 🚫 BAN unnecessary past tense "បាន..." (e.g. ❌ "ខ្ញុំបានដឹងហើយ" -> ✅ "ខ្ញុំដឹងហើយ").
+   - 🚫 BAN unnecessary past tense "បាន..." before a verb (e.g. ❌ "ខ្ញុំបានដឹងហើយ" -> ✅ "ខ្ញុំដឹងហើយ"). "បាន" after a verb (rule 3) is fine.
    - 🚫 BAN continuous "កំពុងតែ..." (e.g. ❌ "កំពុងតែទៅ..." -> ✅ "កំពុងទៅ...").
    - 🚫 BAN possessive "របស់អ្នក / របស់ខ្ញុំ" (e.g. ❌ "ដៃរបស់អ្នក" -> ✅ "ដៃបង" / "ដៃអូន", per FORMS OF ADDRESS).
    - 🚫 BAN polite filler "សូមមេត្តា / សូម..." unless addressing kings or royal superiors.
    - 🚫 BAN word-for-word translation ("ចំពោះរឿងនេះ", "គឺជារឿងដែល", "ដើម្បីធ្វើការ", "មានការ...").
 
-4. GOLDEN DUBBING REPLACEMENTS (គំរូពាក្យសន្ទនាភាពយន្ត):
+5. GOLDEN DUBBING REPLACEMENTS (គំរូពាក្យសន្ទនាភាពយន្ត):
    - ❌ "តើអ្នកកំពុងតែធ្វើអ្វីនៅទីនេះ?" -> ✅ she to him "បងធ្វើអីនៅនេះ?" / he to her "អូនធ្វើអីនៅនេះ?" / parent to child: "កូនធ្វើអីនៅនេះ?" / angry: "ឯងធ្វើអីនៅនេះ?!"
    - ❌ "តើមានរឿងអ្វីបានកើតឡើងចំពោះអ្នក?" -> ✅ "មានរឿងអីកើតឡើង?"
    - ❌ "តើនេះជាការពិតមែនទេ?" -> ✅ "ពិតមែនហ្អេស?!" / "មែនអត់?"
@@ -120,20 +156,20 @@ ${KHMER_FORMS_OF_ADDRESS}
    - ❌ "តើអ្នកសុខសប្បាយជាទេ?" -> ✅ "សុខសប្បាយទេ?" / "មិនអីទេហី?"
    - ❌ "ឆាប់ចេញពីទីនេះភ្លាម" -> ✅ "ចេញពីនេះភ្លាម!"
 
-5. FLUID CONVERSATIONAL PARTICLES (ពាក្យបន្ថែមបែបសន្ទនាធម្មជាតិ):
+6. FLUID CONVERSATIONAL PARTICLES (ពាក្យបន្ថែមបែបសន្ទនាធម្មជាតិ):
    - Localize Asian particles (的, 了, 吧, 呢, 啊, 嘛) into natural colloquial Khmer ("ហ្នឹង", "ហើយ", "ចុះ", "មែនទេ", "ណា", "ហ្ហ៎ា", "អត់", "ហី", "ទៅ", "មក").
 
-6. SUBTITLE LEGIBILITY & SPACING (អានស្រួល មើលច្បាស់):
+7. SUBTITLE LEGIBILITY & SPACING (អានស្រួល មើលច្បាស់):
    - Insert a clean standard space between grammatical clauses (e.g. "សុំទោស ខ្ញុំមកយឺត").
    - DO NOT insert zero-width characters (ZWSP). Ensure clean standard UTF-8 Khmer text.
    - Keep punctuation clean, minimal, and expressive (!, ?, ..., ?!).
 
-7. VOICE ACTING & NATURAL CADENCE (ចង្វាក់សន្ទនា និងអារម្មណ៍តួអង្គ):
+8. VOICE ACTING & NATURAL CADENCE (ចង្វាក់សន្ទនា និងអារម្មណ៍តួអង្គ):
    - Translate for the EAR, not just the eyes: lines must sound natural and fluid when spoken aloud by a voice actor.
    - For emotional pauses, use clean ellipsis "..." to give the voice breathing room between dramatic thoughts.
    - For urgent shouts or battle calls, use short, punchy wording matching visual lip bursts (!, ?!).
 
-8. KHMER TTS & PRONUNCIATION NORMALIZATION (ស្តង់ដារអក្ខរាវិរុទ្ធ និងបញ្ចេញសំឡេង TTS):
+9. KHMER TTS & PRONUNCIATION NORMALIZATION (ស្តង់ដារអក្ខរាវិរុទ្ធ និងបញ្ចេញសំឡេង TTS):
    - Follow standard Khmer Dictionary (Chuon Nath / NCKL) spelling.
    - Numbers (0-9 and ០-៩) must be normalized into full Khmer words (e.g. 25 -> ម្ភៃប្រាំ, 100 -> មួយរយ, 2026 -> ពីរពាន់ម្ភៃប្រាំមួយ, ទី 1 -> ទីមួយ).
    - Decimals: Spoken natural style with "ចុច" (e.g. 44.6 -> សែសិបបួន ចុច ប្រាំមួយ, 99.99 -> កៅសិបប្រាំបួន ចុច កៅសិបប្រាំបួន).
@@ -244,7 +280,12 @@ function parseSrtBlocksForTranslate(content) {
             if (tag && !['male', 'female'].includes(tag[1].toLowerCase())) res.role = tag[1];
             return res;
         })
-        .filter(Boolean);
+        .filter(Boolean)
+        .map((line, i, all) => {
+            // The budget counts the pause before the next line too ("seconds" stays the line's own).
+            const room = line.seconds ? secondsWithPause(line.start, line.end, all[i + 1] ? all[i + 1].start : null) : null;
+            return room ? { ...line, maxSyllables: khmerMaxSyllables(room) } : line;
+        });
 }
 
 // The item the model sees for one SRT line: timing and the speaker's gender only when known.
@@ -274,8 +315,8 @@ ${KHMER_DUBBING_RULES}
 LINE MATCHING & EMOTION RULES:
 1. Exact 1-to-1 Line Match:
    - Output exactly one item for every input line, using the same "i" number. Never merge, split, skip, or reorder lines.
-   - Use the neighbouring lines and PREVIOUS DIALOGUE as context - above all to tell who is talking to whom (a father to his son, a wife to her husband, a servant to a master) before choosing pronouns - but translate each line on its own.
-   - "seconds" is how long the line lasts and "maxSyllables" its Khmer syllable budget: stay within it, but don't pad a short line up to it. A line without them matches the original's length.
+   - Use the neighbouring lines and PREVIOUS DIALOGUE as context - above all to tell who is talking to whom (a father to his son, a wife to her husband, a servant to a master) and what is going on in the scene - but translate each line on its own, and never repeat a neighbouring line's Khmer.
+   - "seconds" is how long the line lasts and "maxSyllables" its Khmer syllable budget (it already counts the short pause before the next line): aim for it, and don't pad a short line up to it. When the full meaning cannot fit, go a little over rather than drop what the line means (rule 0). A line without them matches the original's length.
 
 2. Speaker Gender & Emotional Acting Detection:
    - Assign "gender": "Male" or "Female" - the gender of the character speaking the line, from context, pronouns and relationships.
@@ -326,12 +367,14 @@ Read the lines in order as one scene, the way a Khmer viewer will hear them, and
    b. WRONG FORM OF ADDRESS: a pronoun that does not fit who is speaking to whom (rules below), or that changes between the same two people within the scene for no reason.
    c. WRONG NAME: a character, place or title spelled differently from the glossary / character sheet or from the rest of the lines.
    d. NOT SPOKEN KHMER: a textbook or word-for-word line the rules below forbid, or a word left in another language or script.
+   e. HARD TO UNDERSTAND: a line a Khmer viewer would not understand on first hearing - a saying or joke translated word for word, a fact the story needs left out (who, which, where, a "not"), a pronoun stuck in the middle of the sentence, a formal written word, or a broken spelling.
+   f. COPIED LINE: the same Khmer as a neighbouring line although the originals say different things.
 Do NOT rewrite a line that is already correct just to word it differently. Most lines should come back unchanged - leave them out.
 
 ${KHMER_DUBBING_RULES}
 
 KEEPING TIME:
-   - A corrected line takes about as long to say as the line it replaces, and stays within its "maxSyllables" when given.
+   - A corrected line takes about as long to say as the line it replaces, and stays within its "maxSyllables" when given - but a clear meaning comes first: it may run a little longer when that is what it takes (rule 0).
 
 OUTPUT:
    - Return ONLY a valid JSON array of the corrected lines, using each line's "i": [{ "i": 12, "text": "corrected Khmer line" }]
@@ -385,6 +428,7 @@ module.exports = {
     KHMER_DUBBING_RULES,
     toSeconds,
     khmerMaxSyllables,
+    secondsWithPause,
     lineSeconds,
     getKhmerDramaRegisterGuidance,
     parseSrtBlocksForTranslate,

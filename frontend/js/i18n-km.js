@@ -1329,6 +1329,8 @@ window.I18N_KM = {
   "· name check skipped ({0})": "· បានរំលងការពិនិត្យឈ្មោះ ({0})",
   "· names made consistent in {0} line(s)": "· បានធ្វើឲ្យឈ្មោះស៊ីគ្នាក្នុង {0} ឃ្លា",
   "· {0} name(s) saved to the glossary": "· បានរក្សាទុកឈ្មោះ {0} ក្នុងសទ្ទានុក្រម",
+  "Updated: {0} = {1}": "បានកែ៖ {0} = {1}",
+  "Different characters share one Khmer name, so viewers can't tell them apart: {0} = {1}. Give each one its own name in the Character Glossary.": "តួអង្គផ្សេងគ្នាមានឈ្មោះខ្មែរដូចគ្នា អ្នកមើលមិនអាចបែងចែកបានទេ៖ {0} = {1}។ សូមដាក់ឈ្មោះផ្សេងឲ្យម្នាក់ៗ ក្នុងវចនានុក្រមតួអង្គ (Character Glossary)។",
   "· tab {0} partly used {1} (Google rate limit) - re-transcribe if the lines look merged": "· ផ្ទាំង {0} បានប្រើ {1} មួយផ្នែក (ដែនកំណត់ការប្រើរបស់ Google) - សូមបំប្លែងជាអក្សរម្ដងទៀត បើឃ្លាមើលទៅដូចជាជាប់គ្នា",
   "no tab has subtitles and a video": "គ្មានផ្ទាំងណាមានទាំងអក្សររត់ និងវីដេអូទេ",
   "· tab {0} kept the transcribed times ({1})": "· ផ្ទាំង {0} រក្សាពេលវេលាដែលបានបំប្លែងជាអក្សរ ({1})",

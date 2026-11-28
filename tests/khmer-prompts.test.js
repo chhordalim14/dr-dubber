@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const {
-    KHMER_SYLLABLES_PER_SEC, KHMER_DUBBING_RULES, khmerMaxSyllables, lineSeconds,
+    KHMER_SYLLABLES_PER_SEC, KHMER_DUBBING_RULES, khmerMaxSyllables, secondsWithPause, lineSeconds,
     getKhmerDramaRegisterGuidance, parseSrtBlocksForTranslate, translatePromptLine, buildTranslatePrompt
 } = require('../backend/lib/khmer-prompts');
 
@@ -107,21 +107,105 @@ describe('translate-srt keeps timing', () => {
         + '3\r\nnot a time line\r\nskipped\r\n\r\n'
         + '4\r\n00:01:00,000 --> 00:01:05,500\r\n第一行\r\n第二行';
 
-    test('parses start/end/seconds and a syllable budget per block', () => {
+    // Chinese says a lot in few syllables: a budget from the line's own time alone left 57% of
+    // lines fewer Khmer syllables than the Chinese had, so the budget counts the pause before
+    // the next line too (up to 1 s), and "seconds" stays the line's own duration.
+    test('parses start/end/seconds and a syllable budget per block, the pause before the next line included', () => {
         const lines = parseSrtBlocksForTranslate(srt);
         assert.equal(lines.length, 3);
-        assert.deepEqual(lines[0], { text: '你在干什么？', gender: 'Male', start: 1, end: 3, seconds: 2, maxSyllables: 9 });
-        assert.equal(lines[1].maxSyllables, 2, 'a blip still gets at least 2 syllables');
+        // 1-3 s, next line at 3.5 s: 2 s + 0.45 s pause = 2.45 s -> 11 syllables
+        assert.deepEqual(lines[0], { text: '你在干什么？', gender: 'Male', start: 1, end: 3, seconds: 2, maxSyllables: 11 });
+        // a 0.2 s blip with a long silence after it: at most 1 s of pause -> 1.2 s -> 5
+        assert.equal(lines[1].maxSyllables, 5);
+        // the last line: no next line known, no pause
         assert.deepEqual(lines[2], { text: '第一行\n第二行', gender: null, start: 60, end: 65.5, seconds: 5.5, maxSyllables: 25 });
+    });
+
+    test('a blip right before the next line still gets at least 2 syllables', () => {
+        const lines = parseSrtBlocksForTranslate('1\n00:00:01,000 --> 00:00:01,200\n嗯\n\n2\n00:00:01,200 --> 00:00:02,000\n好');
+        assert.equal(lines[0].maxSyllables, 2);
+    });
+
+    test('secondsWithPause adds the pause before the next line, at most 1 s, never a negative one', () => {
+        assert.equal(secondsWithPause(1, 3, 3.5), 2.45);
+        assert.equal(secondsWithPause(1, 3, 10), 3);
+        assert.equal(secondsWithPause(1, 3, 2.5), 2, 'overlapping next line: no pause');
+        assert.equal(secondsWithPause(1, 3, null), 2);
+        assert.equal(secondsWithPause(1, 3, undefined), 2);
+        assert.equal(secondsWithPause(3, 3, 5), null);
     });
 
     test('the prompt line carries seconds and maxSyllables only when timing is known', () => {
         const [first] = parseSrtBlocksForTranslate(srt);
-        assert.deepEqual(translatePromptLine(4, first), { i: 4, text: '你在干什么？', seconds: 2, maxSyllables: 9, gender: 'Male' });
+        assert.deepEqual(translatePromptLine(4, first), { i: 4, text: '你在干什么？', seconds: 2, maxSyllables: 11, gender: 'Male' });
         assert.deepEqual(translatePromptLine(0, { text: 'x', seconds: null }), { i: 0, text: 'x' });
         const prompt = buildTranslatePrompt({ lines: [translatePromptLine(4, first)], glossaryHint: '', genreGuidance: '', previousLines: [] });
-        assert.match(prompt, /"maxSyllables":9/);
-        assert.match(prompt, /"maxSyllables" its Khmer syllable budget/);
+        assert.match(prompt, /"maxSyllables":11/);
+        assert.match(prompt, /"maxSyllables" its Khmer syllable budget \(it already counts the short pause before the next line\)/);
+        assert.match(prompt, /go a little over rather than drop what the line means/);
+        assert.match(prompt, /never repeat a neighbouring line's Khmer/);
+    });
+
+    test('the reviews of Transcribe and Translate size lines with the pause too', () => {
+        assert.match(serverSource, /seconds: secondsWithPause\(c\._start, c\._end, allCues\[i \+ 1\] \? allCues\[i \+ 1\]\._start : null\)/);
+        assert.match(serverSource, /seconds: l\.seconds && secondsWithPause\(l\.start, l\.end, sourceLines\[i \+ 1\] \? sourceLines\[i \+ 1\]\.start : null\)/);
+    });
+});
+
+// The user (a native Khmer reader) found many lines hard to follow: sayings translated word for
+// word (久仰 as "long time no see", 各取所需 as "each go our own way"), facts cut to fit the time,
+// pronouns stuck mid-sentence. Examples checked against the kheng.info dictionary.
+describe('meaning first, natural Khmer sentences', () => {
+    test('meaning comes before length, and length may run a little over to keep it', () => {
+        assert.match(KHMER_DUBBING_RULES, /0\. MEANING FIRST - A KHMER VIEWER MUST UNDERSTAND EVERY LINE/);
+        assert.match(KHMER_DUBBING_RULES, /\(1\) the line says what the speaker MEANS; \(2\) it sounds like natural spoken Khmer; \(3\) it fits the time/);
+        assert.ok(KHMER_DUBBING_RULES.indexOf('0. MEANING FIRST') < KHMER_DUBBING_RULES.indexOf('1. LENGTH FITS THE TIME'));
+        assert.match(KHMER_DUBBING_RULES, /may run a little over \(about 20%\)/);
+        assert.match(KHMER_DUBBING_RULES, /every "not"/);
+    });
+
+    test('sayings and jokes are translated by meaning, with real examples', () => {
+        assert.match(KHMER_DUBBING_RULES, /translate what they MEAN, never word for word/);
+        assert.match(KHMER_DUBBING_RULES, /久仰[^\n]*"ឮឈ្មោះលោកយូរហើយ"/);
+        assert.match(KHMER_DUBBING_RULES, /我们各取所需 -> "យើងម្នាក់បានម្យ៉ាង"/);
+        assert.match(KHMER_DUBBING_RULES, /你属狐狸的？[^\n]*"នាងជាកញ្ជ្រោងមែនទេ\?"/);
+        assert.match(KHMER_DUBBING_RULES, /测 = វាស់/);
+    });
+
+    test('drop clear pronouns, put a needed one first, and verb + object + បាន + how', () => {
+        assert.match(KHMER_DUBBING_RULES, /3\. NATURAL KHMER SENTENCES/);
+        assert.match(KHMER_DUBBING_RULES, /Drop "you" \/ "I" when the scene makes clear who is meant/);
+        assert.match(KHMER_DUBBING_RULES, /"你捆柴挺快" -> "ចងអុសបានលឿនណាស់។"/);
+        assert.match(KHMER_DUBBING_RULES, /❌ "ចងអុស អ្នកឯងលឿនណាស់"/);
+        assert.match(KHMER_DUBBING_RULES, /\(who\) \+ verb \+ object \+ បាន \+ how/);
+    });
+
+    test('បាន after a verb is allowed; only the past-tense បាន before a verb is banned', () => {
+        assert.match(KHMER_DUBBING_RULES, /"បាន" AFTER a verb \(can \/ manage to/);
+        assert.match(KHMER_DUBBING_RULES, /BAN unnecessary past tense "បាន\.\.\." before a verb[^\n]*"បាន" after a verb \(rule 3\) is fine/);
+    });
+
+    test('final particles: តើ only at the end, never to open a question', () => {
+        assert.match(KHMER_DUBBING_RULES, /"តើ" at the END = indeed \/ after all/);
+        assert.match(KHMER_DUBBING_RULES, /BAN "តើ\.\.\." at the beginning of questions/);
+    });
+
+    test('the review looks for lines hard to understand and lines copied from a neighbour', () => {
+        const { buildReviewSystemPrompt } = require('../backend/lib/khmer-prompts');
+        const p = buildReviewSystemPrompt({ genreGuidance: '' });
+        assert.match(p, /HARD TO UNDERSTAND/);
+        assert.match(p, /COPIED LINE/);
+        assert.match(p, /a clear meaning comes first/);
+    });
+
+    test('Transcribe and the timeline fit keep the meaning too', () => {
+        assert.match(serverSource, /The meaning comes first \(rule 0\): when it cannot fit, a line may run a little over - never cut what it means/);
+        assert.match(serverSource, /Never cut a word the sentence needs to make sense/);
+    });
+
+    test('rules are numbered 0 to 9 in order', () => {
+        const nums = [...KHMER_DUBBING_RULES.matchAll(/^(\d)\. [A-Z]/gm)].map(m => Number(m[1]));
+        assert.deepEqual(nums, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
     });
 });
 

@@ -4112,6 +4112,7 @@
               });
 
               const genData = await translateRes.json();
+              window.reportNameClashes?.(genData);
               if (!genData.success) {
                 const errorText = genData.error || "";
                 if (errorText === "RATE_LIMIT_EXCEEDED" || translateRes.status === 429) throw new Error(genData.isDailyQuota ? "DAILY_QUOTA_EXCEEDED" : "RATE_LIMIT_EXCEEDED");
@@ -4274,6 +4275,7 @@
               }).finally(() => clearInterval(progressTimer));
 
               const genData = await transcribeRes.json();
+              window.reportNameClashes?.(genData);
               if (!genData.success) {
                 const errorText = genData.error || "";
                 if (errorText === "RATE_LIMIT_EXCEEDED" || transcribeRes.status === 429) throw new Error(genData.isDailyQuota ? "DAILY_QUOTA_EXCEEDED" : "RATE_LIMIT_EXCEEDED");
@@ -9593,6 +9595,23 @@
     }
     window.getSubtitleStylePreset = () => currentSubtitlePreset;
 
+    // Different characters of one drama with the same Khmer name (the server's nameClashes, sent
+    // with /api/transcribe and /api/translate-srt results): viewers can't tell them apart (the
+    // hero 沈奕 and his uncle 沈鸿 were both ស៊ូស៊ូ). Each set of names is shown once per session,
+    // so a whole series of parts doesn't repeat it for every tab.
+    const shownNameClashes = new Set();
+    window.reportNameClashes = (data) => {
+      const clashes = Array.isArray(data?.nameClashes) ? data.nameClashes : [];
+      for (const c of clashes) {
+        const names = (c?.names || []).map((n) => (n?.english ? `${n.name} (${n.english})` : n?.name)).filter(Boolean);
+        if (names.length < 2 || !c.khmer) continue;
+        const key = `${c.khmer}|${names.join("|")}`;
+        if (shownNameClashes.has(key)) continue;
+        shownNameClashes.add(key);
+        showToast(`Different characters share one Khmer name, so viewers can't tell them apart: ${names.join(" / ")} = ${c.khmer}. Give each one its own name in the Character Glossary.`, "warning", { duration: 15000 });
+      }
+    };
+
     // One Character Glossary for the whole app: the list kept by DAI-Transcribe's
     // "Character Glossary" (localStorage aiDubberGlossary, [{ original, khmer }]),
     // also filled by All Tabs ➔ "Make names consistent". Every Gemini transcribe /
@@ -11586,7 +11605,7 @@
       toastStack.appendChild(node);
       _lucideCreateIcons();
 
-      const duration = options.linkUrl ? 8000 : 3000;
+      const duration = options.duration || (options.linkUrl ? 8000 : 3000);
       removeTimeout = setTimeout(dismiss, duration);
     };
 

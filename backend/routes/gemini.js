@@ -24,19 +24,20 @@ function getDRRouterProxyForKey(apiKey) {
 const { createCodeCraftClient } = require('../lib/codecraft');
 const { createKeyRest } = require('../lib/key-rest');
 const {
-    KHMER_SYLLABLES_PER_SEC, KHMER_DUBBING_RULES, khmerMaxSyllables, lineSeconds,
+    KHMER_SYLLABLES_PER_SEC, KHMER_DUBBING_RULES, khmerMaxSyllables, secondsWithPause, lineSeconds,
     getKhmerDramaRegisterGuidance, parseSrtBlocksForTranslate, translatePromptLine,
     buildTranslateSystemPrompt, buildTranslateUserPrompt, buildReviewSystemPrompt,
     buildReviewUserPrompt, estimateSpeechSeconds, findOverlongLines
 } = require('../lib/khmer-prompts');
 const { MISSING_RESPONSE_SCHEMA, buildMissingLinesPrompt, checkMissingLine } = require('../lib/missing-lines');
+const { relevantGlossary, collectSourceText } = require('../lib/glossary-filter');
 const { SPLIT_RESPONSE_SCHEMA, buildSplitLinesPrompt, checkSplitLine } = require('../lib/split-lines');
 const {
     CHARACTER_SHEET_SCHEMA, normalizeSheet, mergeSheets, sheetSize,
     applyGlossaryToSheet, formatSheetForPrompt, buildCharacterSheetPrompt,
     loadSeriesSheet, saveSeriesSheet, loadSeriesSpeakers, saveSeriesSpeakers,
     addSeriesSpeakers, seriesNameOf, foldSpeakers, formatSpeakersForPrompt,
-    castDir, withSeriesLock
+    castDir, withSeriesLock, findNameClashes
 } = require('../lib/character-sheet');
 const NameConsistency = require('../../frontend/js/name-consistency.js');
 
@@ -203,17 +204,20 @@ function isGeminiModelGone(apiKey, m) {
 }
 const isJsonModeUnsupported = (msg) => /JSON mode is not enabled|response_?mime_?type|response_?schema/i.test(String(msg || ''));
 
-// Thinking tokens are billed as output. Text jobs that follow clear rules (translate, shorten, the
-// character sheet) ask for little of it: Gemini 3 by level, 2.5 by budget (2.5 Pro can't go below
+// Thinking tokens are billed as output. Jobs that follow clear rules (the character sheet, emotions,
+// splitting lines) ask for little of it ('low'). Writing Khmer (translate, re-translate, shorten)
+// asks for 'medium': with almost none, sayings and jokes came out word for word and lines lost
+// the facts that made them make sense. Gemini 3 by level, 2.5 by budget (2.5 Pro can't go below
 // 128); older and unknown models are sent nothing. A model that refuses the setting gets the
 // request again without it, and is remembered.
 const geminiNoThinkingConfigModels = new Set();
+const GEMINI_25_MEDIUM_BUDGET = 1024;
 function geminiThinkingConfig(model, level) {
     const m = String(model || '').match(/^gemini-(\d+(?:\.\d+)?)-(flash-lite|flash|pro)\b/);
     if (!m || !level) return null;
     const version = parseFloat(m[1]);
     if (version >= 3) return { thinkingLevel: level };
-    if (version >= 2.5) return { thinkingBudget: m[2] === 'pro' ? 128 : 0 };
+    if (version >= 2.5) return { thinkingBudget: level === 'medium' ? GEMINI_25_MEDIUM_BUDGET : m[2] === 'pro' ? 128 : 0 };
     return null;
 }
 
@@ -418,7 +422,7 @@ function formatWait(ms) {
 // request moving to another model - for transcription, where another model splits the
 // dialogue differently (fewer, longer lines).
 // timeoutMs: how long one attempt may take before it counts as a dead connection.
-// thinking: 'low' asks for little thinking (geminiThinkingConfig) - text jobs only.
+// thinking: 'low' or 'medium' asks for little or some thinking (geminiThinkingConfig) - text jobs only.
 // onlyModel: ask exactly requestedModel, no other (Check limits, which asks each model in turn).
 async function executeGeminiGenerate(apiKey, requestedModel, payload, signal, { stayOnModel = false, timeoutMs = GEMINI_ATTEMPT_TIMEOUT_MS, thinking = null, onlyModel = false } = {}) {
     apiKey = String(apiKey || '').trim();
@@ -1102,7 +1106,7 @@ TIMESTAMPS & ACTING RULES:
    - Only real spoken dialogue and narration. Skip background music, song lyrics, sound effects, breathing, and crowd noise.
    - Never invent, summarize, or skip dialogue. If the clip has no speech, return [].
    - "originalText" is the exact words spoken in the original language.
-   - Size each "text" to its own start-to-end duration: about ${KHMER_SYLLABLES_PER_SEC} Khmer syllables per second (a 2-second line is about ${Math.round(2 * KHMER_SYLLABLES_PER_SEC)} syllables).
+   - Size each "text" to its own start-to-end duration: about ${KHMER_SYLLABLES_PER_SEC} Khmer syllables per second (a 2-second line is about ${Math.round(2 * KHMER_SYLLABLES_PER_SEC)} syllables), plus the short pause before the next line. The meaning comes first (rule 0): when it cannot fit, a line may run a little over - never cut what it means.
    - "text" is written in Khmer script only: never leave a word in Chinese or put in a word from any other language or script (Arabic, Thai, Japanese...). Write names and places in Khmer letters.
 
 3. Speaker, Gender & Emotion:
@@ -1741,7 +1745,7 @@ async function retranslateCues(targets, allCues, { keys, model, promptOpts, glos
             generationConfig: { responseMimeType: 'application/json', responseSchema: TRANSLATE_RESPONSE_SCHEMA, maxOutputTokens: 16384 }
         };
         const out = await geminiWithKeys(keys, async (key) => {
-            const r = await generateText(key, model, payload, signal, { timeoutMs: GEMINI_TEXT_TIMEOUT_MS, thinking: 'low' });
+            const r = await generateText(key, model, payload, signal, { timeoutMs: GEMINI_TEXT_TIMEOUT_MS, thinking: 'medium' });
             return r.success ? { ok: true, items: parseJsonArrayLoose(r.text) || [] } : { ok: false, result: r };
         }, signal, { busyBudgetMs: REPAIR_BUSY_BUDGET_MS });
         if (!out.ok) return { fixed, error: out.result };
@@ -1858,6 +1862,24 @@ const CHARACTER_SHEETS_DIR = path.join(STORAGE_BASE, 'character_sheets');
 const { saveBatchResult } = require('../lib/batch-results');
 const BATCH_RESULTS_DIR = path.join(STORAGE_BASE, 'batch_results');
 const CHARACTER_SHEET_MIN_LINES = 20;
+
+// The glossary as the prompt carries it ('' when there is none).
+function glossaryPromptHint(glossary) {
+    return glossary ? `\n\nCUSTOM CHARACTER / GLOSSARY DICTIONARY (STRICTLY USE THESE TRANSLATIONS):\n${typeof glossary === 'string' ? glossary : JSON.stringify(glossary, null, 2)}` : '';
+}
+
+// Different people of this drama with one Khmer name, as the app will show them to the user
+// (findNameClashes). The glossary's spellings count: they are what the translators write.
+function seriesNameClashes(sourceFilePath, glossary) {
+    if (!sourceFilePath) return [];
+    try {
+        const sheet = loadSeriesSheet(CHARACTER_SHEETS_DIR, sourceFilePath);
+        return sheet ? findNameClashes(applyGlossaryToSheet(sheet, glossary)) : [];
+    } catch (e) {
+        console.warn('[Sheet] Could not check the names:', e.message);
+        return [];
+    }
+}
 
 async function prepareCharacterSheet({ lines, sourceFilePath, glossary, glossaryHint = '', keys, model, signal, usage }) {
     return withSeriesLock(CHARACTER_SHEETS_DIR, sourceFilePath, async () => {
@@ -2139,6 +2161,7 @@ ${task}
 STRICT DUBBING CONSTRAINTS:
 1. Stay within each line's "maxSyllables" spoken syllables when it has one. Shorter is fine; never exceed it.
 2. Keep the exact emotional tone, dramatic intent, speaker register and key plot facts. It must sound like authentic, natural film/TV dialogue.
+   The viewer must still understand the line: who, what, which, where, numbers, names and every "not" stay in it. Never cut a word the sentence needs to make sense. When a line cannot fit without losing its meaning, return the shortest line that still says it clearly.
 3. Keep forms of address and pronouns (បង, អូន, លោក, ព្រះអង្គ ...) and names unchanged - they carry who is talking to whom. Cut other words first: filler particles, formal padding and verbose structures.
 4. Write in ${targetLanguage} (the same language as "text"). "sourceText", when present, is the original-language line for meaning reference only.${registerGuidance}${glossaryHint}
 
@@ -2188,7 +2211,7 @@ async function shortenLines({ items, targetLanguage = 'Khmer', genre = 'historic
             generationConfig: { responseMimeType: 'application/json', responseSchema: SHORTEN_RESPONSE_SCHEMA }
         };
         const out = await geminiWithKeys(keyPool, async (key) => {
-            const r = await generateText(key, model, payload, signal, { timeoutMs: GEMINI_TEXT_TIMEOUT_MS, thinking: 'low' });
+            const r = await generateText(key, model, payload, signal, { timeoutMs: GEMINI_TEXT_TIMEOUT_MS, thinking: 'medium' });
             if (!r.success) return { ok: false, result: r };
             addTokenUsage(usage, r);
             const parsed = parseJsonArrayLoose(r.text);
@@ -2324,6 +2347,23 @@ function createGeminiRouter(options = {}) {
 
     const router = express.Router();
 
+    // ── Character Glossary: only the names a request can use (lib/glossary-filter.js) ──
+    // The app sends its whole glossary (every drama ever dubbed) with each request. Here it is cut
+    // to the names in the request's own original-language text and this drama's names. The full
+    // list stays on req.fullGlossary: Transcribe only knows its text once it has heard the audio.
+    router.use((req, res, next) => {
+        const body = req.body;
+        if (req.method !== 'POST' || !body || !body.glossary || typeof body.glossary !== 'object') return next();
+        try {
+            const sheet = body.sourceFilePath ? loadSeriesSheet(CHARACTER_SHEETS_DIR, body.sourceFilePath) : null;
+            req.fullGlossary = body.glossary;
+            body.glossary = relevantGlossary(body.glossary, { text: collectSourceText(body), sheet });
+        } catch (e) {
+            console.warn('[Glossary] Could not narrow the glossary:', e.message);
+        }
+        next();
+    });
+
     // ── Transcribe route ──
     router.post('/transcribe', backgroundable(async (req, res) => {
         const {
@@ -2389,7 +2429,7 @@ function createGeminiRouter(options = {}) {
         try {
             const genreRegister = genre || dramaRegister || 'historical';
             console.log(`[Transcribe] register: ${genreRegister}${videoName ? ` (${videoName})` : ''}`);
-            const userGlossaryHint = glossary ? `\n\nCUSTOM CHARACTER / GLOSSARY DICTIONARY (STRICTLY USE THESE TRANSLATIONS):\n${typeof glossary === 'string' ? glossary : JSON.stringify(glossary, null, 2)}` : '';
+            const userGlossaryHint = glossaryPromptHint(glossary);
             const savedSheet = loadSeriesSheet(CHARACTER_SHEETS_DIR, sourceFilePath);
             const seriesSheet = savedSheet && applyGlossaryToSheet(savedSheet, glossary);
             const seriesSpeakers = sourceFilePath ? foldSpeakers(loadSeriesSpeakers(CHARACTER_SHEETS_DIR, sourceFilePath), seriesSheet) : [];
@@ -2582,15 +2622,22 @@ function createGeminiRouter(options = {}) {
             const speakerNameOf = seriesNameOf(seriesSheet, seriesSpeakers);
             allCues.forEach(c => { if (c.speaker) c.speaker = speakerNameOf(c.speaker); });
 
+            // Now the dialogue is known: the glossary names it contains (before, only the drama's
+            // names on the sheet could be told apart from the rest of the glossary).
+            const lineGlossary = req.fullGlossary
+                ? relevantGlossary(req.fullGlossary, { text: allCues.map(c => c.originalText || '').join('\n'), sheet: savedSheet })
+                : glossary;
+            const lineGlossaryHint = glossaryPromptHint(lineGlossary);
+
             let reviewed = 0;
             if (review !== false) {
                 const reviewTexts = allCues.map(c => c.text);
                 progress.note = 'Checking the Khmer lines against the original';
                 reviewed = await reviewKhmerLines({
-                    lines: allCues.map(c => ({ source: c.originalText || '', gender: c.gender, seconds: c._end - c._start })),
+                    lines: allCues.map((c, i) => ({ source: c.originalText || '', gender: c.gender, seconds: secondsWithPause(c._start, c._end, allCues[i + 1] ? allCues[i + 1]._start : null) })),
                     texts: reviewTexts,
                     apply: (i, text) => { allCues[i].text = text; allCues[i]._reviewed = true; },
-                    genre: genreRegister, glossary, glossaryHint: userGlossaryHint, sheetHint: formatSheetForPrompt(seriesSheet),
+                    genre: genreRegister, glossary: lineGlossary, glossaryHint: lineGlossaryHint, sheetHint: formatSheetForPrompt(seriesSheet),
                     keyPool: textKeys(keyPool), model, signal: abortCtrl.signal, usage: promptOpts.usage, tag: 'Transcribe',
                     share: true // with the other tabs being transcribed (sharedReview)
                 });
@@ -2601,7 +2648,7 @@ function createGeminiRouter(options = {}) {
                 lines: allCues.map(c => ({ text: c.originalText || '', start: c._start, seconds: c._end - c._start })),
                 texts: allCues.map(c => c.text),
                 apply: (i, text) => { allCues[i].text = text; },
-                genre: genreRegister, glossary, keyPool: textKeys(keyPool), model, signal: abortCtrl.signal,
+                genre: genreRegister, glossary: lineGlossary, keyPool: textKeys(keyPool), model, signal: abortCtrl.signal,
                 sheetHint: formatSheetForPrompt(seriesSheet), tag: 'Transcribe', usage: promptOpts.usage
             });
             console.log(`[Transcribe] ${allCues.length} lines${videoName ? ` (${videoName})` : ''}: ${formatTokenUsage(promptOpts.usage)}`);
@@ -2622,9 +2669,10 @@ function createGeminiRouter(options = {}) {
             if (sourceFilePath && allCues.length >= CHARACTER_SHEET_MIN_LINES) {
                 prepareCharacterSheet({
                     lines: allCues.map(c => ({ text: c.originalText, gender: c.gender, khmer: c.text })),
-                    sourceFilePath, glossary, glossaryHint: userGlossaryHint, keys: textKeys(keyPool), model, usage: createTokenUsage()
+                    sourceFilePath, glossary: lineGlossary, glossaryHint: lineGlossaryHint, keys: textKeys(keyPool), model, usage: createTokenUsage()
                 }).catch(e => console.warn('[Sheet] Series sheet update failed:', e.message));
             }
+            const nameClashes = seriesNameClashes(sourceFilePath, req.fullGlossary || glossary);
 
             const data = finalizeCues(allCues);
             if (pieces) pieceMemory.forEach((e, k) => { if (e === pieces) pieceMemory.delete(k); }); // done: a new Transcribe starts fresh
@@ -2651,7 +2699,8 @@ function createGeminiRouter(options = {}) {
                 repair,
                 modelsUsed: [...modelsUsed],
                 fallbackModels,
-                rawText: rawParts.filter(Boolean).join('\n')
+                rawText: rawParts.filter(Boolean).join('\n'),
+                ...(nameClashes.length ? { nameClashes } : {})
             });
 
         } catch (e) {
@@ -2767,7 +2816,7 @@ function createGeminiRouter(options = {}) {
         try {
             const genreRegister = genre || dramaRegister || 'historical';
             const genreGuidance = getKhmerDramaRegisterGuidance(genreRegister);
-            const glossaryHint = glossary ? `\n\nCUSTOM CHARACTER / GLOSSARY DICTIONARY (STRICTLY USE THESE TRANSLATIONS):\n${typeof glossary === 'string' ? glossary : JSON.stringify(glossary, null, 2)}` : '';
+            const glossaryHint = glossaryPromptHint(glossary);
 
             const sourceLines = parseSrtBlocksForTranslate(content);
             if (sourceLines.length === 0) {
@@ -2801,7 +2850,7 @@ function createGeminiRouter(options = {}) {
                         maxOutputTokens: 32768
                     }
                 };
-                const result = await generateText(key, model, payload, abortCtrl.signal, { preferBackup, thinking: 'low' });
+                const result = await generateText(key, model, payload, abortCtrl.signal, { preferBackup, thinking: 'medium' });
                 if (!result.success) return result;
                 addTokenUsage(usage, result);
                 rawParts.push(result.text || '');
@@ -2877,7 +2926,7 @@ function createGeminiRouter(options = {}) {
             try {
                 if (review !== false) {
                     reviewed = await reviewKhmerLines({
-                        lines: sourceLines.map(l => ({ source: l.text, gender: l.gender, seconds: l.seconds })),
+                        lines: sourceLines.map((l, i) => ({ source: l.text, gender: l.gender, seconds: l.seconds && secondsWithPause(l.start, l.end, sourceLines[i + 1] ? sourceLines[i + 1].start : null) })),
                         texts: results.map(r => r && r.text),
                         apply: (i, text) => { results[i] = { ...results[i], text, reviewed: true }; },
                         genre: genreRegister, glossary, glossaryHint, sheetHint, keyPool, model, signal: abortCtrl.signal, usage, tag: 'Translate'
@@ -2902,7 +2951,8 @@ function createGeminiRouter(options = {}) {
                 usage,
                 reviewed,
                 fitted,
-                sheet: sheet ? { names: sheet.characters.length, address: sheet.address.length, terms: sheet.terms.length } : null
+                sheet: sheet ? { names: sheet.characters.length, address: sheet.address.length, terms: sheet.terms.length } : null,
+                ...(() => { const nameClashes = seriesNameClashes(sourceFilePath, req.fullGlossary || glossary); return nameClashes.length ? { nameClashes } : {}; })()
             });
         } catch (e) {
             if (e.name === 'AbortError') return res.json({ success: false, error: 'CANCELLED' });
@@ -3318,7 +3368,7 @@ ${JSON.stringify(chunk)}`;
                 generationConfig: { responseMimeType: 'application/json', responseSchema: MISSING_RESPONSE_SCHEMA }
             };
             const ask = (pool) => geminiWithKeys(pool, async (key) => {
-                const r = await generateText(key, model, payload, abortCtrl.signal, { timeoutMs: GEMINI_TEXT_TIMEOUT_MS, thinking: 'low' });
+                const r = await generateText(key, model, payload, abortCtrl.signal, { timeoutMs: GEMINI_TEXT_TIMEOUT_MS, thinking: 'medium' });
                 if (!r.success) return { ok: false, result: r };
                 const parsed = parseJsonArrayLoose(r.text);
                 if (!Array.isArray(parsed)) return { ok: false, result: { status: 502, error: 'JSON_PARSE_ERROR', message: 'The AI did not return a list of lines.' } };

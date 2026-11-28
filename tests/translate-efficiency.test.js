@@ -37,8 +37,21 @@ describe('low thinking for text jobs', () => {
         assert.equal(geminiThinkingConfig('gemini-3.8-flash', null), null, 'audio jobs ask for nothing');
     });
 
-    test('translate, re-translate, shorten, the sheet, missed subtitles and split lines ask for it; a model that refuses is asked again without', () => {
-        assert.equal((serverSource.match(/, thinking: 'low' \}\)/g) || []).length, 6);
+    test('medium: Gemini 3 by level, 2.5 (Flash, Lite and Pro) with a real budget', () => {
+        assert.deepEqual(geminiThinkingConfig('gemini-3.8-flash', 'medium'), { thinkingLevel: 'medium' });
+        assert.deepEqual(geminiThinkingConfig('gemini-2.5-flash', 'medium'), { thinkingBudget: 1024 });
+        assert.deepEqual(geminiThinkingConfig('gemini-2.5-flash-lite', 'medium'), { thinkingBudget: 1024 });
+        assert.deepEqual(geminiThinkingConfig('gemini-2.5-pro', 'medium'), { thinkingBudget: 1024 });
+        assert.equal(geminiThinkingConfig('gemini-2.0-flash', 'medium'), null);
+    });
+
+    // With almost no thinking, sayings came out word for word (久仰 as "long time no see") and lines
+    // lost the facts that made them make sense, so the jobs that write Khmer think a bit more.
+    test('jobs that write Khmer ask for medium, the rest for low; a model that refuses is asked again without', () => {
+        assert.equal((serverSource.match(/, thinking: 'medium' \}\)/g) || []).length, 4, 'translate, re-translate, missed subtitles, shorten');
+        assert.equal((serverSource.match(/, thinking: 'low' \}\)/g) || []).length, 2, 'the sheet, split lines');
+        assert.match(serverSource, /\{ thinking: 'low' \}\)/, 'emotions');
+        assert.match(serverSource, /executeGeminiGenerate\(apiKey, model, payload, signal, \{ stayOnModel, timeoutMs, thinking \}\)/);
         assert.match(serverSource, /geminiNoThinkingConfigModels\.add\(m\)/);
     });
 });

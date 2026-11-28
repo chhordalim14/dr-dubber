@@ -1701,6 +1701,7 @@
         });
 
         transcribeResult = await transcribeRes.json();
+        window.reportNameClashes?.(transcribeResult);
       } finally {
         clearInterval(pollInterval);
       }
@@ -2312,6 +2313,7 @@
             signal: state.translator.abortController.signal
           });
           const data = await res.json();
+          window.reportNameClashes?.(data);
           if (data.error === 'CANCELLED') throw Object.assign(new Error('stopped'), { name: 'AbortError' });
           if (!data.success || !Array.isArray(data.data)) {
             throw Object.assign(new Error(data.message || data.error || 'Translation failed'), { code: data.error, status: data.status });
@@ -2624,7 +2626,19 @@
     }
 
     loadGlossaryFromStorage(); // don't overwrite names saved elsewhere since the modal opened
-    state.glossary.push({ original, khmer });
+    // A name already in the glossary gets the new spelling: adding it again left the old entry
+    // in place, and "Make names consistent" reads the first one, so the fix never stuck.
+    const same = state.glossary.filter((g) => String(g?.original ?? g?.from ?? '').trim() === original);
+    if (same.length) {
+      same[0].original = original;
+      same[0].khmer = khmer;
+      delete same[0].from;
+      delete same[0].to;
+      state.glossary = state.glossary.filter((g) => !same.slice(1).includes(g));
+      showToast(`Updated: ${original} = ${khmer}`, 'success');
+    } else {
+      state.glossary.push({ original, khmer });
+    }
     saveGlossaryToStorage();
     renderGlossaryTable();
 
