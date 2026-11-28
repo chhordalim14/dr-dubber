@@ -320,14 +320,16 @@ def sanitize_prosody(rate: str, pitch: str, volume: str):
     return rate_str, pitch_str, vol_str
 
 async def generate_single_item(text: str, voice: str, rate: str, pitch: str, volume: str, output_path: str, sem: asyncio.Semaphore = None):
-    """Generate a single speech audio file using Edge-TTS. sem limits the requests at Microsoft
-    at once; it is held only for the request itself (see _generate_speech_core)."""
-    return await _generate_speech_core(text, voice, rate, pitch, volume, output_path, sem)
+    """Generate a single speech audio file using Edge-TTS. sem limits the lines at Microsoft at
+    once, and a line keeps its place while it is tried again: when Microsoft refuses, fewer new
+    requests go out, as in v1.19.3. (v1.20.0 let a waiting line give its place away, so 5
+    requests stayed at Microsoft all the time while it was refusing.)"""
+    if sem:
+        async with sem:
+            return await _generate_speech_core(text, voice, rate, pitch, volume, output_path)
+    return await _generate_speech_core(text, voice, rate, pitch, volume, output_path)
 
-# A request that has not finished by then has hung (a line normally takes 1-2 s; measured
-# 2026-11-27: 150 lines, longest 2-6 s when Microsoft answers, one hung 29.5 s while it was
-# refusing). Ended sooner and tried again, instead of holding a place for 30 s.
-TTS_TIMEOUT_SECONDS = 15
+TTS_TIMEOUT_SECONDS = 30
 BUSY_ATTEMPTS = 5  # tries for a line Microsoft keeps turning away ("No audio was received"): ~9 s of waits
 BUSY_WAIT_SECONDS = 1.0  # wait before the next try of a refused line: 1.0, 2.0, then 3.0 s
 
@@ -339,7 +341,7 @@ async def _edge_save(communicate, output_path: str):
     """One request to Microsoft, with its own time limit."""
     await asyncio.wait_for(communicate.save(output_path), timeout=TTS_TIMEOUT_SECONDS)
 
-async def _generate_speech_core(text: str, voice: str, rate: str, pitch: str, volume: str, output_path: str, sem: asyncio.Semaphore = None):
+async def _generate_speech_core(text: str, voice: str, rate: str, pitch: str, volume: str, output_path: str):
     try:
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
         rate_str, pitch_str, vol_str = sanitize_prosody(rate, pitch, volume)
@@ -373,15 +375,8 @@ async def _generate_speech_core(text: str, voice: str, rate: str, pitch: str, vo
                     volume=vol_str
                 )
 
-                # Only the request holds a place at Microsoft: a refused line waiting to be tried
-                # again, or one being trimmed, leaves it to the next line (2026-11-27: Microsoft
-                # refusing, 5 refused lines waiting held every place - 150 lines took 340 s
-                # instead of ~45 s).
-                if sem:
-                    async with sem:
-                        await _edge_save(communicate, output_path)
-                else:
-                    await _edge_save(communicate, output_path)
+                # Guard against hanging coroutine on network stall / throttling
+                await _edge_save(communicate, output_path)
 
                 if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
                     # Trim before measuring, so the duration the app plans with is the voice

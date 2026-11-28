@@ -101,10 +101,11 @@ print(json.dumps(asyncio.run(main())))
     assert.ok(out.seconds < 1.5, `no pause for every line while one is refused (took ${out.seconds.toFixed(2)}s)`);
 });
 
-// The place at Microsoft is held only for the request: refused lines waiting to be tried again
-// leave it to the next line (2026-11-27: Microsoft refusing, the 5 places all held by waiting
-// lines - 150 lines took 340 s instead of ~45 s).
-test('refused lines waiting to be tried again leave their place to the other lines', { skip: !PY && 'app python_env not found' }, () => {
+// As in v1.19.3: a refused line keeps its place at Microsoft while it waits to be tried again, so
+// while Microsoft refuses fewer new requests go out. (v1.20.0 gave the place to the next line,
+// keeping 5 requests at Microsoft all the time while it was refusing; the user found Generate
+// slower than in v1.19.3 and asked for it back, 2026-11-28.)
+test('a refused line keeps its place while it waits, so fewer requests go out', { skip: !PY && 'app python_env not found' }, () => {
     const out = runPy('text.startswith("busy") and tries < 1', `
 import time
 m.BUSY_WAIT_SECONDS = 0.5
@@ -125,5 +126,12 @@ print(json.dumps(asyncio.run(main())))
 `);
     assert.equal(out.ok, 12, 'every line voiced');
     assert.ok(out.peak <= 2, `never more than the limit at Microsoft (${out.peak})`);
-    assert.ok(out.others < 0.4, `the other lines did not wait for the refused ones (${out.others.toFixed(2)}s)`);
+    assert.ok(out.others >= 0.45, `the refused lines held their places while they waited (others done at ${out.others.toFixed(2)}s)`);
+});
+
+test('the server hands the generator as many lines as it voices at once (as in v1.19.3)', () => {
+    const server = fs.readFileSync(path.join(repo, 'backend', 'server.js'), 'utf8');
+    assert.match(server, /createTtsWorker\(\{\s*maxInFlight: TTS_LINES_AT_ONCE,/);
+    assert.ok(!/TTS_WORKER_LINES/.test(server));
+    assert.match(fs.readFileSync(SCRIPT, 'utf8'), /^TTS_TIMEOUT_SECONDS = 30\b/m);
 });
